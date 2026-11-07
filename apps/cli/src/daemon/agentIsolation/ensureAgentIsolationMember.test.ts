@@ -64,6 +64,29 @@ describe.skipIf(process.platform !== 'linux')('existing P11/P10 first-use member
       .toEqual({ custodyChecks: 1, metadataReads: 0, shimProbes: 1, sudoListProbes: 0 });
   });
 
+  it('reports the actual post-repair native launch failure instead of an unexplained denied result', async () => {
+    const native = fixture();
+    // The fixed member shim is an OS boundary; setup and readiness classification remain real.
+    native.effects.nativeReadiness!.system!.run = async () => {
+      throw Object.assign(new Error('PRIVATE_NATIVE_STDERR'), { code: 73 });
+    };
+    const result = await native.prepare();
+    expect(result).toMatchObject({ kind: 'not_ready', result: { outcome: 'not_applied', reasonCode: 'denied' },
+      readinessCode: 'payload_not_accessible', probeFailure: { check: 'managed_payload', exitCode: 73 } });
+    expect(JSON.stringify(result)).not.toContain('PRIVATE_NATIVE_STDERR');
+    expect(native.mutations).toContain('agent-account');
+  });
+
+  it('preserves the native identity qualification failure after member effects apply', async () => {
+    const native = fixture();
+    // Root creates a user whose uid disagrees with the observed private home.
+    native.setNextAllocatedUid(2402);
+    const result = await native.prepare();
+    expect(native.mutations).toContain('agent-account');
+    expect(result).toMatchObject({ kind: 'not_ready', result: { outcome: 'not_applied', reasonCode: 'denied' },
+      readinessCode: 'agent_user_missing' });
+  });
+
   it('creates only its admitted qualified user and reuses qualified warm native state without an elevated effect or operation', async () => {
     const native = fixture();
     const cold = await native.run();

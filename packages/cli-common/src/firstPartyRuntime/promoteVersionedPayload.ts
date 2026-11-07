@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { mkdir, rename, rm, stat } from 'node:fs/promises';
+import { chmod, mkdir, rename, rm, stat } from 'node:fs/promises';
 
 import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -77,6 +77,8 @@ export async function promoteVersionedPayloadWithoutLock(params: Readonly<{
     : null;
   let legacyCurrentWasMoved = false;
 
+  await mkdir(layout.installRoot, { recursive: true, mode: 0o711 });
+  if (process.platform !== 'win32') await chmod(layout.installRoot, 0o711);
   await mkdir(layout.versionsDir, { recursive: true });
   await replaceRuntimePayloadTree({
     sourcePath: params.stagedPayloadPath,

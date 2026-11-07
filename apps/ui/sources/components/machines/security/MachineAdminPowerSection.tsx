@@ -348,6 +348,11 @@ function HeadlineStatement(props: Readonly<{ children: React.ReactNode }>) {
 function describeIsolation(
   authority: MachineAuthorityModel,
 ): string {
+  const availability = authority.separateUsers.availability;
+  if (availability.kind === 'unavailable') return t(availability.reason === 'metadata_unavailable'
+    ? `${s}.isolationUnknown` : `${s}.isolationUnavailable`);
+  if (availability.kind === 'can_turn_on'
+    && (authority.isolation == null || authority.isolation.kind === 'unavailable')) return t(`${s}.isolationOff`);
   switch (authority.isolation?.kind) {
     case 'effective':
       return t(authority.separateUsers.placement === 'member' ? `${s}.isolationMember` : `${s}.isolationEffective`);

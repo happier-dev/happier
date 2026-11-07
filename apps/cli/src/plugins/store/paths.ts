@@ -1,8 +1,9 @@
 import { mkdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { configuration } from '../../configuration';
 import { resolvePluginStorePathLayout } from './pathLayout';
+import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 
 export type PluginStorePaths = Readonly<{
   happyHomeDir: string;
@@ -29,6 +30,7 @@ export function resolvePluginStorePaths(params?: Readonly<{ happyHomeDir?: strin
 }
 export async function ensurePluginStoreDirectories(params?: Readonly<{ happyHomeDir?: string }>): Promise<PluginStorePaths> {
   const paths = resolvePluginStorePaths(params);
+  await ensureProtectedLocalStateDirectory(dirname(paths.rootDir), { authority: 'owned' });
   await Promise.all([
     mkdir(paths.stateDir, { recursive: true }),
     mkdir(paths.stateRevisionsDir, { recursive: true }),

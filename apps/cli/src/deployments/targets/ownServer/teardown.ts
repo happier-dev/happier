@@ -1,4 +1,5 @@
 import { isDeepStrictEqual } from 'node:util';
+import { disconnectNativeCaddyNetworks } from '@happier-dev/cli-common/machineSetup';
 import { randomUUID } from 'node:crypto';
 import { DeploymentChildRpcV1Schema, type DeploymentChildRpcV1, type ActionExecutorContext, type ActionExecutorDeps } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema, projectActionFailureCauseV1, type ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
@@ -122,12 +123,25 @@ export function createOwnServerTeardownForHost(host: Host) {
                         }
                         // Retained generations can share a network: detach all
                         // owned workloads before removing any owned network.
+                        const networkIds: string[] = [];
                         for (const project of projects) {
                             const networks = await run(['network', 'ls', '--no-trunc', '--filter',
                                 `label=com.docker.compose.project=${project}`, '--format', '{{.ID}}']);
                             if (networks.exitCode !== 0) return { kind: 'unknown' as const, reason: 'network_observation_unavailable' };
-                            const networkIds = networks.stdout.trim() ? networks.stdout.trim().split('\n') : [];
-                            if (networkIds.length && (await run(['network', 'rm', ...networkIds])).exitCode !== 0) {
+                            networkIds.push(...(networks.stdout.trim() ? networks.stdout.trim().split('\n') : []));
+                        }
+                        if (networkIds.length) {
+                            // The root dispatcher retired every Environment Domain
+                            // before native teardown. Caddy itself remains shared.
+                            const detached = await disconnectNativeCaddyNetworks({ networkIds }, {
+                                ...(request.context.signal ? { signal: request.context.signal } : {}),
+                                run: async command => {
+                                    const result = await run(command.args);
+                                    return { code: result.exitCode, stdout: result.stdout, stderr: result.stderr };
+                                },
+                            });
+                            if (detached.status !== 'ready') return { kind: 'unknown' as const, reason: detached.reason };
+                            if ((await run(['network', 'rm', ...networkIds])).exitCode !== 0) {
                                 return { kind: 'unknown' as const, reason: 'network_removal_unproved' };
                             }
                         }

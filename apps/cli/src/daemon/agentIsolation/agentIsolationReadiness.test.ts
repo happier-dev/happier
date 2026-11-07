@@ -71,7 +71,8 @@ it.skipIf(process.platform !== 'linux')('reports unresolved probe cleanup withou
       const result = observeAgentIsolationNativeReadiness({ installedCli: '/opt/happier/cli/current/happier',
         roots: [workspace], privateRoots: [], system, signal: controller.signal });
       if (cancel) await expect(result).rejects.toMatchObject({ name: 'AbortError' });
-      else await expect(result).resolves.toEqual({ kind: 'unavailable', code: 'workspace_not_ready' });
+      else await expect(result).resolves.toMatchObject({ kind: 'unavailable', code: 'workspace_not_ready',
+        probeFailure: { check: 'workspace', exitCode: 76 } });
       expect(await readFile(join(replacement, 'sentinel'), 'utf8')).toBe('retained');
       expect(warning).toHaveBeenCalledWith(expect.any(String), {
         code: 'agent_isolation_probe_cleanup_failed', phase: 'workspace',
@@ -82,7 +83,7 @@ it.skipIf(process.platform !== 'linux')('reports unresolved probe cleanup withou
   } finally { warning.mockRestore(); }
 });
 
-it.skipIf(process.platform !== 'linux')('publishes effective only after current native qualification, preserves refusal and performs no idle probes', async () => {
+it.skipIf(process.platform !== 'linux').each([false, true])('settles applied effects through one native qualification (available initially: %s), preserves refusal and performs no idle probes', async initiallyAvailable => {
   await withTempDir('isolation-readiness-', async directory => {
     const workspace = join(directory, 'workspace');
     await mkdir(workspace);
@@ -104,7 +105,7 @@ it.skipIf(process.platform !== 'linux')('publishes effective only after current 
         observer: createMachineAdminAccessObserver({ onChanged: async () => {} }) },
       readRoots: native.effects.readRoots, trackedSessions,
       protectedRoots: [privateRoot], privateRoots: [privateRoot] });
-    let qualificationEnabled = false;
+    let qualificationEnabled = initiallyAvailable;
     const nativeReadiness = production.nativeReadiness && { ...production.nativeReadiness, system: {
       // Process/OS boundary only. The actual frame, finite readiness owner,
       // setup interpreter, metadata CAS and registered RPC handler stay real.
@@ -218,11 +219,16 @@ it.skipIf(process.platform !== 'linux')('publishes effective only after current 
       executionKind: 'person_break_glass' })).rejects.toMatchObject({ code: 'agent_isolation_unavailable', execLaunch: 'notStarted' });
     // Provisioning alone cannot advance launch admission: this is the actual
     // registered edge with the native qualification producer unavailable.
-    await expect(apply()).resolves.toMatchObject({ kind: 'accepted', status: { kind: 'applying' } });
-    expect(probes).toBe(0);
-    await expect(restrictedLaunch()).rejects.toMatchObject({ code: 'agent_isolation_unavailable', execLaunch: 'notStarted' });
+    if (!initiallyAvailable) {
+      await expect(apply()).resolves.toMatchObject({ kind: 'accepted', status: { kind: 'unavailable',
+        code: 'provisioning_unavailable', prerequisite: { requiredFact: 'native_readiness', remedy: 'machines.agentIsolation.preview' } } });
+      expect(probes).toBe(0);
+      await expect(restrictedLaunch()).rejects.toMatchObject({ code: 'agent_isolation_unavailable', execLaunch: 'notStarted' });
+    }
     qualificationEnabled = true;
-    await expect(apply()).resolves.toMatchObject({ kind: 'accepted', status: { kind: 'effective' } });
+    // The existing recovery Preview can qualify previously unavailable setup;
+    // initial setup qualifies after its actual elevated Apply instead.
+    await expect(apply()).resolves.toMatchObject({ kind: initiallyAvailable ? 'accepted' : 'unchanged', status: { kind: 'effective' } });
     expect(status).toEqual({ kind: 'effective', platform: 'linux', agentUser: 'happier-agent' });
     expect(probes).toBe(1);
     const admitted = await restrictedLaunch();
@@ -295,7 +301,8 @@ it.skipIf(process.platform !== 'linux')('publishes effective only after current 
     expect(await readFile(outside, 'utf8')).toBe('agent');
     plantedLink = false;
     status = { kind: 'applying', phase: 'runtime_replacement' }; failProbe = true;
-    await expect(apply()).resolves.toMatchObject({ status: { kind: 'unavailable', code: 'launch_probe_failed' } });
+    await expect(apply()).resolves.toMatchObject({ status: { kind: 'unavailable', code: 'launch_probe_failed',
+      probeFailure: { check: 'umask', exitCode: 72, identity: { username: 'happier-agent', uid: 999, gid: 988, home: '/var/lib/happier-agent', cwd: workspace } } } });
     expect(status.kind).toBe('unavailable');
     probeFailureCode = 74;
     await expect(apply()).resolves.toMatchObject({ status: { kind: 'unavailable', code: 'local_admin_api_accessible' } });

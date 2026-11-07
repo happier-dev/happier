@@ -50,7 +50,9 @@ describe('native user-manager group currency', () => {
         const os = native(initial), manager = managerStep();
         os.changeAccount();
         const plan = await checkMachineSetupEffectPlan({ basis, steps: [manager], backend: os.backend });
-        expect(plan.nativeFacts[0]).toMatchObject({ status: 'drifted' });
+        expect(plan.nativeFacts[0]).toMatchObject({ status: 'drifted', facts: {
+            requiredFact: 'userManagerGroups', pendingReason: initial.state === 'activating' ? 'user_manager_starting' : 'user_manager_inactive',
+        } });
         expect(await applyMachineSetupEffectPlan({ plan, backend: os.backend }))
             .toMatchObject({ status: 'applied', completedStepIds: ['daemon-user-manager'] });
         expect(await os.backend.observe(manager)).toMatchObject({ status: 'satisfied', facts: {
@@ -106,6 +108,7 @@ describe('native user-manager group currency', () => {
         os.invalidStatus('Uid:\t1000\t1000\t1000\t1000\nGid:\t1000\t1000\t1000\t1000\nGroups:\t1000 1001\n');
         expect(await os.backend.observe(managerStep())).toMatchObject({ status: 'drifted', facts: {
             expectedGroupIds: [1000], actualGroupIds: [1000, 1001],
+            pendingReason: 'user_manager_groups_stale',
         } });
         expect(os.effects).toEqual([]);
     });

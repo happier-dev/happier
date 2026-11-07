@@ -56,7 +56,7 @@ describe('Agent isolation launch principal', () => {
     const steps = buildAgentIsolationBootstrapSteps({ daemonUsername: 'alice', daemonPrimaryGroup: 'engineers',
       binaryPath: '/srv/agent-qa-payload/cli/current/happier', toolsRoot: resolveManagedToolsRoot(processEnv) });
     expect(steps.find(step => step.id === 'tools-root')).toMatchObject({ kind: 'directory',
-      path: resolveManagedToolsRoot(processEnv), owner: 'alice', group: 'engineers', mode: 0o755 });
+      path: resolveManagedToolsRoot(processEnv), owner: 'alice', group: 'engineers', mode: 0o711 });
   });
 
   it.each(['relative/happier', '/tmp/happier\n', '/tmp/happier\nALL ALL=(ALL) ALL', '/tmp/happier, /bin/sh',

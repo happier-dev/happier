@@ -30,6 +30,21 @@ const software = {
     'zh-Hant': ['安裝', '已找到', '缺少', '尚不確定。正在等待所選機器。'],
 } satisfies Record<SupportedLanguage, readonly string[]>;
 
+const softwareCheck = {
+    en: ['Checking software on the chosen Machine.', 'Couldn’t check software on the chosen Machine.'],
+    fr: ['Vérification des logiciels sur la machine choisie.', 'Impossible de vérifier les logiciels sur la machine choisie.'],
+    de: ['Software auf der gewählten Maschine wird geprüft.', 'Software auf der gewählten Maschine konnte nicht geprüft werden.'],
+    es: ['Comprobando el software en la máquina elegida.', 'No se pudo comprobar el software en la máquina elegida.'],
+    it: ['Verifica del software sulla macchina scelta.', 'Impossibile verificare il software sulla macchina scelta.'],
+    pt: ['A verificar o software na máquina escolhida.', 'Não foi possível verificar o software na máquina escolhida.'],
+    ca: ['S’està comprovant el programari de la màquina triada.', 'No s’ha pogut comprovar el programari de la màquina triada.'],
+    ja: ['選択したマシンのソフトウェアを確認しています。', '選択したマシンのソフトウェアを確認できませんでした。'],
+    ru: ['Проверка программ на выбранной машине.', 'Не удалось проверить программы на выбранной машине.'],
+    pl: ['Sprawdzanie oprogramowania na wybranej maszynie.', 'Nie udało się sprawdzić oprogramowania na wybranej maszynie.'],
+    'zh-Hans': ['正在检查所选机器上的软件。', '无法检查所选机器上的软件。'],
+    'zh-Hant': ['正在檢查所選機器上的軟體。', '無法檢查所選機器上的軟體。'],
+} satisfies Record<SupportedLanguage, readonly [string, string]>;
+
 function copy(words: readonly string[], language: SupportedLanguage) {
     return { connect: words[0]!, changeConnection: words[1]!, connectionSelected: words[2]!, keySelected: words[3]!,
         installThenStart: ({ software, name }: { software: string; name: string }) => summary[language][0]
@@ -37,7 +52,8 @@ function copy(words: readonly string[], language: SupportedLanguage) {
         startOnly: ({ name }: { name: string }) => summary[language][1].replace('{name}', () => name),
         skipNeed: words[4]!, useMcp: words[5]!, setupIncomplete: words[6]!,
         installSoftware: software[language][0]!, softwareFound: software[language][1]!,
-        softwareMissing: software[language][2]!, softwareUnknown: software[language][3]! };
+        softwareMissing: software[language][2]!, softwareUnknown: software[language][3]!,
+        softwareChecking: softwareCheck[language][0], softwareCheckUnavailable: softwareCheck[language][1] };
 }
 export const botTemplateSetupTranslations = {
     en: copy(['Connect', 'Change connection', 'Account selected', 'Saved key selected', 'Skip', 'Use this MCP server', 'Complete the required connections and inputs to continue.'], 'en'),

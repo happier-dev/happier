@@ -225,9 +225,7 @@ async function allocateLocalPortForRequest(
 }
 
 export function createSshTunnelSupervisor(deps: SshTunnelSupervisorDeps = {}): SshTunnelSupervisor {
-  const registry = deps.registry ?? createSshTunnelRegistry({
-    registryPath: join(configuration.happyHomeDir, 'daemon', 'ssh-tunnels', 'registry.json'),
-  });
+  const registry = deps.registry ?? createSshTunnelRegistry();
   const active = new Map<string, ActiveTunnel>();
   const pending = new Map<string, Promise<ActiveTunnel>>();
   const leaseToTunnelKey = new Map<string, string>();

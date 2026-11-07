@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { applyMachineSetupEffectPlan, applyMachineSetupEffectPlans, checkMachineSetupEffectPlan, createMachineSetupEffectPlan, type MachineRecipeStepV1, type MachineSetupBackend, type MachineSetupProgressV1 } from './index.js';
+import { applyMachineSetupEffectPlan, applyMachineSetupEffectPlans, checkMachineSetupEffectPlan, createMachineSetupEffectPlan, type MachineRecipeStepV1, type MachineSetupBackend, type MachineSetupStepObservationV1, type MachineSetupProgressV1 } from './index.js';
 import { createMachineSetupNativeBackend } from './nativeBackend.js';
 import { MachineSetupEffectPlanV1Schema, MachineRecipeStepDeclarationV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 
@@ -40,22 +40,57 @@ describe('machine setup reviewed execution', () => {
         expect(writes).toEqual([]);
     });
 
-    it('retains isolation native identity custody until its root-side pins replace CHECK and APPLY', async () => {
+    it.each(['home', 'uid', 'gid'] as const)('retains isolation native %s custody across CHECK and APPLY', async field => {
         const step: MachineRecipeStepV1 = { id: 'agent-account', kind: 'user', username: 'member', uid: 1001,
             home: '/retained/member', locked: true };
-        let home = '/retained/member';
+        const identity = { home: '/retained/member', uid: 1001, gid: 1001 };
         const writes: string[] = [];
         const backend: MachineSetupBackend = {
-            async observe() { return { stepId: step.id, status: home === '/retained/member' ? 'satisfied' : 'drifted',
-                facts: { present: true, uid: 1001, username: 'member', home, locked: true } }; },
+            async observe() { return { stepId: step.id, status: 'satisfied',
+                facts: { present: true, username: 'member', ...identity, locked: true } }; },
             async apply(value) { writes.push(value.id); },
         };
         const plan = await checkMachineSetupEffectPlan({ basis: { kind: 'agentIsolation', machineId: 'machine-a', enabled: true,
             expectedPolicy: { enabled: true } }, steps: [step], backend });
-        home = '/other/member';
+        if (field === 'home') identity.home = '/other/member';
+        else identity[field] = 2001;
         expect(await applyMachineSetupEffectPlan({ plan, backend }))
-            .toMatchObject({ status: 'plan_changed', completedStepIds: [] });
+            .toMatchObject({ status: 'plan_changed', completedStepIds: [], comparison: {
+                targetChanged: true, fields: expect.arrayContaining([{
+                    field: `nativeFacts[0].facts.${field}`, reviewedHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+                    currentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+                }]),
+            } });
         expect(writes).toEqual([]);
+    });
+
+    it('converges the reviewed isolation target after native observations or desired lock state change', async () => {
+        const user: MachineRecipeStepV1 = { id: 'agent-account', kind: 'user', username: 'member', uid: 1001,
+            home: '/retained/member', locked: true };
+        let locked = false, pid = 10;
+        const writes: string[] = [];
+        const backend: MachineSetupBackend = {
+            async observe(step): Promise<MachineSetupStepObservationV1> { return { stepId: step.id, status: step.kind !== 'user' || locked ? 'satisfied' : 'drifted',
+                facts: step.kind === 'user' ? { present: true, uid: 1001, gid: 1001, username: 'member', home: '/retained/member', locked }
+                    : { pid, actualGroupIds: [1001], expectedGroupIds: [1001] } }; },
+            async apply(step) { writes.push(step.id); locked = true; },
+        };
+        const isolationBasis = { kind: 'agentIsolation' as const, machineId: 'machine-a', enabled: true,
+            expectedPolicy: { enabled: false } };
+        const plan = await checkMachineSetupEffectPlan({ basis: isolationBasis, steps: [user, { id: 'manager', kind: 'command',
+                executable: 'systemctl', args: ['restart', 'user@1001.service'],
+                check: { kind: 'userManagerGroups', username: 'member' } }], backend });
+        pid = 20;
+        const result = await applyMachineSetupEffectPlan({ plan, backend });
+        expect(result).toMatchObject({ status: 'applied', comparison: { targetChanged: false, fields: [{
+            field: 'nativeFacts[1].facts.pid', reviewedHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+            currentHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        }] } });
+        expect(JSON.stringify(result)).not.toContain('/retained/member');
+        expect(writes).toEqual(['agent-account']);
+        const settled = await checkMachineSetupEffectPlan({ basis: { ...isolationBasis, expectedPolicy: { enabled: true } },
+            steps: plan.steps, backend });
+        expect(settled.planDigest).toBe(plan.planDigest);
     });
 
     it('executes a retained pre-cut reviewed plan without rewriting its recorded digest', async () => {

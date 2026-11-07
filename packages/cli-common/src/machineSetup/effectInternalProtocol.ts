@@ -111,6 +111,10 @@ const Result = z.object({
     failure: z.optional(MachineElevationFailureV1Schema),
     initialPresence: z.array(z.enum(['present', 'absent', 'unknown'])).optional(),
     restoration: z.optional(MachineFirewallRestorationV1Schema),
+    comparison: z.object({ targetChanged: z.boolean(), fields: z.array(z.object({
+        field: z.string().regex(/^(?:plans\[\d+\]\.)?(?:basis|steps|checks|selectedCheckIds|checkFacts|nativeFacts\[\d+\]\.(?:stepId|status|reason|facts(?:\.[A-Za-z][A-Za-z0-9_]*)?))$/),
+        reviewedHash: z.string().regex(/^[a-f0-9]{64}$/), currentHash: z.string().regex(/^[a-f0-9]{64}$/),
+    }).strict()) }).strict().optional(),
 }).strict() satisfies z.ZodType<machineSetup.MachineSetupApplyResultV1>;
 const Checked: z.ZodType<CheckedResult> = z.union([
     z.object({ status: z.literal('checked'), plan: MachineSetupEffectPlanV1Schema }).strict(),

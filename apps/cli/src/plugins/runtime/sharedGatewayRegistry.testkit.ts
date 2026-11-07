@@ -11,6 +11,7 @@ import { createConnectedAccountRequestAuthSubjectRegistry } from '@/daemon/conne
 import * as persistence from '@/persistence';
 import { configuration } from '@/configuration';
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
+import { projectDaemonRequesterWorkAttribution } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { loadInstalledPlugins } from '@/plugins/discovery/load/installed';
 import { createMergedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { projectLoadedPluginContributes } from '@/plugins/projection/registry/fullProjection';
@@ -20,7 +21,7 @@ import { readCurrentCommittedPluginGenerations } from '@/plugins/store/registry/
 import { writeCommittedLocalPathPluginFixture } from '@/plugins/store/state.testkit';
 
 import { createPluginReloadController, type PluginReloadController } from './reload/controller';
-import { resolveExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
+import { resolveExecutablePluginRuntimeRegistry, type ResolvedExecutablePluginRuntimeRegistry } from './resolveExecutablePluginRuntimeRegistry';
 
 /** Real installed Provider, purpose authority, registry and OS gateway fixture. */
 export function createSharedGatewayRegistryTestkit(input: Readonly<{
@@ -147,10 +148,12 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
                 install: { mode: 'link', manifestVersion: version, installedPath: null,
                     trust: createPluginTrustRecord({ pluginId: id, distribution, approvedAtMs: Date.now() }) }, state: { enabled: true } } });
     };
-    const createRegistry = async (changed: ReadonlySet<string>) => {
+    const createRegistry = async (changed: ReadonlySet<string>): Promise<ResolvedExecutablePluginRuntimeRegistry> => {
         const contributes = createMergedContributionRegistry(projectLoadedPluginContributes({
             loadResult: await loadInstalledPlugins({ happyHomeDir }), provenance: 'external', existingAgentIds: new Set(),
-        }), input.includeBundledDeclarations ? (await import('@/plugins/projection/registry/builtIn/snapshot')).getResolvedContributionRegistry() : {});
+        }), input.includeBundledDeclarations
+            ? (await import('@/plugins/projection/registry/builtIn/snapshot')).getResolvedContributionRegistry()
+            : {});
         const generationAuthority = await readCurrentCommittedPluginGenerations(resolvePluginStorePaths({ happyHomeDir }), {});
         if (!generationAuthority) throw new Error('Expected installed generation authority');
         const serving = controller.retainServingSlots?.(changed);
@@ -158,10 +161,11 @@ export function createSharedGatewayRegistryTestkit(input: Readonly<{
             connectedAccounts: purposeBindingOwner,
             ...(serving ? { servingPluginOccurrences: serving.occurrencesByPluginId, retainedActivationRegistryLeases: serving.leases } : {}),
             managedProviderOperationAuthority: operationAuthority, resolveCurrentMachineId: () => 'machine',
+            externalActionHomeBinding: { serverId: configuration.activeServerId, serverIdentityId: 'home' },
             readDaemonRequesterWorkAttribution: () => {
                 const installation = readInstallationIdentityIfExistsSync(join(happyHomeDir, 'installation-identity.json'));
-                return installation ? { serverId: configuration.activeServerId, accountId: 'account', machineId: 'machine',
-                    installationId: installation.installationId } : null;
+                return projectDaemonRequesterWorkAttribution(installation ? { serverId: configuration.activeServerId,
+                    custodianAccountId: 'account', machineId: 'machine', installationId: installation.installationId } : null, 'home');
             },
             resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'home', machineId: 'machine' }),
         });

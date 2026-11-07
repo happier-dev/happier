@@ -61,7 +61,8 @@ export function createWorkspaceAccessBackend(run: NativeRun) {
                     // APPLY. Known absence is drift, not an unavailable fact.
                     // Still reject an existing symlink in its ancestor chain.
                     await inspectNativeAncestors(step.path);
-                    return { stepId: step.id, status: 'drifted', facts: { present: false } };
+                    return { stepId: step.id, status: 'drifted', facts: { present: false,
+                        requiredFact: step.kind, path: step.path, pendingReason: 'path_missing' } };
                 }
             }
             await requirePath(step.path);
@@ -70,8 +71,14 @@ export function createWorkspaceAccessBackend(run: NativeRun) {
                 const acl = await run('getfacl', ['-n', '-c', '-p', step.path], { LC_ALL: 'C' });
                 if (acl.code !== 0) throw new MachineSetupEffectError('required_fact_unavailable');
                 const lines = parsePosixAcl(acl.stdout);
-                const ready = !!user && posixAclEntryAllows(lines, `user:${user[2]}:`, 'x');
-                return { stepId: step.id, status: ready ? 'satisfied' : 'drifted', facts: { acl: lines, agentUid: user ? Number(user[2]) : null } };
+                const entry = `user:${user?.[2]}:`;
+                const ready = !!user && posixAclEntryAllows(lines, entry, 'x');
+                const pendingReason = !user ? 'agent_user_missing'
+                    : posixAclEntryAllows(lines.filter(line => !line.startsWith('mask::')), entry, 'x') ? 'acl_mask_denied' : 'acl_entry_missing';
+                return { stepId: step.id, status: ready ? 'satisfied' : 'drifted', facts: {
+                    acl: lines, agentUid: user ? Number(user[2]) : null,
+                    ...(!ready ? { requiredFact: step.kind, path: step.path, pendingReason } : {}),
+                } };
             }
             const group = await readLocalAccount(run, 'group', step.group);
             const entries = await tree(step.path);

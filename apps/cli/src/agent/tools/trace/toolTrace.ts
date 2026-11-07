@@ -2,6 +2,7 @@ import { appendFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { configuration } from '@/configuration';
 import { safeJsonStringify } from '@/utils/safeJson';
+import { ensureProtectedLocalStateDirectorySync, ensureProtectedLocalStateFileSync } from '@/utils/fs/protectedLocalState';
 
 export type ToolTraceProtocol = 'acp' | 'codex' | 'claude';
 
@@ -24,10 +25,18 @@ export class ToolTraceWriter {
 
     constructor(params: { filePath: string }) {
         this.filePath = params.filePath;
-        mkdirSync(dirname(this.filePath), { recursive: true });
+        const directory = dirname(this.filePath);
+        if (directory === join(configuration.happyHomeDir, 'tool-traces')) {
+            ensureProtectedLocalStateDirectorySync(directory, { authority: 'owned' });
+        } else {
+            // An explicit trace file can live in a user-selected directory;
+            // its writer owns the file, not an existing containing directory.
+            mkdirSync(directory, { recursive: true, mode: 0o700 });
+        }
         // Touch the file so that "tool trace enabled" is observable even before the first event.
         // appendFileSync creates the file if it does not exist and is a no-op for empty content.
-        appendFileSync(this.filePath, '', 'utf8');
+        appendFileSync(this.filePath, '', { encoding: 'utf8', mode: 0o600 });
+        ensureProtectedLocalStateFileSync(this.filePath, { authority: 'owned' });
     }
 
     record(event: ToolTraceEventV1): void {

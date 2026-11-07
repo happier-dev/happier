@@ -9,10 +9,10 @@ import type { AgentIsolationMemberNativeIdentity } from './agentIsolationNativeI
 import type { RpcHandlerContext } from '@/api/rpc/types';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 
-function withMemberWorkspace(snapshot: HostAgentIsolationLaunchSnapshot | undefined,
-  member: AgentIsolationMemberNativeIdentity | undefined): HostAgentIsolationLaunchSnapshot | undefined {
-  if (!snapshot || !member || snapshot.workspaceRoots.includes(member.workspaceRoot)) return snapshot;
-  return { ...snapshot, workspaceRoots: [...snapshot.workspaceRoots, member.workspaceRoot] };
+function withWorkspaceRoot(snapshot: HostAgentIsolationLaunchSnapshot | undefined,
+  workspaceRoot: string | undefined): HostAgentIsolationLaunchSnapshot | undefined {
+  if (!snapshot || !workspaceRoot || snapshot.workspaceRoots.includes(workspaceRoot)) return snapshot;
+  return { ...snapshot, workspaceRoots: [...snapshot.workspaceRoots, workspaceRoot] };
 }
 
 function memberLaunchFailureRecovery(input: Readonly<{
@@ -45,6 +45,7 @@ export function createAgentIsolationSessionContext(input: Readonly<{
   sessionCustodianAccountId?: string | null;
   hostHomeServerIdentityId?: string | null;
   resolveRequesterIdentity?: HostAgentIsolationLaunchContext['resolveRequesterIdentity'];
+  providerEnvironmentKeys?: readonly string[];
   readMaterial(): AgentLaunchMaterialization | undefined;
 }>): HostAgentIsolationLaunchContext {
   const requesterIdentity = selectHostRequesterExecutionIdentity({ sessionRequester: input.sessionRequester,
@@ -58,7 +59,7 @@ export function createAgentIsolationSessionContext(input: Readonly<{
       const snapshot = input.machine?.read();
       if (!snapshot?.enabled || requesterIdentity.kind !== 'isolated') return snapshot;
       const memberIdentity = input.readMaterial()?.memberIdentity;
-      return withMemberWorkspace({ ...snapshot, ...(memberIdentity ? { memberIdentity } : {}) }, memberIdentity);
+      return withWorkspaceRoot({ ...snapshot, ...(memberIdentity ? { memberIdentity } : {}) }, memberIdentity?.workspaceRoot);
     },
     ...(input.machine ? { async prepareLaunch({ requesterIdentity, sessionMcpContext, mcpLaunchMaterial, agentNativeLaunch, signal }: Parameters<NonNullable<HostAgentIsolationLaunchContext['prepareLaunch']>>[0]) {
       const material = input.readMaterial();
@@ -108,6 +109,7 @@ export function createAgentIsolationSessionContext(input: Readonly<{
         const operation = { machine: input.machine!, managedHappierBinaryPath,
           requesterIdentity: { ...requesterIdentity, homeServerIdentityId: home },
           signal,
+          providerEnvironmentKeys: input.providerEnvironmentKeys,
           readTarget: () => input.readMaterial() === material ? material : undefined,
           readMaterial: () => operationMaterial };
         return createAgentIsolationOperationContext(member
@@ -121,12 +123,13 @@ export function createAgentIsolationSessionContext(input: Readonly<{
         requesterIdentity: { ...requesterIdentity, homeServerIdentityId: home }, signal }) } : {}), read() {
         if (input.readMaterial() !== material) throw new PluginError({ code: 'agent_isolation_unavailable',
           message: 'The Session materialization was retired', retryable: false });
-        const snapshot = withMemberWorkspace(input.machine?.read(), member);
+        const snapshot = withWorkspaceRoot(input.machine?.read(), member?.workspaceRoot);
         if (!snapshot) throw new PluginError({ code: 'agent_isolation_unavailable',
           message: 'Current Machine isolation policy is unavailable', retryable: false });
         return { ...snapshot, ...(member ? { memberIdentity: member } : {}),
           localTransport: { agentUid: identity.agentUid, agentGid: identity.agentGid },
           launch: { managedHappierBinaryPath, runtimeHome: material.runtimeHome,
+            providerEnvironmentKeys: input.providerEnvironmentKeys,
             environment: launchMaterial.environment, selectedEnvironmentKeys: Object.keys(launchMaterial.environment),
             selectedMaterials: launchMaterial.selectedMaterials, sessionMcpContext } };
       } };
@@ -143,6 +146,7 @@ export function createAgentIsolationOperationContext(input: Readonly<{
   rpcContext?: RpcHandlerContext;
   daemonObservation?: AgentIsolationDaemonObservation | null;
   signal: AbortSignal;
+  providerEnvironmentKeys?: readonly string[];
   readMaterial(): AgentLaunchOperationMaterialization | undefined;
 }> & (Readonly<{
   memberIdentity: AgentIsolationMemberNativeIdentity;
@@ -186,12 +190,14 @@ export function createAgentIsolationOperationContext(input: Readonly<{
     const projected = target ? { runtimeHome: target.runtimeHome,
       environment: material.environment, selectedMaterials: material.selectedMaterials }
       : member ? projectAgentIsolationOperationMaterial(member, material) : unavailable();
-    const machine = withMemberWorkspace(input.machine.read(), member);
+    // Finite workers use the selected native home before any Project exists.
+    const machine = withWorkspaceRoot(input.machine.read(), member?.workspaceRoot ?? identity.home);
     if (!machine) unavailable();
     return { ...machine, ...(member ? { memberIdentity: member } : {}),
       ...(input.daemonObservation ? { daemonObservation: input.daemonObservation } : {}),
       localTransport: { agentUid: identity.agentUid, agentGid: identity.agentGid },
       launch: { managedHappierBinaryPath: input.managedHappierBinaryPath, runtimeHome: projected.runtimeHome,
+        providerEnvironmentKeys: input.providerEnvironmentKeys,
         environment: projected.environment, selectedEnvironmentKeys: Object.keys(projected.environment),
         selectedMaterials: projected.selectedMaterials } };
   };

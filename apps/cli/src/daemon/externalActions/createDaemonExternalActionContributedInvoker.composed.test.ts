@@ -1,6 +1,7 @@
 import { unexpectedProjectNativeAdapterResolution } from "@/plugins/testkit/unexpectedProjectNativeAdapterResolution";
 import { unexpectedCaptureSourceResolution } from "@/plugins/testkit/unexpectedCaptureSourceResolution";
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { logger } from '@/ui/logger';
 import axios from 'axios';
 import { isDeepStrictEqual } from 'node:util';
 import tweetnacl from 'tweetnacl';
@@ -65,6 +66,7 @@ import {
   type WorkflowDefinitionV1,
   type PluginActionContributionV2,
   type PluginHostAccessRequestV2,
+  type PluginSourceCustodyV1,
 } from '@happier-dev/protocol';
 import {
   createActionExecutor,
@@ -141,6 +143,15 @@ import { createWorkflowInvocationRecoveryObserver, observeWorkflowInvocationReco
 import { createUnavailableActionTransportDeps } from '@/testkit/actionTransportDeps';
 import { normalizePluginJsonSchema } from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { zodSchemaToJsonSchemaObject } from '@happier-dev/protocol/actions/actionInputJsonSchema';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { createDeploymentEnvironmentDetailV1, createDeploymentReceiptDetailV1 } from '@happier-dev/deployment-protocol/testing/v1';
+import { ProjectSourcesReadOutputV1Schema } from '@happier-dev/protocol/projects/sources/projectSourceV1';
+import { createProjectAccountRowCipherV1 } from '@happier-dev/protocol/projects/projectAccountRowCipherV1';
+import { retainVerifiedExternalActionRequester } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
+import { createFilesystemEffectAdmission } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemEffectAdmission';
+import { readDeploymentSourceIntentForHost } from '@/deployments/readDeploymentSourceIntentForHost';
+import { createPlainProjectAccountRefRow, mockProjectAccountRowsHttpBoundary } from '@/workspaces/projectAccountRows.testkit';
+import { withdrawActiveProjectAccountRowsSnapshot } from '@/workspaces/projectAccountRows';
 
 import {
   createDaemonExternalActionContributedApprovalReplay,
@@ -150,6 +161,9 @@ import {
 import { createDaemonExternalActionTargetResolver } from './daemonExternalActionTargetResolver';
 import { executeExternalAction } from './executeExternalAction';
 import { isTriageHostActionCaller } from '../../../../../packages/plugins/triage/src/actions/callerSource';
+import { readConversationSessionProjectionNoHistoryBaseline } from '../../../../../packages/plugins/channels/src/sessionProjection';
+import { getSessionTranscript } from '@/session/services/getSessionTranscript';
+import { createAccountEncryptionCurrentnessFixture, createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 
 const EXTERNAL_ACTION_ENCRYPTION_KEY = new Uint8Array(32).fill(7);
 
@@ -230,6 +244,7 @@ function createExternalActionRuntime(
   actionOptions: Readonly<{
     localId?: string; surfaces?: readonly ('cli' | 'mcp' | 'agent' | 'plugin')[]; overlappingTool?: true; unavailable?: true;
     pluginVersion?: string; inputSchema?: object; resultSchema?: object; occurrenceId?: PluginRuntimeOccurrenceId;
+    sourceCustody?: PluginSourceCustodyV1;
     inputHints?: { fields: readonly { path: string; title: string; widget: 'secret' }[] };
     onInput?: (input: JsonValue) => void;
     confirmationWhen?: PluginActionContributionV2['confirmationWhen'];
@@ -270,6 +285,8 @@ function createExternalActionRuntime(
             ? { target: 'account', account: { artifactId: 'portable', exportName: 'activate' } }
             : { target: 'daemon' },
           dangerLevel,
+          ...(actionOptions.overlappingTool && id === 'actions/inspect'
+            ? { tool: { name: 'acme_inspect', title: 'Inspect nested Action' }, toolExposure: { cli: 'direct' } } : {}),
           ...(actionOptions.hostAccess ? { hostAccess: actionOptions.hostAccess.map(request => request.id) } : {}),
           ...(actionOptions.inputSchema === undefined ? {} : { inputSchema: actionOptions.inputSchema }),
           ...(actionOptions.resultSchema === undefined ? {} : { resultSchema: actionOptions.resultSchema }),
@@ -278,8 +295,6 @@ function createExternalActionRuntime(
           ...(actionOptions.unavailable ? { availability: { when: { fact: 'plugin.enabled', operator: 'equals', value: false } } } : {}),
           ...(dangerLevel === 'safe' ? {} : { confirmation: { title: 'Write', body: 'Write provider state?', confirmLabel: 'Write' } }),
         })),
-        ...(actionOptions.overlappingTool ? { tools: [{ id: 'inspect-tool', action: 'actions/inspect',
-          name: 'acme_inspect', title: 'Inspect nested Action', surfaces: ['cli'] }] } : {}),
       },
     }),
   } satisfies LoadedPlugin;
@@ -294,7 +309,6 @@ function createExternalActionRuntime(
   }));
   const contributes = createResolvedContributionRegistry({
     actions: resolvedActions,
-    tools: normalized.tools.map((entry) => ({ provenance: 'external' as const, source: { kind: entry.sourceSpec.kind }, ...entry })),
     activationTargets: [{
       provenance: 'external',
       source: { kind: normalizedAction.sourceSpec.kind },
@@ -314,14 +328,14 @@ function createExternalActionRuntime(
   if (!actionsById) throw new Error('Expected indexed external Action contributions');
   const registeredAction = actionsById.get(actionRegistryKey);
   if (!registeredAction) throw new Error('Expected parsed external Action contribution');
-  const sourceCustody = pluginId === 'happier.channels'
+  const sourceCustody = actionOptions.sourceCustody ?? (pluginId === 'happier.channels'
     ? {
       kind: 'bundled_first_party',
       packagedRuntime: { kind: 'cli_version_root', versionRootId: 'fixture-cli-root' },
     } as const
     : pluginId === 'acme.managed'
       ? { kind: 'managed', immutableGenerationId: 'fixture-immutable-generation', installSource: 'localPath' } as const
-    : { kind: 'development', registeredRootId: `fixture-root:${pluginId}` } as const;
+    : { kind: 'development', registeredRootId: `fixture-root:${pluginId}` } as const);
   const fixtureOccurrenceId = actionOptions.occurrenceId ?? createPluginRuntimeOccurrenceId(pluginId);
   const targetActionInvocations = buildTargetActionInvocationRegistry({
     ...(actionOptions.executionTarget === 'account' ? { executionRealm: 'account' as const } : {}),
@@ -389,6 +403,9 @@ function createExternalActionRuntime(
     generation: 1,
     targetActionInvocations,
     readPluginOccurrenceId: (currentPluginId: string) => currentPluginId === pluginId ? fixtureOccurrenceId : null,
+    isPluginOccurrenceCurrent: (currentPluginId: string, occurrenceId: PluginRuntimeOccurrenceId) => (
+      currentPluginId === pluginId && occurrenceId === fixtureOccurrenceId
+    ),
     resolveCurrentPluginExecutionOrigin: async (currentPluginId) => (
       resolveCurrentPluginExecutionOrigin
         ? resolveCurrentPluginExecutionOrigin(currentPluginId)
@@ -515,6 +532,98 @@ function createExternalActionIngressExecutor(scope: 'global' | 'session' = 'sess
 }
 
 describe('createDaemonExternalActionContributedInvoker', () => {
+  it.each(['custodian', 'nested-custodian', 'foreign', 'agent', 'cloned', 'cloned-child'] as const)(
+    'preserves replay requester custody through a reviewed Plugin Action source read (%s)', async scenario => {
+      const environment = createDeploymentEnvironmentDetailV1();
+      const sourceIntent = createDeploymentReceiptDetailV1().content.sourceIntent;
+      if (sourceIntent.kind !== 'repository') throw new Error('Repository source fixture required');
+      const accountId = scenario === 'foreign' ? 'member' : 'owner';
+      const sourceAllowed = scenario === 'custodian' || scenario === 'nested-custodian';
+      const installationKeyPair = tweetnacl.sign.keyPair();
+      const target = { kind: 'machine' as const, machineId: 'machine-local' };
+      const root = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'replayed-root', binding: {
+        accountId, custodianAccountId: 'owner', serverIdentityId: 'server-external', machineId: target.machineId,
+        installationId: 'installation', authentication: { kind: 'account', tokenEpoch: 1 }, accountEncryptionMode: 'plain',
+        admittedMachineRole: 'use', actionId: 'deployments.deploy', requestId: 'source-request',
+        requestEnvelopeDigest: 'a'.repeat(43), target,
+      } });
+      // Replay rehydrates its signed root through the ingress owner. Only HTTP
+      // and Account-row storage are replaced below; child issuance, requester
+      // selection, source admission and outer Plugin Action settlement stay real.
+      const retained = retainVerifiedExternalActionRequester({ authorization: { ...root,
+        requesterAccountProjection: { accountId, serverId: 'server-external', accountEncryptionMode: 'plain',
+          projectAccountRowCipher: createProjectAccountRowCipherV1({ mode: 'plain' }), isCurrent: async () => true,
+          readArtifact: async () => null },
+        requesterHttpProjection: { accountId, serverId: 'server-external', serverIdentityId: 'server-external',
+          serverHttpBaseUrl: 'https://source.test', accountEncryptionMode: 'plain', isCurrent: async () => true,
+          createRequestHeaders: async () => ({ 'x-requester-proof': 'fixture' }) },
+      }, isCurrent: async () => true });
+      const authorization = scenario === 'cloned'
+        ? Object.defineProperties({ ...retained }, Object.getOwnPropertyDescriptors(retained)) : retained;
+      const rows = mockProjectAccountRowsHttpBoundary([createPlainProjectAccountRefRow({ id: 'workspace', serverId: 'server-external',
+        machineId: target.machineId, rootPath: '/source-checkout', createdAtMs: 1,
+        source: { sourceId: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision } })]);
+      const sourceReads = vi.spyOn(axios, 'request').mockResolvedValue({ status: 200, data: ProjectSourcesReadOutputV1Schema.parse({ ok: true,
+        canManage: true, source: { id: sourceIntent.projectSourceId, revision: sourceIntent.sourceRevision, name: 'App', audience: [],
+          createdByAccountId: accountId, repository: { protocol: 'https', provider: { id: 'github', kind: 'github', displayName: 'GitHub',
+            baseUrl: 'https://github.com' }, repository: { nameWithOwner: 'example/app', cloneUrl: 'https://github.com/example/app.git' } } } }) });
+      const identityOwner = createFilesystemEffectAdmission({ resolveHomeServerIdentityId: async () => 'server-external',
+        resolveHostIdentity: async () => ({ machineId: target.machineId, installationId: 'installation', custodianAccountId: 'owner' }) });
+      let issuedContext: ActionExecutorContext | undefined;
+      let invocationContext: ActionExecutorContext | undefined;
+      let acquiredSource = false;
+      const runtime = createExternalActionRuntime('global', 'acme.external', async () => {
+        if (!invocationContext) throw new Error('Expected invocation approval context');
+        const selected = await readDeploymentSourceIntentForHost({ request: { environment, sourceIntent, context: invocationContext }, host: {
+          credentials: { token: 'owner-fixture', encryption: null }, serverId: 'server-external', serverHttpBaseUrl: 'https://source.test',
+          machineId: target.machineId, async assertAuthority() {}, async resolveRequesterIdentity(current) {
+            const requester = await identityOwner.resolveActionRequester!(current);
+            try { return requester.identity; } finally { await requester.dispose(); }
+          },
+        } });
+        expect(selected.workspace?.rootPath).toBe('/source-checkout');
+        acquiredSource = true;
+      }, undefined, undefined, seed => { invocationContext = seed.approvalContext; }, undefined, 'safe', undefined,
+      { surfaces: ['cli', 'plugin'] });
+      const lease: PluginRuntimeRegistryLease = { registry: runtime, source: 'ephemeral',
+        durableRevision: runtime.durableRevision ?? -1, release: async () => {} };
+      const invoke = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease: async () => lease });
+      const action = { pluginId: 'acme.external', localId: 'inspect' };
+      try {
+        const result = await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: {} },
+          context: { surface: 'cli', authority: 'account_automation', runtimeAccountId: accountId,
+            serverId: 'server-external', serverIdentityId: 'server-external', actionRequestId: 'source-request',
+            signExternalActionApprovalInput: ({ actionId, input, target, requesterConfirmation }) =>
+              signExternalActionApprovalInputV1({ authorizationToken: root.token, actionId, input, target,
+                ...(requesterConfirmation ? { requesterConfirmation } : {}), privateKey: installationKeyPair.secretKey }),
+            actionCaller: scenario === 'agent' ? { kind: 'session', sessionId: 'owner-agent', starterDepth: 0, turnDepth: 0 } : { kind: 'host' },
+            externalActionTarget: target, externalActionExecutionAuthorization: authorization },
+          child: { action, role: 'deploy', input: {} }, admittedReview: { action, role: 'deploy', surface: 'cli' },
+          execute: async (input, context) => {
+            if (scenario === 'nested-custodian') return invokeHostReviewedChildV1({
+              parent: { actionId: 'deployments.deploy', input: {} }, context,
+              child: { action, role: 'deploy', input: {} }, admittedReview: { action, role: 'deploy', surface: 'cli' },
+              execute: async (_input, nested) => { issuedContext = nested; return invoke({ action, input: {}, context: nested }); },
+            });
+            const childAuthorization = context.externalActionExecutionAuthorization;
+            issuedContext = scenario === 'cloned-child' && childAuthorization ? { ...context,
+              externalActionExecutionAuthorization: Object.defineProperties({ ...childAuthorization },
+                Object.getOwnPropertyDescriptors(childAuthorization)) } : context;
+            return invoke({ action, input: {}, context: issuedContext });
+          },
+        });
+        expect(result, JSON.stringify(result)).toMatchObject(sourceAllowed ? { ok: true } : {
+          ok: false, errorCode: 'agent_isolation_unavailable',
+          details: { retryable: false, details: { phase: 'deployment_source_admission', reason: scenario.startsWith('cloned')
+            ? 'requester_authority_unavailable' : 'requester_workspace_requires_owner',
+            requiredFact: scenario.startsWith('cloned') ? 'verified_root_requester' : 'unrestricted_workspace_requester',
+            remedy: scenario.startsWith('cloned') ? 'retry_original_request' : 'run_from_authorized_host' },
+            ...(scenario.startsWith('cloned') ? { remediation: { kind: 'retry' } } : {}) },
+        });
+        expect(acquiredSource).toBe(sourceAllowed);
+        if (!sourceAllowed) { expect(rows).not.toHaveBeenCalled(); expect(sourceReads).not.toHaveBeenCalled(); }
+      } finally { withdrawActiveProjectAccountRowsSnapshot(); vi.restoreAllMocks(); }
+    });
   afterEach(() => { vi.restoreAllMocks(); });
 
   it.each([
@@ -523,7 +632,10 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     { requester: 'absent', waive: false },
     { requester: 'bob', waive: true },
     { requester: 'unknown', waive: true },
-  ] as const)('preserves requester consent through public Account-target action.invoke ($requester, waive=$waive)', async ({ requester, waive }) => {
+    { requester: 'absent', waive: false, retiredDuringApproval: true },
+  ] as const)('preserves requester consent through public Account-target action.invoke ($requester, waive=$waive)', async (scenario) => {
+    const { requester, waive } = scenario;
+    const retiredDuringApproval = 'retiredDuringApproval' in scenario;
     const previousSettings = getActiveAccountSettingsSnapshot();
     setActiveAccountSettingsSnapshot({ source: 'cache', settingsVersion: 1, loadedAtMs: 1, settingsSecretsReadKeys: [],
       settings: accountSettingsParse({ actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
@@ -544,7 +656,10 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       row.request = TargetActionApprovalRequestV1Schema.parse(request);
       return { ok: true as const };
     };
-    const lease: PluginRuntimeRegistryLease = { registry: runtime, source: 'committed', durableRevision: 1, release: async () => {} };
+    // The Account source's Home read: the census admitted this release, so it
+    // runs again only when a person's approval wait crossed a later boundary.
+    const revalidateAccountExecution = vi.fn(async () => !retiredDuringApproval);
+    const lease: PluginRuntimeRegistryLease = { registry: { ...runtime, revalidateAccountExecution }, source: 'committed', durableRevision: 1, release: async () => {} };
     const list = createDaemonExternalActionContributedDefinitionLister({ tryAcquireRuntimeRegistryLease: () => lease });
     const invoke = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => lease,
       requestCurrentIntent: createTargetActionCurrentIntentAdapter({
@@ -566,6 +681,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
           : { ok: false, errorCode: 'approval_requester_unavailable' } });
         expect(row.request).toBeNull();
         expect(effects).toBe(waive ? 1 : 0);
+        expect(revalidateAccountExecution).toHaveBeenCalledTimes(0);
         return;
       }
       expect(first).toEqual({ created: true });
@@ -594,7 +710,13 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       } } : ownerContext;
       if (requester === 'bob') expect(await decide({ artifactId: 'account-write', decision: 'approve', context }))
         .toMatchObject({ ok: true });
+      if (retiredDuringApproval) {
+        expect(await pending).toMatchObject({ ok: false, errorCode: 'plugin_action_generation_retired' });
+        expect(effects).toBe(0);
+        return;
+      }
       expect(await pending).toMatchObject({ ok: true });
+      expect(revalidateAccountExecution).toHaveBeenCalledTimes(1);
       expect(row.request).toMatchObject({ status: 'executed', execution: { ok: true, effectAttempted: true } });
       expect(effects).toBe(1);
       expect(await decide({ artifactId: 'account-write', decision: 'approve', context }))
@@ -609,7 +731,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     }
   });
 
-  it.each(['current', 'wrong-home', 'stale-source'] as const)('decides target approvals through the real CLI and exact daemon (%s)', async mode => {
+  it.each(['current', 'wrong-home', 'stale-source', 'live-only'] as const)('decides target approvals through the real CLI and exact daemon (%s)', async mode => {
     const scratch = await mkdtemp(join(tmpdir(), 'happier-fx45-'));
     const effectPath = join(scratch, 'target-effect.json');
     const token = `fixture.${Buffer.from(JSON.stringify({ sub: 'account-1', session: 'terminal', tokenEpoch: 7,
@@ -697,7 +819,10 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     try { await runWithServerHttpBaseUrl(serverApiUrl, async () => {
       const invoke = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease: async () => lease,
         requestCurrentIntent: createTargetActionCurrentIntentAdapter({
-          create: request => store.targetActionApprovalsCreate({ request }),
+          // Seed detached live-custody history at initial creation; custody
+          // cannot be changed by an Artifact transition after admission.
+          create: request => store.targetActionApprovalsCreate({ request: mode === 'live-only'
+            ? TargetActionApprovalRequestV1Schema.parse({ ...request, approvalInputCustody: 'live_only' }) : request }),
           read: artifactId => store.targetActionApprovalsGet({ artifactId }),
         }) });
       const { principalId: _principal, credentialId: _credential, ...ordinaryOrigin } = createApiActionApprovalOrigin();
@@ -708,6 +833,9 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       expect(created, JSON.stringify(created)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
       const artifactId = [...rows.keys()][0]!;
       expect(await store.targetActionApprovalsGet({ artifactId })).toMatchObject({ status: 'open' });
+      if (mode === 'live-only') expect(await store.targetActionApprovalsGet({ artifactId })).toMatchObject({
+        approvalInputCustody: 'live_only', replayPlacement: { serverId: 'server-external', machineId: 'machine-local' },
+      });
       const standalone = createCliActionExecutorFromCredentials({ credentials, serverId: 'deciding-device', serverApiUrl,
         actionsSettingsProvider: createActionSettingsProvider() });
       for (const surface of ['mcp', 'agent'] as const) {
@@ -733,7 +861,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
           : { ok: true, data: { status: 'executed' } });
       } finally { output.restore(); process.exitCode = 0; }
       const settled = await store.targetActionApprovalsGet({ artifactId });
-      expect(settled).toMatchObject({ status: mode === 'wrong-home' ? 'open' : mode === 'stale-source' ? 'failed' : 'executed' });
+      expect(settled).toMatchObject({ status: mode === 'wrong-home' || mode === 'live-only' ? 'open' : mode === 'stale-source' ? 'failed' : 'executed' });
       expect(effects).toBe(mode === 'current' ? 1 : 0);
       expect(calls).toEqual(mode === 'wrong-home' ? [] : [`machine-local:${RPC_METHODS.APPROVAL_REQUEST_DECIDE}`]);
       expect(packets).toEqual(mode === 'wrong-home' ? [] : [{ artifactId, decision: 'approve',
@@ -839,6 +967,9 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         create: async request => { stored = TargetActionApprovalRequestV1Schema.parse(request); return { artifactId: 'credential-write' }; },
         read: async () => stored,
         update: async ({ request }) => {
+          if (!stored) throw new Error('Missing admitted approval');
+          const transition = admitTargetActionApprovalTransition(stored, request);
+          if (!transition.ok) return transition;
           stored = TargetActionApprovalRequestV1Schema.parse(request);
           if (outcome === 'receipt_unknown' && request.execution !== undefined) throw new Error('Receipt acknowledgement lost');
           return { ok: true };
@@ -898,7 +1029,8 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         owner: { kind: 'account', accountId: 'alice' }, service,
         why: { kind: 'purpose_binding', purpose, target: 'account' }, currentness: { kind: 'current_at_materialization' } }];
       const executed = outcome === 'executed' || outcome === 'receipt_unknown';
-      expect(stored).toMatchObject({ status: executed ? 'executed' : 'failed', decision: { decidingAccountId: 'bob' },
+      const status = outcome === 'uncertain' ? 'outcome_unknown' : executed ? 'executed' : 'failed';
+      expect(stored).toMatchObject({ status, decision: { decidingAccountId: 'bob' },
         executionOriginV1: { accountId: 'alice', actionRequestAttributionV1: attribution },
         execution: { ok: executed, operationCredentialUses,
           ...(executed ? {} : { errorCode: outcome === 'failed' ? 'release_refused' : 'approval_execution_outcome_unknown' }) } });
@@ -906,12 +1038,15 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       const receipt = await reader.execute('approval.request.get', { artifactId: 'credential-write' }, {
         surface: 'cli', authority: 'account_automation', actionCaller: { kind: 'host' },
       });
-      expect(receipt).toMatchObject({ ok: true, result: { request: { status: executed ? 'executed' : 'failed',
+      expect(receipt).toMatchObject({ ok: true, result: { request: { status,
         execution: { ok: executed, operationCredentialUses } } } });
       if (!liveOnly) expect(result).toMatchObject({ result: { execution: { operationCredentialUses } } });
       const repeated = await replay({ artifactId: 'credential-write', decision: 'approve', context });
-      expect(repeated).toMatchObject({ ok: true, result: { status: executed ? 'executed' : 'failed',
-        execution: { operationCredentialUses } } });
+      if (status === 'outcome_unknown') {
+        expect(repeated).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
+      } else {
+        expect(repeated).toMatchObject({ ok: true, result: { status, execution: { operationCredentialUses } } });
+      }
       expect(materializations).toBe(1);
       expect(effects).toBe(1);
       for (const privateValue of [secret, 'private-release-token', 'private-connected-profile']) {
@@ -1124,7 +1259,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         inputHints: { fields: [{ path: 'releaseTag', title: 'Release credential', widget: 'secret' }] },
         onInput: input => { expect(input).toEqual(actionInput); } });
     const lease = { registry: runtime, source: 'ephemeral' as const, durableRevision: runtime.durableRevision ?? -1, release: async () => {} };
-    const invoker = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => lease, isWorkflowRunAuthorizationCurrent: async () => true,
+    const invoker = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: async () => lease,
       requestCurrentIntent: createTargetActionCurrentIntentAdapter({
         create: async request => { stored = TargetActionApprovalRequestV1Schema.parse(JSON.parse(JSON.stringify(request))); return { artifactId: 'secret-workflow' }; },
         read: async () => {
@@ -1166,6 +1301,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       expect(progress.execution?.kind === 'action' ? progress.execution.input : undefined).toEqual(viaMeta
         ? { action: { pluginId: 'acme.external', localId: 'inspect' }, input: stored!.input } : stored!.input);
       const run = WorkflowRunSummaryV1Schema.parse({ id: runId, sourceArtifactId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         ownerAccountId: 'account-1', visibleTeamId: null, origin: { kind: 'direct' }, state: outcome.state, revision: 1,
         machineId: workspace.machineId, workflowCustodyState: 'settled', originDeliveryAckRevision: null,
         availability: { pause: false, resumeBoundary: false, restoreWorkspace: false, cancel: false, inspectExecution: true, disabledReasons: [] },
@@ -1236,7 +1372,6 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     const acquire = async () => ({ registry: runtime, source: 'ephemeral' as const,
       durableRevision: runtime.durableRevision ?? -1, release: async () => {} });
     const invoker = createCommittedContributedActionInvoker({ acquireRuntimeRegistryLease: acquire,
-      isWorkflowRunAuthorizationCurrent: async () => true,
       requestCurrentIntent: createTargetActionCurrentIntentAdapter({
         create: async request => { approvalsCreated++; stored = TargetActionApprovalRequestV1Schema.parse(request); return { artifactId }; },
         read: async () => stored ?? null,
@@ -1316,6 +1451,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       // no test invokes a coordinator until the public control accepts it.
       let state: string = held.state;
       const run = () => WorkflowRunSummaryV1Schema.parse({ id: input.runId, sourceArtifactId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         ownerAccountId: 'account-1', visibleTeamId: null, origin: { kind: 'direct' }, state, revision: 1,
         machineId: workspace.machineId, workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: false, resumeBoundary: state === 'paused', restoreWorkspace: false, cancel: true, inspectExecution: true, disabledReasons: [] },
@@ -1579,12 +1715,6 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     const seeds: PluginActionsServiceSeed[] = [];
     const runtime = createExternalActionRuntime('global', 'acme.external', undefined, undefined, undefined,
       seed => { seeds.push(seed); }, undefined, 'writesRemote', undefined, { surfaces: ['agent', 'plugin'] });
-    const current = createWorkflowAcceptedAuthorizationCurrentness({ accountId: 'account',
-      listAccountApiTokens: async () => { throw new Error('This workflow has no API grant'); },
-      resolveCurrentPluginOccurrenceId: async id => runtime.readPluginOccurrenceId?.(id) ?? null,
-      resolveCurrentPluginSourceCustody: async () => null,
-      isMediatedSourceCurrent: async () => { throw new Error('This workflow has no mediated source'); },
-    });
     const approve = vi.fn(async (request: TargetActionCurrentIntentRequest) => ({
       status: 'approved' as const, fingerprint: request.fingerprint,
     }));
@@ -1592,7 +1722,6 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       acquireRuntimeRegistryLease: async () => ({ registry: runtime, source: 'ephemeral',
         durableRevision: runtime.durableRevision ?? -1, release: async () => {} }),
       requestCurrentIntent: approve,
-      isWorkflowRunAuthorizationCurrent: current,
     });
     const authorization = { admittedPermissionCeiling: 'default' as const,
       principal: origin === 'session' ? { kind: 'session' as const, sessionId: 'origin' }
@@ -1602,15 +1731,10 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     const context = buildWorkflowActionContext({ runId: 'workflow-run', authorization });
     try {
       const result = await invoker({ action: { pluginId: 'acme.external', localId: 'inspect' }, input: {}, context });
-      if (origin === 'retired') {
-        expect(result).toMatchObject({ ok: false, errorCode: 'workflow_authorization_not_current' });
-        expect(seeds).toHaveLength(0);
-      } else {
-        expect(result).toMatchObject({ ok: true });
-        expect(seeds).toHaveLength(1);
-        expect(seeds[0]?.initiatingActionCaller).toEqual(context.actionCaller);
-      }
-      if (origin === 'host_waived' || origin === 'retired') {
+      expect(result).toMatchObject({ ok: true });
+      expect(seeds).toHaveLength(1);
+      expect(seeds[0]?.initiatingActionCaller).toEqual(context.actionCaller);
+      if (origin === 'host_waived') {
         expect(approve).not.toHaveBeenCalled();
       } else {
         expect(approve).toHaveBeenCalledWith(expect.objectContaining({
@@ -1623,41 +1747,6 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
     }
-  });
-
-  it('refuses a workflow grant revoked while contributed Action confirmation is pending', async () => {
-    const invoked = vi.fn();
-    const runtime = createExternalActionRuntime('global', 'acme.external', invoked, undefined, undefined,
-      undefined, undefined, 'writesRemote', undefined, { surfaces: ['agent', 'plugin'] });
-    const token = AccountApiTokenSummaryV1Schema.parse({ tokenId: '11111111-1111-4111-8111-111111111111',
-      label: 'Workflow', displayPrefix: 'hap_v1_12345678', createdAt: '2026-10-12T00:00:00Z', lastUsedAt: null,
-      expiresAt: null, hasEncryptionAccess: false, hasUnattendedTeamAccess: false, grant: API_TOKEN_FULL_GRANT_V1,
-      parentTokenId: null, activeChildCount: 0, embedConfig: null });
-    let revoked = false;
-    // The Account token-list HTTP port is the boundary; grant currentness and
-    // the contributed Action's policy, confirmation and invocation stay real.
-    const current = createWorkflowAcceptedAuthorizationCurrentness({ accountId: 'account',
-      listAccountApiTokens: async () => ({ tokens: revoked ? [] : [token] }),
-      resolveCurrentPluginOccurrenceId: async () => null, resolveCurrentPluginSourceCustody: async () => null,
-      isMediatedSourceCurrent: async () => { throw new Error('No mediated source'); },
-    });
-    const invoker = createCommittedContributedActionInvoker({
-      acquireRuntimeRegistryLease: async () => ({ registry: runtime, source: 'ephemeral',
-        durableRevision: runtime.durableRevision ?? -1, release: async () => {} }),
-      isWorkflowRunAuthorizationCurrent: current,
-      requestCurrentIntent: async request => {
-        revoked = true;
-        return { status: 'approved', fingerprint: request.fingerprint };
-      },
-    });
-    try {
-      expect(await invoker({ action: { pluginId: 'acme.external', localId: 'inspect' }, input: {},
-        context: buildWorkflowActionContext({ runId: 'workflow-run', authorization: {
-          admittedPermissionCeiling: 'default', principal: { kind: 'api', accountId: 'account',
-            principalId: 'account', credentialId: token.tokenId },
-        } }) })).toMatchObject({ ok: false, errorCode: 'workflow_authorization_not_current', actionHandlerInvocation: 'notStarted' });
-      expect(invoked).not.toHaveBeenCalled();
-    } finally { await runtime.dispose(); }
   });
 
   it('keeps projected Tool and discovered Action identities distinct when local IDs overlap the Action namespace', async () => {
@@ -1723,7 +1812,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         const runtime = createExternalActionRuntime('global', 'acme.external', () => { invocationCount += 1; },
           undefined, undefined, undefined, undefined, 'writesRemote', undefined,
           { localId, surfaces: ['cli', 'mcp', 'agent'] });
-        expect(runtime.contributes.tools).toHaveLength(0);
+        expect(projectOccurrenceBoundExecutablePluginToolCatalog(runtime)).toHaveLength(0);
         const lease = { registry: runtime, source: 'ephemeral', durableRevision: -1, release: async () => {} } satisfies PluginRuntimeRegistryLease;
         const listDefinitions = createDaemonExternalActionContributedDefinitionLister({ tryAcquireRuntimeRegistryLease: () => lease });
         const actionId = formatQualifiedPluginActionId({ pluginId: 'acme.external', localId });
@@ -2033,19 +2122,9 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     expect(evaluateCatalogPolicy).toHaveBeenCalledWith('acme.external', 'inspect');
   });
 
-  it('fails closed when a partial committed runtime has no Action invocation policy owner', () => {
-    const runtime = createExternalActionRuntime('global');
-    const partialRuntime: ResolvedExecutablePluginRuntimeRegistry = {
-      ...runtime,
-      targetActionInvocations: undefined,
-    };
+  it('does not advertise contributed Actions when the applied runtime is unavailable', () => {
     const listContributedActionDefinitions = createDaemonExternalActionContributedDefinitionLister({
-      tryAcquireRuntimeRegistryLease: () => ({
-        registry: partialRuntime,
-        source: 'active',
-        durableRevision: partialRuntime.durableRevision ?? -1,
-        release: async () => {},
-      }),
+      tryAcquireRuntimeRegistryLease: () => null,
     });
 
     expect(listContributedActionDefinitions()).toEqual([]);
@@ -2615,6 +2694,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       const runId = '99999999-9999-4999-8999-999999999999';
       let acceptedEnvelope: string | undefined;
       const run = WorkflowRunSummaryV1Schema.parse({ id: runId, sourceArtifactId: null,
+        attentionRequired: false, failureUnseen: false, invocationAttentionRequired: false, attentionSeenFailureAt: null, finishedAt: null,
         ownerAccountId: 'account-1', visibleTeamId: null, origin: { kind: 'direct' }, state: 'queued', revision: 0,
         machineId: 'machine-local', workflowCustodyState: 'pending', originDeliveryAckRevision: null,
         availability: { pause: true, resumeBoundary: false, restoreWorkspace: false, cancel: true, inspectExecution: false, disabledReasons: [] },
@@ -2758,6 +2838,147 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       expect(actionInvocations).toBe(1);
     } finally {
       await serviceOwners?.dispose();
+      if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+      else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
+    }
+  });
+
+  it('replays the Channels conversation-start baseline with plugin authority instead of an unbound Agent scope', async () => {
+    const sessionId = 'c1234567890123456789012345';
+    const credentials = { token: 'daemon-token', encryption: null } as const;
+    const session = createSessionRecordFixture({ id: sessionId, encryptionMode: 'plain' });
+    externalActionTargetResolverMocks.fetchSessionById.mockResolvedValue(session);
+    let transcriptReads = 0;
+    // HTTP and approval persistence are the substituted system boundaries.
+    // Replay, invocation binding, Actions admission and projection stay real.
+    const http = vi.spyOn(axios, 'get').mockImplementation(async url => {
+      const path = new URL(String(url)).pathname;
+      if (path === '/v1/account/encryption/currentness') {
+        return { status: 200, data: createAccountEncryptionCurrentnessFixture() };
+      }
+      if (path === '/v1/account/profile') return { status: 200, data: { id: 'account-1' } };
+      if (path === `/v1/sessions/${sessionId}/messages`) {
+        transcriptReads++;
+        return { status: 200, data: { messages: [{ id: 'message-4', seq: 4, createdAt: 4,
+          messageRole: 'user', externalShareableActor: 'machine',
+          content: { t: 'plain', v: { role: 'user', content: { type: 'text', text: 'Existing history' } } },
+        }], hasMore: false, nextBeforeSeq: null, nextAfterSeq: null, publicationBlocked: false,
+        externalShareableSnapshot: { turns: [] } } };
+      }
+      throw new Error(`Unexpected transcript HTTP path ${path}`);
+    });
+    const hostExecutor = createActionExecutor({ ...createUnavailableActionTransportDeps(),
+      sessionTranscriptGet: async ({ sessionId: target, projection, cursor, limit, callerPluginId, signal }) =>
+        await getSessionTranscript({ credentials, idOrPrefix: target, projection, cursor, limit, callerPluginId, signal }),
+    });
+    const services = createProductionPluginInvocationServiceOwners({ actionExecutor: hostExecutor,
+      invokeContributedAction: async () => { throw new Error('No nested contributed Action expected'); } });
+    let baseline: Awaited<ReturnType<typeof readConversationSessionProjectionNoHistoryBaseline>> | undefined;
+    const runtime = createExternalActionRuntime('global', 'happier.channels', async context => {
+      baseline = await readConversationSessionProjectionNoHistoryBaseline({ actions: context.services.actions,
+        sessionId, signal: context.signal });
+      if (baseline.kind !== 'ready') throw new PluginError({
+        code: baseline.kind === 'unavailable' ? baseline.actionErrorCode ?? 'baseline_unavailable' : baseline.reason,
+        message: 'Conversation start cannot establish its transcript baseline',
+      });
+    }, () => null, () => ({ serverId: 'server-external', machineId: 'machine-local' }),
+    undefined, services, 'writesRemote', undefined, { localId: 'conversation/start-v1', surfaces: ['agent', 'plugin'] });
+    const lease: PluginRuntimeRegistryLease = { registry: runtime, source: 'ephemeral',
+      durableRevision: runtime.durableRevision ?? -1, release: async () => {} };
+    let stored: TargetActionApprovalRequestV1 | null = null;
+    const invoke = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease: async () => lease,
+      requestCurrentIntent: createTargetActionCurrentIntentAdapter({ now: () => 1,
+        create: async request => { stored = TargetActionApprovalRequestV1Schema.parse(request); return { artifactId: 'channels-start-approval' }; },
+        read: async () => stored,
+      }) });
+    const context = { ...buildWorkflowActionContext({ runId: '99999999-9999-4999-8999-999999999999',
+      authorization: { principal: { kind: 'session', sessionId: 'origin' }, admittedPermissionCeiling: 'default' } }),
+      serverId: 'server-external', runtimeAccountId: 'account-1', actionRequestId: 'workflow-start-request',
+      actionRequestAttributionV1: { requestRef: 'workflow-start-request',
+        requester: { serverId: 'server-external', accountId: 'account-1' },
+        persona: { serverId: 'server-external', sessionId: 'origin' }, origin: null },
+    };
+    const unusedAuthorityRead = async (): Promise<never> => { throw new Error('Host acceptance has no delegated credential'); };
+    const workflowCurrentness = createWorkflowAcceptedAuthorizationCurrentness({ accountId: 'account-1',
+      listAccountApiTokens: unusedAuthorityRead, resolveCurrentPluginOccurrenceId: unusedAuthorityRead,
+      resolveCurrentPluginSourceCustody: unusedAuthorityRead, isMediatedSourceCurrent: unusedAuthorityRead,
+    });
+    const originCurrentness = createDaemonApprovalExecutionOriginCurrentness({
+      accountId: 'account-1', machineId: 'machine-local', serverId: 'server-external',
+      // Installed Home/Machine identity is the OS boundary; currentness owners remain real.
+      resolveCurrentMachineExecutionOriginContext: async () => ({ serverIdentityId: 'server-external', machineId: 'machine-local' }),
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials }),
+      isAccountCurrent: async () => (await axios.get<{ id: string }>('http://fixture-home/v1/account/profile')).data.id === 'account-1',
+      listAccountApiTokens: unusedAuthorityRead, isWorkflowRunAuthorizationCurrent: workflowCurrentness,
+    });
+    try {
+      const deferred = await invoke({ action: { pluginId: 'happier.channels', localId: 'conversation/start-v1' }, input: {},
+        context, approvalExecutionOrigin: { v: 1, authority: 'account_automation', surface: 'agent',
+          serverId: 'server-external', serverIdentityId: 'server-external', accountId: 'account-1', machineId: 'machine-local',
+          target: { kind: 'machine', machineId: 'machine-local' }, actionId: 'action.invoke', requestId: 'workflow-start-request',
+          caller: context.actionCaller!, callerPermissionMode: 'default',
+          actionRequestAttributionV1: context.actionRequestAttributionV1 }, signal: new AbortController().signal,
+      });
+      expect(deferred, JSON.stringify(deferred)).toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      expect(transcriptReads).toBe(0);
+      const replay = createDaemonExternalActionContributedApprovalReplay({ credentials,
+        acquireRuntimeRegistryLease: async () => lease, isApprovalExecutionOriginCurrent: originCurrentness,
+        targetActionApprovals: { targetActionApprovalsGet: async () => stored,
+          targetActionApprovalsUpdate: async ({ request }) => { stored = TargetActionApprovalRequestV1Schema.parse(request); return { ok: true }; } },
+      });
+      const replayed = await replay({ artifactId: 'channels-start-approval', decision: 'approve' });
+      expect(replayed, JSON.stringify(replayed)).toMatchObject({ ok: true,
+        result: { status: 'executed', execution: { ok: true } } });
+      expect(baseline).toEqual({ kind: 'ready', transcriptCursor: '4', lastScannedSeq: 4 });
+      expect(transcriptReads).toBe(1);
+      await expect(replay({ artifactId: 'channels-start-approval', decision: 'approve' }))
+        .resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+      expect(transcriptReads).toBe(1);
+    } finally { http.mockRestore(); await runtime.dispose(); await services.dispose(); }
+  });
+
+  it('retains the typed provider cause when approved replay registry acquisition throws', async () => {
+    const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
+    process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({ v: 1, actions: {
+      'acme.managed/actions/inspect': { approvalRequiredSurfaces: ['api'] },
+    } });
+    const runtime = createExternalActionRuntime('global', 'acme.managed');
+    const lease: PluginRuntimeRegistryLease = { registry: runtime, source: 'ephemeral',
+      durableRevision: runtime.durableRevision ?? -1, release: async () => {} };
+    let persisted: TargetActionApprovalRequestV1 | null = null;
+    const nativeCause = { httpStatusClass: '4xx', code: 'forbidden' } as const;
+    const diagnostic = vi.spyOn(logger, 'warnLocalFile').mockImplementation(() => {});
+    try {
+      const defer = createDaemonExternalActionContributedInvoker({ acquireRuntimeRegistryLease: async () => lease,
+        requestCurrentIntent: createTargetActionCurrentIntentAdapter({ now: () => 1,
+          create: async request => { persisted = request; return { artifactId: 'provider-cause-replay' }; },
+          read: async () => persisted,
+        }) });
+      await expect(defer({ action: { pluginId: 'acme.managed', localId: 'inspect' }, input: {},
+        approvalExecutionOrigin: createApiActionApprovalOrigin('session-1'),
+        context: { surface: 'api', authority: 'account_automation', actionCaller: { kind: 'host' }, defaultSessionId: 'session-1' },
+        signal: new AbortController().signal,
+      })).resolves.toMatchObject({ ok: true, result: { kind: 'approval_request_created' } });
+      const replay = createDaemonExternalActionContributedApprovalReplay({
+        credentials: { token: 'daemon-token', encryption: null },
+        isApprovalExecutionOriginCurrent: async () => true,
+        // The committed registry's filesystem/module acquisition is the failing boundary.
+        acquireRuntimeRegistryLease: async () => { throw new PluginError({ code: 'provider_request_rejected',
+          details: { nativeCause, diagnostic: 'token=fixture-private-token' } }); },
+        targetActionApprovals: { targetActionApprovalsGet: async () => persisted,
+          targetActionApprovalsUpdate: async ({ request }) => { persisted = request; return { ok: true }; } },
+        now: () => 2,
+      });
+      const result = await replay({ artifactId: 'provider-cause-replay', decision: 'approve' });
+      expect(result).toMatchObject({ ok: false, errorCode: 'provider_request_rejected',
+        data: { code: 'provider_request_rejected', details: { nativeCause } } });
+      expect(JSON.stringify(result)).not.toContain('fixture-private-token');
+      expect(persisted).toMatchObject({ status: 'failed', execution: { ok: false, errorCode: 'provider_request_rejected' } });
+      expect(diagnostic.mock.calls).toEqual([['[ExternalAction] Approved contributed Action replay failed',
+        { code: 'provider_request_rejected' }]]);
+    } finally {
+      diagnostic.mockRestore();
+      await runtime.dispose();
       if (previousSettings === undefined) delete process.env.HAPPIER_ACTIONS_SETTINGS_V1;
       else process.env.HAPPIER_ACTIONS_SETTINGS_V1 = previousSettings;
     }
@@ -3196,7 +3417,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     }
   });
 
-  it('admits one target effect across independent concurrent executors', async () => {
+  it.each([false, true])('admits one target effect across independent concurrent executors (unknown write fails: %s)', async unknownWriteFails => {
     const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
@@ -3239,30 +3460,14 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         }>) => {
           const prior = persisted;
           if (failTerminalWrite
-            && (args.request.status === 'executed' || args.request.status === 'failed')) {
+            && (args.request.status === 'executed' || args.request.status === 'failed'
+              || unknownWriteFails && args.request.status === 'outcome_unknown')) {
             return { ok: false as const, errorCode: 'conflict', error: 'synthetic_terminal_write_failure' };
           }
-          // Mirror the Artifact store contract: terminal equality is
-          // idempotent, while an equal executing row loses the claim.
-          if (prior !== null && isDeepStrictEqual(prior, args.request)) {
-            return args.request.status === 'executing'
-              ? { ok: false as const, errorCode: 'invalid_transition', error: 'target_action_approval_invalid_transition' }
-              : { ok: true as const };
-          }
-          const allowed = prior !== null && (
-            (prior.status === 'open' && args.request.status === 'approved')
-            || (prior.status === 'approved' && args.request.status === 'executing')
-            || (prior.status === 'executing'
-              && (args.request.status === 'executed' || args.request.status === 'failed'))
-          );
-          if (!allowed) {
-            return {
-              ok: false as const,
-              errorCode: 'invalid_transition',
-              error: 'target_action_approval_invalid_transition',
-            };
-          }
-          persisted = args.request;
+          if (!prior) throw new Error('Missing admitted approval');
+          const transition = admitTargetActionApprovalTransition(prior, args.request);
+          if (!transition.ok) return transition;
+          persisted = TargetActionApprovalRequestV1Schema.parse(args.request);
           return { ok: true as const };
         },
       };
@@ -3315,13 +3520,17 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         decision: { kind: 'approve' },
         execution: { ok: true },
       });
-      persisted = { ...persisted!, status: 'approved', updatedAtMs: 3, execution: undefined };
+      const { execution: _priorExecution, ...unsettled } = persisted!;
+      persisted = { ...unsettled, status: 'approved', updatedAtMs: 3 };
       failTerminalWrite = true;
       await expect(createReplay()({ artifactId: 'approval-api-concurrent-1', decision: 'approve' }))
         .resolves.toEqual({ ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' });
       expect(actionInvocations).toBe(2);
       expect(invocationIds).toEqual(['approval-api-concurrent-1', 'approval-api-concurrent-1']);
-      expect(persisted).toMatchObject({ status: 'executing' });
+      expect(persisted).toMatchObject(unknownWriteFails ? { status: 'executing' }
+        : { status: 'outcome_unknown', execution: {
+          ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown',
+        } });
       await expect(createReplay()({ artifactId: 'approval-api-concurrent-1', decision: 'approve' }))
         .resolves.toEqual({ ok: false, errorCode: 'approval_execution_outcome_unknown', error: 'approval_execution_outcome_unknown' });
       expect(actionInvocations).toBe(2);
@@ -3430,7 +3639,8 @@ describe('createDaemonExternalActionContributedInvoker', () => {
     }
   });
 
-  it.each(['policy', 'version', 'input declaration'] as const)('fails a replay when the current Action %s no longer matches its durable approval', async change => {
+  it.each(['policy', 'version', 'readoption', 'input declaration', 'result declaration', 'origin', 'transport_unknown'] as const)(
+    'replays only the approved Action subject after replacement: %s', async change => {
     const previousSettings = process.env.HAPPIER_ACTIONS_SETTINGS_V1;
     process.env.HAPPIER_ACTIONS_SETTINGS_V1 = JSON.stringify({
       v: 1,
@@ -3444,6 +3654,7 @@ describe('createDaemonExternalActionContributedInvoker', () => {
       let actionInvocations = 0;
       const onInvocation = () => {
         actionInvocations += 1;
+        if (change === 'transport_unknown') throw new PluginError({ code: 'RPC_OUTCOME_UNKNOWN', message: 'RPC_OUTCOME_UNKNOWN' });
       };
       const occurrenceId = 'acme.external:1' as PluginRuntimeOccurrenceId;
       const runtime = createExternalActionRuntime('global', 'acme.external', onInvocation,
@@ -3502,10 +3713,13 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         // A new daemon epoch can allocate the same occurrence spelling and root.
         const successor = createExternalActionRuntime('global', 'acme.external', onInvocation,
           undefined, undefined, undefined, undefined, 'safe', undefined, {
-            occurrenceId,
-            ...(change === 'version' ? { pluginVersion: '2.0.0' } : {
+            occurrenceId: change === 'readoption' ? createPluginRuntimeOccurrenceId('acme.external') : occurrenceId,
+            ...(change === 'version' ? { pluginVersion: '2.0.0' } : {}),
+            ...(change === 'input declaration' ? {
               inputSchema: { type: 'object', properties: { target: { type: 'string' } }, additionalProperties: false },
-            }),
+            } : {}),
+            ...(change === 'result declaration' ? { resultSchema: { type: 'object', additionalProperties: true } } : {}),
+            ...(change === 'origin' ? { sourceCustody: { kind: 'development', registeredRootId: 'another-install-root' } as const } : {}),
           });
         lease = { ...lease, registry: successor };
       }
@@ -3517,10 +3731,30 @@ describe('createDaemonExternalActionContributedInvoker', () => {
         now: () => 2,
       });
 
-      await expect(replay({
+      const result = await replay({
         artifactId: 'approval-api-stale-1',
         decision: 'approve',
-      })).resolves.toMatchObject({
+      });
+      if (change === 'version' || change === 'readoption') {
+        expect(result).toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(actionInvocations).toBe(1);
+        expect(persisted).toMatchObject({ status: 'executed', execution: { ok: true } });
+        await expect(replay({ artifactId: 'approval-api-stale-1', decision: 'approve' }))
+          .resolves.toMatchObject({ ok: true, result: { status: 'executed' } });
+        expect(actionInvocations).toBe(1);
+        return;
+      }
+      if (change === 'transport_unknown') {
+        expect(result).toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
+        expect(persisted).toMatchObject({ status: 'outcome_unknown', execution: {
+          ok: false, effectAttempted: true, errorCode: 'approval_execution_outcome_unknown',
+        } });
+        await expect(replay({ artifactId: 'approval-api-stale-1', decision: 'approve' }))
+          .resolves.toMatchObject({ ok: false, errorCode: 'approval_execution_outcome_unknown' });
+        expect(actionInvocations).toBe(1);
+        return;
+      }
+      expect(result).toMatchObject({
         ok: false,
         errorCode: 'plugin_action_current_intent_mismatch',
       });

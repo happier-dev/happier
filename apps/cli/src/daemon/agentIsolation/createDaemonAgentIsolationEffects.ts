@@ -3,20 +3,36 @@ import { getFirstPartyComponentCatalogEntry, resolveFirstPartyInstallLayout, res
 import { getMachineAdminAccessV1 } from '@happier-dev/protocol';
 import type { ApiMachineClient } from '@/api/apiMachine';
 import type { DaemonMachineAdminAccessRoutes } from '@/rpc/handlers/daemonMachineAdminAccess';
+import { logger } from '@/ui/logger';
+import type { LiveWorkProducerV1 } from '../lifecycle/managedActivity';
 import type { AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
 
 /** The daemon's exact-Machine metadata and Workspace census remain authorities. */
 export function createDaemonAgentIsolationEffects(input: Readonly<{
-  getMachineClient(): Pick<ApiMachineClient, 'getMachineMetadataSnapshot' | 'compareAndSwapMachineMetadata' | 'publishAgentIsolationStatus'> | null;
+  getMachineClient(): Pick<ApiMachineClient, 'getMachineMetadataSnapshot' | 'compareAndSwapMachineMetadata' | 'publishAgentIsolationStatus' | 'getAgentIsolationSnapshot'> | null;
   adminAccess: Pick<DaemonMachineAdminAccessRoutes, 'target' | 'observer'>;
   readRoots: AgentIsolationEffectDependencies['readRoots'];
   trackedSessions: ReadonlyMap<number, unknown>;
+  sessionChanges?: Pick<LiveWorkProducerV1, 'subscribe'>;
   protectedRoots: readonly string[];
   privateRoots: readonly string[];
   readMemberBindingScope?: AgentIsolationEffectDependencies['readMemberBindingScope'];
 }>): AgentIsolationEffectDependencies {
   const layout = resolveFirstPartyInstallLayout({ componentId: 'happier-cli', channel: resolveManagedCliReleaseChannelSync().ringId });
   const installedCli = join(layout.currentPath, getFirstPartyComponentCatalogEntry('happier-cli').binaryRelativePath);
+  input.sessionChanges?.subscribe(() => {
+    if (input.trackedSessions.size !== 0) return;
+    const client = input.getMachineClient();
+    if (!client) return;
+    void client.publishAgentIsolationStatus({ kind: 'disabled' }, state => {
+      const current = client.getAgentIsolationSnapshot();
+      // Evaluate in the publication drain: a queued retirement cannot overwrite
+      // a later Apply, an enabled policy, or another runtime's retained status.
+      return input.trackedSessions.size === 0 && !current.enabled
+        && current.status.kind === 'applying' && current.status.phase === 'runtime_replacement'
+        && state.agentIsolation?.kind === 'applying' && state.agentIsolation.phase === 'runtime_replacement';
+    }).catch(() => logger.warnLocalFile('[agentIsolation] Failed to publish retired runtime status'));
+  });
   return { platform: process.platform, installedCli, readRoots: input.readRoots, nativeReadiness: { privateRoots: input.privateRoots },
     // Retained entries remain in custody until the existing exit observer
     // finishes retirement. A requested stop, pause or unknown identity is live.

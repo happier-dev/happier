@@ -15,7 +15,7 @@ import { memberIdentityRetirementInput, supersedeMemberIdentityRetirement } from
 import { readAgentIsolationMemberLaunchIdentity } from './memberBindings';
 import { retireAgentIsolationMemberIdentity, readProvisionedRequesterAccounts,
   ensureAgentIsolationMember, applyAgentIsolationMemberEffects, type EnsureAgentIsolationMemberResult,
-  type AgentIsolationEffectDependencies, type ApplyAgentIsolationMemberEffectsResult } from './agentIsolationProvisioner';
+  type AgentIsolationEffectDependencies } from './agentIsolationProvisioner';
 
 type RetirementResult = Readonly<{ kind: 'settled' | 'incomplete' }>;
 type MemberOperationTarget = Readonly<{
@@ -116,7 +116,7 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
       requesterIdentity: AgentIsolationMemberRequester; rpcContext?: RpcHandlerContext; signal?: AbortSignal;
     }>): Promise<EnsureAgentIsolationMemberResult> {
       const target = options.target(), { requesterIdentity, rpcContext } = input;
-      const refused = (): EnsureAgentIsolationMemberResult => ({ kind: 'not_ready',
+      const refused = (): Extract<EnsureAgentIsolationMemberResult, { kind: 'not_ready' }> => ({ kind: 'not_ready',
         result: { outcome: 'not_applied', reasonCode: input.signal?.aborted || rpcContext?.signal.aborted ? 'cancelled' : 'denied' } });
       if (!target || target.homeServerIdentityId !== requesterIdentity.homeServerIdentityId
         || target.machineId !== requesterIdentity.requester.machineId
@@ -142,7 +142,7 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
             // Its child uses the runtime's actual enrolled Account; it never
             // copies or fabricates an owner RPC/admission for the requester.
             rpcContext?.localActionContext?.operationProgress?.update({ phase: 'owner_setup', label: 'Waiting for owner setup' });
-            let result: ApplyAgentIsolationMemberEffectsResult = refused();
+            let result: EnsureAgentIsolationMemberResult = refused();
             const execute = async (operation: Readonly<{
               signal: AbortSignal;
               operationAcceptance?: NonNullable<RpcHandlerContext['localActionContext']>['operationAcceptance'];
@@ -179,11 +179,13 @@ export function createAgentIsolationMemberOperations(options: Readonly<{
                 } finally { signal!.removeEventListener('abort', cancel); }
               });
             };
-            await options.observeExecution({ actionId: 'machines.agentIsolation.set',
+            const outcome = await options.observeExecution({ actionId: 'machines.agentIsolation.set',
               input: { kind: 'memberIdentityProvisioning', homeServerIdentityId: target.homeServerIdentityId,
                 machineId: target.machineId, installationId: target.installationId,
                 accountId: requesterIdentity.requester.accountId },
               execute });
+            if (!outcome.ok && outcome.errorCode === 'machine_setup_operation_unavailable')
+              return { ...refused(), operationErrorCode: outcome.errorCode };
             return result;
           },
         }, options.effects);

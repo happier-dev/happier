@@ -11,6 +11,8 @@ import { installAxiosFastifyAdapter } from '@/testkit/http/axiosAdapter';
 import { createRequesterCurrentnessSocketHarness } from '@/testkit/backends/requesterCurrentnessSocketHarness';
 import { registerAccountHomeHttp } from '@/session/actions/widgetApproval.testkit';
 import { createDaemonApprovalExecutionAuthorizationPreparer } from './approvalExecutionAuthorization';
+import { invokeHostReviewedChildV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { isHostRequesterUnrestrictedOwner, selectHostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 it('a stored Workflow root retains its own custody instead of borrowing the deciding Account credential box', async () => {
   await withConfiguredDaemonTestHome({ prefix: 'workflow-approval-custody-' }, async () => {
@@ -67,6 +69,23 @@ it('a stored Workflow root retains its own custody instead of borrowing the deci
       expect(prepared?.authorization).toMatchObject({ token: authorization.token,
         binding: { workflowActionOrigin: binding.workflowActionOrigin } });
       expect(prepared?.authorization.requesterAccountContext).toBeUndefined();
+      if (!prepared) throw new Error('Expected replay authorization');
+      const action = { pluginId: 'acme.external', localId: 'upload' };
+      // The durable root above has no private ports. Its real replay preparer
+      // restores original ingress before the reviewed child wraps HTTP custody.
+      await invokeHostReviewedChildV1({ parent: { actionId: 'deployments.deploy', input: {} },
+        context: { authority: 'account_automation', surface: 'cli', runtimeAccountId: accountId,
+          actionCaller: { kind: 'host' }, externalActionTarget: target,
+          externalActionExecutionAuthorization: prepared.authorization },
+        child: { action, role: 'uploadDeploy', input: {} }, admittedReview: { action, role: 'uploadDeploy', surface: 'cli' },
+        execute: async (_input, context) => {
+          const identity = selectHostRequesterExecutionIdentity({ actionContext: context,
+            hostHomeServerIdentityId: homeId, hostCustodianAccountId: accountId,
+            hostExecutionTarget: { machineId, installationId: installation.installationId } });
+          expect(identity).toMatchObject({ kind: 'isolated', separationRequired: false, accountAutomation: true });
+          expect(isHostRequesterUnrestrictedOwner(identity)).toBe(true);
+          return { ok: true, result: null };
+        } });
       await prepared?.dispose?.();
     } finally { await requester?.dispose(); await channel.close(); fetchBoundary.mockRestore(); restore(); await app.close(); }
   });

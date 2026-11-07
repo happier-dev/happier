@@ -24,6 +24,7 @@ import { bootstrapAccountSettingsContext } from '@/settings/accountSettings/boot
 import { EXTERNAL_ACTION_EFFECT_ACTION_HEADER } from '@happier-dev/protocol/actions/externalActionApi';
 import { ProjectAccountRowReadRequestV1Schema, ProjectAccountRowReadResponseV1Schema, ProjectAccountRowListRequestV1Schema,
   ProjectAccountRowListResponseV1Schema } from '@happier-dev/protocol/projects/projectAccountRowsV1';
+import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import { readBundledPluginAvailabilityHttpFixture } from '@/plugins/testkit/bundledPluginAvailabilityHttpFixture';
 
 /** Installed Project/Account/Trust and native IO composition for cold launch seam tests. */
@@ -31,25 +32,33 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
   accountActionCredentials?: StoredCredentials;
   requesterCredentials?: StoredCredentials;
   serverId?: string;
-  accountSettings?: Readonly<Record<string, unknown>>;
   homeServerIdentityId?: string;
   boundSessionId?: string;
   prepareProject?: boolean;
   machineAccess?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['machineAccess'];
+  agentIsolationEnabled?: boolean;
+  mcpCatalog?: NonNullable<Parameters<typeof createProjectSessionRuntimeFixture>[0]>['mcpCatalog'];
+  additionalAccountCredentials?: readonly StoredCredentials[];
+  accountSettings?: Readonly<Record<string, unknown>>;
   machineRpcMethods?: readonly string[];
   resolveCurrentMachineExecutionOriginContext?: Parameters<typeof createInstalledProjectFiniteRuntime>[0]['resolveCurrentMachineExecutionOriginContext'];
 }> = {}) {
   const serverId = options.serverId ?? 'session-home';
+  const homeServerIdentityId = options.homeServerIdentityId ?? 'srv_session_home';
   const f = await createProjectSessionRuntimeFixture(options.accountActionCredentials
-    ? { serverId, homeServerIdentityId: options.homeServerIdentityId, boundSessionId: options.boundSessionId,
+    ? { serverId, homeServerIdentityId, boundSessionId: options.boundSessionId,
       serverUrl: 'https://session-home.test', machineAccess: options.machineAccess,
+      agentIsolationEnabled: options.agentIsolationEnabled, mcpCatalog: options.mcpCatalog,
+      additionalAccountCredentials: options.additionalAccountCredentials,
       // Account decision ingress may proceed directly over RPC. Original
       // CLI Run ingress remains unwaived and must retain setup review.
       accountSettings: { ...options.accountSettings, actionsSettingsV1: setActionApprovalOverride({ settings: normalizeActionsSettingsV1(options.accountSettings?.actionsSettingsV1),
         actionId: 'projects.prepare', surface: 'rpc', approvalRequired: false }) } }
-    : { serverId, homeServerIdentityId: options.homeServerIdentityId, boundSessionId: options.boundSessionId,
+    : { serverId, homeServerIdentityId, boundSessionId: options.boundSessionId,
       serverUrl: 'https://session-home.test', credentials: options.requesterCredentials, machineAccess: options.machineAccess,
-      accountSettings: options.accountSettings });
+      agentIsolationEnabled: options.agentIsolationEnabled, mcpCatalog: options.mcpCatalog,
+      accountSettings: options.accountSettings,
+      additionalAccountCredentials: options.additionalAccountCredentials });
   let accountActionCredentials: StoredCredentials | undefined;
   let accountActionSettings: Awaited<ReturnType<typeof bootstrapAccountSettingsContext>> | undefined;
   if (options.accountActionCredentials) {
@@ -86,7 +95,8 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
             || options.machineRpcMethods?.some(method => body.method === `machine:${method}`))
           ? { method: body.method } : null;
       const custodianAccountId = options.machineAccess?.custodianAccountId ?? 'requester';
-      const valid = purpose !== null && context.actorAccountId === 'requester'
+      const valid = purpose !== null && (context.actorAccountId === 'requester'
+        || options.additionalAccountCredentials?.some(credentials => readAccountIdFromToken(credentials.token) === context.actorAccountId))
         && context.custodianAccountId === custodianAccountId
         && context.role === (options.machineAccess?.role ?? 'manage')
         && verifyMachineInstallationProof({ publicKey: f.installation.publicKey,
@@ -113,7 +123,8 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
       // Account topology is read with the admitted requester's bearer. A signed
       // execution root alone does not authorize this Account-private endpoint.
       if (requestOptions?.headers?.Authorization !== `Bearer ${f.bootstrap.credentials.token}`
-        && (!accountActionCredentials || requestOptions?.headers?.Authorization !== `Bearer ${accountActionCredentials.token}`)) {
+        && (!accountActionCredentials || requestOptions?.headers?.Authorization !== `Bearer ${accountActionCredentials.token}`)
+        && !options.additionalAccountCredentials?.some(credentials => requestOptions?.headers?.Authorization === `Bearer ${credentials.token}`)) {
         return { status: 403, data: { error: 'forbidden' } };
       }
       const key = { kind: 'workspace-ref', serverId, id: 'workspace' } as const;
@@ -155,15 +166,18 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
     prepareBetween: async () => { throw new Error('No worker routing expected'); },
     resolveCurrentMachineExecutionOriginContext: options.resolveCurrentMachineExecutionOriginContext ?? (async () => null) });
   const machine = new ApiMachineClient(accountActionCredentials?.token ?? 'custodian-token', { id: 'machine', encryptionMode: 'plain',
-    dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER, metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0 },
+    dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+    metadata: options.agentIsolationEnabled === undefined ? null : { host: 'host', platform: 'linux', homeDir: '/home/user',
+      happyCliVersion: 'test', happyHomeDir: '/home/user/.happier', agentIsolation: { enabled: options.agentIsolationEnabled } },
+    metadataVersion: 0, daemonState: null, daemonStateVersion: 0 },
     undefined, { createProjectFiniteRuntime: finite,
-      resolveCurrentServerIdentityId: () => options.homeServerIdentityId ?? null });
+      resolveCurrentServerIdentityId: () => homeServerIdentityId });
+  const actionsSettingsProvider = options.accountActionCredentials
+    ? createActionSettingsProvider({ allowEnvironmentOverride: false,
+      scopeKey: accountActionSettings?.scopeKey,
+      getAccountSettings: () => accountActionSettings?.settings ?? null }) : undefined;
   machine.setRPCHandlers({ spawnSession: async () => { throw new Error('No replacement Session expected'); },
-    stopSession: async () => true, requestShutdown() {} }, options.accountActionCredentials ? {
-      actionsSettingsProvider: createActionSettingsProvider({ allowEnvironmentOverride: false,
-        scopeKey: accountActionSettings?.scopeKey,
-        getAccountSettings: () => accountActionSettings?.settings ?? null }),
-    } : undefined);
+    stopSession: async () => true, requestShutdown() {} }, actionsSettingsProvider ? { actionsSettingsProvider } : undefined);
   onTestFinished(() => machine.shutdown());
   const signal: AbortSignal = new AbortController().signal;
   if (options.prepareProject !== false) {
@@ -177,7 +191,7 @@ export async function createInstalledProjectAgentLaunchFixture(options: Readonly
       .approveReviewedEffect({ project: reviewed.outcome.plan.project, expectedRevision: 'absent', authority: 'present_user',
         reviewedEffectDigest: reviewed.outcome.plan.reviewedEffectDigest, currentEffectDigest: reviewed.outcome.plan.reviewedEffectDigest, approvedAtMs: 1 });
   }
-  return { f, cwd, machine, finite, signal, admission, installedCredentials: accountActionCredentials,
+  return { f, cwd, machine, finite, signal, admission, installedCredentials: accountActionCredentials, actionsSettingsProvider,
     nativeEffects: () => nativeEffects, accountReads: () => [...accountReads],
     trustWrites: () => trustWrites,
     async requireSetup(command = 'printf setup') {

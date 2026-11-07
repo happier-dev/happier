@@ -66,13 +66,13 @@ describe('reviewed workspace access at the setup interpreter', () => {
             await writeFile(join(checkout, 'script'), 'selected'); await chmod(join(checkout, 'script'), 0o4700);
             await writeFile(join(outside, 'private'), 'outside'); await chmod(join(outside, 'private'), 0o600);
             await symlink(outside, join(checkout, 'outside'));
-            let sharedGit = false, trusted = false;
+            let sharedGit = false, trusted = false, agentUid = process.getuid!();
             const run = async (input: { executable: string; args: readonly string[] }) => {
                 const { executable, args } = input;
                 if (executable === 'git') throw new Error('Workspace-controlled Git must not run as root');
                 if (executable === 'getent') return { code: 0, stdout: args.includes('group')
                     ? `happier-workspace:x:${process.getgid!()}:\n`
-                    : `happier-agent:x:${process.getuid!()}:${process.getgid!()}::${root}:/usr/sbin/nologin\n`, stderr: '' };
+                    : `happier-agent:x:${agentUid}:${process.getgid!()}::${root}:/usr/sbin/nologin\n`, stderr: '' };
                 if (executable === 'runuser') {
                     if (args.includes('--add')) trusted = true;
                     if (args.at(-1) === 'group') sharedGit = true;
@@ -96,7 +96,12 @@ describe('reviewed workspace access at the setup interpreter', () => {
             expect((await checkMachineSetupEffectPlan({ basis, steps: [step], backend })).nativeFacts[0]?.status).toBe('satisfied');
             const reviewed = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
             await writeFile(join(checkout, 'new'), 'new');
-            expect((await applyMachineSetupEffectPlan({ plan: reviewed, backend })).status).toBe('plan_changed');
+            // New ordinary files do not change the reviewed access target.
+            expect((await applyMachineSetupEffectPlan({ plan: reviewed, backend })).status).toBe('applied');
+            expect((await lstat(join(checkout, 'new'))).mode & 0o660).toBe(0o660);
+            const retained = await checkMachineSetupEffectPlan({ basis, steps: [step], backend });
+            agentUid++;
+            expect((await applyMachineSetupEffectPlan({ plan: retained, backend })).status).toBe('plan_changed');
         } finally { await rm(root, { recursive: true, force: true }); }
     });
 });

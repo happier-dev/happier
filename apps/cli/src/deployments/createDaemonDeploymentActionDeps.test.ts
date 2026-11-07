@@ -966,7 +966,7 @@ describe('installed deployment storage and target composition', () => {
             expect(childLookups, JSON.stringify(dispatchTrace)).toEqual([{ machineId: kind === 'build' ? 'captured-builder' : 'machine-a', receiptReads: 1 }]);
         } finally { await requester.dispose(); }
     });
-    it.each(['build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
+    it.each(['build logs', 'teardown without role', 'teardown without role, descriptor unavailable', 'teardown without role, remove Environment', 'compact repository missing SCM provider', 'reviewed child', 'upload source', 'retained receipt observe', 'background receipt observe', 'SDK background receipt observe', 'settlement pointer changed', 'provider failure', 'Home source read refusal', 'source admission failure', 'root source custodian', 'root source approval custodian', 'root source approval missing Home', 'root source foreign', 'root source missing proof', 'requester revoked', 'receipt source differs', 'admission cause retained approval', 'child policy requires approval', 'qualified child policy requires approval'] as const)(
     'admits the declared platform target without native history, a builder or an app-host Machine (%s)', async scenario => {
         const pluginId = 'example.platform';
         const rootSource = scenario.startsWith('root source ');
@@ -1253,13 +1253,22 @@ describe('installed deployment storage and target composition', () => {
                     return lease;
                 },
                 runtime: { async acquire() { throw new Error('Platform must not acquire native execution'); } } });
-            if (scenario === 'teardown without role' || scenario === 'teardown without role, descriptor unavailable') {
+            if (scenario === 'teardown without role' || scenario === 'teardown without role, descriptor unavailable'
+                || scenario === 'teardown without role, remove Environment') {
                 if (scenario === 'teardown without role, descriptor unavailable') row.targetLink.source = { kind: 'plugin',
                     contribution: { pluginId, localId: 'missing-runtime' } };
                 const prepared = await deps.prepareDeploymentTeardown!({ input: { serverId: 'home',
                     environmentId: environment.environment.id, targetLinkId: row.targetLink.id,
-                    reason: 'manual', requestKey: 'remove-no-teardown' }, context: ownerContext,
+                    reason: 'manual', requestKey: 'remove-no-teardown',
+                    ...(scenario === 'teardown without role, remove Environment' ? { removeEnvironment: true as const } : {}) }, context: ownerContext,
                     readWorkflowInvocation: async () => { throw new Error('Detach has no Workflow custody'); } });
+                if (scenario === 'teardown without role, remove Environment') {
+                    expect(prepared).toMatchObject({ ok: false, errorCode: 'unsupported_action',
+                        details: { reason: 'environment_removal_unavailable', requiredFact: 'environmentRemoval', remedy: expect.any(String) } });
+                    expect(candidatesCreated).toBe(0);
+                    expect(nativeReads).toBe(0);
+                    return;
+                }
                 if (scenario === 'teardown without role, descriptor unavailable') {
                     expect(prepared).toMatchObject({ ok: false, errorCode: 'deployment_target_role_unavailable' });
                     expect(candidatesCreated).toBe(0);

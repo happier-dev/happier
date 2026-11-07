@@ -1,14 +1,10 @@
 import { describe, expect, it, vi } from 'vitest';
 import { createActionExecutor, type ActionExecutorDeps, type ActionExecutorContext } from './actionExecutor.js';
-import { MachineAgentIsolationReadyPreviewV1Schema } from '../machines/agentIsolationV1.js';
 import { ActionsSettingsV1Schema } from './actionSettings.js';
 
 const actionId = 'machines.agentIsolation.set';
 const input = { serverId: 'home', machineId: 'machine', enabled: true, expectedMetadataVersion: 1,
   expectedPolicy: { enabled: false }, expectedPlanDigest: 'reviewed-plan' };
-const preview = MachineAgentIsolationReadyPreviewV1Schema.parse({ kind: 'ready', policy: input.expectedPolicy,
-  metadataVersion: 1, status: { kind: 'disabled' }, plan: { roots: [], ancestorAcls: [], sessionsToReplace: 0,
-    requiresAdmin: true, planDigest: input.expectedPlanDigest } });
 const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' },
   serverId: 'home', runtimeAccountId: 'owner', actionRequestId: 'change-isolation',
   externalActionTarget: { kind: 'machine', machineId: 'machine' } };
@@ -16,9 +12,8 @@ const context: ActionExecutorContext = { surface: 'ui', authority: 'present_user
 function createHarness(ask: boolean) {
   const approvalsCreate = vi.fn<NonNullable<ActionExecutorDeps['approvalsCreate']>>(async () => ({ artifactId: 'isolation-review' }));
   // Only the target-daemon transport and approval Artifact persistence are substituted.
-  const machineAgentIsolationAction = vi.fn<NonNullable<ActionExecutorDeps['machineAgentIsolationAction']>>(async ({ actionId }) =>
-    actionId === 'machines.agentIsolation.preview' ? preview
-      : { kind: 'unchanged', metadataVersion: 1, status: { kind: 'disabled' } });
+  const machineAgentIsolationAction = vi.fn<NonNullable<ActionExecutorDeps['machineAgentIsolationAction']>>(async () =>
+    ({ kind: 'unchanged', metadataVersion: 1, status: { kind: 'disabled' } }));
   return { executor: createActionExecutor({ approvalsCreate, machineAgentIsolationAction }), approvalsCreate,
     machineAgentIsolationAction, context: { ...context, actionsSettings: ActionsSettingsV1Schema.parse({ v: 1,
       actions: { [actionId]: { approvalRequiredSurfaces: ask ? ['ui'] : [] } },
@@ -26,25 +21,12 @@ function createHarness(ask: boolean) {
 }
 
 describe('Agent isolation Action admission', () => {
-  it.each([true, false])('settles exact metadata conflicts before approval or a write (Ask=%s)', async ask => {
-    const harness = createHarness(ask);
-    for (const expectedMetadataVersion of [0, 2]) {
-      expect(await harness.executor.execute(actionId, { ...input, expectedMetadataVersion }, harness.context))
-        .toEqual({ ok: true, result: { kind: 'conflict', policy: preview.policy, metadataVersion: 1 } });
-    }
-    expect(harness.approvalsCreate).not.toHaveBeenCalled();
-    expect(harness.machineAgentIsolationAction.mock.calls.map(([request]) => request.actionId))
-      .toEqual(['machines.agentIsolation.preview', 'machines.agentIsolation.preview']);
-  });
-
-  it.each([0, 1])('still creates ordinary approval for a fresh changing request at metadata version %s', async metadataVersion => {
+  it('creates ordinary approval without redoing the reviewed target Preview', async () => {
     const harness = createHarness(true);
-    harness.machineAgentIsolationAction.mockResolvedValue({ ...preview, metadataVersion });
-    expect(await harness.executor.execute(actionId, { ...input, expectedMetadataVersion: metadataVersion }, harness.context)).toMatchObject({ ok: true,
+    expect(await harness.executor.execute(actionId, input, harness.context)).toMatchObject({ ok: true,
       result: { kind: 'approval_request_created', actionId, artifactId: 'isolation-review' } });
     expect(harness.approvalsCreate).toHaveBeenCalledOnce();
-    expect(harness.machineAgentIsolationAction.mock.calls.map(([request]) => request.actionId))
-      .toEqual(['machines.agentIsolation.preview']);
+    expect(harness.machineAgentIsolationAction).not.toHaveBeenCalled();
   });
 
   it('spends a fresh waived admission without repeating its target preview', async () => {
@@ -55,7 +37,8 @@ describe('Agent isolation Action admission', () => {
     expect(await prepared.invocation.run()).toMatchObject({ ok: true, result: { kind: 'unchanged' } });
     expect(harness.approvalsCreate).not.toHaveBeenCalled();
     expect(harness.machineAgentIsolationAction.mock.calls.map(([request]) => request.actionId))
-      .toEqual(['machines.agentIsolation.preview', 'machines.agentIsolation.set']);
+      .toEqual(['machines.agentIsolation.set']);
+    expect(harness.machineAgentIsolationAction.mock.calls[0]?.[0].input).toEqual(input);
   });
 
 });

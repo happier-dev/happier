@@ -14,6 +14,7 @@ import { createStoredReadSchema } from '@happier-dev/protocol/json/storedReadSch
 import { readOrCreateDeviceLocalSecretStorage, type DeviceLocalSecretStorage } from './deviceLocalSecretStorage';
 import { resolveReleaseRingScopedBasename } from '../cli/runtime/publicReleaseChannel';
 import {
+  ensureProtectedLocalStateDirectory,
   publishProtectedLocalStateFileIfAbsent,
   readProtectedLocalStateFile,
   removeProtectedLocalStateFile,
@@ -34,6 +35,7 @@ import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } fro
 import { areServerProfileIdentifiersEquivalent } from '@happier-dev/protocol/features/payload/capabilities/serverIdentityCapabilities';
 import { notifyDaemonSessionActivityChanged } from './controlClient';
 import { resolveExecutionRunFollowOccurrenceV1 } from '@happier-dev/protocol/sessions/follow/sessionFollowInputV1';
+import { EXECUTION_RUN_KIND_BY_INTENT } from '@happier-dev/protocol/execution/runs/startRequest';
 
 const liveWorkListeners = new Set<() => void>();
 function notifyExecutionRunLiveWorkChanged(): void {
@@ -49,11 +51,16 @@ function notifyExecutionRunLiveWorkChanged(): void {
  */
 export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
   const listeners = new Set<() => void>();
+  type RetainedWork = Readonly<{ runId: string; state: LiveWorkItemV1['state']; attribution?: RequesterWorkAttributionV1 }>;
+  const retainedProjections = new Map<string, RetainedExecutionRunProjection<RetainedWork>>();
+  let invalidated = true;
+  let pending: Promise<Awaited<ReturnType<LiveWorkProducerV1['read']>>> | undefined;
   let watcher: FSWatcher | undefined;
   let watchedDirectory: string | undefined;
   let watchedIdentity: Readonly<{ dev: number; ino: number }> | undefined;
   let watcherFailed = false;
   const notify = () => {
+    invalidated = true;
     for (const listener of listeners) {
       try { listener(); } catch { /* Observation cannot alter execution custody. */ }
     }
@@ -63,6 +70,7 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
     watcher = undefined;
     watchedDirectory = undefined;
     watchedIdentity = undefined;
+    retainedProjections.clear();
     current?.close();
   };
   const armWatcher = () => {
@@ -71,7 +79,13 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
     if (!listeners.size || watcher || watcherFailed) return;
     try {
       const identity = statSync(directory);
-      const armed = watch(directory, { persistent: false }, notify);
+      const armed = watch(directory, { persistent: false }, (_event, filename) => {
+        const entry = filename?.toString();
+        if (entry && entry !== basename(directory) && !isCanonicalExecutionRunMarkerEntry(entry)
+          && !(entry.startsWith('state-') && entry.endsWith('.sealed'))
+          && !(entry.startsWith('worker-update-') && entry.endsWith('.sealed'))) return;
+        notify();
+      });
       watcher = armed;
       watchedDirectory = directory;
       watchedIdentity = { dev: identity.dev, ino: identity.ino };
@@ -89,15 +103,17 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
       watcherFailed = (error as NodeJS.ErrnoException)?.code !== 'ENOENT';
     }
   };
-  return {
-    async read() {
+  const readSnapshot = async (forceRead: boolean) => {
       armWatcher();
       const observedWatcher = watcher;
       const observedIdentity = watchedIdentity;
       let coverage: 'complete' | 'unknown' = observedWatcher ? 'complete' : 'unknown';
       const incomplete = () => { coverage = 'unknown'; };
       const observations = await Promise.allSettled([
-        listExecutionRunMarkersRaw(incomplete), readRetainedExecutionRunRecords(incomplete), readPendingExecutionRunWorkerUpdates(incomplete),
+        listExecutionRunMarkersRaw(incomplete), readRetainedExecutionRunProjections({ onUnavailable: incomplete,
+          projections: retainedProjections, forceRead, project: record => ({ runId: record.state.runId,
+            state: record.state.status === 'running' || record.terminalEventId ? 'active' as const : 'settled' as const,
+            attribution: record.requesterWorkAttributionV1 }) }), readPendingExecutionRunWorkerUpdates(incomplete),
       ]);
       const items = new Map<string, LiveWorkItemV1>();
       const put = (runId: string, state: LiveWorkItemV1['state'], attribution?: RequesterWorkAttributionV1) => {
@@ -115,7 +131,7 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
         put(marker.runId, isRunningMarker(marker) || marker.executionRunConnectedServicesCleanupReceiptV1 ? 'active' : 'settled', marker.requesterWorkAttributionV1);
       }
       if (retained.status === 'fulfilled') for (const record of retained.value) {
-        put(record.state.runId, record.state.status === 'running' || record.terminalEventId ? 'active' : 'settled', record.requesterWorkAttributionV1);
+        put(record.runId, record.state, record.attribution);
       }
       if (deliveries.status === 'fulfilled') for (const delivery of deliveries.value) put(delivery.update.workerId, 'active', delivery.requesterWorkAttributionV1);
       if (observedWatcher && watcher === observedWatcher) {
@@ -137,6 +153,32 @@ export function createExecutionRunLiveWorkProducer(): LiveWorkProducerV1 {
         if (watcher) notify();
       }
       return { items: [...items.values()], coverage };
+  };
+  return {
+    read() {
+      if (pending) return pending;
+      // A passive edge admits only changed files. A later explicit confirmation
+      // rereads bodies; neither path retains decrypted Run instructions/output.
+      const forceRead = !invalidated;
+      const observation = (async () => {
+        let force = forceRead;
+        let snapshot: Awaited<ReturnType<typeof readSnapshot>>;
+        do {
+          invalidated = false;
+          snapshot = await readSnapshot(force);
+          force = false;
+        } while (invalidated && snapshot.coverage === 'complete');
+        return snapshot;
+      })();
+      const result = observation.finally(() => {
+        if (pending !== result) return;
+        pending = undefined;
+        // Directory replacement/initial watcher acquisition stays unknown for
+        // that observation, then pushes one fresh covered observation.
+        if (invalidated && listeners.size) notify();
+      });
+      pending = result;
+      return result;
     },
     subscribe(listener) {
       listeners.add(listener);
@@ -258,21 +300,34 @@ export async function readRetainedExecutionRunRecord(runId: string): Promise<Ret
   return prior;
 }
 
-async function writeRetainedExecutionRunRecord(record: RetainedExecutionRunRecord, attentionChanged = false): Promise<void> {
+/** A hint compares only existing source revision identity; content is validated by its source reader. */
+function retainedExecutionRunOutputRevision(state: Pick<ExecutionRunState, 'structuredMeta' | 'latestToolResult'>): string | null {
+  const value = state.structuredMeta?.kind === EXECUTION_RUN_KIND_BY_INTENT.scm_diff_summary
+    ? state.structuredMeta.payload : state.latestToolResult;
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const output = value as Record<string, unknown>;
+  const comparison = output.comparison;
+  if (typeof output.resultId !== 'string' || typeof output.revision !== 'number' || !Number.isSafeInteger(output.revision)
+    || !comparison || typeof comparison !== 'object' || !('id' in comparison) || typeof comparison.id !== 'string') return null;
+  return JSON.stringify([comparison.id, output.resultId, output.revision]);
+}
+
+async function writeRetainedExecutionRunRecord(record: RetainedExecutionRunRecord, attentionChanged = false,
+  outputChanged = false, terminalChanged = false): Promise<void> {
   const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
   await writeProtectedLocalStateFileAtomic(retainedStatePath(record.state.runId), storage.sealJson({
     purpose: 'execution_run_state', value: RetainedExecutionRunRecordSchema.parse(record),
   }), { authority: 'owned' });
   notifyExecutionRunLiveWorkChanged();
   const state = record.state;
-  if (state.sessionId && (state.terminalOccurrenceId || attentionChanged)) {
+  if (terminalChanged || attentionChanged || outputChanged) {
     // A hint never owns delivery or terminal state. Read-after-write routing
     // re-enters the retained original, current Follow and Pending owners.
-    const occurrence = resolveExecutionRunFollowOccurrenceV1({ ...state, sessionId: state.sessionId,
-      terminalEventId: state.terminalOccurrenceId ?? null });
+    const occurrence = state.sessionId && (terminalChanged || attentionChanged)
+      ? resolveExecutionRunFollowOccurrenceV1({ ...state, sessionId: state.sessionId, terminalEventId: state.terminalOccurrenceId ?? null }) : null;
     // Empty attention re-enters the same source range read, withdrawing an
     // outstanding original without inventing a terminal event or another log.
-    void notifyDaemonSessionActivityChanged(state.sessionId, occurrence ?? undefined)
+    void notifyDaemonSessionActivityChanged(state.sessionId, occurrence ?? undefined, state.runId)
       .catch(error => logger.debug('[executionRunRegistry] Follow occurrence remains in retained Run custody', error));
   }
 }
@@ -298,22 +353,48 @@ export async function retainExecutionRunState(state: ExecutionRunState, terminal
       ...(attribution ? { requesterWorkAttributionV1: RequesterWorkAttributionV1Schema.parse(attribution) } : {}),
       ...(identity?.processStartTimeMs !== undefined ? { ownerProcessStartTimeMs: identity.processStartTimeMs } : {}),
       state: projectRetainedExecutionRunState(state), ...(pendingEventId ? { terminalEventId: pendingEventId } : {}),
-    }, JSON.stringify(current?.state.attention?.requests ?? []) !== JSON.stringify(state.attention?.requests ?? []));
+    }, JSON.stringify(current?.state.attention?.requests ?? []) !== JSON.stringify(state.attention?.requests ?? []),
+    retainedExecutionRunOutputRevision(state) !== (current ? retainedExecutionRunOutputRevision(current.state) : null),
+    Boolean(state.terminalOccurrenceId && state.terminalOccurrenceId !== current?.state.terminalOccurrenceId));
   });
 }
 
 export async function readRetainedExecutionRunRecords(onUnavailable?: () => void): Promise<readonly RetainedExecutionRunRecord[]> {
+  return await readRetainedExecutionRunProjections({ onUnavailable, project: record => record });
+}
+
+type RetainedExecutionRunProjection<T> = Readonly<{ runId: string; observation: string; value: T }>;
+
+/** Full readers and compact live-work readers share persistence admission. Only
+ * the live producer retains its admitted projection between filesystem edges. */
+async function readRetainedExecutionRunProjections<T>(input: Readonly<{
+  onUnavailable?: () => void;
+  project(record: RetainedExecutionRunRecord): T;
+  projections?: Map<string, RetainedExecutionRunProjection<T>>;
+  forceRead?: boolean;
+}>): Promise<readonly T[]> {
+  const { onUnavailable } = input;
   await Promise.all(retainedStateWrites.values());
   let entries: string[];
   try { entries = (await readdir(resolveExecutionRunMarkerDir())).filter((entry) => entry.startsWith('state-') && entry.endsWith('.sealed')); }
-  catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') { pruneUnavailableRetainedEntries('state-', []); return []; } throw error; }
+  catch (error) { if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') { pruneUnavailableRetainedEntries('state-', []); input.projections?.clear(); return []; } throw error; }
   pruneUnavailableRetainedEntries('state-', entries);
+  if (input.projections) {
+    const present = new Set(entries.map(entry => join(resolveExecutionRunMarkerDir(), entry)));
+    for (const path of input.projections.keys()) if (!present.has(path)) input.projections.delete(path);
+  }
   if (!entries.length) return [];
   const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
-  const records = new Map<string, RetainedExecutionRunRecord>();
+  const records = new Map<string, T>();
   for (const entry of entries) {
     const path = join(resolveExecutionRunMarkerDir(), entry);
     const observation = await retainedEntryObservation(path);
+    const projected = input.projections?.get(path);
+    if (!input.forceRead && observation !== null && projected?.observation === observation) {
+      records.set(projected.runId, projected.value);
+      continue;
+    }
+    input.projections?.delete(path);
     if (unavailableRetainedEntries.has(path) && unavailableRetainedEntries.get(path)?.observation === observation) {
       onUnavailable?.();
       continue;
@@ -344,7 +425,9 @@ export async function readRetainedExecutionRunRecords(onUnavailable?: () => void
         },
       });
       unavailableRetainedEntries.delete(path);
-      records.set(record.state.runId, record);
+      const value = input.project(record);
+      records.set(record.state.runId, value);
+      if (observation !== null) input.projections?.set(path, { runId: record.state.runId, observation, value });
     } catch (error) {
       // Terminal GC can retire ephemeral state after the directory scan.
       if ((error as NodeJS.ErrnoException)?.code === 'ENOENT') { unavailableRetainedEntries.delete(path); continue; }
@@ -416,14 +499,15 @@ export async function reconcileRetainedExecutionRunRecords(params: Readonly<{
         const reused = processGenerationProvesReuse(record.ownerProcessStartTimeMs, identity?.processStartTimeMs);
         if (!alive || reused) {
           next = projectExecutionRunHostLoss(record, params.nowMs);
-          await writeRetainedExecutionRunRecord(next);
+          await writeRetainedExecutionRunRecord(next, false, false, true);
           const run = next.state;
           const { resolvedSelection } = projectExecutionRunPublicState(run);
           await writeExecutionRunMarker({
             pid: record.ownerPid, happySessionId: run.sessionId, runId: run.runId, callId: run.callId,
             ...(next.requesterWorkAttributionV1 ? { requesterWorkAttributionV1: next.requesterWorkAttributionV1 } : {}),
             sidechainId: run.sidechainId, intent: run.intent, backendTarget: readBackendTargetRefV2(run.backendTarget),
-            permissionMode: run.permissionMode, retentionPolicy: run.retentionPolicy, runClass: run.runClass,
+            permissionMode: run.permissionMode, approvalProfileId: run.approvalProfileId ?? null,
+            retentionPolicy: run.retentionPolicy, runClass: run.runClass,
             ioMode: run.ioMode, status: run.status, startedAtMs: run.startedAtMs,
             ...(resolvedSelection ? { resolvedSelection } : {}),
             updatedAtMs: params.nowMs, finishedAtMs: params.nowMs, errorCode: 'execution_run_host_lost',
@@ -436,7 +520,7 @@ export async function reconcileRetainedExecutionRunRecords(params: Readonly<{
           const path = join(resolveExecutionRunMarkerDir(), resolveWorkerUpdateEntry(update.update.workerId, update.localId));
           // An existing (even unreadable) delivery owns its immutable custody.
           // Recovery only fills the crash window before initial publication.
-          try { await readProtectedLocalStateFile(path); }
+          try { await lstat(path); }
           catch (error) {
             if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error;
             await retainExecutionRunWorkerUpdate({ ...update,
@@ -532,14 +616,28 @@ export async function retainExecutionRunWorkerUpdate(input: RetainedExecutionRun
   if (published) notifyExecutionRunLiveWorkChanged();
 }
 
-export async function readPendingExecutionRunWorkerUpdates(onUnavailable?: () => void): Promise<readonly RetainedExecutionRunWorkerUpdate[]> {
+export async function readPendingExecutionRunWorkerUpdates(
+  onUnavailable?: () => void,
+  admittedUpdates: Iterable<RetainedExecutionRunWorkerUpdate> = [],
+): Promise<readonly RetainedExecutionRunWorkerUpdate[]> {
   const entries = await listWorkerUpdateEntries();
   pruneUnavailableRetainedEntries('worker-update-', entries);
   if (!entries.length) return [];
+  // Completion custody is published once and only removed by acceptance. Reuse
+  // the intake owner's admitted values; the directory still discovers writes
+  // and ACKs from other processes, without reopening unchanged sealed content.
+  const admittedByEntry = new Map([...admittedUpdates].map(update => [
+    resolveWorkerUpdateEntry(update.update.workerId, update.localId), update,
+  ]));
   const storage = await readOrCreateDeviceLocalSecretStorage({ path: configuration.deviceLocalSecretKeyFile });
   const result = new Map<string, RetainedExecutionRunWorkerUpdate>();
   for (const entry of entries) {
     const path = join(resolveExecutionRunMarkerDir(), entry);
+    const admitted = admittedByEntry.get(entry);
+    if (admitted) {
+      result.set(path, admitted);
+      continue;
+    }
     const observation = await retainedEntryObservation(path);
     if (unavailableRetainedEntries.has(path) && unavailableRetainedEntries.get(path)?.observation === observation) {
       onUnavailable?.();
@@ -737,6 +835,7 @@ async function writeJsonAtomic(filePath: string, value: DaemonExecutionRunMarker
 
 export async function writeExecutionRunMarker(marker: DaemonExecutionRunMarkerOwnerWrite, options?: Readonly<{ allowTerminalToRunning?: boolean }>): Promise<void> {
   const dir = resolveExecutionRunMarkerDir();
+  await ensureProtectedLocalStateDirectory(join(configuration.happyHomeDir, 'tmp'), { authority: 'owned' });
   await mkdir(dir, { recursive: true });
 
   const payload = ExecutionRunMarkerOwnerWriteSchema.parse(marker);

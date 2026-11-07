@@ -46,10 +46,12 @@ async function offerFor(agentIsolation: unknown) {
   return hook.getCurrent();
 }
 
-it('does not offer separate users when the Machine reports isolation unavailable', async () => {
+it('uses the same supported turn-on availability while Preview owns unavailable native prerequisites', async () => {
   const result = await offerFor({ kind: 'unavailable', code: 'sudo_unavailable' });
   expect(result.authority.isolation).toMatchObject({ kind: 'unavailable' });
-  expect(result.guest.canEnableSeparateUsers).toBe(false);
+  expect(result.authority.separateUsers.availability).toEqual({ kind: 'can_turn_on' });
+  expect(result.guest.availability).toEqual(result.authority.separateUsers.availability);
+  expect(result.guest.canEnableSeparateUsers).toBe(true);
 });
 
 it('keeps offering separate users on a Linux Machine whose isolation is off or not reported', async () => {

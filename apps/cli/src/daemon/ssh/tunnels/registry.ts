@@ -1,9 +1,11 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
-import { dirname } from 'node:path';
+import { dirname, join } from 'node:path';
 
 import { z } from 'zod/mini';
 
 import type { SshTunnelRegistry, SshTunnelRegistryEntry } from './types';
+import { configuration } from '@/configuration';
+import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 
 const RegistryEntrySchema = z.object({
   tunnelKey: z.string().check(z.minLength(1)),
@@ -28,11 +30,12 @@ const RegistryFileSchema = z.object({
   entries: z.array(RegistryEntrySchema),
 });
 
-export function createSshTunnelRegistry(params: Readonly<{ registryPath: string }>): SshTunnelRegistry {
+export function createSshTunnelRegistry(params?: Readonly<{ registryPath: string }>): SshTunnelRegistry {
+  const registryPath = params?.registryPath ?? join(configuration.happyHomeDir, 'daemon', 'ssh-tunnels', 'registry.json');
   return {
     async read(): Promise<readonly SshTunnelRegistryEntry[]> {
       try {
-        const raw = await readFile(params.registryPath, 'utf8');
+        const raw = await readFile(registryPath, 'utf8');
         const parsed = RegistryFileSchema.safeParse(JSON.parse(raw));
         return parsed.success ? parsed.data.entries : [];
       } catch {
@@ -40,8 +43,9 @@ export function createSshTunnelRegistry(params: Readonly<{ registryPath: string 
       }
     },
     async write(entries: readonly SshTunnelRegistryEntry[]): Promise<void> {
-      await mkdir(dirname(params.registryPath), { recursive: true });
-      await writeFile(params.registryPath, `${JSON.stringify({ entries }, null, 2)}\n`, 'utf8');
+      if (!params) await ensureProtectedLocalStateDirectory(join(configuration.happyHomeDir, 'daemon'), { authority: 'owned' });
+      await mkdir(dirname(registryPath), { recursive: true, mode: 0o700 });
+      await writeFile(registryPath, `${JSON.stringify({ entries }, null, 2)}\n`, { encoding: 'utf8', mode: 0o600 });
     },
   };
 }

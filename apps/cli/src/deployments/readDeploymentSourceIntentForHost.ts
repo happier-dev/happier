@@ -1,7 +1,13 @@
+import { refuseDeploymentAuthorization } from './deploymentAuthorizationFailure';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
+import { readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import type { DeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { WorkspaceRefV1 } from '@happier-dev/protocol/workspaces/workspaceRefV1';
 import type { DeploymentEnvironmentDetailV1, DeploymentSourceIntentV1 } from '@happier-dev/deployment-protocol';
+import type { DeploymentSourceAdmissionFailureV1 } from '@happier-dev/protocol/deployments/deploymentReceiptEventsV1';
+import { projectActionFailureCauseV1 } from '@happier-dev/protocol/actions/actionExecutionResult';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { readRequesterAccountActionContext } from '@/daemon/sessionEncryption/requesterAccountActionContext';
@@ -19,7 +25,7 @@ type DeploymentSourceRequest = Readonly<{
     sourceIntent?: DeploymentSourceIntentV1;
     sha?: string;
     context: ActionExecutorContext;
-    actionId?: 'deployments.deploy' | 'deployments.promote' | 'deployments.rollback';
+    actionId?: 'deployments.deploy' | 'deployments.promote' | 'deployments.rollback' | DeploymentBackupActionIdV1;
     restoration?: boolean;
     /** Native materialization needs a checkout; provider Git integration does not. */
     requireWorkspace?: boolean;
@@ -38,6 +44,7 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     host: Readonly<{
         credentials: StoredCredentials; serverId: string; serverHttpBaseUrl: string; machineId: string;
         resolveRequesterIdentity: DeploymentSourceRequesterIdentityResolver;
+        resolveRepositoryRef?(repository: ProjectSourceRepositorySelectorV1, ref: string, context: ActionExecutorContext): Promise<string>;
         signal?: AbortSignal; assertAuthority(): Promise<void>;
     }>;
 }>): Promise<DeploymentSourceIntentForHost> {
@@ -50,10 +57,20 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
     let intent = request.sourceIntent ? structuredClone(request.sourceIntent) : undefined;
     if (intent && request.actionId !== 'deployments.rollback' && !request.restoration) admitDeploymentSourceIntent(environment, intent);
     const repository = (intent ?? environment.content.definition).kind === 'repository';
-    const needsWorkspace = repository && (request.requireWorkspace !== false || !intent && !request.sha);
+    const needsWorkspace = repository && request.requireWorkspace !== false;
     if (needsWorkspace) {
         const requester = await host.resolveRequesterIdentity(request.context);
-        if (!isHostRequesterUnrestrictedOwner(requester)) return refuse('agent_isolation_unavailable');
+        if (!isHostRequesterUnrestrictedOwner(requester)) {
+            const details: DeploymentSourceAdmissionFailureV1 = requester.kind === 'unknown'
+                ? { phase: 'deployment_source_admission', reason: requester.reason,
+                    requiredFact: 'verified_root_requester', remedy: 'retry_original_request' }
+                : { phase: 'deployment_source_admission', reason: 'requester_workspace_requires_owner',
+                    requiredFact: 'unrestricted_workspace_requester', remedy: 'run_from_authorized_host' };
+            throw new PluginError({ code: 'agent_isolation_unavailable', retryable: false, details,
+                ...(requester.kind === 'unknown' ? { remediation: { kind: 'retry' } } : {}),
+                failureCause: projectActionFailureCauseV1(new Error('agent_isolation_unavailable'),
+                    `deployment.source.admission.${details.reason}`) });
+        }
     }
     const sourceId = intent?.kind === 'repository' ? intent.projectSourceId : environment.environment.projectSourceId;
     let sourceRevision = intent?.kind === 'repository' ? intent.sourceRevision : undefined;
@@ -70,7 +87,8 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         admitAccount: serverId => serverId === host.serverId ? null : { ok: false, errorCode: 'target_mismatch', error: 'target_mismatch' },
         async resolveRequestHeaders(context, effectActionId, transport) {
             await assertAuthority();
-            const authorization = context.externalActionExecutionAuthorization;
+            // Source selection is the deployment parent's preparation read, not the plugin child's effect.
+            const authorization = readHostReviewedChildOriginalAuthorizationV1(context) ?? context.externalActionExecutionAuthorization;
             const projection = authorization?.requesterHttpProjection;
             if (projection) return await projection.createRequestHeaders({ ...transport, effectActionId: childActionId ?? effectActionId, signal });
             if (context.externalActionCredential || context.rpcSessionAuthorization) return null;
@@ -82,7 +100,10 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
         if (!repository) return;
         if (!sourceActions.projectSourcesRead) return refuse('deployment_source_unavailable');
         const result = await sourceActions.projectSourcesRead({ serverId: host.serverId, sourceId }, request.context);
-        if (!result.ok) return refuse('errorCode' in result ? result.errorCode : result.error);
+        if (!result.ok) {
+            if ('errorCode' in result && result.errorCode === 'action_forbidden') return refuseDeploymentAuthorization('home_project_source_read_forbidden', result);
+            return refuse('errorCode' in result ? result.errorCode : result.error);
+        }
         if (result.source.id !== sourceId) return refuse('target_mismatch');
         if (sourceRevision !== undefined && result.source.revision !== sourceRevision) return refuse('deployment_conflict');
         if (!result.source.repository) return refuse('deployment_source_unavailable');
@@ -105,8 +126,10 @@ export async function readDeploymentSourceIntentForHost(input: Readonly<{
             if (sourceRevision === undefined) return refuse('deployment_source_unavailable');
             let sha = request.sha;
             if (!sha) {
-                if (!workspace) return refuse('deployment_source_unavailable');
-                sha = await resolveWorkspaceCommitRef({ sourcePath: workspace.rootPath, ref: definition.ref, signal });
+                if (workspace) sha = await resolveWorkspaceCommitRef({ sourcePath: workspace.rootPath, ref: definition.ref, signal });
+                else if (sourceRepository && host.resolveRepositoryRef) {
+                    sha = await host.resolveRepositoryRef(sourceRepository, definition.ref, request.context);
+                } else return refuse('deployment_source_unavailable');
             }
             intent = { kind: 'repository', projectSourceId: sourceId, sourceRevision, compose: definition.compose,
                 sha };

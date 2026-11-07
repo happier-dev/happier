@@ -4,7 +4,8 @@ import { constants } from 'node:fs';
 import { chmod, lstat, mkdtemp, open, rm, writeFile, type FileHandle } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
-import type { MachineAgentIsolationOwnStatusV1, MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
+import type { MachineAgentIsolationOwnStatusV1, MachineAgentIsolationStatusV1,
+  MachineAgentIsolationProbeFailureV1 } from '@happier-dev/protocol/machines/agentIsolationV1';
 import type { SessionMcpLocalTransport } from '@/mcp/runtime/sessionMcpLocalTransport';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { logger } from '@/ui/logger';
@@ -14,17 +15,42 @@ import { readAgentIsolationNativeIdentity, type AgentIsolationMemberNativeIdenti
 export type AgentIsolationReadinessSystem = Readonly<{ run: typeof execFileWithDeadline }>;
 type Unavailable = Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>;
 
+const probeExits = { uid: 71, umask: 72, managed_payload: 73, groups: 74, mcp_authentication: 75,
+  workspace: 76, home: 77, user: 78, required_groups: 79, agent_payload: 80, root_sudo: 81,
+  docker_socket: 82, private_path: 83, mcp_anonymous: 85 } as const satisfies
+  Partial<Record<MachineAgentIsolationProbeFailureV1['check'], number>> & { required_groups: number };
+function probeFailure(identity: MachineAgentIsolationProbeFailureV1['identity'], error: unknown): MachineAgentIsolationProbeFailureV1 {
+  const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
+  if (typeof code === 'number' && Number.isSafeInteger(code) && code >= 0) {
+    const check = Object.entries(probeExits).find(([, exit]) => exit === code)?.[0] as keyof typeof probeExits | undefined;
+    return { check: check === 'required_groups' ? 'groups' : check ?? 'launch', exitCode: code, identity };
+  }
+  const signal = error && typeof error === 'object' ? Reflect.get(error, 'signal') : undefined;
+  return { check: 'launch', identity, transportError: signal ? 'signalled'
+    : code === 'ENOENT' || code === 'EACCES' ? 'spawn_failed' : 'execution_failed' };
+}
+function probeUnavailable(failure: MachineAgentIsolationProbeFailureV1): Unavailable {
+  const check = failure.check;
+  return { kind: 'unavailable', code: check === 'managed_payload' || check === 'agent_payload' ? 'payload_not_accessible'
+    : check === 'mcp_authentication' || check === 'mcp_anonymous' ? 'mcp_socket_access_unavailable'
+    : check === 'workspace' ? 'workspace_not_ready'
+    : (check === 'groups' && !('exitCode' in failure && failure.exitCode === probeExits.required_groups))
+      || check === 'root_sudo' || check === 'docker_socket' || check === 'private_path'
+      ? 'local_admin_api_accessible' : 'launch_probe_failed', probeFailure: failure };
+}
+
 // This fixed host-authored program runs only through the incumbent framed
 // RunAs shim. No Workspace/provider command or custodian environment is read.
-const nativeLaunchChecks = `[ "$(id -u)" = "$1" ] && [ "$1" != 0 ] || exit 71
-[ "$HOME" = "$2" ] && [ "$USER" = "$READINESS_EXPECTED_USER" ] || exit 71
+const nativeLaunchChecks = `[ "$(id -u)" = "$1" ] && [ "$1" != 0 ] || exit ${probeExits.uid}
+[ "$HOME" = "$2" ] || exit ${probeExits.home}
+[ "$USER" = "$READINESS_EXPECTED_USER" ] || exit ${probeExits.user}
 groups=$(id -G)
-case " $groups " in *" \${READINESS_ALLOWED_GROUPS#* } "*) ;; *) exit 71 ;; esac
+case " $groups " in *" \${READINESS_ALLOWED_GROUPS#* } "*) ;; *) exit ${probeExits.required_groups} ;; esac
 for group in $groups; do
-  case " $READINESS_ALLOWED_GROUPS " in *" $group "*) ;; *) exit 74 ;; esac
+  case " $READINESS_ALLOWED_GROUPS " in *" $group "*) ;; *) exit ${probeExits.groups} ;; esac
 done
-case "$(umask)" in 0002|002) ;; *) exit 72 ;; esac
-[ -x "$3" ] && [ ! -w "$3" ] || exit 73
+case "$(umask)" in 0002|002) ;; *) exit ${probeExits.umask} ;; esac
+[ -x "$3" ] && [ ! -w "$3" ] || exit ${probeExits.managed_payload}
 `;
 
 const nativeProbe = `set -eu
@@ -37,26 +63,26 @@ set +e
 sudo -n -u root -- /usr/bin/true >/dev/null 2>&1
 root_status=$?
 set -e
-[ "$root_status" = 1 ] || exit 74
+[ "$root_status" = 1 ] || exit ${probeExits.root_sudo}
 if [ -S /var/run/docker.sock ]; then
-  [ ! -w /var/run/docker.sock ] || exit 74
+  [ ! -w /var/run/docker.sock ] || exit ${probeExits.docker_socket}
   set +e
   curl --disable --silent --show-error --unix-socket /var/run/docker.sock http://localhost/_ping >/dev/null 2>&1
   docker_status=$?
   set -e
-  [ "$docker_status" = 7 ] || exit 74
+  [ "$docker_status" = 7 ] || exit ${probeExits.docker_socket}
 fi
-[ ! -r "$4" ] && [ ! -w "$4" ] || exit 74
-[ "$(curl --disable --silent --show-error --unix-socket "$5" --header "@$READINESS_HEADERS" http://localhost/readiness)" = ready ] || exit 75
-[ "$(curl --disable --silent --show-error --unix-socket "$5" --output /dev/null --write-out '%{http_code}' http://localhost/readiness)" = 401 ] || exit 75
+[ ! -r "$4" ] && [ ! -w "$4" ] || exit ${probeExits.private_path}
+[ "$(curl --disable --silent --show-error --unix-socket "$5" --header "@$READINESS_HEADERS" http://localhost/readiness)" = ready ] || exit ${probeExits.mcp_authentication}
+[ "$(curl --disable --silent --show-error --unix-socket "$5" --output /dev/null --write-out '%{http_code}' http://localhost/readiness)" = 401 ] || exit ${probeExits.mcp_anonymous}
 shift 7
 while [ "$private_count" -gt 0 ]; do
-  [ ! -r "$1" ] && [ ! -w "$1" ] || exit 74
+  [ ! -r "$1" ] && [ ! -w "$1" ] || exit ${probeExits.private_path}
   shift
   private_count=$((private_count - 1))
 done
 for root do
-  [ -r "$root/daemon" ] && [ -w "$root/daemon" ] || exit 76
+  [ -r "$root/daemon" ] && [ -w "$root/daemon" ] || exit ${probeExits.workspace}
   printf agent >> "$root/daemon"
   printf agent > "$root/agent"
 done
@@ -68,7 +94,7 @@ runtime_home=$4
 trap 'rm -rf -- "$runtime_home"' 0
 trap 'exit 1' HUP INT TERM
 ${nativeLaunchChecks}
-[ "$#" -lt 6 ] || { [ -x "$5" ] && { [ "$5" = "$6" ] || [ -r "$6" ]; }; } || exit 73
+[ "$#" -lt 6 ] || { [ -x "$5" ] && { [ "$5" = "$6" ] || [ -r "$6" ]; }; } || exit ${probeExits.agent_payload}
 printf 'member-native-ready\\n'
 `;
 
@@ -89,6 +115,8 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
   if (process.platform !== 'linux') return unavailable('unsupported_platform');
   input.signal?.throwIfAborted();
   const identity = input.memberIdentity;
+  const selected = { username: identity.username, uid: identity.agentUid, gid: identity.agentGid,
+    home: identity.home, cwd: identity.home };
   const runtimeHome = join(identity.home, 'runtime', `readiness-${randomUUID()}`);
   try {
     // The existing framed shim creates the private operation runtime home. Its
@@ -106,12 +134,10 @@ export async function observeAgentIsolationMemberLaunchReadiness(input: Readonly
     input.signal?.throwIfAborted();
     return Buffer.from(result.stdout).equals(Buffer.from('member-native-ready\n'))
       ? { kind: 'member_native_ready', status: { kind: 'effective', platform: 'linux' },
-        directories: { home: identity.home, workspace: identity.workspaceRoot } } : unavailable('launch_probe_failed');
+        directories: { home: identity.home, workspace: identity.workspaceRoot } } : probeUnavailable({ check: 'output', exitCode: 0, identity: selected });
   } catch (error) {
     input.signal?.throwIfAborted();
-    const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
-    return unavailable(code === 73 ? 'payload_not_accessible'
-      : code === 74 ? 'local_admin_api_accessible' : 'launch_probe_failed');
+    return probeUnavailable(probeFailure(selected, error));
   }
 }
 
@@ -151,6 +177,7 @@ export async function observeAgentIsolationNativeReadiness(input: Readonly<{
     authenticated = true; response.end('ready');
   });
   let phase: Unavailable['code'] = 'mcp_socket_access_unavailable';
+  let selected: MachineAgentIsolationProbeFailureV1['identity'] | undefined;
   let observed: MachineAgentIsolationStatusV1;
   let cleanupFailure: Unavailable['code'] | undefined;
   const qualify = async (): Promise<MachineAgentIsolationStatusV1> => {
@@ -182,17 +209,21 @@ export async function observeAgentIsolationNativeReadiness(input: Readonly<{
       selectedEnvironmentKeys: ['READINESS_HEADERS', 'READINESS_CHALLENGE', 'READINESS_ALLOWED_GROUPS', 'READINESS_EXPECTED_USER'],
       selectedMaterials: [{ relativePath: 'files/headers', contentBase64: Buffer.from(`Authorization: Bearer ${context.bearerToken}\n`).toString('base64') },
         { relativePath: 'files/challenge', contentBase64: challenge.toString('base64') }], sessionMcpContext: context });
+    selected = { username: 'happier-agent', uid: identity.uid, gid: identity.groups[0]!, home: identity.home,
+      cwd: input.roots[0] ?? '/srv/happier' };
     const result = await run(launch.command, launch.args, { encoding: null, env: launch.env, inputBytes: launch.stdinPreamble,
       signal: input.signal, terminateOnAbort: terminateProcessTree });
-    if (!Buffer.from(result.stdout).equals(challenge)) return unavailable(phase);
-    if (!authenticated || !anonymousDenied) return unavailable('mcp_socket_access_unavailable');
+    if (!Buffer.from(result.stdout).equals(challenge)) return probeUnavailable({ check: 'output', exitCode: 0, identity: selected });
+    if (!authenticated || !anonymousDenied) return probeUnavailable({ check: !authenticated ? 'mcp_authentication' : 'mcp_anonymous',
+      exitCode: 0, identity: selected });
     for (const entry of scratch) {
       // Agent-writable names cannot grant the daemon authority over a symlink
       // or replaced ancestor. Pin our own directory and open only regular files.
       for (const [name, expected] of [['daemon', 'daemonagent'], ['agent', 'agent']] as const) {
         const file = await open(`/proc/self/fd/${entry.directory.fd}/${name}`, constants.O_RDWR | constants.O_NOFOLLOW | constants.O_NONBLOCK);
         try {
-          if (!(await file.stat()).isFile() || await file.readFile('utf8') !== expected) return unavailable('workspace_not_ready');
+          if (!(await file.stat()).isFile() || await file.readFile('utf8') !== expected) return probeUnavailable({
+            check: 'workspace', exitCode: 0, identity: selected });
           if (name === 'agent') await file.appendFile('daemon');
         } finally { await file.close(); }
       }
@@ -204,9 +235,7 @@ export async function observeAgentIsolationNativeReadiness(input: Readonly<{
     observed = await qualify();
   } catch (error) {
     input.signal?.throwIfAborted();
-    const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
-    observed = unavailable(code === 75 ? 'mcp_socket_access_unavailable' : code === 76 ? 'workspace_not_ready'
-      : code === 73 ? 'payload_not_accessible' : code === 74 ? 'local_admin_api_accessible' : phase);
+    observed = selected ? probeUnavailable(probeFailure(selected, error)) : unavailable(phase);
   } finally {
     server.closeAllConnections();
     const cleanup = await Promise.allSettled([new Promise<void>(resolve => server.close(() => resolve())),

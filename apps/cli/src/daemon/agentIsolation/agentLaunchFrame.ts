@@ -2,6 +2,9 @@ import { isAbsolute } from 'node:path';
 import { Readable } from 'node:stream';
 import { z } from 'zod';
 
+/** Native state exists even when the selected Provider needs no credential file. */
+export const AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH = 'native-home';
+
 /** Host-private stdin framing; the remainder of stdin belongs to the Agent. */
 const magic = Buffer.from('HAPAGT1\n', 'ascii');
 const nonNullString = z.string().refine((value) => !value.includes('\0'));
@@ -63,8 +66,9 @@ function parseAgentLaunchControlFrame(input: unknown): AgentLaunchFramePayload {
 
 export class AgentLaunchFrameError extends Error {
   readonly code = 'agent_launch_frame_invalid';
+  readonly stage = 'frame_read';
   constructor() {
-    super('agent_launch_frame_invalid');
+    super('agent_launch_frame_invalid stage=frame_read');
     this.name = 'AgentLaunchFrameError';
   }
 }

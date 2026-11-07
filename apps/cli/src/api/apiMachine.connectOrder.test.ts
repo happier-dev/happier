@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { createEnrollMachineFlowExecutorFromHappierJsonExecutor } from '@happier-dev/cli-common/systemTasks';
+import axios from 'axios';
 
 import {
   bindApiSessionSocketSequenceMock,
@@ -13,10 +14,18 @@ import {
 import { MachinePublishedDaemonStateV1Schema } from '@happier-dev/protocol/machines/machinePublishedContentV1';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 
 import { ApiMachineClient } from './apiMachine';
+import { ApiClient } from './api';
+import { createMachineContentCodec } from './machine/machineStoredContent';
+import { MACHINE_PLAIN_DATA_KEY_MARKER } from '@happier-dev/protocol/machines/machineStoredContent';
+import { createDaemonAgentIsolationEffects } from '@/daemon/agentIsolation/createDaemonAgentIsolationEffects';
+import { createMachineAdminAccessObserver } from '@/machines/adminAccess/observeMachineAdminAccess';
 import type { RpcHandlerManager } from './rpc/RpcHandlerManager';
 import { startPeerMediationLoopback } from '@/daemon/peer/mediation/rpc/startLoopback';
+import { createManagedActivityInventory } from '@/daemon/lifecycle/managedActivity';
+import { createDaemonAdmissionDrain } from '@/daemon/lifecycle/admissionDrain';
 
 const callOrder = vi.hoisted(() => [] as string[]);
 const ioMock = vi.hoisted(() => vi.fn());
@@ -62,6 +71,7 @@ vi.mock('@/configuration', () => ({
     happyHomeDir: '/private/tmp/happier-api-machine-connect-order-home',
     executionRunsMaxConcurrentPerSession: null,
     oneShotTasksMaxConcurrentPerSession: null,
+    organizationPolicy: { status: 'absent' },
   },
 }));
 
@@ -83,6 +93,121 @@ vi.mock('@/ui/logger', () => ({
 }));
 
 describe('ApiMachineClient connect ordering', () => {
+  it.each((['plain', 'e2ee'] as const).flatMap(mode => [true, false].map(enabled => ({ mode, enabled }))))(
+    'claims an incumbent runtime in $mode with isolation $enabled before readiness publication and preserves that proof on reconnect', async ({ mode, enabled }) => {
+    vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
+    const metadata = { host: 'worker', platform: 'linux', happyCliVersion: 'test', homeDir: '/home/happier',
+      happyHomeDir: '/home/happier/.happier', agentIsolation: { enabled } };
+    const secret = new Uint8Array(32).fill(21);
+    const codec = createMachineContentCodec(mode === 'plain' ? { encryptionMode: 'plain' }
+      : { encryptionKey: secret, encryptionVariant: 'legacy' });
+    const retained = { id: 'runtime-replacement', metadata: codec.encodeStored(metadata), metadataVersion: 4,
+      daemonState: codec.encodeStored({ status: 'running', pid: process.pid, startedAt: 1, runtimeId: 'predecessor',
+        agentIsolation: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } }),
+      daemonStateVersion: 3, dataEncryptionKey: mode === 'plain' ? MACHINE_PLAIN_DATA_KEY_MARKER : null };
+    // HTTP and Socket.IO are the boundaries. Registration, readiness, codecs,
+    // publication reducers and current-runtime admission execute real code.
+    const get = vi.spyOn(axios, 'get').mockImplementation(async (url: string) => {
+      if (url.endsWith(`/v1/machines/${retained.id}`)) return { status: 200, data: { machine: retained } };
+      if (url.endsWith('/v1/account/encryption')) return { status: 200, data: { mode, updatedAt: 1 } };
+      if (url.endsWith('/v1/account/profile')) return { status: 200, data: { id: 'owner' } };
+      throw new Error(`Unexpected HTTP path: ${new URL(url).pathname}`);
+    });
+    const post = vi.spyOn(axios, 'post').mockResolvedValue({ status: 200, data: { machine: retained } });
+    const api = await ApiClient.create({ token: 'test-token', encryption: mode === 'plain' ? null : { type: 'legacy', secret } });
+    const machine = await api.getOrCreateMachine({ machineId: retained.id, metadata,
+      daemonState: { status: 'offline', runtimeId: 'successor' } });
+    expect(machine.daemonState).toMatchObject({ runtimeId: 'predecessor', agentIsolation: { kind: 'effective' } });
+    expect(post.mock.calls[0]?.[1]).toMatchObject({ daemonState: retained.daemonState });
+    const states: unknown[] = [];
+    const socket = () => createApiSessionSocketStub({ disconnectReason: 'transport close', emitWithAck: (event, payload) => {
+      if (event === MACHINE_UPDATE_OPERATION_PROTOCOL_CAPABILITIES_EVENT_V1) return { v: 1, result: 'success', revision: 1 };
+      if (event === 'machine-update-state') {
+        const write = payload as { daemonState: string; expectedVersion: number }; // Socket boundary.
+        states.push(codec.decodeStored(write.daemonState));
+        retained.daemonState = write.daemonState;
+        retained.daemonStateVersion = write.expectedVersion + 1;
+        return { result: 'success', version: write.expectedVersion + 1, daemonState: write.daemonState };
+      }
+      return { result: 'success', version: 1 };
+    } });
+    const first = socket(), second = socket();
+    bindApiSessionSocketSequenceMock(ioMock, [first, second]);
+    const client = new ApiMachineClient('test-token', machine, { runtimeId: 'successor' });
+    const manager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
+    registerRequiredMachineControlHandlers(manager);
+    const acknowledge = async (current: typeof first) => {
+      await vi.waitFor(() => expect(current.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTER, expect.anything()));
+      for (const [event, registration] of current.emit.mock.calls) {
+        if (event === SOCKET_RPC_EVENTS.REGISTER && registration && typeof registration === 'object'
+          && 'method' in registration && typeof registration.method === 'string') {
+          current.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: registration.method });
+        }
+      }
+    };
+    try {
+      client.connect();
+      await acknowledge(first);
+      await vi.waitFor(() => expect(states).toHaveLength(1));
+      expect(machine.daemonState).toMatchObject({ runtimeId: 'successor', agentIsolation: { kind: enabled ? 'unavailable' : 'disabled' } });
+      expect(machine.daemonState?.startedAt).not.toBe(1);
+      expect(client.getAgentIsolationSnapshot()).toMatchObject({ enabled, status: { kind: enabled ? 'unavailable' : 'disabled' } });
+      // This is the actual production readiness writer. Native qualification's
+      // binary/ACL proof is covered through its registered owner in agentIsolationReadiness.test.ts.
+      const effects = createDaemonAgentIsolationEffects({ getMachineClient: () => client,
+        adminAccess: { target: () => null, observer: createMachineAdminAccessObserver({ onChanged: async () => {} }) },
+        readRoots: () => [], trackedSessions: new Map(), protectedRoots: [], privateRoots: [] });
+      if (enabled) await effects.publishStatus({ kind: 'effective', platform: 'linux', agentUser: 'happier-agent' });
+      expect(client.getAgentIsolationSnapshot()).toMatchObject({ status: { kind: enabled ? 'effective' : 'disabled' } });
+      const qualified = machine.daemonState;
+      const settled = states.length;
+      first.disconnect();
+      await acknowledge(second);
+      await vi.waitFor(() => expect(client.isMachineControlRegistrationReady()).toBe(true));
+      expect(client.getAgentIsolationSnapshot()).toMatchObject({ status: { kind: enabled ? 'effective' : 'disabled' } });
+      expect(machine.daemonState).toEqual(qualified);
+      expect(states).toHaveLength(settled);
+    } finally { await client.shutdown(); get.mockRestore(); post.mockRestore(); }
+  });
+
+  it('recovers the current aggregate activity through startup publication without restarting inventory observations', async () => {
+    const activity = createManagedActivityInventory({ now: () => 1234, producers: [{
+      read: () => ({ items: [], coverage: 'complete' }), subscribe: () => () => undefined,
+    }] });
+    await activity.readDecision();
+    const socket = createApiSessionSocketStub({ emitWithAck: (event, payload) => {
+      if (event === 'machine-update-state') {
+        const write = payload as { daemonState: string; expectedVersion: number };
+        return { result: 'success', version: write.expectedVersion + 1, daemonState: write.daemonState };
+      }
+      return { result: 'success', revision: 1 };
+    } });
+    bindApiSessionSocketSequenceMock(ioMock, [socket]);
+    const client = new ApiMachineClient(String(1), { id: 'machine-1', encryptionMode: 'plain',
+      metadata: null, metadataVersion: 0, daemonStateVersion: 0,
+      daemonState: { status: 'running', managedActivity: { kind: 'busy', reasons: ['finite'] } },
+    }, undefined, { managedActivity: { activity, admissionDrain: createDaemonAdmissionDrain() } });
+    const manager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
+    registerRequiredMachineControlHandlers(manager);
+    try {
+      client.connect();
+      await vi.waitFor(() => expect(socket.emit).toHaveBeenCalledWith(SOCKET_RPC_EVENTS.REGISTER, expect.anything()));
+      for (const [event, registration] of socket.emit.mock.calls) {
+        if (event === SOCKET_RPC_EVENTS.REGISTER && registration && typeof registration === 'object'
+          && 'method' in registration && typeof registration.method === 'string') {
+          socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method: registration.method });
+        }
+      }
+      const { decodePlainMachineStoredContent } = await import('@happier-dev/protocol/machines/machineStoredContent');
+      await vi.waitFor(() => {
+        const writes = socket.emitWithAck.mock.calls.filter(([event]) => event === 'machine-update-state');
+        expect(writes.length).toBeGreaterThan(0);
+        const write = writes.at(-1)![1] as { daemonState: string };
+        expect(decodePlainMachineStoredContent(write.daemonState)).toMatchObject({ managedActivity: { kind: 'idle', since: 1234 } });
+      });
+    } finally { await client.shutdown(); activity.dispose(); }
+  });
+
   afterEach(() => {
     callOrder.length = 0;
     probeReadinessMock.mockClear();
@@ -91,6 +216,60 @@ describe('ApiMachineClient connect ordering', () => {
     ioMock.mockReset();
     vi.unstubAllEnvs();
     vi.useRealTimers();
+  });
+
+  it('registers core RPCs while Account identity is pending and keeps peer effects behind that identity', async () => {
+    vi.stubEnv('HAPPY_ENABLE_V2_CHANGES', 'false');
+    const profile = createDeferred<{ status: number; data: { id: string } }>();
+    // HTTP is the boundary: retain the real identity acquisition and RPC admission.
+    const http = vi.spyOn(axios, 'get').mockImplementation(async (url) => {
+      if (String(url).endsWith('/v1/account/profile')) return await profile.promise;
+      throw new Error(`Unexpected startup HTTP route: ${new URL(String(url)).pathname}`);
+    });
+    const socket = createApiSessionSocketStub({
+      id: 'identity-pending-socket',
+      emitWithAck: (event, payload) => event === 'machine-update-state'
+        ? { result: 'success', version: 1, daemonState: (payload as { daemonState: string }).daemonState }
+        : { result: 'success', version: 1 },
+    });
+    bindApiSessionSocketSequenceMock(ioMock, [socket]);
+    const token = `header.${Buffer.from(JSON.stringify({ sub: 'startup-account' })).toString('base64url')}.signature`;
+    const client = new ApiMachineClient(token, {
+      id: 'machine-1', encryptionMode: 'plain',
+      metadata: null, metadataVersion: 0, daemonState: null, daemonStateVersion: 0,
+    });
+    const manager = Reflect.get(client, 'rpcHandlerManager') as RpcHandlerManager;
+    registerRequiredMachineControlHandlers(manager);
+    let peerSettled = false;
+    try {
+      client.connect();
+      await vi.waitFor(() => expect(http).toHaveBeenCalledWith(
+        'https://example.test/v1/account/profile', expect.anything(),
+      ));
+      const peer = client.getPeerMediationMachineRpcHandlerManager().invokeLocal(
+        RPC_METHODS.STOP_SESSION, {}, { verifiedPeerAccountId: 'startup-account' },
+      );
+      void peer.then(() => { peerSettled = true; });
+      const registrations = () => socket.emit.mock.calls.flatMap(([event, registration]) =>
+        event === SOCKET_RPC_EVENTS.REGISTER && registration && typeof registration === 'object'
+          && 'method' in registration && typeof registration.method === 'string'
+          ? [registration.method] : []);
+      await vi.waitFor(() => expect(registrations()).toContain(`machine-1:${RPC_METHODS.STOP_SESSION}`));
+      expect(peerSettled).toBe(false);
+      for (const method of registrations()) socket.trigger(SOCKET_RPC_EVENTS.REGISTERED, { method });
+      await vi.waitFor(() => expect(socket.emitWithAck.mock.calls).toContainEqual([
+        'machine-update-state', expect.objectContaining({ daemonState: expect.any(String) }),
+      ]));
+      expect(peerSettled).toBe(false);
+      // An authenticated Profile that names another Account cannot admit the peer.
+      profile.resolve({ status: 200, data: { id: 'different-account' } });
+      await expect(peer).resolves.toMatchObject({ errorCode: RPC_ERROR_CODES.FORBIDDEN });
+      expect(http.mock.calls.filter(([url]) => String(url).endsWith('/v1/account/profile'))).toHaveLength(1);
+    } finally {
+      profile.resolve({ status: 200, data: { id: 'different-account' } });
+      await client.shutdown();
+      http.mockRestore();
+    }
   });
 
   it('publishes endpoint owner changes while Machine heartbeats only renew reachability', async () => {
@@ -306,6 +485,7 @@ describe('ApiMachineClient connect ordering', () => {
       await expect(waiter.waitForReadyDaemon!({ timeoutMs: 1_000, requireMachineControlReady: true }))
         .resolves.toMatchObject({ daemonHealthy: true, machineId: 'machine-1' });
       expect(statusReads).toBe(1);
+
       const runningPublication = firstSocket.emitWithAck.mock.calls.find(([event]) => event === 'machine-update-state');
       expect(runningPublication).toBeDefined();
       // Exercise the actual encrypted publication, not only its scheduling.

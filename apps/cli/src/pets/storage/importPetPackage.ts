@@ -14,6 +14,7 @@ import { splitSafePetSpritesheetRelativePath } from '../validation/validatePetMa
 import { validatePetPackage } from '../validation/validatePetPackage';
 import { readManagedLocalPetStorageUsage, rememberManagedLocalPetSource } from './managedLocalPetRegistry';
 import { resolveManagedPetRoot } from './resolveManagedPetRoot';
+import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 
 export { forgetManagedLocalPetSource } from './managedLocalPetRegistry';
 
@@ -100,6 +101,7 @@ export async function importPetPackage(input: Readonly<{
 
   const destinationExisted = await pathExists(destination);
   try {
+    if (input.managedRoot === undefined) await ensureProtectedLocalStateDirectory(dirname(managedRoot), { authority: 'owned' });
     await mkdir(destination, { recursive: true });
     await copyFile(join(input.packagePath, 'pet.json'), join(destination, 'pet.json'));
     await mkdir(dirname(destinationSpritesheetPath), { recursive: true });

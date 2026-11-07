@@ -27,8 +27,10 @@ export async function observeNativeUserManagerGroups(stepId: string, username: s
     if (manager.code !== 0 || pidText === undefined || !state || !Number.isSafeInteger(Number(pidText))) return result('unavailable');
     // Linger may have queued startup already. The canonical synchronous restart
     // settles that job before verification; an in-flight PID is not ready proof.
-    if (state === 'activating') return result('drifted');
-    if (pidText === '0' && (state === 'inactive' || state === 'failed')) return result('drifted');
+    if (state === 'activating') { facts.pendingReason = 'user_manager_starting'; return result('drifted'); }
+    if (pidText === '0' && (state === 'inactive' || state === 'failed')) {
+        facts.pendingReason = 'user_manager_inactive'; return result('drifted');
+    }
     if (state !== 'active' || Number(pidText) <= 0) return result('unavailable');
     const status = await run('cat', [`/proc/${Number(pidText)}/status`], { LC_ALL: 'C' });
     if (status.code !== 0) return result('unavailable');
@@ -40,5 +42,7 @@ export async function observeNativeUserManagerGroups(stepId: string, username: s
     const actualIds = ids(`${gid} ${groups}`);
     if (!actualIds) return result('unavailable');
     Object.assign(facts, { pid: Number(pidText), actualGroupIds: actualIds });
-    return result(actualIds.length === expectedIds.length && actualIds.every((value, index) => value === expectedIds[index]) ? 'satisfied' : 'drifted');
+    if (actualIds.length === expectedIds.length && actualIds.every((value, index) => value === expectedIds[index])) return result('satisfied');
+    facts.pendingReason = 'user_manager_groups_stale';
+    return result('drifted');
 }

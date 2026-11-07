@@ -1,9 +1,10 @@
-import { mkdir } from 'node:fs/promises';
+import { chmod, mkdir } from 'node:fs/promises';
 import { createWriteStream, type WriteStream } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 import { configuration } from '@/configuration';
 import { logger } from '@/ui/logger';
+import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 
 function sanitizePathSegment(value: string): string {
   return String(value ?? '')
@@ -65,7 +66,7 @@ export async function createBoundedTextFileAppender(params: Readonly<{
   filePath: string;
   maxBytes: number;
 }>): Promise<BoundedTextFileAppender> {
-  await mkdir(dirname(params.filePath), { recursive: true });
+  await mkdir(dirname(params.filePath), { recursive: true, mode: 0o700 });
 
   let stream: WriteStream | null = createWriteStream(params.filePath, { flags: 'a', mode: 0o600 });
   let bytesWritten = 0;
@@ -124,7 +125,13 @@ export async function createSubprocessStderrAppender(params: Readonly<{
   if (maxBytes === 0) return null;
   const dir = resolveSubprocessArtifactsDir({ agentName: params.agentName, envOverrides: params.envOverrides });
   try {
-    await mkdir(dir, { recursive: true });
+    if (dir === join(configuration.happyHomeDir, 'cli', 'logs', 'subprocess', sanitizePathSegment(params.agentName))) {
+      const cliRoot = join(configuration.happyHomeDir, 'cli');
+      await mkdir(cliRoot, { recursive: true, mode: 0o711 });
+      if (process.platform !== 'win32') await chmod(cliRoot, 0o711);
+      await ensureProtectedLocalStateDirectory(join(cliRoot, 'logs'), { authority: 'owned' });
+    }
+    await mkdir(dir, { recursive: true, mode: 0o700 });
     const stamp = Date.now();
     const pidSuffix = typeof params.pid === 'number' && Number.isFinite(params.pid) ? `-pid-${params.pid}` : '';
     const filePath = join(dir, `${sanitizePathSegment(params.label)}-stderr-${stamp}${pidSuffix}.log`);

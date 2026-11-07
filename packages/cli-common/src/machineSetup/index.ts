@@ -1,16 +1,21 @@
-import { createHash } from 'node:crypto';
 import { MachineAdministratorUsernameV1Schema, MachineElevationFailureV1Schema } from '@happier-dev/protocol/machines/adminAccessV1';
 import type { MachineElevationFailureV1, MachineFirewallRecoveryV1 as MachineSetupFirewallRecoveryV1,
     MachineFirewallRestorationV1 as MachineSetupFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
 export type { MachineFirewallRecoveryV1 as MachineSetupFirewallRecoveryV1,
     MachineFirewallRestorationV1 as MachineSetupFirewallRestorationV1 } from '@happier-dev/protocol/machines/adminAccessV1';
-import { MachineSetupEffectPlanV1Schema, MachineSetupElevatedEffectV1Schema, isMachineSetupBootstrapBasisV1, type MachineRecipeStepV1, type MachineRecipeCheckV1, type MachineSetupEffectPlanV1, type MachineSetupStepObservationV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { MachineSetupElevatedEffectV1Schema, isMachineSetupBootstrapBasisV1, type MachineRecipeStepV1, type MachineRecipeCheckV1, type MachineSetupEffectPlanV1, type MachineSetupStepObservationV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+import { createMachineSetupEffectPlan, readMachineSetupEffectPlanV1, compareMachineSetupEffectPlansV1,
+    type MachineSetupPlanComparisonV1 } from './planReview.js';
+export { createMachineSetupEffectPlan, readMachineSetupEffectPlanV1, compareMachineSetupEffectPlansV1,
+    type MachineSetupPlanComparisonV1 } from './planReview.js';
 
 export type { MachineRecipeStepV1, MachineSetupEffectPlanV1, MachineSetupStepObservationV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 export { MachineSetupEffectPlanV1Schema } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
+
 export { createMachineSetupNativeBackend, runMachineSetupNativeCommand, type MachineSetupNativeCommand, type MachineSetupNativeCommandResult, type MachineSetupSecretGrantMaterial } from './nativeBackend.js';
 export { createDockerEngineSetupSteps } from './dockerEngine.js';
 export { parseNativeDockerEngineInfo, type NativeDockerEngineFacts } from './nativeDockerEngine.js';
+export { observeNativeUpdates, createNativeUpdatesSteps, type NativeUpdatesObservation, type NativeUpdatesCandidates } from './nativeUpdates.js';
 export * from './effectInternalProtocol.js';
 export { MANAGED_SUDOERS_PATH, buildManagedSudoersSteps, recognizeManagedSudoersDropIn } from './managedSudoers.js';
 export { assertAgentIsolationLaunchPrincipal, buildAgentIsolationBootstrapSteps, buildAgentIsolationToolsRootStep } from './agentIsolationBootstrap.js';
@@ -27,7 +32,7 @@ export { createMachineFirewallTransitionObservationStepV1, readMachineFirewallTr
     type MachineFirewallTransitionMaterializationV1 } from './nativeFirewallTransition.js';
 export { nativeCaddyProfile, createNativeCaddySetupInput, createCaddyContainerSetupSteps, ensureNativeCaddyContainer, readCaddyContainerFirewallExposures, nativeCaddyImage,
     checkNativeCaddyPortAvailability,
-    createNativeCaddyBindings, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, connectNativeCaddyNetworks, type NativeCaddyObservationResult,
+    createNativeCaddyBindings, observeNativeCaddyContainer, observeNativeCaddyFirewallBindings, connectNativeCaddyNetworks, disconnectNativeCaddyNetworks, type NativeCaddyObservationResult,
     createNativeCaddyAdminExchange, hashNativeCaddyPassword, type NativeCaddyAdminExchange,
     type NativeCaddyPublishedEndpoint, type NativeCaddyServerObservation,
     type NativeCaddySetupInput, type NativeCaddyFirewallExposure, type NativeCaddyContainerResult } from './nativeCaddy.js';
@@ -106,6 +111,7 @@ export type MachineSetupApplyResultV1 = Readonly<{
     restoration?: MachineSetupFirewallRestorationV1;
     /** Executing-process presence, in admitted plan order, before any mutation. */
     initialPresence?: readonly ('present' | 'absent' | 'unknown')[];
+    comparison?: MachineSetupPlanComparisonV1;
 }>;
 
 /** Unknown steps cannot establish that this operation first installed an item. */
@@ -146,39 +152,6 @@ export class MachineSetupEffectError extends Error {
     }
 }
 
-function canonicalJson(value: unknown): string {
-    if (Array.isArray(value)) return `[${value.map(canonicalJson).join(',')}]`;
-    if (value !== null && typeof value === 'object') {
-        const object = value as Record<string, unknown>;
-        return `{${Object.keys(object).filter(key => object[key] !== undefined).sort().map((key) => `${JSON.stringify(key)}:${canonicalJson(object[key])}`).join(',')}}`;
-    }
-    const encoded = JSON.stringify(value);
-    if (encoded === undefined) throw new TypeError('Setup plans contain only admitted JSON');
-    return encoded;
-}
-export function createMachineSetupEffectPlan(input: Omit<MachineSetupEffectPlanV1, 'v' | 'planDigest'>): MachineSetupEffectPlanV1 {
-    const value = { v: 1 as const, ...input };
-    const operation = { v: value.v, basis: value.basis, steps: value.steps,
-        ...(value.checks !== undefined ? { checks: value.checks } : {}),
-        ...(value.selectedCheckIds !== undefined ? { selectedCheckIds: value.selectedCheckIds } : {}) };
-    // Isolation's retained UID/home and retirement-lock proof still crosses
-    // CHECK/APPLY. Keep that native custody fence until its owner moves the
-    // exact pins into root-side admitted intent.
-    const digested = value.basis.kind === 'agentIsolation' ? value : operation;
-    return MachineSetupEffectPlanV1Schema.parse({ ...value, planDigest: createHash('sha256').update(canonicalJson(digested)).digest('hex') });
-}
-/** Read current and retained reviewed plans without rewriting their admitted contents. */
-export function readMachineSetupEffectPlanV1(value: unknown): MachineSetupEffectPlanV1 | null {
-    const parsed = MachineSetupEffectPlanV1Schema.safeParse(value);
-    if (!parsed.success) return null;
-    const plan = parsed.data;
-    const { v: _version, planDigest: _digest, ...contents } = plan;
-    // Retained Workflow/approval inputs may use the earlier full-plan hash.
-    // The current writer still owns operation hashes and isolation's full-plan proof.
-    if (createMachineSetupEffectPlan(contents).planDigest !== plan.planDigest
-        && createHash('sha256').update(canonicalJson({ v: 1, ...contents })).digest('hex') !== plan.planDigest) return null;
-    return plan;
-}
 /** Only the native package owner can establish an explicit fallback condition. */
 export function isMachineSetupPackageUnavailableV1(step: MachineRecipeStepV1 | MachineRecipeCheckV1, fact: MachineSetupStepObservationV1): boolean {
     return step.kind === 'package' && fact.stepId === step.id && fact.status === 'unsupported'
@@ -271,12 +244,14 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
     const completedStepIds: string[] = [];
     let daemonRestartRequired = false;
     let restoration: MachineSetupFirewallRestorationV1 | undefined;
+    let comparison: MachineSetupPlanComparisonV1 | undefined;
     const initialPresence: NonNullable<MachineSetupApplyResultV1['initialPresence']>[number][] = [];
     const result = (status: MachineSetupApplyResultV1['status'], stepId?: string, reason?: string, requiredFact?: string, failure?: MachineElevationFailureV1): MachineSetupApplyResultV1 => ({
         status, completedStepIds: [...completedStepIds], daemonRestartRequired,
         ...(stepId ? { stepId } : {}), ...(reason ? { reason } : {}),
         ...(requiredFact ? { requiredFact } : {}), ...(failure ? { failure } : {}),
         ...(restoration ? { restoration } : {}),
+        ...(comparison ? { comparison } : {}),
         ...(status === 'applied' && entries.some(entry => 'plan' in entry && entry.plan.basis.kind === 'setup')
             ? { initialPresence: [...initialPresence] } : {}),
     });
@@ -346,7 +321,13 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
             const current = createMachineSetupEffectPlan({ basis: plan.basis, steps: plan.steps, nativeFacts,
                 ...('checks' in plan && plan.checks !== undefined ? { checks: plan.checks, checkFacts } : {}),
                 ...('selectedCheckIds' in plan && plan.selectedCheckIds !== undefined ? { selectedCheckIds: plan.selectedCheckIds } : {}) });
-            if (reviewed?.basis.kind === 'agentIsolation' && current.planDigest !== reviewed.planDigest) return result('plan_changed', undefined, 'plan_stale');
+            if (reviewed?.basis.kind === 'agentIsolation') {
+                const native = compareMachineSetupEffectPlansV1(reviewed, current);
+                comparison = { targetChanged: native.targetChanged,
+                    fields: [...(comparison?.fields ?? []), ...native.fields.map(field => entries.length === 1 ? field
+                        : { ...field, field: `plans[${planIndex}].${field.field}` })] };
+                if (comparison.targetChanged) return result('plan_changed', undefined, 'plan_stale');
+            }
             const blocked = findMachineSetupBlockingObservationV1(current);
             if (blocked) {
                 const requiredFact = typeof blocked.facts.requiredFact === 'string' ? blocked.facts.requiredFact : blocked.stepId;
@@ -485,4 +466,3 @@ export async function applyMachineSetupEffectPlans(input: Readonly<{
         establishment?.password.fill(0);
     }
 }
-export { observeNativeUpdates, createNativeUpdatesSteps, type NativeUpdatesObservation, type NativeUpdatesCandidates } from './nativeUpdates.js';

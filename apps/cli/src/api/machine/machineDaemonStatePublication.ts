@@ -7,10 +7,11 @@ import type { ApiMachineDaemonStatePublicationOptions, MachinePublicationOutcome
 import type { MachineContentCodec } from './machineStoredContent';
 
 /** Registration returns retained content. Only the ready daemon may replace its
- * ownership, and a successor must qualify isolation again before claiming it. */
+ * ownership. A successor qualifies enabled isolation again; Off needs no native proof. */
 export function projectMachineDaemonRunningState(
   state: DaemonState | null,
   runtimeId: string | undefined,
+  isolationEnabled: boolean,
 ): DaemonState {
   const sameRuntime = state?.pid === process.pid && state.runtimeId === runtimeId;
   const { runtimeId: _retainedRuntimeId, ...fields } = state ?? {};
@@ -20,7 +21,9 @@ export function projectMachineDaemonRunningState(
     status: 'running',
     pid: process.pid,
     startedAt: sameRuntime && typeof state.startedAt === 'number' ? state.startedAt : Date.now(),
-    ...(!sameRuntime ? { agentIsolation: { kind: 'unavailable' as const, code: 'provisioning_unavailable' as const } } : {}),
+    ...(!sameRuntime ? { agentIsolation: isolationEnabled
+      ? { kind: 'unavailable' as const, code: 'provisioning_unavailable' as const }
+      : { kind: 'disabled' as const } } : {}),
   };
 }
 

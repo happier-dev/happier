@@ -15,9 +15,11 @@ export type EnsureAgentIsolationMemberInput = Readonly<{
   /** Bound only by createAgentIsolationMemberOperations to its existing Action,
    * setup task, transient prompt and machineSetup native admission. Every
    * failed native qualification idempotently repairs state before payload dispatch. */
-  setup(): Promise<ApplyAgentIsolationMemberEffectsResult>;
+  setup(): Promise<EnsureAgentIsolationMemberResult>;
 }>;
-export type EnsureAgentIsolationMemberResult = Extract<ApplyAgentIsolationMemberEffectsResult, { kind: 'not_ready' }>
+export type EnsureAgentIsolationMemberResult = (Extract<ApplyAgentIsolationMemberEffectsResult, { kind: 'not_ready' }> & Readonly<{
+    operationErrorCode?: 'machine_setup_operation_unavailable';
+  }>)
   | (Extract<ApplyAgentIsolationMemberEffectsResult, { kind: 'ready' }> & Readonly<{
     repaired?: true;
   }>);
@@ -28,7 +30,7 @@ export type EnsureAgentIsolationMemberResult = Extract<ApplyAgentIsolationMember
  */
 export async function ensureAgentIsolationMember(input: EnsureAgentIsolationMemberInput,
   effects: AgentIsolationEffectDependencies): Promise<EnsureAgentIsolationMemberResult> {
-  const refused = (reasonCode: 'cancelled' | 'plan_stale' | 'denied' | 'mode_none'): EnsureAgentIsolationMemberResult =>
+  const refused = (reasonCode: 'cancelled' | 'plan_stale' | 'denied' | 'mode_none'): Extract<EnsureAgentIsolationMemberResult, { kind: 'not_ready' }> =>
     ({ kind: 'not_ready', result: { outcome: 'not_applied', reasonCode } });
   try {
     const { requesterIdentity } = input;
@@ -59,6 +61,8 @@ export async function ensureAgentIsolationMember(input: EnsureAgentIsolationMemb
     if (prepared.kind !== 'ready') return prepared;
     const readiness = await observeAgentIsolationMemberLaunchReadiness({ installedCli: effects.installedCli,
       memberIdentity: prepared.identity, signal: input.signal, system: effects.nativeReadiness?.system });
-    return readiness.kind === 'member_native_ready' ? { ...prepared, repaired: true } : refused('denied');
+    return readiness.kind === 'member_native_ready' ? { ...prepared, repaired: true }
+      : { ...refused('denied'), readinessCode: readiness.code,
+        ...(readiness.probeFailure ? { probeFailure: readiness.probeFailure } : {}) };
   } catch { return refused(input.signal?.aborted ? 'cancelled' : 'denied'); }
 }

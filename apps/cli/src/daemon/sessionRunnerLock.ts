@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { hashProcessCommand, readProcessInstanceFingerprintSync } from '@happier-dev/cli-common/processInstance';
 
 import { configuration } from '@/configuration';
+import { ensureProtectedLocalStateDirectory } from '@/utils/fs/protectedLocalState';
 
 import {
   processGenerationMatches,
@@ -297,6 +298,7 @@ export async function acquireSessionRunnerLock(params: Readonly<{
   if (!lockPath) return { ok: false, reason: 'invalid_session_id' };
 
   try {
+    await ensureProtectedLocalStateDirectory(join(happyHomeDir, 'tmp'), { authority: 'owned' });
     await mkdir(sessionRunnerLocksDir(happyHomeDir), { recursive: true });
   } catch (e) {
     return { ok: false, reason: 'io_error', errorMessage: e instanceof Error ? e.message : String(e) };

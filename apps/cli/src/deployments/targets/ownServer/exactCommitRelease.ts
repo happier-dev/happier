@@ -1,6 +1,7 @@
 import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { lstat, mkdir, mkdtemp, readdir, readlink, realpath, rm, writeFile } from 'node:fs/promises';
-import type { DeploymentSourceMaterializationPortV1, DeploymentSourceMaterializationRequestV1 } from '@happier-dev/plugin-sdk';
+import type { DeploymentSourceMaterializationPortV1, DeploymentSourceMaterializationRequestV1, DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
+import type { WorkspaceManifestEntry } from '@happier-dev/protocol';
 import type { ProjectSourceRepositorySelectorV1 } from '@happier-dev/protocol/projects/sources/projectSourceV1';
 import type { ScmBackendRegistry } from '@/scm/registry';
 import { exportWorkspaceCommit, fetchWorkspaceCommitRef } from '@/scm/workspace/workspaceCommitExport';
@@ -10,12 +11,24 @@ import { admitStoredComposeDefinition, type StoredComposeDefinition } from '@/wo
 import { hashWorkspaceFile } from '@/scm/workspace/workspaceExportPackaging/hashWorkspaceFile';
 import { resolveDeploymentSourcePathForHost } from './paths';
 import { createDeploymentSourceOperationLogCustody, type DeploymentSourceProgress } from './sourceOperationLog';
-import type { DeploymentSourceMaterializationV1 } from '@happier-dev/plugin-sdk';
-import type { WorkspaceManifestEntry } from '@happier-dev/protocol';
+export { resolveDeploymentSourcePathForHost } from './paths';
 
+// The public handle exposes only its fingerprint. Host storage admission keeps
+// the original source entries with the same physical materialization custody.
 const sourceManifests = new WeakMap<DeploymentSourceMaterializationV1, Readonly<{
     entries: readonly WorkspaceManifestEntry[]; operationLog?: boolean; commitSubject?: string;
 }>>();
+
+/** Check only the selected bind subtree, including extra runtime-created files.
+ * Source links are followed only after proving their original target and root. */
+export async function isDeploymentSourceUnchangedManifestInput(source: DeploymentSourceMaterializationV1, path: string): Promise<boolean> {
+    const custody = sourceManifests.get(source);
+    if (!custody) return false;
+    const manifest = custody.entries;
+    await source.assertCurrent();
+    return isDeploymentManifestInputUnchanged({ rootPath: source.rootPath, manifest, path,
+        ...(custody.operationLog ? { operationLog: custody.operationLog } : {}) });
+}
 
 /** Host-only projection of the manifest already admitted by transfer custody. */
 export function readDeploymentSourceManifestForHost(source: DeploymentSourceMaterializationV1): readonly WorkspaceManifestEntry[] {
@@ -34,23 +47,21 @@ export function observeRetainedDeploymentSourceForHost(input: Omit<DeploymentSou
     return source;
 }
 
-export async function isDeploymentSourceUnchangedManifestInput(source: DeploymentSourceMaterializationV1, path: string): Promise<boolean> {
-    const custody = sourceManifests.get(source);
-    if (!custody) return false;
-    const manifest = custody.entries;
-    await source.assertCurrent();
-    return isDeploymentManifestInputUnchanged({ rootPath: source.rootPath, manifest, path,
-        ...(custody.operationLog ? { operationLog: custody.operationLog } : {}) });
-}
+/** Display metadata captured by the same immutable SCM export, not a later repository read. */
 export function readDeploymentSourceCommitSubjectForHost(source: DeploymentSourceMaterializationV1): string | undefined {
     return sourceManifests.get(source)?.commitSubject;
 }
+
+/** Reload/retention compares the original admitted transfer entries, never a
+ * newly invented scan or a manifest of application-created bytes. */
 export async function isDeploymentManifestInputUnchanged(input: Readonly<{
     rootPath: string; manifest: readonly WorkspaceManifestEntry[]; path: string;
     operationLog?: boolean;
 }>): Promise<boolean> {
     return (await createDeploymentManifestInputReader(input))(input.path);
 }
+
+/** Reuse the admitted manifest index across a bounded retention pass. */
 export async function createDeploymentManifestInputReader(input: Readonly<{
     rootPath: string; manifest: readonly WorkspaceManifestEntry[];
     operationLog?: boolean;
@@ -114,6 +125,8 @@ export async function createDeploymentManifestInputReader(input: Readonly<{
         }
     };
 }
+
+/** Host admission captures these facts from the approved role; plugins cannot choose them. */
 export type DeploymentSourceAdmissionForHost = Readonly<{
     environmentId: string;
     environmentInstanceId: string;
@@ -132,19 +145,29 @@ export type DeploymentSourceAdmissionForHost = Readonly<{
     pullRequestHead?: Readonly<{ number: number }>; repository?: ProjectSourceRepositorySelectorV1 }>
     | Readonly<{ definition: StoredComposeDefinition; sourcePath?: never; commitSha?: never; pullRequestHead?: never; repository?: never }>);
 export type AdmittedDeploymentSourceV1 = DeploymentSourceAdmissionForHost & Readonly<{ assertCurrent(): Promise<void> }>;
+
 async function exportStoredDefinition(admitted: AdmittedDeploymentSourceV1 & Readonly<{ definition: StoredComposeDefinition }>) {
     const definition = await admitStoredComposeDefinition(admitted.definition);
-    await mkdir(admitted.artifactDirectory, { recursive: true });
+    await mkdir(admitted.artifactDirectory, { recursive: true, mode: 0o700 });
     const directory = await mkdtemp(join(admitted.artifactDirectory, 'stored-compose-'));
     try {
         const sourcePath = join(directory, 'compose.yaml');
         await writeFile(sourcePath, definition.document, { mode: 0o600 });
+        const entries = [{ relativePath: 'compose.yaml', sourcePath }];
+        for (const file of definition.publicFiles ?? []) {
+            const sourcePath = join(directory, file.path);
+            await mkdir(dirname(sourcePath), { recursive: true });
+            await writeFile(sourcePath, file.content, { mode: 0o600 });
+            entries.push({ relativePath: file.path, sourcePath });
+        }
         const exported = await buildScmWorkspaceIntegrationWorkspaceExportArtifactsWithBlobProviderFromTransferEntries({
-            entries: [{ relativePath: 'compose.yaml', sourcePath }],
+            entries,
         });
         return { ...exported, async dispose() { await rm(directory, { recursive: true, force: true }); } };
     } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
 }
+
+/** Public source port over SCM export and the one contained manifest/blob materializer. */
 export function createDeploymentSourceMaterializationPort(input: Readonly<{
     admit(request: DeploymentSourceMaterializationRequestV1, signal?: AbortSignal): Promise<AdmittedDeploymentSourceV1>;
     registry?: ScmBackendRegistry;
@@ -266,5 +289,3 @@ export function createDeploymentSourceMaterializationPort(input: Readonly<{
         },
     };
 }
-
-export { resolveDeploymentSourcePathForHost } from './paths';

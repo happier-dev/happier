@@ -313,6 +313,7 @@ export class TmuxUtilities {
         stdio: stdin !== undefined ? ['pipe', 'pipe', 'pipe'] : ['ignore', 'pipe', 'pipe'],
         shell: false,
         ...spawnOptions,
+                windowsHide: true,
         env: mergedEnv,
       });
 
@@ -602,7 +603,7 @@ export class TmuxUtilities {
     const executeSpawnCommand = (cmd: string[]) => this.executeTmuxCommand(cmd, undefined, undefined, undefined, undefined, undefined, rootSpawnOptions);
     try {
       const socketRoot = this.tmuxCommandEnv?.TMUX_TMPDIR;
-      if (socketRoot) await mkdir(socketRoot, { recursive: true });
+      if (socketRoot) await mkdir(socketRoot, { recursive: true, mode: 0o700 });
 
       // Check if tmux is available
       const tmuxCheck = await executeSpawnCommand(['list-sessions']);

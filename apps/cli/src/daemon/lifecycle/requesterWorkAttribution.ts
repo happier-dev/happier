@@ -7,6 +7,14 @@ import { RequesterWorkAttributionV1Schema, type RequesterWorkAttributionV1 } fro
 export { RequesterWorkAttributionV1Schema, RequesterWorkAttributionStoredReadV1Schema,
   type RequesterWorkAttributionV1 } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 
+/** Stamp the held Home identity; a resource target's serverId is a local profile alias. */
+export function projectDaemonRequesterWorkAttribution(target: Readonly<{
+  serverId: string; custodianAccountId: string; machineId: string; installationId: string;
+}> | null, homeServerIdentityId: string | null): RequesterWorkAttributionV1 | null {
+  return target && homeServerIdentityId ? { serverId: homeServerIdentityId, accountId: target.custodianAccountId,
+    machineId: target.machineId, installationId: target.installationId } : null;
+}
+
 /** Carry already-admitted requester facts into host-owned work, never public RPC input. */
 export function projectRpcRequesterWorkAttribution(context: Readonly<Partial<Pick<RpcHandlerContext,
   'signal' | 'machineAdmission' | 'callerInputAuthorization' | 'localActionContext' | 'requesterSessionBootstrap'>> & {

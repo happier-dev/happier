@@ -16,7 +16,6 @@ import type { PluginRuntimeRegistryLease } from './reload/controller';
 import { createDaemonPluginRegistryRuntimeLifecycle } from './reload/registryRuntimeLifecycle';
 import { createSharedGatewayRegistryTestkit } from './sharedGatewayRegistry.testkit';
 import { readOrCreateInstallationIdentity } from '@/daemon/identity/store';
-import { configuration } from '@/configuration';
 
 const filesystemBoundary = vi.hoisted(() => ({ beforeStat: undefined as undefined | ((path: unknown) => Promise<void>) }));
 // Only the operating-system read may pause; every stat and all admission,
@@ -112,7 +111,7 @@ it.each(['serving', 'resolving', 'explicitStart', 'withdrawn', 'withdrawnResolvi
         if (pausesResolution) await statEntered;
         const incumbentPid = firstServing ? await readPid(firstServing.service) : null;
         if (stage === 'serving') {
-            const attribution = { serverId: configuration.activeServerId, accountId: 'account', machineId: 'machine',
+            const attribution = { serverId: 'home', accountId: 'account', machineId: 'machine',
                 installationId: installation.installationId };
             expect(firstServing!.lease.registry.projectManagedServices.readResourceTargets()).toEqual([
                 expect.objectContaining({ root: expect.objectContaining({ pid: incumbentPid, requesterWorkAttributionV1: attribution }) }),

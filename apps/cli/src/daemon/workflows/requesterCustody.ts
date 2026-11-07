@@ -2,7 +2,8 @@ import type { StoredCredentials } from '@/persistence';
 import { z } from 'zod/mini';
 import { resolveServerHttpBaseUrl, runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
 import { getAutomationDefinition } from '@/api/automations';
-import { observeAccountChanges } from '@/api/observeAccountChanges';
+import { observeAccountChanges, type AccountChangeNotification } from '@/api/observeAccountChanges';
+import { ChangeKindSchema } from '@happier-dev/protocol/changes';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { isTerminalAutomationRunStateV3 } from '@happier-dev/protocol/automations/automationRunStateV3';
 import { WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
@@ -167,7 +168,8 @@ export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBi
   let cursor: string | undefined;
   do {
     const page = RunPageSchema.parse(await storage.execute({ operation: 'list', request: {
-      triggerId: input.scopeId, machineId: input.machineId, ...(cursor ? { cursor } : {}),
+      ...(stored.stored.automationId ? { triggerId: input.scopeId } : { runId: input.scopeId }),
+      machineId: input.machineId, ...(cursor ? { cursor } : {}),
     }, pageByteLimit: EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES }));
     if (page.runs.some(run => !isTerminalAutomationRunStateV3(run.state) || run.workflowCustodyState === 'pending')) return;
     cursor = page.nextCursor;
@@ -184,7 +186,8 @@ export async function settleWorkflowRequesterCredentialRetirement(input: ScopeBi
 export function observeWorkflowRequesterCredentialCustody(input: Omit<ScopeBinding, 'scopeId'> & Readonly<{
   hostAccountId: string; onError(error: unknown): void;
 }>): Readonly<{ dispose(): void }> {
-  type Observation = { token: string; dispose(): Promise<void>; invalidate(): void };
+  type Scope = Extract<Awaited<ReturnType<typeof listWorkflowRequesterCredentialScopes>>, { status: 'ready' }>['bindings'][number];
+  type Observation = { token: string; dispose(): Promise<void>; updateScopes(scopes: readonly Scope[]): void };
   const observations = new Map<string, Observation>();
   let disposed = false;
   let refreshing = false;
@@ -225,29 +228,50 @@ export function observeWorkflowRequesterCredentialCustody(input: Omit<ScopeBindi
           }
           if (!credentials) continue;
           const existing = observations.get(accountId);
-          if (existing) { existing.invalidate(); continue; }
+          if (existing) { existing.updateScopes(scopes); continue; }
           let running = false;
-          let pending = false;
-          const invalidate = () => {
-            pending = true;
-            if (running || disposed) return;
+          let accountScopes = new Map(scopes.map(scope => [scope.sessionId, scope]));
+          const pending = new Set<string>();
+          const enqueue = (targets: Iterable<Scope>) => {
+            for (const scope of targets) pending.add(scope.sessionId);
+            if (!pending.size || running || disposed) return;
             running = true;
             void (async () => {
-              while (pending && !disposed) {
-                pending = false;
-                const current = await listWorkflowRequesterCredentialScopes(input);
-                if (current.status !== 'ready') throw new Error(current.reason);
-                for (const binding of current.bindings) if (binding.attribution.accountId === accountId) {
-                  await reconcileWorkflowRequesterCredentialScope({ ...input, accountId, scopeId: binding.sessionId });
-                }
+              while (pending.size && !disposed) {
+                const scopeId = pending.values().next().value!;
+                pending.delete(scopeId);
+                if (accountScopes.has(scopeId))
+                  await reconcileWorkflowRequesterCredentialScope({ ...input, accountId, scopeId });
               }
-            })().catch(input.onError).finally(() => { running = false; });
+            })().catch(input.onError).finally(() => {
+              running = false;
+              if (pending.size && !disposed) enqueue([]);
+            });
+          };
+          const invalidate = (change?: AccountChangeNotification) => {
+            if (change && change.t !== 'account-change') return;
+            // Missing or future hints are coarse gaps. Known typed changes
+            // select only custody already associated with their producer ids.
+            if (!change || !change.changeKinds || !change.entityIds
+              || change.changeKinds.some(kind => !ChangeKindSchema.safeParse(kind).success)) {
+              enqueue(accountScopes.values());
+              return;
+            }
+            const kinds = change.changeKinds;
+            const ids = new Set(change.entityIds);
+            enqueue([...accountScopes.values()].filter(scope => scope.automationId
+              ? kinds.includes('automation') && ids.has(scope.automationId)
+              : kinds.includes('account') && ids.has(`workflow-run:${scope.sessionId}`)));
           };
           const observation = observeAccountChanges({ token: credentials.token, serverUrl: input.serverHttpBaseUrl },
             { onChange: invalidate, onError: input.onError });
           if (disposed) { await observation.dispose(); break; }
-          observations.set(accountId, { token: credentials.token, dispose: observation.dispose, invalidate });
-          invalidate();
+          observations.set(accountId, { token: credentials.token, dispose: observation.dispose, updateScopes: next => {
+            const added = next.filter(scope => !accountScopes.has(scope.sessionId)
+              || accountScopes.get(scope.sessionId)?.automationId !== scope.automationId);
+            accountScopes = new Map(next.map(scope => [scope.sessionId, scope]));
+            enqueue(added);
+          } });
         }
       }
     } finally { refreshing = false; }

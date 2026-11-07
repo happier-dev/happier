@@ -5,11 +5,12 @@ import { isDeepStrictEqual } from 'node:util';
 
 import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { ActionExecutorContext, MachineAgentIsolationOwnStatusV1, MachineAgentIsolationStatusV1 } from '@happier-dev/protocol';
-import { readHostReviewedChildReceivingAdmissionV1 } from '@happier-dev/protocol/actions/actionExecutor';
+import { readHostReviewedChildReceivingAdmissionV1, readHostReviewedChildOriginalAuthorizationV1 } from '@happier-dev/protocol/actions/actionExecutor';
 import { isCanonicalAbsolutePathInsideRoot } from '@/utils/path/expandHomeDirPath';
 import type { HostAgentIsolationLaunchKind } from './agentIsolationLaunchKind';
 import type { SessionMcpLocalContext } from '@/mcp/runtime/sessionMcpLocalTransport';
 import type { RpcHandlerContext } from '@/api/rpc/types';
+import type { MachineAccessRoleV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import type { RequesterWorkAttributionV1 } from '@/daemon/lifecycle/requesterWorkAttribution';
 import { RequesterWorkAttributionV1Schema } from '@happier-dev/protocol/machines/requesterWorkAttributionV1';
 import { logger } from '@/ui/logger';
@@ -108,6 +109,7 @@ function refuseIsolationNotReady(status: HostAgentIsolationLaunchSnapshot['statu
     throwNativeAdmissionRefusal(new PluginError({ code,
         message: 'Requester execution protection is unavailable', retryable: false,
         details: { reason, status: status.kind, ...(status.kind === 'applying' ? { phase: status.phase } : {}),
+            ...(status.kind === 'unavailable' && status.probeFailure ? { probeFailure: status.probeFailure } : {}),
             ...(launchKind ? { launchKind } : {}) } }), reason, launchKind, status);
 }
 
@@ -126,7 +128,8 @@ type HostRequesterActionContext = Readonly<Pick<RpcHandlerContext,
 
 /** Restore only host-private proof, never replace an existing receipt or guard. */
 export function projectVerifiedExternalActionRequesterContext<T extends HostRequesterActionContext>(context: T): T {
-    const proof = readRetainedVerifiedExternalActionRequester(context.externalActionExecutionAuthorization);
+    const proof = readRetainedVerifiedExternalActionRequester(context.externalActionExecutionAuthorization)
+        ?? readRetainedVerifiedExternalActionRequester(readHostReviewedChildOriginalAuthorizationV1(context));
     if (!proof || context.verifiedExternalActionRequester && context.verifyMachineAdmissionCurrent) return context;
     return { ...context, verifiedExternalActionRequester: context.verifiedExternalActionRequester ?? proof,
         ...(!context.machineAdmission && !context.verifyMachineAdmissionCurrent
@@ -406,6 +409,8 @@ export type HostAgentIsolationLaunchSnapshot = Readonly<{
         managedHappierBinaryPath: string;
         runtimeHome: string;
         selectedEnvironmentKeys: readonly string[];
+        /** Keys owned by the captured Agent's selected Provider binding. */
+        providerEnvironmentKeys?: readonly string[];
         environment?: Readonly<Record<string, string>>;
         selectedMaterials: readonly Readonly<{ relativePath: string; contentBase64: string }>[];
         /** Live Session lease output; never Machine metadata or general env. */
@@ -426,6 +431,8 @@ export type HostAgentIsolationLaunchContext = Readonly<{
     }>>;
     /** Existing custodian-authorized setup owner. This does not admit a requester. */
     prepareMember?(input: Readonly<{ requesterIdentity: AgentIsolationMemberRequester;
+        /** Already admitted role, retained only for refusal presentation. */
+        requesterMachineRole?: MachineAccessRoleV1;
         rpcContext?: RpcHandlerContext; signal?: AbortSignal }>): Promise<Readonly<{
         identity: AgentIsolationMemberNativeIdentity; daemonObservation: AgentIsolationDaemonObservation;
         /** This attempt needed the existing native setup owner. */

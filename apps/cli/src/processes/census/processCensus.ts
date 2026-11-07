@@ -1,8 +1,7 @@
 import { readdir, readlink } from 'node:fs/promises';
 import { cpus } from 'node:os';
 import { execFileWithDeadline } from '@happier-dev/cli-common/process';
-import { createProcessCustodySamplingInvoker, resolveProcessCustodySupportExecutable, type ProcessCustodySamplingExecFile } from '@/subprocess/supervision/processCustody';
-import { logger } from '@/ui/logger';
+import type { ProcessCustodySamplingExecFile } from '@/subprocess/supervision/processCustody';
 import { createLinuxCensusReader, DAEMON_OWNERSHIP_ENVIRONMENT_VARIABLE_KEYS, type LinuxCensusBoundary } from './linux';
 import { readLinuxProcFile } from './linuxProcfs';
 import { decodeHelperCensus } from './decodeHelperCensus';
@@ -70,21 +69,30 @@ export function createProcessCensusReader(dependencies: ProcessCensusDependencie
         const startedAtMs = Date.now();
         try { return await operation(); }
         finally {
+            const { logger } = await import('@/ui/logger');
             logger.debug('[process-census] Observation phase settled', {
                 phase: 'native_census', platform, capturedAtMs, elapsedMs: Date.now() - startedAtMs,
             });
         }
     }
-    const invokeNative = createProcessCustodySamplingInvoker({
-        execFile: (file, args, options) => {
-            const execute = () => (dependencies.execFile ?? execFileWithDeadline)(file, args, options);
-            // Observe actual helper execution, after missing-helper/backoff admission.
-            return args.some(arg => arg.startsWith('--pids=')) ? execute()
-                : observeNativeCensus((dependencies.now ?? Date.now)(), execute);
-        },
-        resolveExecutable: () => dependencies.helperExecutablePath === undefined
-            ? resolveProcessCustodySupportExecutable(platform) : dependencies.helperExecutablePath,
-    });
+    // Linux's targeted census serves account-free internal CHECK/stop entries.
+    // Native helper setup must not initialize an unrelated Account home there.
+    type NativeInvoker = ReturnType<typeof import('@/subprocess/supervision/processCustody').createProcessCustodySamplingInvoker>;
+    let nativeInvoker: Promise<NativeInvoker> | undefined;
+    const invokeNative = async (input: Parameters<NativeInvoker>[0]) => {
+        const invoke = await (nativeInvoker ??= import('@/subprocess/supervision/processCustody').then(custody =>
+            custody.createProcessCustodySamplingInvoker({
+                execFile: (file, args, options) => {
+                    const execute = () => (dependencies.execFile ?? execFileWithDeadline)(file, args, options);
+                    // Observe actual helper execution, after missing-helper/backoff admission.
+                    return args.some(arg => arg.startsWith('--pids=')) ? execute()
+                        : observeNativeCensus((dependencies.now ?? Date.now)(), execute);
+                },
+                resolveExecutable: () => dependencies.helperExecutablePath === undefined
+                    ? custody.resolveProcessCustodySupportExecutable(platform) : dependencies.helperExecutablePath,
+            })));
+        return await invoke(input);
+    };
     async function capture(input: ProcessCensusInput): Promise<ProcessCensusSnapshot> {
         const capturedAtMs = (dependencies.now ?? Date.now)();
         const requested = input.pids ? [...new Set(input.pids.filter(pid => Number.isSafeInteger(pid) && pid > 0))] : undefined;

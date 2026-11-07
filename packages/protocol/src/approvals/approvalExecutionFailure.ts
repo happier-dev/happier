@@ -37,7 +37,7 @@ import { WidgetInstanceActionIdV1Schema } from '../widgets/actionIdsV1.js';
 import { isProviderActionIdV1, PROVIDER_ACTION_INPUT_SCHEMAS_V1 } from '../providers/providerActionsV1.js';
 import { ProviderErrorV1Schema } from '../providers/errors.js';
 import { PluginIdSchema } from '../plugins/pluginId.js';
-import { DeploymentActionInputSchemasV1, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema, DeploymentMachineUnavailableV1Schema } from '../deployments/deploymentActionsV1.js';
+import { DeploymentActionInputSchemasV1, DeploymentTeardownStepV1Schema, DeploymentTeardownRefusalDetailsV1Schema, DeploymentTeardownEnvironmentPartialDetailsV1Schema, DeploymentMachineUnavailableV1Schema } from '../deployments/deploymentActionsV1.js';
 import { DeploymentReceiptAcceptedResultV1Schema, DeploymentReceiptSettlementFailureDetailsV1Schema,
   readDeploymentReceiptFailureCodeV1 } from '../deployments/deploymentReceiptResultV1.js';
 import { DeploymentTemplateInstantiateInputV1Schema, DeploymentTemplateInstantiationPartialV1Schema } from '../deployments/deploymentTemplateInstantiationV1.js';
@@ -103,6 +103,12 @@ function parseStrictApprovalFailure(input: Readonly<{
     if (retirement.success && 'step' in retirement.data && retirement.data.step === 'removeDomain') {
       return args.success && retirement.data.environmentId === args.data.environmentId
         ? { ...input.failure, details: retirement.data } : null;
+    }
+    const removal = (storedRead ? createStoredReadSchema(DeploymentTeardownEnvironmentPartialDetailsV1Schema)
+      : DeploymentTeardownEnvironmentPartialDetailsV1Schema).safeParse(input.failure.details);
+    if (removal.success) {
+      return args.success && removal.data.environmentId === args.data.environmentId
+        ? { ...input.failure, details: removal.data } : null;
     }
     if (input.failure.errorCode === 'unsupported_action') {
       const details = (storedRead ? createStoredReadSchema(DeploymentTeardownRefusalDetailsV1Schema)

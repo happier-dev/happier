@@ -6,6 +6,13 @@ import { prepareDaemonAgentIsolationIdentity } from './prepareDaemonAgentIsolati
 import { deriveAgentIsolationMemberIdentity } from '../agentIsolation/provisioning';
 import { readAgentIsolationNativeIdentity } from '../agentIsolation/agentIsolationNativeIdentity';
 import { createSessionAgentIsolationMemberPreparation } from '../agentIsolation/sessionPreparation';
+import { ApiMachineClient } from '@/api/apiMachine';
+import { createAgentIsolationMemberPreparationBoundary } from '../agentIsolation/agentIsolationEffects.testkit';
+import { SpawnSessionControlErrorResponseSchema, projectSpawnSessionControlErrorResponse } from '@/session/shared/spawnSessionContract';
+import { projectSessionSpawnFailure } from '@/session/creation/projectSessionSpawnFailure';
+import { SessionSpawnNewActionResultV1Schema, projectSessionSpawnNewActionResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
+import { observeAgentIsolationMemberLaunchReadiness } from '../agentIsolation/agentIsolationReadiness';
+import { admitAgentIsolationLaunchForHost } from '../agentIsolation/agentIsolationLaunchPolicy';
 
 const nativeHomes = vi.hoisted(() => new Map<string, Readonly<{ backingDirectory: string; uid: number; gid: number }>>());
 // Only native passwd/home metadata is simulated. Native identity observation,
@@ -29,6 +36,61 @@ vi.mock('@happier-dev/cli-common/process', async original => {
 afterEach(() => { nativeHomes.clear(); vi.restoreAllMocks(); });
 
 describe.skipIf(process.platform !== 'linux')('managed cwd native identity preparation', () => {
+  it('retains the native cause when execution admission consumes an unavailable probe status', async () => {
+    const memberIdentity = { ...deriveAgentIsolationMemberIdentity({ homeServerIdentityId: 'canonical-home',
+      requester: { serverId: 'saved-profile', accountId: 'member', machineId: 'machine', installationId: 'installation' } }),
+      agentUid: 2401, agentGid: 2401 };
+    const status = await observeAgentIsolationMemberLaunchReadiness({ installedCli: '/opt/happier/current/happier', memberIdentity,
+      system: { run: async () => { throw Object.assign(new Error('PRIVATE_NATIVE_STDERR'), { code: 71 }); } } });
+    if (status.kind !== 'unavailable') throw new Error('Expected failed native readiness');
+    await expect(admitAgentIsolationLaunchForHost({ context: { read: () => ({ enabled: true, status, workspaceRoots: [] }) },
+      cwd: memberIdentity.home, agentNativeLaunch: true })).rejects.toMatchObject({ data: { details: {
+        reason: 'launch_probe_failed', probeFailure: { check: 'uid', exitCode: 71,
+          identity: { username: memberIdentity.username, uid: 2401, gid: 2401, home: memberIdentity.home, cwd: memberIdentity.home } },
+      } } });
+  });
+  it('keeps a failed native launch probe distinct from missing setup after member setup succeeds', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'member-probe-refusal-'));
+    const birth = { serverId: 'saved-home-profile', accountId: 'member', machineId: 'machine', installationId: 'installation' };
+    const requesterIdentity = { kind: 'isolated' as const, requester: birth, separationRequired: true, homeServerIdentityId: 'canonical-home' };
+    const identity = deriveAgentIsolationMemberIdentity(requesterIdentity);
+    const client = new ApiMachineClient('token', { id: 'machine', encryptionMode: 'plain', metadataVersion: 1,
+      daemonStateVersion: 1, metadata: { host: 'fixture', platform: 'linux', happyCliVersion: '0.3',
+        homeDir: '/home/happier', happyHomeDir: '/home/happier/.happier' }, daemonState: { status: 'running' } });
+    try {
+      await mkdir(join(root, 'server'), { mode: 0o700 });
+      nativeHomes.set(identity.home, { backingDirectory: join(root, 'server'), uid: 2401, gid: 2401 });
+      const native = createAgentIsolationMemberPreparationBoundary({ activeServerDir: join(root, 'server'), requesterIdentity,
+        custodianAccountId: 'owner', encryptionMode: 'plain', uid: 2401 });
+      // The OS process is the boundary: native setup, bindings, readiness and
+      // Session transport all execute their real owners beneath it.
+      native.effects.nativeReadiness!.system!.run = async () => {
+        throw Object.assign(new Error('PRIVATE_NATIVE_STDERR'), { code: 71, stderr: 'PRIVATE_NATIVE_STDERR' });
+      };
+      Reflect.set(client, 'agentIsolationMemberOperations', native.members);
+      const prepared = await prepareDaemonAgentIsolationIdentity({ hasAgentRuntime: true,
+        requesterWorkAttributionV1: birth,
+        prepareAgentIsolationMember: async () => (await client.prepareAgentIsolationMember({ requesterIdentity })).identity,
+      });
+      expect(native.runtime.store.get({ accountId: 'owner', machineId: 'machine' }, 'member-setup-1'))
+        .toMatchObject({ state: 'succeeded', result: { kind: 'ready' } });
+      if (prepared.ok) throw new Error('Expected native probe refusal after successful setup');
+      const response = SpawnSessionControlErrorResponseSchema.parse(projectSpawnSessionControlErrorResponse(prepared.result));
+      const result = SessionSpawnNewActionResultV1Schema.parse(projectSessionSpawnNewActionResultV1(projectSessionSpawnFailure({
+        errorCode: response.errorCode!, errorMessage: response.error, errorDetail: response.errorDetail,
+      })));
+      expect(result).toMatchObject({ type: 'error', code: 'spawn_failed', launchError: {
+        agentIsolationRefusal: { reason: 'launch_probe_failed', phase: 'native_execution_preparation', readinessCode: 'launch_probe_failed' },
+      } });
+      if (result.type !== 'error' || result.code !== 'spawn_failed') throw new Error('Expected launch failure');
+      expect(result.launchError?.agentIsolationRefusal).toMatchObject({ probeFailure: {
+        check: 'uid', exitCode: 71,
+        identity: { username: identity.username, uid: 2401, gid: 2401, home: identity.home, cwd: identity.home },
+      } });
+      expect(result.launchError?.agentIsolationRefusal?.remedy).toBeUndefined();
+      expect(JSON.stringify(result)).not.toContain('PRIVATE_NATIVE_STDERR');
+    } finally { await client.shutdown(); await rm(root, { recursive: true, force: true }); }
+  });
   it.each(['member', 'shared'] as const)('selects the admitted %s workspace before managed cwd allocation', async kind => {
     const root = await mkdtemp(join(tmpdir(), 'managed-cwd-admission-'));
     try {

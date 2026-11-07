@@ -16,7 +16,7 @@ export function buildAgentIsolationToolsRootStep(input: Readonly<{
   daemonUsername: string; daemonPrimaryGroup: string; toolsRoot: string;
 }>): Extract<MachineRecipeStepV1, { kind: 'directory' }> {
   return { id: 'tools-root', kind: 'directory', path: input.toolsRoot,
-    owner: input.daemonUsername, group: input.daemonPrimaryGroup, mode: 0o755 };
+    owner: input.daemonUsername, group: input.daemonPrimaryGroup, mode: 0o711 };
 }
 
 /** The same shared-account bootstrap steps; member provisioning remains daemon-owned. */

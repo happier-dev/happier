@@ -46,7 +46,7 @@ it('preserves a reviewed member policy across its desired publication and elevat
   expect(native.mutations.length).toBeGreaterThan(0);
 });
 
-it('refuses a stale reviewed metadata version before direct RPC effects even when the policy still matches', async () => {
+it('refuses a changed reviewed policy before direct RPC effects', async () => {
   const target = { serverId: 'home', machineId: 'guest', installationId: 'installation', custodianAccountId: 'owner' };
   const native = createAgentIsolationEffectsBoundary({ installationId: target.installationId,
     installedCli: '/opt/happier/cli/current/happier', readRoots: () => [], readSessionsToReplace: () => 0,
@@ -66,7 +66,8 @@ it('refuses a stale reviewed metadata version before direct RPC effects even whe
     { machineId: target.machineId, enabled: true }, { rpcContext: context }));
   if (preview.kind !== 'ready') throw new Error('Expected review');
   expect(await rpc.invokeLocal('machines.agentIsolation.set', { machineId: target.machineId, enabled: true,
-    expectedMetadataVersion: 16, expectedPolicy: preview.policy, expectedPlanDigest: preview.plan.planDigest }, { rpcContext: context }))
+    expectedMetadataVersion: 16, expectedPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' },
+    expectedPlanDigest: preview.plan.planDigest }, { rpcContext: context }))
     .toEqual({ kind: 'conflict', policy: { enabled: false }, metadataVersion: 17 });
   expect(native.launches).toEqual([]);
   expect(native.mutations).toEqual([]);

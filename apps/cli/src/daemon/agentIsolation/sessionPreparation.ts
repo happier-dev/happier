@@ -23,7 +23,9 @@ export function createSessionAgentIsolationMemberPreparation(options: Readonly<{
   resolveCurrentMachineExecutionOriginContext?(signal?: AbortSignal): Promise<CurrentMachineExecutionOriginContext | null>;
 }>) {
   return (
-    requester: Pick<RequesterSessionRuntimeContext, 'bootstrap'> | null | undefined,
+    requester: Readonly<{ bootstrap: Pick<RequesterSessionRuntimeContext['bootstrap'], 'attribution' | 'homeServerIdentityId'> & Readonly<{
+      savedSecretOperationContext: Pick<RequesterSessionRuntimeContext['bootstrap']['savedSecretOperationContext'], 'machineAdmission'>;
+    }> }> | null | undefined,
     lifetimeSignal: AbortSignal,
     accountSource?: SessionAgentIsolationAccountSource,
   ): PrepareAgentIsolationMember => async input => {
@@ -94,6 +96,7 @@ export function createSessionAgentIsolationMemberPreparation(options: Readonly<{
       message: 'Requester native setup is unavailable', retryable: false });
     return (await options.agentIsolation.prepareMember({
       requesterIdentity: { ...identity, homeServerIdentityId }, signal,
+      requesterMachineRole: birth?.savedSecretOperationContext.machineAdmission?.role,
     })).identity;
   };
 }

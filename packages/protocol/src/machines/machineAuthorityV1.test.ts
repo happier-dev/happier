@@ -11,18 +11,19 @@ const ordinary: MachineAdminAccessObservationV1 = {
 };
 
 describe('presentMachineAuthorityV1', () => {
-  it('keeps separate-user setup availability consistent with the reported isolation status', () => {
+  it('keeps separate-user review available while native prerequisites remain with Preview', () => {
     for (const isolation of [null, { kind: 'disabled' },
       { kind: 'unavailable', code: 'sudo_unavailable' }] as const) {
       const result = presentMachineAuthorityV1({ platform: 'linux', isolationPolicy: { enabled: false }, isolation });
       expect(result.isolation).toBe(isolation);
-      expect(result.separateUsers).toEqual({ placement: 'daemon', canEnable: isolation?.kind !== 'unavailable' });
+      expect(result.separateUsers).toEqual({ placement: 'daemon', availability: { kind: 'can_turn_on' } });
     }
     expect(presentMachineAuthorityV1({ platform: 'linux', isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' } })
-      .separateUsers).toEqual({ placement: 'member', canEnable: false });
+      .separateUsers).toEqual({ placement: 'member', availability: { kind: 'available' } });
     expect(presentMachineAuthorityV1({ platform: 'darwin', isolationPolicy: { enabled: false } })
-      .separateUsers).toEqual({ placement: 'daemon', canEnable: false });
-    expect(presentMachineAuthorityV1({}).separateUsers).toEqual({ placement: null, canEnable: false });
+      .separateUsers).toEqual({ placement: 'daemon', availability: { kind: 'unavailable', reason: 'unsupported_platform' } });
+    expect(presentMachineAuthorityV1({}).separateUsers).toEqual({ placement: null,
+      availability: { kind: 'unavailable', reason: 'metadata_unavailable' } });
   });
 
   it('carries AM-8 pending restart facts through strict observation, retained reads and the shared power presenter', () => {
@@ -74,6 +75,15 @@ describe('presentMachineAuthorityV1', () => {
     expect(result).toMatchObject({ hostAuthority: 'administrator', agentHostAuthority: 'ordinary',
       powerSources: ['rootEquivalentGroup'], rootEquivalentGroups: ['docker'], sharedAgentUid: true });
     expect(result.isolation).toBe(isolation);
+  });
+
+  it('presents per-person placement without describing it as a shared Agent identity or retracting delivered material', () => {
+    const result = presentMachineAuthorityV1({ platform: 'linux',
+      isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' }, sharedMachine: true,
+      isolation: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } });
+    expect(result.separateUsers).toEqual({ placement: 'member', availability: { kind: 'available' } });
+    expect(result.sharedAgentUid).toBe(false);
+    expect(result.deliveredMaterial).toEqual({ ownerVisible: true, sharedUserPeerVisible: true });
   });
 
   it('retains owner and shared-user peer visibility for Direct material before member separation', () => {

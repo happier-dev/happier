@@ -131,6 +131,7 @@ export function MachineSecuritySection(
         machineName={props.machineName}
         online={props.online}
         controls={controls}
+        canManage={props.canManage}
       />
     </>
   );
@@ -142,11 +143,14 @@ export function MachineSecurityView(
     machineName: string;
     online: boolean | null;
     controls: MachineSecurityControls;
+    /** Installing, restarting and checking need Manage (10-31); a Use grantee reads the pushed facts only. */
+    canManage?: boolean;
   }>,
 ) {
   const { updates, controls } = props;
+  const canManage = props.canManage ?? true;
   const machine = props.machineName;
-  const status = describeUpdatesStatus(updates, machine, props.online);
+  const status = describeUpdatesStatus(updates, machine, props.online, canManage);
   const busy =
     controls.review.kind !== 'idle' &&
     controls.review.kind !== 'settled' &&
@@ -159,6 +163,7 @@ export function MachineSecurityView(
         updates={updates}
         machineName={machine}
         online={props.online}
+        canManage={canManage}
       />
       <ItemGroup
         testID="machine-security-updates-group"
@@ -185,7 +190,7 @@ export function MachineSecurityView(
           loading={status.loading}
           showChevron={false}
           rightElement={
-            status.install && props.online === true ? (
+            status.install && canManage && props.online === true ? (
               <RoundButton
                 testID="machine-security-install"
                 size="small"
@@ -203,6 +208,7 @@ export function MachineSecurityView(
             machineName={machine}
             online={props.online}
             controls={controls}
+            canManage={canManage}
           />
         ) : null}
       </ItemGroup>
@@ -223,10 +229,15 @@ export function describeUpdatesStatus(
   updates: MachineUpdatesModel,
   machine: string,
   online: boolean | null,
+  canManage = true,
 ): UpdatesStatus {
   const s = 'machineDetailPage.security' as const;
   const security = updates.pendingSecurity;
   const all = updates.pendingAll;
+  // A Use grantee can't ask the Machine; without pushed facts there is nothing to show but who can.
+  if (updates.observation === null && !canManage) {
+    return { title: t(`${s}.needsManage`, { machine }), install: null };
+  }
   if (updates.observation === null) {
     if (
       updates.status === 'unknown' &&
@@ -344,12 +355,24 @@ function UpdatesFreshness(
     updates: MachineUpdatesModel;
     machineName: string;
     online: boolean | null;
+    canManage: boolean;
   }>,
 ) {
   const { updates } = props;
   if (!updates.stale) return null;
   const s = 'machineDetailPage.security' as const;
   const offline = props.online !== true;
+  if (!offline && !props.canManage) {
+    return (
+      <ItemGroup surface="none">
+        <SurfaceFreshnessLine
+          testID="machine-security-stale"
+          glyph="lock"
+          reason={t(`${s}.staleNeedsManage`, { machine: props.machineName })}
+        />
+      </ItemGroup>
+    );
+  }
   const unavailable =
     updates.status === 'unavailable' || updates.status === 'unverifiable';
   const reason = offline
@@ -388,12 +411,13 @@ function RestartRow(
     machineName: string;
     online: boolean | null;
     controls: MachineSecurityControls;
+    canManage: boolean;
   }>,
 ) {
   const { reboot } = props.controls;
   const machine = props.machineName;
   const s = 'machineDetailPage.security' as const;
-  const restartButton = (
+  const restartButton = !props.canManage ? undefined : (
     <RoundButton
       testID="machine-security-restart-start"
       size="small"

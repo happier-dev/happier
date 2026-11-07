@@ -1,10 +1,15 @@
+import { createHash } from 'node:crypto';
 import { lstat, mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { resolveManagedToolsRoot } from '@happier-dev/cli-common/agents';
 import { applyMachineSetupEffectPlan, checkMachineSetupEffectPlan, createMachineSetupNativeBackend,
   createCaddyContainerSetupSteps } from '@happier-dev/cli-common/machineSetup';
+import type { HostRequesterExecutionIdentity } from './agentIsolationLaunchPolicy';
 import { buildAgentIsolationProvisioningSteps } from './provisioning';
+
+afterEach(() => vi.unstubAllEnvs());
 
 describe('agent isolation provisioning', () => {
   it.skipIf(process.platform === 'win32').each(['caddy-first', 'member-first'] as const)(
@@ -46,4 +51,71 @@ describe('agent isolation provisioning', () => {
       } finally { await rm(root, { recursive: true, force: true }); }
     });
 
+  it('uses the observed daemon primary group, not the daemon username or happier, for managed directory access', () => {
+    vi.stubEnv('HAPPIER_FIRST_PARTY_INSTALL_HOME', '/srv/agent-qa-payload');
+    const requesterIdentity = { kind: 'isolated' as const, separationRequired: true, homeServerIdentityId: 'home-group',
+      requester: { serverId: 'profile-group', accountId: 'member-group', machineId: 'machine-group', installationId: 'installation-group' } };
+    const input = { daemonUsername: 'alice', daemonPrimaryGroup: 'engineers',
+      binaryPath: '/home/alice/.happier/stack-state/agent-qa/cli/cli/current/happier' };
+    for (const member of [undefined, requesterIdentity]) {
+      const steps = buildAgentIsolationProvisioningSteps({ ...input, ...(member ? { requesterIdentity: member } : {}) });
+      expect(steps.find(step => step.id === 'tools-root')).toMatchObject({
+        path: resolveManagedToolsRoot(), owner: 'alice', group: 'engineers', mode: 0o711 });
+      if (member) {
+        expect(steps.find(step => step.id === 'member-workspaces')).toMatchObject({ owner: 'alice', group: 'engineers' });
+        expect(steps.find(step => step.id === 'member-workspace')).toMatchObject({ group: 'engineers', mode: 0o2770 });
+      }
+    }
+    const missing = { ...input, daemonPrimaryGroup: null };
+    expect(() => buildAgentIsolationProvisioningSteps(missing))
+      .toThrowError(expect.objectContaining({ code: 'agent_isolation_unavailable', details: { reason: 'requester_authority_unavailable', phase: 'native_execution_preparation' } }));
+  });
+
+  it('provisions private qualified owner and member identities without common workspace group membership', () => {
+    const homeServerIdentityId = 'home-member-test';
+    const machineId = 'machine-member-test', installationId = 'installation-member-test';
+    const usernames = new Set<string>();
+    for (const accountId of ['owner', 'member-a', 'member-b']) {
+      const requesterIdentity = { kind: 'isolated' as const, separationRequired: accountId !== 'owner', homeServerIdentityId,
+        requester: { serverId: 'saved-profile', machineId, installationId, accountId } } satisfies HostRequesterExecutionIdentity & { homeServerIdentityId: string };
+      const input = { daemonUsername: 'happier' as const, daemonPrimaryGroup: 'happier', binaryPath: '/opt/happier/cli/current/happier', requesterIdentity };
+      const digest = createHash('sha256').update(JSON.stringify([homeServerIdentityId, machineId, installationId, accountId])).digest('hex');
+      const username = `hpm-${digest.slice(0, 24)}`;
+      const steps = buildAgentIsolationProvisioningSteps(input);
+      expect(steps.find(step => step.kind === 'user')).toMatchObject({ username, home: `/var/lib/happier/members/${digest}`,
+        shell: '/usr/sbin/nologin', locked: true, ownershipMarker: `happier-member-${digest}`, supplementaryGroups: [] });
+      expect(steps).toEqual(expect.arrayContaining([
+        expect.objectContaining({ kind: 'directory', path: `/var/lib/happier/members/${digest}`, owner: username, group: username, mode: 0o700 }),
+        expect.objectContaining({ kind: 'directory', path: `/srv/happier/members/${digest}`, owner: username, group: 'happier', mode: 0o2770 }),
+        expect.objectContaining({ kind: 'pathTraversal', path: '/srv/happier', agentUsername: username }),
+      ]));
+      expect(steps.some(step => step.kind === 'group')).toBe(false);
+      const rule = steps.find(step => step.kind === 'file');
+      if (rule?.kind !== 'file' || rule.content?.kind !== 'literal') throw new Error('Missing exact RunAs policy');
+      expect(rule.path).toBe(`/etc/sudoers.d/91-happier-${username}`);
+      expect(rule.content.value).toContain(`happier ALL=(${username}) NOPASSWD:NOSETENV:`);
+      expect(rule.content.value).not.toMatch(/\(ALL|\(root|happier-agent/);
+      usernames.add(username);
+    }
+    expect(usernames.size).toBe(3);
+  });
+  it('provisions the locked Agent, shared workspace and exact RunAs launch without root or Docker authority', () => {
+    const input = { daemonUsername: 'happier', daemonPrimaryGroup: 'happier', binaryPath: '/opt/happier/cli/current/happier' };
+    const steps = buildAgentIsolationProvisioningSteps(input);
+    expect(steps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: 'user', username: 'happier-agent', locked: true }),
+      expect.objectContaining({ kind: 'group', name: 'happier-workspace', members: ['happier', 'happier-agent'] }),
+      expect.objectContaining({ kind: 'directory', path: '/srv/happier', owner: 'happier', group: 'happier-workspace', mode: 0o2770 }),
+      expect.objectContaining({ kind: 'directory', path: resolveManagedToolsRoot(), owner: 'happier', group: 'happier', mode: 0o711 }),
+    ]));
+    const rule = steps.find(step => step.kind === 'file' && step.path === '/etc/sudoers.d/91-happier-agent');
+    expect(rule).toMatchObject({ kind: 'file', owner: 'root', group: 'root', mode: 0o440, validate: 'sudoers' });
+    if (rule?.kind !== 'file' || rule.content?.kind !== 'literal') throw new Error('Missing exact RunAs policy');
+    expect(rule.content.value).toContain('happier ALL=(happier-agent) NOPASSWD:NOSETENV:');
+    expect(rule.content.value).toContain('/opt/happier/cli/current/happier agent-launch');
+    expect(rule.content.value).toContain('umask=0002');
+    expect(rule.content.value).toContain('umask_override');
+    expect(rule.content.value).not.toMatch(/\(root\)|\(ALL/);
+    expect(steps.filter(step => step.kind === 'group').map(step => step.name)).toEqual(['happier-workspace']);
+  });
 });

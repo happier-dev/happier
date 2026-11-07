@@ -10,12 +10,14 @@ import type { RpcHandlerContext, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { buildActionExecutorContextForRpc } from '@/rpc/handlers/_actionDispatchAdapter';
 import { doesMachineRpcTargetMatchAdmission } from '@/api/machine/machineRpcAuthorization';
 import type { AgentIsolationSnapshot } from '@/daemon/agentIsolation/agentIsolationPolicy';
-import { prepareAgentIsolationEffects, prepareAgentIsolationEffectsResult, resolveAgentIsolationEffectIntent, type AgentIsolationEffectDependencies,
+import { prepareAgentIsolationEffectsResult, projectAgentIsolationPendingNativeStatus, resolveAgentIsolationEffectIntent, type AgentIsolationEffectDependencies,
   type PreparedAgentIsolationEffects } from '@/daemon/agentIsolation/agentIsolationProvisioner';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
+import { compareMachineSetupEffectPlansV1 } from '@happier-dev/cli-common/machineSetup';
+import { logger } from '@/ui/logger';
 import { runElevatedEffect } from '@/machines/adminAccess/runElevatedEffect';
 import { observeAgentIsolationNativeReadiness } from '@/daemon/agentIsolation/agentIsolationReadiness';
-import { selectHostRequesterExecutionIdentity, isHostRequesterUnrestrictedOwner,
+import { selectHostRequesterExecutionIdentity, isHostRequesterUnrestrictedOwner, resolveHostRequesterAgentExecutionIdentity,
   type HostRequesterExecutionIdentity } from '@/daemon/agentIsolation/agentIsolationLaunchPolicy';
 
 export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRegistrar, options: Readonly<{
@@ -57,11 +59,13 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       const snapshot = options.read();
       if (actionId === 'machines.agentIsolation.status') {
         const bootstrap = context?.requesterSessionBootstrap;
-        const identity = selectHostRequesterExecutionIdentity({ rpcContext: context,
+        const personIdentity = selectHostRequesterExecutionIdentity({ rpcContext: context,
           hostHomeServerIdentityId: homeServerIdentityId, hostCustodianAccountId: target!.custodianAccountId,
           hostExecutionTarget: target!, ...(bootstrap ? { sessionRequester: bootstrap.attribution,
             sessionRequesterHomeServerIdentityId: bootstrap.homeServerIdentityId,
             sessionCustodianAccountId: target!.custodianAccountId } : {}) });
+        const identity = resolveMachineAgentExecutionPlacementV1({ policy: snapshot, platform: process.platform }) === 'member'
+          ? resolveHostRequesterAgentExecutionIdentity(personIdentity) : personIdentity;
         let result: MachineAgentIsolationOwnStatusV1;
         if (identity.kind === 'unknown' || !homeServerIdentityId) result = { protection: 'unavailable',
           status: { kind: 'unavailable', code: 'metadata_unavailable' } };
@@ -100,27 +104,31 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       const operationId = acceptance?.actionId === actionId ? acceptance.operationId
         : actionId === 'machines.agentIsolation.preview'
           ? context?.localActionContext?.actionRequestId ?? context?.transportRequestId : undefined;
-      const prepare = (expectedPolicy?: MachineAgentIsolationPolicyV1) => prepareAgentIsolationEffects({ machineId: request.machineId,
+      const prepareResult = (expectedPolicy?: MachineAgentIsolationPolicyV1) => prepareAgentIsolationEffectsResult({ machineId: request.machineId,
         enabled: desired.enabled, port, status: options.read().status, operationId, signal: context?.signal,
         ...(desired.memberProvisioning ? { memberProvisioning: desired.memberProvisioning } : {}),
         verifyCurrent: verify, ...(expectedPolicy ? { expectedPolicy } : {}) }, effects);
+      const prepare = async (expectedPolicy?: MachineAgentIsolationPolicyV1) => {
+        const result = await prepareResult(expectedPolicy);
+        return 'preview' in result ? result : null;
+      };
       if (actionId === 'machines.agentIsolation.preview') {
-        const prepared = await prepareAgentIsolationEffectsResult({ machineId: request.machineId,
-          enabled: desired.enabled, port, status: options.read().status, operationId, signal: context?.signal,
-          ...(desired.memberProvisioning ? { memberProvisioning: desired.memberProvisioning } : {}),
-          verifyCurrent: verify }, effects).catch(() => null);
+        const prepared = await prepareResult().catch(() => null);
         const preview = MachineAgentIsolationPreviewResultV1Schema.parse(prepared && 'preview' in prepared
           ? prepared.preview : prepared ?? unavailable());
         // Reinstall withdraws runtime proof, not native setup. An explicit CHECK
         // can qualify that unknown shared identity without repeating APPLY.
-        const status = preview.kind === 'ready' && preview.status.kind === 'unavailable'
+        const pendingStatus = preview.kind === 'ready' && preview.plan.requiresAdmin && preview.status.kind === 'unavailable'
+          && preview.status.prerequisite?.reason === 'native_effect_pending'
+          && agentIsolationMetadataFieldV1.equal(preview.policy, desiredPolicy) ? preview.status : undefined;
+        const status = pendingStatus ?? (preview.kind === 'ready' && preview.status.kind === 'unavailable'
           && preview.status.code === 'provisioning_unavailable'
           && agentIsolationMetadataFieldV1.equal(preview.policy, desiredPolicy)
           && resolveMachineAgentExecutionPlacementV1({ policy: preview.policy, platform: effects.platform }) === 'sharedAgent'
           && !preview.plan.requiresAdmin && preview.plan.sessionsToReplace === 0 && effects.nativeReadiness
           ? await observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
             roots: preview.plan.roots.map(root => root.path), signal: context?.signal,
-            privateRoots: effects.nativeReadiness.privateRoots, system: effects.nativeReadiness.system }) : undefined;
+            privateRoots: effects.nativeReadiness.privateRoots, system: effects.nativeReadiness.system }) : undefined);
         if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
         if (status) {
           await effects.publishStatus(status);
@@ -133,18 +141,12 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       const failed = (code: 'cancelled' | 'denied' | 'locked' | 'invalid' | 'unavailable' | 'outcome_unknown', operationId?: string) =>
         MachineAgentIsolationSetResultV1Schema.parse({ kind: 'failed', code, ...(operationId ? { operationId } : {}) });
       const requireReview = async (prepared: PreparedAgentIsolationEffects) => {
-        // A concurrent desired write may satisfy an older field request. The
-        // new review's digest must bind its returned policy, not that old basis.
-        const review = prepared.setupPlan.basis.kind === 'agentIsolation'
-          && agentIsolationMetadataFieldV1.equal(prepared.setupPlan.basis.expectedPolicy, prepared.preview.policy)
-          ? prepared : await prepare().catch(() => null);
-        if (!review) return failed('unavailable', operationId);
         if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
         context?.localActionContext?.operationOwnerUpdate?.update({ state: 'running', observation: {
           kind: 'review_required', code: 'agent_isolation_effect_changed', machineId: mutation.machineId,
-          enabled: mutation.enabled, current: review.preview,
+          enabled: mutation.enabled, current: prepared.preview,
         } });
-        return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'plan_changed', ...(operationId ? { operationId } : {}), current: review.preview });
+        return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'plan_changed', ...(operationId ? { operationId } : {}), current: prepared.preview });
       };
       const before = await port.read();
       if (before.status !== 'ready') return failed(before.status);
@@ -158,9 +160,8 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'conflict', policy: previous.policy,
           metadataVersion: before.metadataVersion });
       }
-      if ((!agentIsolationMetadataFieldV1.equal(previous.policy, mutation.expectedPolicy)
-        && !agentIsolationMetadataFieldV1.equal(previous.policy, desiredPolicy))
-        || before.metadataVersion !== mutation.expectedMetadataVersion) return MachineAgentIsolationSetResultV1Schema.parse({
+      if (!agentIsolationMetadataFieldV1.equal(previous.policy, mutation.expectedPolicy)
+        && !agentIsolationMetadataFieldV1.equal(previous.policy, desiredPolicy)) return MachineAgentIsolationSetResultV1Schema.parse({
           kind: 'conflict', policy: previous.policy, metadataVersion: before.metadataVersion });
       let prepared = await prepare(mutation.expectedPolicy).catch(() => null);
       if (!prepared) return failed('unavailable');
@@ -198,7 +199,8 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
         return failed(result.status === 'outcomeUnknown' ? 'outcome_unknown' : result.status);
       }
       const publish = async (status: MachineAgentIsolationStatusV1) => {
-        if (!await verify()) throw new RpcError('Current Machine admission is required', RPC_ERROR_CODES.FORBIDDEN);
+        // The admitted apply owns its status through settlement. Cancellation
+        // stops native work; it must still withdraw the applying publication.
         await effects.publishStatus(status);
         const label = status.kind === 'applying' ? ({ account: 'Preparing separate Agent user', sudoers: 'Configuring Agent launch',
           workspace: 'Preparing workspace access', runtime_replacement: 'Waiting for Agent runtime replacement' } as const)[status.phase]
@@ -206,9 +208,14 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
             ? 'Agent isolation ready' : 'Agent isolation unavailable';
         context?.localActionContext?.operationProgress?.update({ phase: status.kind === 'applying' ? status.phase : status.kind, label });
       };
-      const parkForReview = async () => {
+      const parkForReview = async (stage: 'before_native_apply' | 'native_apply_refused' | 'post_apply_check' | 'after_native_readiness',
+        current?: PreparedAgentIsolationEffects | null) => {
         await publish({ kind: 'applying', phase: 'workspace' });
-        const fresh = await prepare().catch(() => null);
+        const fresh = current ?? await prepare().catch(() => null);
+        logger.warnLocalFile('[agent-isolation] Apply requires review', { operationId, stage,
+          ...(fresh && prepared ? { comparison: compareMachineSetupEffectPlansV1(prepared.setupPlan, fresh.setupPlan),
+            pendingFields: fresh.setupPlan.nativeFacts.flatMap((fact, index) => fact.status === 'satisfied' ? []
+              : [`nativeFacts[${index}].status`]) } : {}) });
         if (!fresh) return failed('unavailable', operationId);
         return await requireReview(fresh);
       };
@@ -227,7 +234,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
             : prepared.setupPlan.steps.every(step => intent.steps.some(candidate => sameStrictJsonValue(candidate, step))));
       };
       if (!await verifyEffect()) {
-        return await parkForReview();
+        return await parkForReview('before_native_apply');
       }
       const retirement = prepared.preview.plan.retirement ? { retirement: {
         removed: prepared.preview.plan.retirement.filter(effect => effect.action === 'remove').map(effect => effect.stepId),
@@ -251,7 +258,7 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
           emit: event => { effects.elevation.emit?.(event); context?.localActionContext?.operationProgress?.update({
             phase: event.type, label: 'Applying reviewed Agent isolation changes' }); } });
         if (effect.outcome !== 'applied') {
-          if (effect.outcome === 'not_applied' && effect.reasonCode === 'plan_stale') return await parkForReview();
+          if (effect.outcome === 'not_applied' && effect.reasonCode === 'plan_stale') return await parkForReview('native_apply_refused');
           await publish({ kind: 'unavailable', code: 'provisioning_unavailable' });
           if (effect.outcome === 'outcome_unknown') context?.localActionContext?.operationOwnerUpdate?.update({ state: 'running',
             outcome: { ok: false, errorCode: 'outcome_unknown', error: 'Elevated isolation effects could not be confirmed' } });
@@ -263,16 +270,33 @@ export function registerDaemonMachineAgentIsolationRpcHandlers(rpc: RpcHandlerRe
       // qualification may publish it; existing Sessions must first be replaced.
       let status: MachineAgentIsolationStatusV1 = !mutation.enabled && effects.readSessionsToReplace() === 0
         ? { kind: 'disabled' } : { kind: 'applying', phase: 'runtime_replacement' };
-      if (mutation.enabled && effects.readSessionsToReplace() === 0 && effects.nativeReadiness) {
-        const ready = await prepare().catch(() => null);
-        if (!ready || ready.preview.plan.requiresAdmin) return await parkForReview();
-        status = await observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
-          roots: ready.preview.plan.roots.map(root => root.path), signal: context?.signal,
-          privateRoots: effects.nativeReadiness.privateRoots, system: effects.nativeReadiness.system });
-        // Neither a revoked target, changed policy/Workspace census nor a newly
-        // admitted predecessor Session can inherit the completed native proof.
-        if (!await verifyEffect()) return await parkForReview();
-        if (effects.readSessionsToReplace() !== 0) status = { kind: 'applying', phase: 'runtime_replacement' };
+      if (mutation.enabled && effects.readSessionsToReplace() === 0) {
+        // One finite CHECK after APPLY. Pending facts have no advancing event:
+        // settle them with their native cause and the existing reviewed repair.
+        const observed = await prepareResult().catch(() => null);
+        status = { kind: 'unavailable', code: 'provisioning_unavailable', prerequisite: {
+          reason: 'native_effect_pending', requiredFact: 'native_readiness', detail: 'native_readiness_unavailable',
+          remedy: 'machines.agentIsolation.preview',
+        } };
+        if (observed && 'preview' in observed) {
+          const ready = observed;
+          if (ready.preview.plan.requiresAdmin && ready.preview.plan.planDigest !== prepared.preview.plan.planDigest)
+            return await parkForReview('post_apply_check', ready);
+          const pendingStatus = projectAgentIsolationPendingNativeStatus(ready.setupPlan);
+          if (pendingStatus) {
+            status = pendingStatus;
+            logger.warnLocalFile('[agent-isolation] Applied setup is not ready', { operationId, stage: 'post_apply_check',
+              comparison: compareMachineSetupEffectPlansV1(prepared.setupPlan, ready.setupPlan),
+              pendingFields: ready.setupPlan.nativeFacts.flatMap((fact, index) => fact.status === 'satisfied' ? []
+                : [`nativeFacts[${index}].status`]) });
+          } else if (effects.nativeReadiness) status = await observeAgentIsolationNativeReadiness({ installedCli: effects.installedCli,
+            roots: ready.preview.plan.roots.map(root => root.path), signal: context?.signal,
+            privateRoots: effects.nativeReadiness.privateRoots, system: effects.nativeReadiness.system });
+          // Neither changed policy/Workspace census nor a newly admitted
+          // predecessor Session can inherit the completed native proof.
+          if (!await verifyEffect()) return await parkForReview('after_native_readiness');
+          if (effects.readSessionsToReplace() !== 0) status = { kind: 'applying', phase: 'runtime_replacement' };
+        } else if (observed) status = projectMachineAgentIsolationUnavailableStatusV1(observed);
       }
       await publish(status);
       return MachineAgentIsolationSetResultV1Schema.parse({ kind: 'accepted', operationId, metadataVersion: result.metadataVersion, status, ...retirement });

@@ -2,11 +2,15 @@ import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import type { SessionSpawnNewInitialInputDispositionV1, SessionSpawnNewResultV1 } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewResultV1';
 import type { ActionOperationFailureV1 } from '@happier-dev/protocol/actions/operations/v1';
 import { ApprovalStaleFailureDetailsSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
+import { WorkflowTargetUnavailableDetailsV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { SessionCreationCurrentnessFailureV1Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnLaunchErrorV1';
 
 import { presentSessionStartupFailureCause } from '@/components/sessions/presentation/sessionRuntimeIssuePresentation';
 import { presentProviderError } from '@/providers/connection/errorPresentation';
 import { connectedServicePoolExclusionCountsText } from '@/components/sessions/connectedServices/diagnostics/poolExclusionPresentation';
+import { resolveConnectedServiceUxDiagnosticPresentation } from '@/components/sessions/connectedServices/diagnostics/connectedServiceUxDiagnostics';
 import { t } from '@/text';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import type { SessionSpawnNewActionResult } from './sessionSpawnNewAction';
 
 export type SessionSpawnNewActionFailurePresentation =
@@ -104,28 +108,65 @@ export function resolveSessionSpawnNewActionFailureMessage(
 
 function sessionSpawnFailureDisplayCode(failure: Readonly<{ errorCode: string; details?: unknown }>): string {
     const stale = failure.errorCode === 'approval_stale' ? ApprovalStaleFailureDetailsSchema.safeParse(failure.details) : null;
-    return stale?.success ? `${failure.errorCode}:${stale.data.reason}` : failure.errorCode;
+    if (stale?.success) return `${failure.errorCode}:${stale.data.reason}`;
+    const unavailable = failure.errorCode === 'target_unavailable'
+        ? WorkflowTargetUnavailableDetailsV1Schema.safeParse(failure.details) : null;
+    return unavailable?.success ? `${failure.errorCode}:${unavailable.data.reason}` : failure.errorCode;
 }
 
 export function resolveSessionSpawnNewResultFailureMessage(
     result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
+    requestId?: string | null,
 ): string {
+    const message = resolveSessionSpawnNewResultFailureBody(result);
+    return requestId ? `${message}\n\n${t('session.startFailure.requestId', { id: requestId })}` : message;
+}
+
+function resolveSessionSpawnNewResultFailureBody(
+    result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
+): string {
+    if (result.type === 'error' && result.code === 'spawn_failed' && result.launchError?.agentIsolationRefusal?.remedy) {
+        return t(result.launchError.agentIsolationRefusal.remedy.kind === 'ask_machine_manager'
+            ? 'errors.agentIsolationMemberSetupAskManager' : 'errors.agentIsolationMemberSetupOpenSecurity');
+    }
     if (result.type === 'error' && result.code === 'spawn_failed' && result.providerError) {
         const presentation = presentProviderError(result.providerError);
         return `${t(presentation.titleKey)}\n\n${t(presentation.descriptionKey)}`;
     }
     const poolFailure = resolveSessionSpawnNewConnectedAccountFailure(result);
     if (poolFailure) return poolFailure.message;
+    const diagnostic = result.type === 'error' && result.code === 'spawn_failed'
+        ? resolveConnectedServiceUxDiagnosticPresentation(result.launchError?.uxDiagnostic) : null;
+    if (diagnostic) return t('errors.errorWithCode', {
+        message: presentSessionStartupFailureCause(diagnostic.code) ?? t(diagnostic.bodyKey), code: diagnostic.code,
+    });
     const key = resolveSessionSpawnNewResultFailureMessageKey(result);
+    if (result.type === 'error' && result.code === 'spawn_failed' && result.launchError?.profileRefusal) {
+        const { profileId, reason, catalogStatus } = result.launchError.profileRefusal;
+        return `${t('errors.errorWithCode', { message: result.launchError.message, code: result.launchError.code })}\n\n${profileId}: ${reason}${catalogStatus ? ` (${catalogStatus})` : ''}`;
+    }
+    if (result.type === 'error' && result.code === 'spawn_failed'
+        && result.launchError?.code === 'currentness_unavailable') {
+        const currentness = SessionCreationCurrentnessFailureV1Schema.safeParse(result.launchError.currentnessFailure);
+        return t('errors.errorWithCode', { message: t(key), code: currentness.success
+            ? `${result.launchError.code}:${currentness.data.reason}` : result.launchError.code });
+    }
+    if (result.type === 'error' && result.code === 'spawn_failed'
+        && result.launchError?.code === 'CHILD_EXITED_BEFORE_WEBHOOK' && result.launchError.childExit) {
+        return `${t('errors.errorWithCode', { message: t(key), code: result.launchError.code })}\n\n${result.launchError.message}`;
+    }
     if (result.type !== 'pending' && (key === 'newSession.failedToStart'
         || key === 'connectedServices.diagnostics.body.connected_service_credential_reconnect_required')) {
         // A closed launch cause outranks the generic guidance; any other cause keeps the
         // outer code so no private detail reaches the person.
         const cause = result.code === 'spawn_failed' ? result.launchError?.code : undefined;
         const message = presentSessionStartupFailureCause(cause);
-        return message !== null && cause !== undefined
+        const presented = message !== null && cause !== undefined
             ? t('errors.errorWithCode', { message, code: cause })
             : t('errors.errorWithCode', { message: t(key), code: result.code });
+        const defaultFailure = result.code === 'spawn_failed'
+            ? result.launchError?.failureCause?.connectedServicesDefault : undefined;
+        return defaultFailure ? `${presented}\n\n${defaultFailure.phase}${defaultFailure.catalogReason ? `: ${defaultFailure.catalogReason}` : ''}` : presented;
     }
     return t(key);
 }
@@ -133,6 +174,27 @@ export function resolveSessionSpawnNewResultFailureMessage(
 export type SessionSpawnConnectedAccountRecoveryAction =
     | Readonly<{ kind: 'reconnect'; serviceId: string; profileId: string }>
     | Readonly<{ kind: 'select'; serviceId: string }>;
+
+/** Consumes the admitted requester's remedy; Security owns any subsequent setup review. */
+export function presentSessionSpawnNewAgentIsolationFailure(
+    result: Exclude<SessionSpawnNewResultV1, Readonly<{ type: 'success' }>>,
+    navigate: (href: ReturnType<typeof machinePageHref>) => void,
+    alert: typeof import('@/modal').Modal.alert,
+    requestId?: string | null,
+): boolean {
+    const remedy = result.type === 'error' && result.code === 'spawn_failed'
+        ? result.launchError?.agentIsolationRefusal?.remedy : undefined;
+    if (!remedy) return false;
+    const message = resolveSessionSpawnNewResultFailureMessage(result, requestId);
+    if (remedy.kind === 'ask_machine_manager') alert(t('common.error'), message);
+    else alert(t('common.error'), message, [
+        { text: t('machineDetailPage.subPages.security'), onPress: () => navigate(machinePageHref({
+            door: 'rail', target: remedy.target, page: 'security',
+        })) },
+        { text: t('common.cancel'), style: 'cancel' },
+    ]);
+    return true;
+}
 
 /** Shared recovery for fresh-start and Resume credential refusals. */
 export function presentSessionCredentialReconnectFailure(

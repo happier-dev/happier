@@ -20,6 +20,8 @@ export const BotTemplateUpdateDiffResultV1Schema = lazyZodSchema(() => z.strictO
   connectedServices: z.optional(ConnectedServiceBindingsV2Schema),
   offer: z.enum(['available', 'current', 'skipped', 'stopped']),
   upstream: BotTemplatePreviewResultV1Schema,
+  acceptedSuggestions: z.strictObject({ firstTask: BotTemplateContentV1Schema.shape.firstTask,
+    suggestedAgent: BotTemplateContentV1Schema.shape.suggestedAgent }),
   instructions: z.nullable(z.strictObject({ ref: BotTemplateDraftRefV1Schema, title: z.string(), revision: ArtifactRevisionV1Schema, comparison: ThreeWayTextComparisonV1Schema })),
   skills: z.array(z.strictObject({ key: z.string(), title: z.string(), status: z.enum(['added', 'removed', 'existing', 'deleted']),
     canTake: z.boolean(), skillId: z.optional(z.string()), revision: z.optional(z.string()), files: z.array(SkillUpdateFileV1Schema) })),
@@ -27,7 +29,7 @@ export const BotTemplateUpdateDiffResultV1Schema = lazyZodSchema(() => z.strictO
 }));
 export const BotTemplateUpdateApplyInputV1Schema = lazyZodSchema(() => z.strictObject({
   sessionRef: BotTemplateSourceSessionRefV1Schema, expectedVersion: BotTemplateVersionV1Schema,
-  expectedRevision: z.optional(ArtifactRevisionV1Schema), expectedMetadataRevision: z.number().check(z.int(), z.nonnegative()),
+  expectedRevision: z.optional(ArtifactRevisionV1Schema),
   instructions: z.optional(z.strictObject({ expectedRevision: ArtifactRevisionV1Schema,
     choices: z.optional(choices), markdown: z.optional(z.string()) })),
   skills: z.optional(z.record(z.string(), z.strictObject({ choice: z.enum(['keep', 'take', 'remove', 'skip']),

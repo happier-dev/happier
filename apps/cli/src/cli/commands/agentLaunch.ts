@@ -1,7 +1,8 @@
 import { constants, userInfo } from 'node:os';
 import type { CommandHandler } from '../commandRegistry';
-import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, readAgentLaunchFrame } from '../../daemon/agentIsolation/agentLaunchFrame';
+import { AGENT_LAUNCH_TERMINAL_READY, AGENT_LAUNCH_TERMINAL_ACCEPTED, AgentLaunchFrameError, readAgentLaunchFrame } from '../../daemon/agentIsolation/agentLaunchFrame';
 import { executeAgentLaunchPayload } from '../../daemon/agentIsolation/agentLaunchShim';
+import { AgentLaunchDiagnosticError } from '../../daemon/agentIsolation/agentLaunchDiagnostics';
 import { observeCurrentAgentIsolationLaunchIdentity } from '../../daemon/agentIsolation/agentIsolationNativeIdentity';
 
 type AgentLaunchStopSignal = 'SIGTERM' | 'SIGINT' | 'SIGHUP';
@@ -13,7 +14,7 @@ export async function runAgentLaunchShim(args: readonly string[]): Promise<void>
     || identity.uid === 0 || process.getuid?.() !== identity.uid) {
     throw Object.assign(new Error('agent_launch_identity_unavailable'), { code: 'agent_launch_identity_unavailable' });
   }
-  if (args.length) throw Object.assign(new Error('agent_launch_frame_invalid'), { code: 'agent_launch_frame_invalid' });
+  if (args.length) throw new AgentLaunchFrameError();
   const terminal = process.stdin.isTTY === true && process.stdout.isTTY === true;
   let readingTerminalFrame = false;
   const controller = new AbortController();
@@ -53,13 +54,25 @@ export async function runAgentLaunchShim(args: readonly string[]): Promise<void>
       input: process.stdin, stdout: process.stdout, stderr: process.stderr, signal: controller.signal,
       ...(terminal ? { terminal: { accepted: () => { process.stdout.write(AGENT_LAUNCH_TERMINAL_ACCEPTED); } } } : {}) });
     process.exitCode = result.code ?? (result.signal ? 128 + constants.signals[result.signal] : 1);
+    if (terminal && (result.code !== 0 || result.signal)) {
+      process.stderr.write(`${new AgentLaunchDiagnosticError(controller.signal.aborted
+        ? { stage: 'caller_cancelled' } : { stage: 'child_exit', exitCode: result.code, signal: result.signal }).message}\n`);
+    }
   } catch (error) {
     if (requestedSignal) {
       process.exitCode = 128 + constants.signals[requestedSignal];
-      return;
+      if (!(error instanceof AgentLaunchDiagnosticError) || error.stage === 'caller_cancelled') {
+        process.stderr.write(`${error instanceof AgentLaunchDiagnosticError
+          ? error.message : new AgentLaunchDiagnosticError({ stage: 'caller_cancelled' }).message}\n`);
+        return;
+      }
     }
     throw error;
   } finally {
+    // The native child has settled. Release the frame/input reader even when
+    // exec failed before stream forwarding; the parent keeps its input open
+    // until this shim exits and must not have to time out to observe failure.
+    if (!terminal) process.stdin.destroy();
     if (terminal && readingTerminalFrame) process.stdin.setRawMode(false);
     process.off('SIGTERM', terminate);
     process.off('SIGINT', interruptInput);
@@ -70,9 +83,15 @@ export async function runAgentLaunchShim(args: readonly string[]): Promise<void>
 export const handleAgentLaunchCliCommand: CommandHandler = async context => {
   try { await runAgentLaunchShim(context.args.slice(1)); }
   catch (error) {
+    if (error instanceof AgentLaunchDiagnosticError || error instanceof AgentLaunchFrameError) {
+      process.stderr.write(`${error.message}\n`);
+      process.exitCode = error instanceof AgentLaunchDiagnosticError
+        ? error.exitCode ?? (error.signal ? 128 + constants.signals[error.signal] : 1) : 1;
+      return;
+    }
     const code = error && typeof error === 'object' ? Reflect.get(error, 'code') : undefined;
     const publicCodes = ['agent_launch_identity_unavailable', 'agent_launch_frame_invalid', 'agent_launch_material_invalid',
-      'agent_launch_stream_failed', 'agent_launch_transport_unavailable'];
+      'agent_launch_transport_unavailable'];
     process.stderr.write(`${typeof code === 'string' && publicCodes.includes(code) ? code : 'agent_launch_failed'}\n`);
     process.exitCode = 1;
   }

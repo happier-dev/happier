@@ -1,17 +1,20 @@
 import { lstat, mkdir, readFile, realpath, rm, rmdir } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
-import type { Readable, Writable } from 'node:stream';
+import { Readable, type Writable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import { userInfo } from 'node:os';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { classifySpawnFailure } from '@/processes/spawnFailure/classifySpawnFailure';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
 import { isCanonicalConnectedServiceMaterializedRoot,
   ensurePrivateConnectedServiceMaterializedRoot } from '../connectedServices/materialize/privateMaterializedRoot';
 import { writeBytesAtomic } from '../../utils/fs/writeJsonAtomic';
-import { parseAgentLaunchPayload, type AgentLaunchPayload, type AgentLaunchFramePayload } from './agentLaunchFrame';
+import { AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH, parseAgentLaunchPayload, type AgentLaunchPayload, type AgentLaunchFramePayload } from './agentLaunchFrame';
 import { createBestEffortCleanupDirectory } from '../connectedServices/materialization/materializer';
 import { grantExactUidPathAccess } from '@/utils/fs/unixPathAccess';
 import { prepareAgentLaunchIdentityCache, retireAgentLaunchOperationRuntime } from './agentLaunchRuntime';
+import { AgentLaunchDiagnosticError, createAgentLaunchStderr, type AgentLaunchFailure, type AgentLaunchFailureStage } from './agentLaunchDiagnostics';
 
 async function prepareNativeSocketDirectory(payload: AgentLaunchPayload): Promise<() => Promise<void>> {
   const directory = payload.nativeSocketDirectory;
@@ -68,6 +71,7 @@ async function prepareAgentLaunchMaterials(input: AgentLaunchPayload, agentHome:
   // Finish directory ownership/privacy admission before cleanup can acquire
   // selected bytes. A directory refusal must retain all preexisting files.
   await ensurePrivateConnectedServiceMaterializedRoot(payload.runtimeHome);
+  await ensurePrivateConnectedServiceMaterializedRoot(join(payload.runtimeHome, AGENT_LAUNCH_NATIVE_HOME_RELATIVE_PATH));
   for (const entry of entries) await ensurePrivateConnectedServiceMaterializedRoot(dirname(entry.path));
   return { payload, entries };
 }
@@ -89,7 +93,7 @@ export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, 
   /** Actual process terminal only; the fixed RunAs shim derives this from isTTY. */
   terminal?: Readonly<{ accepted(): void }>;
 }>): Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>> {
-  io.signal?.throwIfAborted();
+  if (io.signal?.aborted) throw new AgentLaunchDiagnosticError({ stage: 'caller_cancelled' });
   if ('action' in input) {
     await retireAgentLaunchOperationRuntime(await realpath(io.agentHome), input.runtimeHome);
     return { code: 0, signal: null };
@@ -123,9 +127,9 @@ export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, 
     const cacheHome = await prepareAgentLaunchIdentityCache(await realpath(io.agentHome));
     await publishPreparedAgentLaunchMaterials(prepared);
     cleanupNativeSocketDirectory = await prepareNativeSocketDirectory(payload);
-    io.signal?.throwIfAborted();
+    if (io.signal?.aborted) throw new AgentLaunchDiagnosticError({ stage: 'caller_cancelled' });
     const { spawnSupervisedPluginProcess } = await import('../../plugins/runtime/exec/processSupervisor');
-    io.signal?.throwIfAborted();
+    if (io.signal?.aborted) throw new AgentLaunchDiagnosticError({ stage: 'caller_cancelled' });
     const identity = userInfo();
     const environment = { ...payload.environment, HOME: io.agentHome, USER: identity.username, LOGNAME: identity.username,
       SHELL: '/bin/sh', XDG_CONFIG_HOME: join(payload.runtimeHome, '.config'),
@@ -138,6 +142,7 @@ export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, 
       const child = (() => {
         try { return spawn(payload.executable, [...payload.args], { cwd: payload.cwd, env: environment,
           stdio: 'inherit', detached: false }); }
+        catch (error) { throw new AgentLaunchDiagnosticError({ stage: 'exec', errno: classifySpawnFailure(error).errno }); }
         finally { process.umask(mask); }
       })();
       let stop: Promise<void> | undefined;
@@ -152,7 +157,7 @@ export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, 
       if (io.signal?.aborted) interrupt();
       try {
         const result = await new Promise<Readonly<{ code: number | null; signal: NodeJS.Signals | null }>>((resolve, reject) => {
-          child.once('error', reject);
+          child.once('error', error => reject(new AgentLaunchDiagnosticError({ stage: 'exec', errno: classifySpawnFailure(error).errno })));
           child.once('spawn', () => { io.terminal!.accepted(); });
           child.once('exit', (code, signal) => resolve({ code, signal }));
         });
@@ -168,33 +173,71 @@ export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, 
       try {
         return spawnSupervisedPluginProcess({ command: payload.executable, args: payload.args, cwd: payload.cwd,
           env: environment, signals: io.signal ? [io.signal] : [], spawnOptions: { detached: true },
-          // Output travels through the live pipes; do not retain another copy.
+          // Protocol stdout stays binary. The shim owns one redacted stderr
+          // tail; forwarding noise would bury its failure in outer head capture.
           maxStdoutBytes: 0, maxStderrBytes: 0 });
-      } finally { process.umask(mask); }
+      } catch (error) { throw new AgentLaunchDiagnosticError({ stage: 'exec', errno: classifySpawnFailure(error).errno }); }
+      finally { process.umask(mask); }
     })();
-    const pipe = (work: Promise<void>) => work.catch(async (error: unknown) => {
+    const stderr = createAgentLaunchStderr(payload);
+    let firstFailure: AgentLaunchFailure | undefined;
+    const record = (failure: AgentLaunchFailure) => { firstFailure ??= failure; };
+    const cancelled = () => record({ stage: 'caller_cancelled' });
+    const execFailed = (error: unknown) => record({ stage: 'exec', errno: classifySpawnFailure(error).errno });
+    const exited = (exitCode: number | null, signal: NodeJS.Signals | null) => {
+      if (exitCode !== 0 || signal) record({ stage: 'child_exit', exitCode, signal });
+    };
+    supervised.child.once('error', execFailed);
+    supervised.child.once('exit', exited);
+    io.signal?.addEventListener('abort', cancelled, { once: true });
+    if (io.signal?.aborted) cancelled();
+    const pipe = (stage: AgentLaunchFailureStage, work: Promise<void>) => work.catch(async () => {
+      // A child exit can close stdin before its exit event is delivered. That
+      // shutdown is a consequence; retain the native exit rather than EPIPE.
+      if (stage !== 'stdin' || supervised.child.exitCode === null && supervised.child.signalCode === null) record({ stage });
       await supervised.dispose();
-      throw error;
     });
     try {
-      const [result, input, output, errorOutput] = await Promise.all([
+      // The supervisor already observes output, making these streams flowing.
+      // Attach forwarding before yielding: Bun can deliver a finite child's
+      // output before the spawn continuation runs, and zero-byte capture drops it.
+      const output = [
+        pipe('stdout', pipeline(supervised.child.stdout, io.stdout, { end: false })),
+        pipe('stderr', pipeline(supervised.child.stderr, stderr.stream)),
+      ];
+      // Keep stdin behind native cwd/exec admission so a failed spawn retains
+      // its initiating exec diagnostic rather than consequent input shutdown.
+      try { await once(supervised.child, 'spawn'); }
+      catch { throw new AgentLaunchDiagnosticError(firstFailure ?? { stage: 'exec' }); }
+      const [result] = await Promise.all([
         supervised.handle.wait(),
-        pipe(pipeline(io.input, supervised.child.stdin)).then(() => null, error => error as unknown),
-        pipe(pipeline(supervised.child.stdout, io.stdout, { end: false })).then(() => null, error => error as unknown),
-        pipe(pipeline(supervised.child.stderr, io.stderr, { end: false })).then(() => null, error => error as unknown),
+        pipe('stdin', pipeline(io.input, supervised.child.stdin)),
+        ...output,
       ]);
-      // A provider may exit before consuming all stdin. Preserve its actual exit;
-      // unrelated stream errors remain failures and have already stopped the tree.
-      const inputCode = input && typeof input === 'object' ? Reflect.get(input, 'code') : undefined;
-      if (output || errorOutput || input && inputCode !== 'EPIPE' && inputCode !== 'ERR_STREAM_PREMATURE_CLOSE') {
-        throw Object.assign(new Error('agent_launch_stream_failed'), { code: 'agent_launch_stream_failed' });
-      }
       const observed = result.termination.observed;
+      const tail = stderr.readTail();
+      if (firstFailure) {
+        const diagnostic = new AgentLaunchDiagnosticError(firstFailure, tail);
+        if (firstFailure.stage !== 'child_exit') throw diagnostic;
+        // A native nonzero exit is still a process result for readiness/finite
+        // callers. Retain its diagnostic if subsequent material cleanup fails.
+        executionFailure = diagnostic;
+        try { await pipeline(Readable.from([`${diagnostic.message}\n`]), io.stderr, { end: false }); }
+        catch { throw diagnostic; }
+      } else if (tail) {
+        try { await pipeline(Readable.from([tail]), io.stderr, { end: false }); }
+        catch { throw new AgentLaunchDiagnosticError({ stage: 'stderr' }, tail); }
+      }
       if (observed.kind === 'exit') return { code: observed.exitCode, signal: null };
       // This host supervisor observes Node child signals; the portable SDK widens their type.
       if (observed.kind === 'signal') return { code: null, signal: observed.signal as NodeJS.Signals };
       throw Object.assign(new Error('agent_launch_transport_unavailable'), { code: 'agent_launch_transport_unavailable' });
-    } finally { await supervised.dispose(); }
+    } finally {
+      io.signal?.removeEventListener('abort', cancelled);
+      supervised.child.off('error', execFailed);
+      supervised.child.off('exit', exited);
+      try { await supervised.dispose(); } finally { stderr.close(); }
+    }
   } catch (error) {
     executionFailure = error;
     throw error;
@@ -203,6 +246,12 @@ export async function executeAgentLaunchPayload(input: AgentLaunchFramePayload, 
     await cleanupMaterial().catch((error: unknown) => { cleanupFailures.push(error); });
     await cleanupNativeSocketDirectory().catch((error: unknown) => { cleanupFailures.push(error); });
     if (cleanupFailures.length) {
+      if (executionFailure instanceof AgentLaunchDiagnosticError) {
+        // Secondary cleanup must not replace the initiating native diagnostic.
+        // Retain its failures as a cause; only the redacted preview is public.
+        executionFailure.cause = new AggregateError(cleanupFailures, 'Agent launch cleanup failed');
+        throw executionFailure;
+      }
       if (executionFailure !== undefined) throw new AggregateError([executionFailure, ...cleanupFailures], 'Agent launch and cleanup failed');
       if (cleanupFailures.length === 1) throw cleanupFailures[0];
       throw new AggregateError(cleanupFailures, 'Agent launch cleanup failed');

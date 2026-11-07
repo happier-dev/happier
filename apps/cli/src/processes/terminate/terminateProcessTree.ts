@@ -9,8 +9,6 @@ import { descendantsOf, indexCensus, protectedSet, membersOfCgroup, membersOfJob
 
 import { resolveCliRuntimeAssetPath } from '@/packagedRuntime/assets/resolveCliRuntimeAssetPath';
 import { taskkillWindowsProcessTree } from '@/subprocess/supervision/taskkillWindowsProcessTree';
-import { logger } from '@/ui/logger';
-import { CUSTODY_TERMINATE_TIMEOUT_MS, resolveProcessCustodySupportExecutable, terminateProcessCustodyByJob } from '@/subprocess/supervision/processCustody';
 
 export type ProcessTreeRoot = Readonly<{
   pid?: number;
@@ -34,8 +32,9 @@ export type ProcessTreeTerminationInput = Readonly<{
   firstSignal?: 'SIGHUP' | 'SIGINT' | 'SIGTERM' | 'SIGKILL';
   graceMs?: number;
   containment?: Readonly<{ kind: 'linux_unit'; prefix: string }> | Readonly<{ kind: 'windows_job'; name: string }>;
-  /** Lifecycle owner revalidates fresh targets/membership using the canonical classifier. */
-  authorizeSnapshot?: (snapshot: Extract<ProcessCensusSnapshot, { status: 'ok' }>) => boolean | Promise<boolean>;
+  /** Lifecycle policy checks the terminator's exact retained/discovered targets against this same census. */
+  authorizeSnapshot?: (snapshot: Extract<ProcessCensusSnapshot, { status: 'ok' }>,
+    targets?: readonly Readonly<{ pid: number; start: ProcessStartIdentity }>[]) => boolean | Promise<boolean>;
   /** Current credential, cancellation and lifecycle custody, immediately before every signal. */
   authorizeSignal?: () => boolean | Promise<boolean>;
   /** Runner lifecycle owns its existing grace/wait budget; this sends only the first signal. */
@@ -70,8 +69,7 @@ type ProcessTreeAdapters = Readonly<{
   isPidPresent: typeof isPidPresent;
   probeProcessGroupLiveness: typeof probeProcessGroupLiveness;
   taskkillWindowsProcessTree: typeof taskkillWindowsProcessTree;
-  terminateWindowsJob: (input: Readonly<{ jobName: string; timeoutMs: number }>) => Promise<unknown>;
-  windowsJobTerminationBudgetMs: number;
+  terminateWindowsJob: (input: Readonly<{ jobName: string; timeoutMs?: number }>) => Promise<unknown>;
   platform?: NodeJS.Platform;
   kill?: (pid: number, signal: NodeJS.Signals) => unknown;
   wait?: (ms: number) => Promise<void>;
@@ -86,14 +84,21 @@ const moduleOwner = createRequire(import.meta.url)(resolveCliRuntimeAssetPath('s
   };
 };
 const adapters: ProcessTreeAdapters = {
-  windowsJobTerminationBudgetMs: CUSTODY_TERMINATE_TIMEOUT_MS,
   readProcessCensus, indexCensus, descendantsOf, protectedSet, membersOfCgroup, membersOfJob, membersOfPgid, execFileWithDeadline, isPidPresent, probeProcessGroupLiveness, taskkillWindowsProcessTree,
-  async terminateWindowsJob(input) {
-    const executablePath = resolveProcessCustodySupportExecutable('win32');
-    if (!executablePath) return 'unavailable';
-    return await terminateProcessCustodyByJob({ executablePath, ...input });
-  },
+  terminateWindowsJob: input => terminateWindowsJob(input),
 };
+
+async function terminateWindowsJob(input: Readonly<{ jobName: string; timeoutMs?: number }>,
+  terminate?: (input: Readonly<{ jobName: string; timeoutMs: number }>) => Promise<unknown>) {
+  const custody = await import('@/subprocess/supervision/processCustody');
+  // Keep the custody owner's budget at the native boundary, including injected
+  // platform adapters. Linux internal stop never needs Account configuration.
+  const request = { ...input, timeoutMs: input.timeoutMs ?? custody.CUSTODY_TERMINATE_TIMEOUT_MS };
+  if (terminate) return await terminate(request);
+  const executablePath = custody.resolveProcessCustodySupportExecutable('win32');
+  if (!executablePath) return 'unavailable';
+  return await custody.terminateProcessCustodyByJob({ executablePath, ...request });
+}
 const owner = moduleOwner.createProcessTreeOwner(adapters);
 
 /** Observation-only native identities, for existing root/owner lifecycle retention. */
@@ -105,14 +110,15 @@ export function createProcessTreeTerminator(input: Readonly<{
   kill?: (pid: number, signal: NodeJS.Signals) => unknown;
   wait?: (ms: number) => Promise<void>;
   censusDependencies?: ProcessCensusDependencies;
-  terminateWindowsJob?: ProcessTreeAdapters['terminateWindowsJob'];
+  terminateWindowsJob?: (input: Readonly<{ jobName: string; timeoutMs: number }>) => Promise<unknown>;
   terminateWindowsTree?: typeof taskkillWindowsProcessTree;
 }> = {}): (input: ProcessTreeTerminationInput) => Promise<ProcessTreeTerminationResult> {
   const adapted = moduleOwner.createProcessTreeOwner({ ...adapters,
     ...(input.platform ? { platform: input.platform } : {}),
     ...(input.kill ? { kill: input.kill } : {}),
     ...(input.wait ? { wait: input.wait } : {}),
-    ...(input.terminateWindowsJob ? { terminateWindowsJob: input.terminateWindowsJob } : {}),
+    ...(input.terminateWindowsJob ? { terminateWindowsJob: (job: Parameters<ProcessTreeAdapters['terminateWindowsJob']>[0]) =>
+      terminateWindowsJob(job, input.terminateWindowsJob) } : {}),
     ...(input.terminateWindowsTree ? { taskkillWindowsProcessTree: input.terminateWindowsTree } : {}),
     ...(input.censusDependencies ? { readProcessCensus: createProcessCensusReader(input.censusDependencies) } : {}),
   });
@@ -127,6 +133,7 @@ export async function terminateProcessTree(proc: ProcessTreeRoot | ProcessTreeTe
     await owner.terminateProcessTree(proc, opts);
   } catch (error) {
     if (error && typeof error === 'object' && 'code' in error && error.code === 'plugin_exec_termination_incomplete') {
+      const { logger } = await import('@/ui/logger');
       // The CJS owner attaches its structured result; project categories without native identities.
       const result = 'result' in error ? error.result as Partial<ProcessTreeTerminationResult> : undefined;
       logger.infoFile('[process-tree] Owned process cleanup could not be verified', {

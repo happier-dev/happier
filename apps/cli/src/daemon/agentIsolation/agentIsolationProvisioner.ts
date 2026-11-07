@@ -3,6 +3,8 @@ import { resolveMachineAgentExecutionPlacementV1, readMachineAgentIsolationPolic
   type MachineAgentIsolationPreviewResultV1, type MachineAgentIsolationStatusV1, type MachineElevatedResultV1 } from '@happier-dev/protocol';
 import type { MachineSetupEffectPlanV1 } from '@happier-dev/protocol/machines/setup/machineRecipeV1';
 import { MachineSetupObservationReasonV1Schema } from '@happier-dev/protocol/machines/setup/machineSetupObservationReasonV1';
+import { MachineAgentIsolationUnavailableStatusV1Schema } from '@happier-dev/protocol/machines/agentIsolationV1';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import type { MachineMetadataFieldPortV1 } from '@happier-dev/protocol/machines/machineMetadataFieldV1';
 import { checkElevatedMachineSetupPlanResult, runElevatedEffect, runElevatedMachineSetupIntent, type MachineElevationDependencies } from '@/machines/adminAccess/runElevatedEffect';
 import { buildAgentIsolationMemberRetirementSteps,
@@ -53,6 +55,20 @@ export async function prepareAgentIsolationEffects(input: Parameters<typeof prep
   effects: AgentIsolationEffectDependencies): Promise<PreparedAgentIsolationEffects | null> {
   const result = await prepareAgentIsolationEffectsResult(input, effects);
   return 'preview' in result ? result : null;
+}
+
+/** Native CHECK owns the pending fact. Publication and reviewed recovery carry
+ * its single result; paths come only from the validated reviewed declaration. */
+export function projectAgentIsolationPendingNativeStatus(plan: MachineSetupEffectPlanV1): Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }> | null {
+  const pending = plan.nativeFacts.find(fact => fact.status !== 'satisfied');
+  if (!pending) return null;
+  const step = plan.steps.find(candidate => candidate.id === pending.stepId);
+  const requiredFact = pending.facts.requiredFact, detail = pending.facts.pendingReason;
+  return { kind: 'unavailable', code: 'provisioning_unavailable', prerequisite: {
+    reason: 'native_effect_pending', requiredFact: typeof requiredFact === 'string' ? requiredFact : step?.kind ?? 'native_setup',
+    ...(typeof detail === 'string' ? { detail } : {}),
+    ...(step?.kind === 'pathTraversal' ? { path: step.path } : {}), remedy: 'machines.agentIsolation.preview',
+  } };
 }
 
 /** Read-only preparation preserves the native/elevation owner's prerequisite;
@@ -114,7 +130,8 @@ export async function prepareAgentIsolationEffectsResult(input: Readonly<{
     ...(retirement ? { retirement } : {}) };
   return { setupPlan, ...('daemonObservation' in intent ? { daemonObservation: intent.daemonObservation } : {}),
     preview: { kind: 'ready', plan, policy: policy.policy,
-    metadataVersion: snapshot.metadataVersion, status: input.status } };
+    metadataVersion: snapshot.metadataVersion, status: input.enabled && policy.policy.enabled
+      ? projectAgentIsolationPendingNativeStatus(setupPlan) ?? input.status : input.status } };
 }
 
 export type ApplyAgentIsolationMemberEffectsInput = Readonly<{
@@ -130,7 +147,9 @@ export type ApplyAgentIsolationMemberEffectsInput = Readonly<{
 }>;
 export type ApplyAgentIsolationMemberEffectsResult = Readonly<{
   kind: 'ready'; identity: AgentIsolationMemberNativeIdentity; daemonObservation: AgentIsolationDaemonObservation;
-}> | Readonly<{ kind: 'not_ready'; result: Exclude<MachineElevatedResultV1, { outcome: 'applied' }> }>;
+}> | Readonly<{ kind: 'not_ready'; result: Exclude<MachineElevatedResultV1, { outcome: 'applied' }>;
+  readinessCode?: Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>['code'];
+  probeFailure?: Extract<MachineAgentIsolationStatusV1, { kind: 'unavailable' }>['probeFailure']; }>;
 
 /** The single member mutation owner, consumed by both explicit reviewed plans
  * and owner-authorized first use/recovery. Callers never mint an approval or
@@ -139,7 +158,7 @@ export type ApplyAgentIsolationMemberEffectsResult = Readonly<{
  */
 export async function applyAgentIsolationMemberEffects(input: ApplyAgentIsolationMemberEffectsInput,
   effects: AgentIsolationEffectDependencies): Promise<ApplyAgentIsolationMemberEffectsResult> {
-  const refused = (reasonCode: 'cancelled' | 'plan_stale' | 'denied'): ApplyAgentIsolationMemberEffectsResult =>
+  const refused = (reasonCode: 'cancelled' | 'plan_stale' | 'denied'): Extract<ApplyAgentIsolationMemberEffectsResult, { kind: 'not_ready' }> =>
     ({ kind: 'not_ready', result: { outcome: 'not_applied', reasonCode } });
   if (input.nativeEffectContext.operation.operationId !== input.operationId
     || input.requesterIdentity.requester.machineId !== input.machineId
@@ -208,7 +227,14 @@ export async function applyAgentIsolationMemberEffects(input: ApplyAgentIsolatio
     await writeAgentIsolationMemberBinding(input.activeServerDir, identity);
     if (!await verify()) return refused('plan_stale');
     return { kind: 'ready', identity, daemonObservation };
-  } catch { return refused(input.signal?.aborted ? 'cancelled' : 'denied'); }
+  } catch (error) {
+    const result = refused(input.signal?.aborted ? 'cancelled' : 'denied');
+    if (input.signal?.aborted || !(error instanceof PluginError) || error.code !== 'agent_isolation_unavailable') return result;
+    const detail = error.details;
+    const code = MachineAgentIsolationUnavailableStatusV1Schema.shape.code.safeParse(
+      detail && typeof detail === 'object' && !Array.isArray(detail) ? Reflect.get(detail, 'reason') : undefined);
+    return code.success ? { ...result, readinessCode: code.data } : result;
+  }
 }
 
 /** Exact server-authorized loss is serialized by its existing setup-operation owner. */

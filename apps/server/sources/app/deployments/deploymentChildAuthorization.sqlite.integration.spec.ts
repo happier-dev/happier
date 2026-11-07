@@ -1,3 +1,14 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createPrepareDeploymentBindingsForHost } from '../../../../cli/src/deployments/secrets/prepareDeploymentBindingsForHost';
+import { admitRequesterAccountActionContext } from '../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createRequesterCurrentnessSocketHarness } from '../../../../cli/src/testkit/backends/requesterCurrentnessSocketHarness';
+import { readOrCreateInstallationIdentity } from '../../../../cli/src/daemon/identity/store';
+import { configuration, reloadConfiguration } from '../../../../cli/src/configuration';
+import { registerAccountProfileRoute } from '@/app/api/routes/account/registerAccountProfileRoute';
+import { registerAccountSettingsRoutes } from '@/app/api/routes/account/registerAccountSettingsRoutes';
+import { featuresRoutes } from '@/app/api/routes/features/featuresRoutes';
 import { projectExternalActionMachineRuntimeDemandV1 } from '@happier-dev/protocol/actions/actionSpecs';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import axios, { AxiosHeaders } from 'axios';
@@ -1537,6 +1548,121 @@ describe('deployment children retain their controller Action authority', () => {
             authority: 'present_user' } })).resolves.toMatchObject({ kind: 'response' });
     });
 
+    it('saves an authored variable binding through signed requester preparation and real Home HTTP', async () => {
+        const f = await fixture('account', 'account', { readableEnvironment: true });
+        const home = await mkdtemp(join(tmpdir(), 'happier-binding-author-'));
+        const previousHome = process.env.HAPPIER_HOME_DIR;
+        const exchanges: Array<{ method: string; path: string; status: number }> = [];
+        let publication: unknown;
+        const channel = await createRequesterCurrentnessSocketHarness();
+        try {
+            process.env.HAPPIER_HOME_DIR = home;
+            reloadConfiguration();
+            const identity = await readOrCreateInstallationIdentity(configuration.installationIdentityFile);
+            await db.machine.update({ where: { id: f.controller.id }, data: {
+                installationId: identity.installationId,
+                installationPublicKey: privacyKit.decodeBase64(identity.publicKey, 'base64url'),
+            } });
+            const token = await auth.createToken(f.account.id, undefined, { kind: 'account', authority: 'present_user' });
+            const credentials = { token, encryption: null };
+            const target = { kind: 'machine' as const, machineId: f.controller.id };
+            const binding = { purpose: 'variable', name: 'PUBLIC_LABEL', phase: 'runtime', source: { kind: 'value', value: 'authored' } } as const;
+            const input = getActionSpec('deployments.bindings.set').inputSchema.parse({ serverId,
+                environmentId: f.environment.id, expectedRevision: f.environmentRevision,
+                set: [binding],
+                remove: [],
+            });
+            const envelope = { v: 1 as const, requestId: crypto.randomUUID(), target, input };
+            const root = await auth.mintExternalActionExecutionAuthorization({ serverIdentityId: serverId,
+                accountId: f.account.id, authentication: { kind: 'account', tokenEpoch: f.account.tokenEpoch },
+                actionId: 'deployments.bindings.set', machineId: f.controller.id, target, requestId: envelope.requestId,
+                requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope) }, { input });
+            await withAuthenticatedTestApp(async app => {
+                registerAccountProfileRoute(app);
+                registerAccountEncryptionRoutes(app);
+                registerAccountSettingsRoutes(app);
+                featuresRoutes(app);
+                artifactsRoutes(app);
+                registerDeploymentRoutes(app);
+                app.addHook('onResponse', async (request, reply) => {
+                    exchanges.push({ method: request.method, path: request.url.split('?')[0]!, status: reply.statusCode });
+                    if (request.method === 'POST' && request.url === '/v1/artifacts' && reply.statusCode === 200) publication = request.body;
+                });
+            }, async app => {
+                // Both Axios authoring and the fetch-based feature probe reach the same real Home routes.
+                const origin = await app.listen({ host: '127.0.0.1', port: 0 });
+                let requester: Awaited<ReturnType<typeof admitRequesterAccountActionContext>> = null;
+                try {
+                    requester = await admitRequesterAccountActionContext({ authorization: root, credentials,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, isCurrent: async () => true });
+                    expect(requester, JSON.stringify(exchanges)).not.toBeNull();
+                    if (!requester) throw new Error('Expected admitted requester');
+                    const authorization = await projectExternalActionRequesterHttpAuthorization({ authorization: requester.authorization,
+                        serverId, serverIdentityId: serverId, serverHttpBaseUrl: origin, target,
+                        installationId: identity.installationId, privateKey: identity.privateKey, rootAdmitted: true });
+                    if (!authorization?.requesterHttpProjection) throw new Error('Expected signed requester HTTP projection');
+                    const prepare = createPrepareDeploymentBindingsForHost({ credentials, serverId,
+                        serverHttpBaseUrl: origin, machineId: f.controller.id,
+                        resolveRequestHeaders: (_context, effectActionId, request) =>
+                            authorization.requesterHttpProjection!.createRequestHeaders({ ...request, effectActionId }) });
+                    const prepared = await prepare({ input, context: { externalActionExecutionAuthorization: authorization,
+                        signal: new AbortController().signal } });
+                    expect(exchanges).toContainEqual({ method: 'GET', path: `/v1/deployments/environments/${f.environment.id}`, status: 200 });
+                    expect(exchanges).toContainEqual({ method: 'GET', path: `/v1/artifacts/${f.environment.contentArtifactId}`, status: 200 });
+                    expect(exchanges).toContainEqual({ method: 'POST', path: `/v1/deployments/environments/${f.environment.id}/secret-launch-admission`, status: 200 });
+                    expect(prepared, JSON.stringify(exchanges)).toMatchObject({ environmentId: f.environment.id,
+                        expectedRevision: input.expectedRevision });
+                    if ('ok' in prepared) throw new Error('Expected prepared authored bindings');
+                    const candidate = ArtifactJsonCreateHttpInputV1Schema.parse(publication);
+                    for (const refused of [{ ...candidate, id: crypto.randomUUID() },
+                        { ...candidate, kind: DEPLOYMENT_RECEIPT_ARTIFACT_STORED_KIND_V1 }]) {
+                        const headers = await authorization.requesterHttpProjection.createRequestHeaders({ method: 'POST',
+                            path: '/v1/artifacts', body: refused, effectActionId: 'deployments.bindings.set' });
+                        const rejected = await app.inject({ method: 'POST', url: '/v1/artifacts', headers: {
+                            ...currentAccountStoredContentCompatibilityHeaders, ...headers }, payload: refused });
+                        expect(rejected.statusCode, rejected.body).toBe(401);
+                    }
+                    const path = `/v1/deployments/environments/${f.environment.id}/bindings`;
+                    const body = DeploymentBindingsSetStorageInputV1Schema.parse(prepared);
+                    const sibling = await db.deploymentEnvironment.create({ data: { projectSourceId: f.environment.projectSourceId,
+                        createdByAccountId: f.account.id, protection: 'nonProduction', purpose: 'standard', deployerMode: 'managers',
+                        controllerMachineId: f.controller.id, buildMachineId: f.builder.id, revision: input.expectedRevision,
+                        contentArtifactId: f.environment.contentArtifactId, contentHeaderVersion: f.environment.contentHeaderVersion,
+                        contentBodyVersion: f.environment.contentBodyVersion } });
+                    const siblingPath = `/v1/deployments/environments/${sibling.id}/bindings`;
+                    const siblingBody = { ...body, environmentId: sibling.id, grants: [] };
+                    const siblingHeaders = await authorization.requesterHttpProjection.createRequestHeaders({ method: 'POST',
+                        path: siblingPath, body: siblingBody, effectActionId: 'deployments.bindings.set' });
+                    const siblingSave = await app.inject({ method: 'POST', url: siblingPath, headers: {
+                        ...currentAccountStoredContentCompatibilityHeaders, ...siblingHeaders }, payload: siblingBody });
+                    expect(siblingSave.statusCode, siblingSave.body).toBe(401);
+                    expect(await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: sibling.id } }))
+                        .toMatchObject({ revision: sibling.revision, contentArtifactId: sibling.contentArtifactId });
+                    const headers = await authorization.requesterHttpProjection.createRequestHeaders({ method: 'POST', path,
+                        body, effectActionId: 'deployments.bindings.set' });
+                    const saved = await app.inject({ method: 'POST', url: path, headers: {
+                        ...currentAccountStoredContentCompatibilityHeaders, ...headers }, payload: body });
+                    expect(saved.statusCode, saved.body).toBe(200);
+                    const stored = await db.deploymentEnvironment.findUniqueOrThrow({ where: { id: f.environment.id } });
+                    expect(stored.contentArtifactId).toBe(prepared.contentArtifactId);
+                    expect(stored.revision).toBe(input.expectedRevision + 1);
+                    const artifact = await db.artifact.findUniqueOrThrow({ where: { id: stored.contentArtifactId } });
+                    const content = ArtifactBodyEnvelopeV1Schema.parse(decodePlainArtifactStoredContent(privacyKit.encodeBase64(artifact.body!)));
+                    if (typeof content.body !== 'string') throw new Error('Expected authored Environment text');
+                    expect(JSON.parse(content.body)).toMatchObject({ bindings: [binding] });
+                } finally {
+                    await requester?.dispose();
+                }
+            }, { authentication: 'real' });
+        } finally {
+            await channel.close();
+            if (previousHome === undefined) delete process.env.HAPPIER_HOME_DIR;
+            else process.env.HAPPIER_HOME_DIR = previousHome;
+            reloadConfiguration();
+            await rm(home, { recursive: true, force: true });
+        }
+    });
+
     it.each(['deployments.targets.link', 'deployments.bindings.set'] as const)(
         'allows signed %s preparation to read an accessible Environment without granting foreign resources or writes', async actionId => {
         const f = await fixture();
@@ -1568,7 +1694,7 @@ describe('deployment children retain their controller Action authority', () => {
                         method: 'GET', path, body: undefined, privateKey: f.controller.keys.secretKey }),
                 } });
                 expect(response.statusCode, response.body).toBe(statusCode);
-                if (statusCode === 401) expect(response.json()).toEqual({ error: 'invalid_token' });
+                if (statusCode === 401) expect(response.json()).toMatchObject({ error: 'invalid_token' });
             }
             if (actionId === 'deployments.bindings.set') {
                 const body = DeploymentBindingsSetStorageInputV1Schema.parse({ ...input, grants: [] });
@@ -1787,7 +1913,7 @@ describe('deployment children retain their controller Action authority', () => {
         expect(authorization.binding.deploymentCandidatePublication).toBeUndefined();
         const admitted = authorization.binding.deploymentNativeAdmission;
         if (!isDeploymentEnvironmentUpdateNativeAdmissionV1(admitted)) throw new Error('Ingress admission missing');
-        const artifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding, deploymentNativeAdmission: admitted });
+        const artifactId = createDeploymentEnvironmentContentArtifactIdV1({ ...authorization.binding, environmentId: admitted.environmentId });
         const dataKey = nacl.randomBytes(32);
         const seal = async (value: unknown) => mode === 'plain' ? encodePlainArtifactStoredContent(value)
             : privacyKit.encodeBase64(new Uint8Array(await sealSessionDataKeyBundleV0(value, dataKey)));

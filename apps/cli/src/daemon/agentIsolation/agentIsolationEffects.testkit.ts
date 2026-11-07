@@ -9,7 +9,6 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import { createHostActionOperationRuntime } from '@/daemon/actionOperations/createHostActionOperationRuntime';
 import { createAgentIsolationMemberOperations } from './createAgentIsolationMemberOperations';
 import { deriveAgentIsolationMemberIdentity, type AgentIsolationMemberRequester } from './provisioning';
-
 import type { AgentIsolationReadinessSystem } from './agentIsolationReadiness';
 import { readAgentLaunchFrame } from './agentLaunchFrame';
 
@@ -110,6 +109,9 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
   encryptionMode: NonNullable<RpcHandlerContext['machineAdmission']>['encryptionMode'];
   uid: number;
   adminAccess?: MachineAdminAccessV1;
+  /** Native CHECK and enrolled credential discovery are system boundaries. */
+  observeNativeStep?: machineSetup.MachineSetupBackend['observe'];
+  resolveAccountId?: Parameters<typeof createHostActionOperationRuntime>[0]['resolveAccountId'];
   readActivityInventory?: Parameters<typeof createAgentIsolationMemberOperations>[0]['readActivityInventory'];
   /** Native OS state outlives the daemon runtime in restart fixtures. */
   nativeState?: { installed: Set<string>; drifted: Set<string>; accountUid: number };
@@ -136,6 +138,7 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
   } };
   const backend: machineSetup.MachineSetupBackend = {
     async observe(step): Promise<machineSetup.MachineSetupStepObservationV1> {
+      if (input.observeNativeStep) return input.observeNativeStep(step);
       if (step.kind === 'user') userObservations++;
       if (step.kind === 'file' && step.state === 'absent') {
         const present = installed.has('agent-runas');
@@ -172,7 +175,7 @@ export function createAgentIsolationMemberPreparationBoundary(input: Readonly<{
   const runtime = createHostActionOperationRuntime({ serverId: requesterIdentity.requester.serverId,
     machineId: requesterIdentity.requester.machineId,
     custodyBinding: { serverId: requesterIdentity.requester.serverId, installationId: requesterIdentity.requester.installationId },
-    resolveAccountId: async () => input.custodianAccountId, generateOperationId: () => `member-setup-${++nextOperation}` });
+    resolveAccountId: input.resolveAccountId ?? (async () => input.custodianAccountId), generateOperationId: () => `member-setup-${++nextOperation}` });
   const members = createAgentIsolationMemberOperations({ observeExecution: runtime.observeExecution, operations: runtime,
     serverId: requesterIdentity.requester.serverId, readActivityInventory: input.readActivityInventory ?? (() => null), activeServerDir, effects,
     captureMetadataPort: () => port,

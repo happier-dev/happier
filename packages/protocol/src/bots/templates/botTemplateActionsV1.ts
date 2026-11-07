@@ -9,7 +9,7 @@ import { BotTemplateCandidatesV1Schema, BotTemplateContentV1Schema, BotTemplateC
   BotTemplatePreviewResultV1Schema } from './botTemplateV1.js';
 export { BotTemplateArtifactPresentationV1Schema, type BotTemplateArtifactPresentationV1,
   BotTemplatePreviewResultV1Schema, type BotTemplatePreviewResultV1 } from './botTemplateV1.js';
-import { SessionSpawnNewActionInputV2Schema, SessionServerStartSpawnDraftV1Schema,
+import { SessionSpawnNewActionInputV2Schema, SessionSpawnNewActionAgentAuthoringInputV2Schema, SessionServerStartSpawnDraftV1Schema,
   admitSessionSpawnNewActionInputV2, type SessionServerStartSpawnDraftV1 } from '../../sessions/creation/sessionSpawnNewInputV2.js';
 import { SessionSpawnNewActionResultV1Schema } from '../../sessions/creation/sessionSpawnNewResultV1.js';
 import { SessionBotFaceV1AuthoringSchema } from '../../sessions/identity/sessionBotFaceV1.js';
@@ -59,6 +59,10 @@ export const BotTemplateInstantiateInputV1Schema = lazyZodSchema(() => z.strictO
   setup: z.optional(BotTemplateSetupSelectionsV1Schema),
 }));
 export type BotTemplateInstantiateInputV1 = z.infer<typeof BotTemplateInstantiateInputV1Schema>;
+/** Authenticated Agent Sessions inherit omitted Machine and Agent choices at the ordinary start owner. */
+export const BotTemplateInstantiateAgentAuthoringInputV1Schema = lazyZodSchema(() => z.extend(BotTemplateInstantiateInputV1Schema, {
+  creation: SessionSpawnNewActionAgentAuthoringInputV2Schema,
+}));
 /** Original requester admission binds the public draft; host-sealed birth operands stay local. */
 export function projectBotTemplateInstantiationRequesterInputV1(input: BotTemplateInstantiateInputV1):
   Omit<BotTemplateInstantiateInputV1, 'creation'> & Readonly<{ creation: SessionServerStartSpawnDraftV1 }> {

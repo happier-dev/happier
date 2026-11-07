@@ -18,8 +18,7 @@ export function useMachineGuestExecution(input: Readonly<{
     const options = { serverId: scope.serverId };
     const platform = useMachineField(machineId, 'metadata', 'platform', options);
     const storedPolicy = useMachineField(machineId, 'metadata', 'agentIsolation', options);
-    const isolation = useMachineField(machineId, 'daemonState', 'agentIsolation', options);
-    const { separateUsers } = presentMachineAuthorityV1({ platform, isolationPolicy: storedPolicy, isolation });
+    const { separateUsers } = presentMachineAuthorityV1({ platform, isolationPolicy: storedPolicy });
     const { placement } = separateUsers;
     const previewSeparateUsers = React.useCallback((signal?: AbortSignal) => execute('machines.agentIsolation.preview', {
         serverId: scope.serverId, machineId, enabled: true, memberProvisioning: 'linuxUsersV1',
@@ -34,6 +33,7 @@ export function useMachineGuestExecution(input: Readonly<{
         } satisfies MachineAgentIsolationSetInputV1,
         { surface: 'ui', authority: 'present_user', serverId: scope.serverId, expectedAccountId: scope.accountId, signal }),
     [execute, scope.serverId, scope.accountId, machineId]);
-    return { placement, showOwnerUserDisclosure: placement !== null && placement !== 'member', canEnableSeparateUsers: input.canManage && separateUsers.canEnable,
+    return { placement, availability: separateUsers.availability,
+        canEnableSeparateUsers: input.canManage && separateUsers.availability.kind === 'can_turn_on',
         previewSeparateUsers, applySeparateUsers };
 }

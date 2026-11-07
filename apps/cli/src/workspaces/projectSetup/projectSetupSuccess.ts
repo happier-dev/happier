@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { ProjectSetupSuccessV1Schema, StoredProjectSetupSuccessV1Schema, type ProjectSetupSuccessV1 } from '@happier-dev/protocol/workspaces/projectSetup/projectSetupSuccessV1';
 
 import { writeJsonAtomicSync } from '@/utils/fs/writeJsonAtomicSync';
+import { ensureProtectedLocalStateDirectorySync } from '@/utils/fs/protectedLocalState';
 
 export type ProjectSetupSuccessTarget = Readonly<{ serverId: string; machineId: string; workspaceRefId: string }>;
 
@@ -52,6 +53,7 @@ export function createProjectSetupSuccessStore(input: Readonly<{ homeDir: string
         async recordCompletion(target: ProjectSetupSuccessTarget, success: ProjectSetupSuccessV1): Promise<void> {
             const value = ProjectSetupSuccessV1Schema.parse(success);
             if (value.workspaceRefId !== target.workspaceRefId) throw new ProjectSetupSuccessUnavailableError();
+            ensureProtectedLocalStateDirectorySync(join(input.homeDir, 'project-setup'), { authority: 'owned' });
             writeJsonAtomicSync(pathFor(target), value);
         },
         async invalidate(target: ProjectSetupSuccessTarget): Promise<void> {

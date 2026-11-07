@@ -1,5 +1,5 @@
 import { existsSync, readFileSync } from 'node:fs';
-import { mkdir, rename, writeFile } from 'node:fs/promises';
+import { chmod, mkdir, rename, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 
 import type { PermissionMode } from '@/api/types';
@@ -49,11 +49,15 @@ function kickPersist(): void {
   const temporaryPath = `${filePath}.tmp`;
   persistInFlight = (async () => {
     try {
-      await mkdir(dirname(filePath), { recursive: true });
+      // cli/ also contains the shared native executable; private state must
+      // not remove traversal required to launch that published payload.
+      await mkdir(dirname(filePath), { recursive: true, mode: 0o711 });
+      if (process.platform !== 'win32') await chmod(dirname(filePath), 0o711);
       while (pendingPersist) {
         const snapshot = pendingPersist;
         pendingPersist = null;
-        await writeFile(temporaryPath, JSON.stringify(snapshot), 'utf8');
+        await writeFile(temporaryPath, JSON.stringify(snapshot), { encoding: 'utf8', mode: 0o600 });
+        if (process.platform !== 'win32') await chmod(temporaryPath, 0o600);
         await rename(temporaryPath, filePath);
       }
     } catch {
