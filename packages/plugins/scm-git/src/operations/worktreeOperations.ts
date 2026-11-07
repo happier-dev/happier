@@ -20,7 +20,7 @@ import { createGitWorkspaceCheckoutAtDefaultPath } from './materializeGitWorkspa
 import { lstat, rm, readFile } from 'node:fs/promises';
 import { basename, dirname, join, toNamespacedPath } from 'node:path';
 import { canonicalAbsolutePathsEqual, canonicalizePath, isCanonicalAbsolutePathInsideRoot } from '@happier-dev/plugin-sdk/fs';
-import { inspectGitCheckoutIdentity } from '../checkoutIdentity.js';
+import { inspectGitCheckoutIdentity, resolveGitMainWorktreePath } from '../checkoutIdentity.js';
 import { parseGitWorktreeListPorcelain } from '../worktreeListParser.js';
 import { withGitWorktreeMutation } from './worktreeMutationQueue.js';
 import { readGitRetentionKind } from './worktreeRetentionFacts.js';
@@ -41,28 +41,6 @@ function trimCommandOutput(value: string | null | undefined): string {
     return String(value ?? '').trim();
 }
 
-function resolveParentPath(path: string): string | null {
-    const normalizedPath = trimCommandOutput(path).replace(/\\/g, '/').replace(/\/+$/g, '');
-    const lastSlashIndex = normalizedPath.lastIndexOf('/');
-    if (lastSlashIndex <= 0) {
-        return null;
-    }
-
-    return normalizedPath.slice(0, lastSlashIndex);
-}
-
-function resolveRepositoryRootPath(params: Readonly<{
-    sourceRootPath: string;
-    gitCommonDir: string | null | undefined;
-}>): string {
-    const normalizedCommonDir = trimCommandOutput(params.gitCommonDir).replace(/\\/g, '/').replace(/\/+$/g, '');
-    if (normalizedCommonDir.endsWith('/.git')) {
-        return resolveParentPath(normalizedCommonDir) ?? params.sourceRootPath;
-    }
-
-    return params.sourceRootPath;
-}
-
 async function resolveCreateWorktreePaths(context: ScmBackendContext): Promise<{
     sourceRootPath: string;
     repositoryRootPath: string;
@@ -78,21 +56,19 @@ async function resolveCreateWorktreePaths(context: ScmBackendContext): Promise<{
         ? trimCommandOutput(sourceRootResult.stdout) || context.cwd
         : context.cwd;
 
-    const gitCommonDirResult = await runScmCommand({
+    const worktreesResult = await runScmCommand({
         bin: 'git',
         cwd: context.cwd,
-        args: ['rev-parse', '--path-format=absolute', '--git-common-dir'],
+        args: ['worktree', 'list', '--porcelain', '-z'],
         timeoutMs: 15_000,
         env: buildScmNonInteractiveEnv(),
     });
 
     return {
         sourceRootPath,
-        repositoryRootPath: gitCommonDirResult.success
-            ? resolveRepositoryRootPath({
-                sourceRootPath,
-                gitCommonDir: gitCommonDirResult.stdout,
-            })
+        repositoryRootPath: worktreesResult.success
+            ? await resolveGitMainWorktreePath({ worktreesOutput: worktreesResult.stdout,
+                currentWorktreePath: sourceRootPath }) ?? sourceRootPath
             : sourceRootPath,
     };
 }
@@ -265,8 +241,9 @@ export async function gitWorktreeRemove(input: {
         if (after) {
             const registered = await runScmCommand({ bin: 'git', cwd: input.context.cwd,
                 args: ['worktree', 'list', '--porcelain', '-z'], env: buildScmNonInteractiveEnv() });
-            const repositoryRoot = identity ? dirname(identity.commonDirPath) : input.context.detection.rootPath ?? input.context.cwd;
-            const guarded = isCanonicalAbsolutePathInsideRoot(join(repositoryRoot, '.dev', 'worktree'), physicalPath)
+            const repositoryRoot = registered.success ? await resolveGitMainWorktreePath({
+                worktreesOutput: registered.stdout, currentWorktreePath: input.context.detection.rootPath }) : null;
+            const guarded = (repositoryRoot !== null && isCanonicalAbsolutePathInsideRoot(join(repositoryRoot, '.dev', 'worktree'), physicalPath))
                 || (retainedEntry !== null && basename(path) === 'payload' && basename(dirname(path)) === retainedEntry);
             const registeredPaths = registered.success ? parseGitWorktreeListPorcelain({ worktreesOutput: registered.stdout, currentWorktreePath: null }) : null;
             const fresh = await readPathIdentity(path);

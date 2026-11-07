@@ -295,13 +295,14 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
             resolveToken: async () => ({ kind: 'available', token: 'fixture-token' }),
             fetcher: async (url) => {
                 requests.push(url);
+                const body = url.endsWith('/user/orgs') ? []
+                    : url.endsWith('/user') ? { login: 'happier-dev' }
+                    : { full_name: 'happier-dev/project', html_url: 'https://github.com/happier-dev/project',
+                        clone_url: 'https://github.com/happier-dev/project.git', private: true };
                 return {
                     ok: true, status: 200, statusText: 'OK',
-                    json: async () => url.endsWith('/user/orgs') ? []
-                        : url.endsWith('/user') ? { login: 'happier-dev' }
-                        : { full_name: 'happier-dev/project', html_url: 'https://github.com/happier-dev/project',
-                            clone_url: 'https://github.com/happier-dev/project.git', private: true },
-                    text: async () => '',
+                    json: async () => body,
+                    text: async () => JSON.stringify(body),
                 };
             },
         });
@@ -355,7 +356,7 @@ describe('git hosting repository publish operation', { timeout: 20_000 }, () => 
                 ok: false, status: 403, statusText: 'Forbidden',
                 headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' }),
                 json: async () => ({ message: 'API rate limit exceeded.' }),
-                text: async () => 'API rate limit exceeded.',
+                text: async () => JSON.stringify({ message: 'API rate limit exceeded.' }),
             }),
         });
         const operation = createGitHostingRepositoryPublishOperation({

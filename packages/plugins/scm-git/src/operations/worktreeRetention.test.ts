@@ -206,6 +206,25 @@ describe('worktree retention through the Git backend', () => {
             expect(result?.paths).not.toContain('file');
         });
     });
+    it('reads ignored paths without waiting behind an in-flight worktree mutation of the same repository', async () => {
+        const f = await fixture();
+        let release!: () => void; let entered!: () => void;
+        const gate = new Promise<void>(resolve => { release = resolve; });
+        const active = new Promise<void>(resolve => { entered = resolve; });
+        const mutation = withGitWorktreeMutation(f.root, async () => { entered(); await gate; });
+        await active;
+        try {
+            await runWithRealGitScmRuntime(async () => {
+                // A read-only `ls-files` writes nothing to the shared admin directory. The mutation
+                // stays held for the whole test, so a queued read can only lose this race.
+                const read = f.backend.ignoredPaths?.({ context: f.context, request: { cwd: f.root } });
+                const winner = await Promise.race([read?.then(() => 'read'),
+                    new Promise(resolve => setTimeout(() => resolve('queued'), 10_000))]);
+                expect(winner).toBe('read');
+                await expect(read).resolves.toMatchObject({ success: true });
+            });
+        } finally { release(); await mutation; }
+    }, 30_000);
     it('keeps a retired worktree registered across prune, restores its files and branch, then discards a locked payload', async () => {
         const f = await fixture();
         await runWithRealGitScmRuntime(async () => {

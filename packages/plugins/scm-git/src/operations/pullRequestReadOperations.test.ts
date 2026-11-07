@@ -148,15 +148,16 @@ describe('git pull request read operations', () => {
         } finally { await rm(root, { recursive: true, force: true }); }
     });
 
-    it('retains the real forge throttle and retry instant through list and get', async () => {
+    it('retains the forge throttle through list and get without another HTTP read', async () => {
+        const fetcher = vi.fn(async () => ({
+            ok: false, status: 403, statusText: 'Forbidden',
+            headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' }),
+            json: async () => ({ message: 'API rate limit exceeded.' }),
+            text: async () => 'API rate limit exceeded.',
+        }));
         const adapter = createGithubRestAdapter({
             resolveToken: async () => ({ kind: 'available', token: 'fixture-token', profileKey: 'bound' }),
-            fetcher: async () => ({
-                ok: false, status: 403, statusText: 'Forbidden',
-                headers: new Headers({ 'x-ratelimit-remaining': '0', 'x-ratelimit-reset': '1900000000' }),
-                json: async () => ({ message: 'API rate limit exceeded.' }),
-                text: async () => 'API rate limit exceeded.',
-            }),
+            fetcher,
         });
         const operations = createGitPullRequestReadOperations({
             registry: createRegistry(adapter), cache: createPrStatusCache(),
@@ -164,7 +165,12 @@ describe('git pull request read operations', () => {
         });
         const expected = { success: false, errorCode: 'REMOTE_RATE_LIMITED', retryNotBeforeMs: 1900000000000 };
         expect(await operations.list({ context, request: {} })).toMatchObject(expected);
-        expect(await operations.get({ context, request: { prReference: { number: 42 } } })).toMatchObject(expected);
+        const subsequent = await operations.get({ context, request: { prReference: { number: 42 } } });
+        expect(subsequent).toMatchObject({ success: false, errorCode: 'REMOTE_RATE_LIMITED' });
+        // The request owner parks the HTTP boundary using whole-second Retry-After;
+        // its next refusal may round later, but must not permit an earlier retry.
+        expect(subsequent.success ? undefined : subsequent.retryNotBeforeMs).toBeGreaterThanOrEqual(expected.retryNotBeforeMs);
+        expect(fetcher).toHaveBeenCalledTimes(1);
     });
     it('resolves default hosting provider runtime services from the host only', () => {
         const source = readFileSync(new URL('./pullRequestReadOperations.ts', import.meta.url), 'utf8');
@@ -245,7 +251,7 @@ describe('git pull request read operations', () => {
         expect(observedRuntimeServices).toBe(runtimeServices);
     });
 
-    it('uses the detected repository default branch before current upstream when list base is omitted', async () => {
+    it('discovers PRs across bases when only a head branch is requested', async () => {
         let observedBase: string | undefined;
         const operations = createGitPullRequestReadOperations({
             cache: createPrStatusCache({ now: () => 1000 }),
@@ -282,7 +288,7 @@ describe('git pull request read operations', () => {
         });
 
         expect(response.success).toBe(true);
-        expect(observedBase).toBe('trunk');
+        expect(observedBase).toBeUndefined();
     });
 
     it('stores freshly resolved PR list results under the current auth profile key', async () => {

@@ -88,7 +88,36 @@ describe('Git repository worktree status enrichment', () => {
             branch: { head: linked ? 'linked' : 'main' } } });
         expect(response.snapshot?.repo.worktrees.find(worktree => worktree.branch === 'main')?.isMain).toBe(true);
         // Real plugin → SDK → CLI process execution, including repository detection.
-        expect(observedCommands).toHaveLength(9);
+        expect(observedCommands).toHaveLength(linked ? 9 : 8);
+    });
+
+    it.each([false, true])('reads repository facts without scanning the working copy (linked worktree: %s)', async (linked) => {
+        const repoRoot = await initRepoWithCommit('git-snapshot-facts-');
+        cleanups.push(() => rm(repoRoot, { recursive: true, force: true }));
+        const worktreeRoot = linked ? await makeTempDir('git-snapshot-facts-linked-') : repoRoot;
+        if (linked) {
+            cleanups.push(() => rm(worktreeRoot, { recursive: true, force: true }));
+            await runGit(repoRoot, ['worktree', 'add', '-b', 'linked', worktreeRoot]);
+        }
+        await writeFile(join(worktreeRoot, 'README.md'), 'changed\n');
+        await writeFile(join(worktreeRoot, 'untracked.txt'), 'new\n');
+        const observedCommands: string[][] = [];
+        const read = (detail?: 'facts') => runWithRealGitScmRuntime(() => runWithGitScmCommandRunner(async (input) => {
+            observedCommands.push([...input.args]);
+            return runHostScmCommand({ ...input, bin: input.command, args: [...input.args] });
+        }, async () => {
+            const detection = await detectGitRepo({ cwd: worktreeRoot });
+            return getGitSnapshot({ context: { cwd: worktreeRoot, detection, projectKey: `test:${worktreeRoot}` },
+                request: { operationStateVersion: 1, ...(detail ? { detail } : {}) } });
+        }));
+        const full = await read();
+        observedCommands.length = 0;
+        const facts = await read('facts');
+        expect(facts).toMatchObject({ success: true, snapshot: { detail: 'facts', entries: [],
+            repo: { rootPath: full.snapshot?.repo.rootPath, worktrees: full.snapshot?.repo.worktrees },
+            branch: { head: full.snapshot?.branch.head, headOid: full.snapshot?.branch.headOid, ahead: 0, behind: 0 } } });
+        // No working-copy scan: no status walk, no numstat, no untracked reads.
+        expect(observedCommands.filter(args => args[0] === 'status' || args[0] === 'diff' || args.includes('--numstat'))).toEqual([]);
     });
 
     it.each(([['merge', false], ['rebase', false], ['merge', true]] as const).filter(([, newlineCheckout]) => !newlineCheckout || process.platform !== 'win32'))('keeps in-progress %s facts when reading snapshot metadata in batches (newline checkout: %s)', async (operation, newlineCheckout) => {

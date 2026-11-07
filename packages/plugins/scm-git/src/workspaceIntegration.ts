@@ -41,7 +41,7 @@ import {
 } from './workspace/workspaceCheckoutRealization.js';
 import type { ScmWorkspaceIntegrationWorkspaceCheckoutCreationResult } from './workspace/workspaceCheckoutCreation.js';
 
-import { inspectGitCheckoutIdentity } from './checkoutIdentity.js';
+import { inspectGitCheckoutIdentity, inspectGitMainWorktreePath } from './checkoutIdentity.js';
 import {
     createGitWorkspaceCheckoutAtDefaultPath,
     materializeGitWorkspaceCheckoutAtPath,
@@ -81,6 +81,8 @@ export async function inspectGitWorkspaceLocation(input: Readonly<{
 
     const identity = await inspectGitCheckoutIdentity({ cwd: input.context.cwd });
     const committedRevision = await readGitRevision({ cwd: input.context.cwd });
+    const parentRootPath = identity && identity.gitDirPath !== identity.commonDirPath
+        ? await inspectGitMainWorktreePath({ cwd: input.context.cwd, currentWorktreePath: identity.worktreePath }) : null;
 
     return {
         rootPath: input.context.detection.rootPath,
@@ -90,6 +92,7 @@ export async function inspectGitWorkspaceLocation(input: Readonly<{
             kind: 'git_worktree',
             path: identity?.registeredWorktreePath ?? identity?.worktreePath,
             ...(identity?.commonDirPath ? { repositoryIdentityPath: identity.commonDirPath } : {}),
+            ...(parentRootPath && parentRootPath !== identity?.worktreePath ? { parentRootPath } : {}),
         }],
     };
 }

@@ -57,12 +57,15 @@ describe('git worktree operations', () => {
         runScmCommandMock
             .mockResolvedValueOnce({ success: true, stdout: '.git\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '/repo-linked\n', stderr: '' })
-            .mockResolvedValueOnce({ success: true, stdout: '/repo/.git\n', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: 'worktree /repo\0\0worktree /repo-linked\0\0', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: '/repo\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: 'abc123\n', stderr: '' })
             // Each attempt first lists registered worktrees, so a path Git still lists as deleted is overridden.
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: 'abc123\n', stderr: '' })
             .mockResolvedValueOnce({ success: false, stdout: '', stderr: 'already exists' })
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: 'abc123\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
             .mockResolvedValue({ success: true, stdout: '/repo/.dev/worktree/feature-auth-2\n', stderr: '' });
         mkdirMock.mockResolvedValue(undefined);
@@ -87,16 +90,14 @@ describe('git worktree operations', () => {
             repositoryRootPath: '/repo',
         });
         expect(mkdirMock).toHaveBeenCalledWith('/repo/.dev/worktree', { recursive: true });
-        expect(runScmCommandMock).toHaveBeenNthCalledWith(
-            6,
+        expect(runScmCommandMock).toHaveBeenCalledWith(
             expect.objectContaining({
                 command: 'git',
                 cwd: '/repo',
                 args: ['worktree', 'add', '-b', 'feature-auth', '--', '/repo/.dev/worktree/feature-auth', 'abc123'],
             }),
         );
-        expect(runScmCommandMock).toHaveBeenNthCalledWith(
-            8,
+        expect(runScmCommandMock).toHaveBeenCalledWith(
             expect.objectContaining({
                 command: 'git',
                 cwd: '/repo',
@@ -109,7 +110,7 @@ describe('git worktree operations', () => {
         runScmCommandMock
             .mockResolvedValueOnce({ success: true, stdout: '.git\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '/repo\n', stderr: '' })
-            .mockResolvedValueOnce({ success: true, stdout: '/repo/.git\n', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: 'worktree /repo\0\0', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '', stderr: '' })
             .mockResolvedValue({ success: true, stdout: '/repo/.dev/worktree/feature/auth\n', stderr: '' });
@@ -136,9 +137,7 @@ describe('git worktree operations', () => {
             repositoryRootPath: '/repo',
         });
         expect(mkdirMock).toHaveBeenCalledWith('/repo/.dev/worktree/feature', { recursive: true });
-        expect(runScmCommandMock).toHaveBeenCalledTimes(10);
-        expect(runScmCommandMock).toHaveBeenNthCalledWith(
-            5,
+        expect(runScmCommandMock).toHaveBeenCalledWith(
             expect.objectContaining({
                 command: 'git',
                 cwd: '/repo',
@@ -152,7 +151,7 @@ describe('git worktree operations', () => {
         runScmCommandMock
             .mockResolvedValueOnce({ success: true, stdout: '.git\n', stderr: '' })
             .mockResolvedValueOnce({ success: true, stdout: '/repo\n', stderr: '' })
-            .mockResolvedValueOnce({ success: true, stdout: '/repo/.git\n', stderr: '' })
+            .mockResolvedValueOnce({ success: true, stdout: 'worktree /repo\0\0', stderr: '' })
             .mockResolvedValueOnce({
                 success: true,
                 stdout: [

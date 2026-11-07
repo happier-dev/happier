@@ -3,6 +3,7 @@ import { access, cp, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { pathToFileURL } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
@@ -43,6 +44,57 @@ async function writeTrackedFile(cwd: string, relativePath: string, contents: str
 }
 
 describe('materializeGitWorkspaceCheckout', { timeout: 20_000 }, () => {
+    it('admits only the first fetch URL when another configured URL names the approved base repository', async () => {
+        const root = await makeTempDir('git-source-fetch-multiple-urls-');
+        const repoRoot = join(root, 'source');
+        const base = join(root, 'base.git');
+        const fork = join(root, 'fork.git');
+        try {
+            await mkdir(repoRoot);
+            await runGit(repoRoot, ['init']);
+            await configureGitRepo(repoRoot);
+            await writeTrackedFile(repoRoot, 'compose.yaml', 'approved H');
+            await runGit(repoRoot, ['commit', '-m', 'H']);
+            const approved = await runGit(repoRoot, ['rev-parse', 'HEAD']);
+            await writeTrackedFile(repoRoot, 'compose.yaml', 'base B');
+            await runGit(repoRoot, ['commit', '-m', 'B']);
+            const advancedBase = await runGit(repoRoot, ['rev-parse', 'HEAD']);
+            await runGit(repoRoot, ['init', '--bare', base]);
+            await runGit(repoRoot, ['init', '--bare', fork]);
+            await runGit(repoRoot, ['push', base, `${advancedBase}:refs/pull/7/head`]);
+            await runGit(repoRoot, ['push', fork, `${approved}:refs/pull/7/head`]);
+            const baseUrl = 'https://github.example.test/base/project.git';
+            const forkUrl = 'https://github.example.test/fork/project.git';
+            await runGit(repoRoot, ['config', `url.${pathToFileURL(base).href}.insteadOf`, baseUrl]);
+            await runGit(repoRoot, ['config', `url.${pathToFileURL(fork).href}.insteadOf`, forkUrl]);
+            await runGit(repoRoot, ['remote', 'add', 'origin', forkUrl]);
+            await runGit(repoRoot, ['remote', 'set-url', '--add', 'origin', baseUrl]);
+            await expect(runWithRealGitScmRuntime(() => prepareGitReviewWorkspace({ repoRoot,
+                sourceTip: { repository: { kind: 'github', deployment: 'https://github.example.test', repository: 'base/project' },
+                    cloneUrl: baseUrl, branch: 'approved-preview', sourceHeadSha: approved, fetchRef: 'refs/pull/7/head' },
+            }))).rejects.toMatchObject({ errorCode: SCM_OPERATION_ERROR_CODES.REMOTE_NOT_FOUND });
+            await runGit(repoRoot, ['config', '--unset-all', 'remote.origin.url']);
+            await runGit(repoRoot, ['config', '--add', 'remote.origin.url', baseUrl]);
+            const runtime = createRealGitScmBackendRuntimeServices();
+            let interleaved = false;
+            await expect(runWithGitScmCommandRunner(async input => {
+                const result = await runtime.runCommand(input);
+                if (input.args[0] === 'fetch' && !interleaved) {
+                    interleaved = true;
+                    // A separate real fetch overwrites shared FETCH_HEAD with H
+                    // while this invocation must still refuse the base's B.
+                    await runGit(repoRoot, ['fetch', fork, 'refs/pull/7/head']);
+                }
+                return result;
+            }, () => prepareGitReviewWorkspace({ repoRoot,
+                sourceTip: { repository: { kind: 'github', deployment: 'https://github.example.test', repository: 'base/project' },
+                    cloneUrl: baseUrl, branch: 'approved-preview', sourceHeadSha: approved, fetchRef: 'refs/pull/7/head' },
+            }))).rejects.toMatchObject({ code: 'approval_stale' });
+            expect(interleaved).toBe(true);
+            expect(await runGit(repoRoot, ['rev-parse', 'HEAD'])).toBe(advancedBase);
+            expect(await runGit(repoRoot, ['for-each-ref', '--format=%(refname)', 'refs/happier/source-fetch'])).toBe('');
+        } finally { await rm(root, { recursive: true, force: true }); }
+    });
     it.each(['refs/remotes/origin', 'refs/company'])('materializes an existing branch fetched only into %s', async (destination) => {
         const root = await makeTempDir('git-materialize-remote-tracking-');
         const repoRoot = join(root, 'source');

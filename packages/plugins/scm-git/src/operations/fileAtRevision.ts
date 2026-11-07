@@ -63,7 +63,9 @@ export async function gitFileAtRevision(input: {
 
     // The batch metadata query checks type and exact size together without decoding
     // content. Its stdin is one schema-validated immutable hexadecimal object id.
-    const metadata = await command(['cat-file', '--batch-check=%(objecttype) %(objectsize)'], `${blobId}\n`);
+    // Once selected, this immutable object id owns both size and content, even
+    // when the local checkout has replacement refs for that blob.
+    const metadata = await command(['--no-replace-objects', 'cat-file', '--batch-check=%(objecttype) %(objectsize)'], `${blobId}\n`);
     if (!metadata.success) return unavailable(metadata.stderr);
     const match = /^blob (\d+)\r?\n$/.exec(metadata.stdout);
     if (!match) return unavailable();
@@ -74,7 +76,7 @@ export async function gitFileAtRevision(input: {
     const chunks: Buffer[] = [];
     const hash = createHash('sha256');
     let received = 0;
-    const content = await runScmCommand({ bin: 'git', cwd, args: ['cat-file', 'blob', blobId], signal: input.signal,
+    const content = await runScmCommand({ bin: 'git', cwd, args: ['--no-replace-objects', 'cat-file', 'blob', blobId], signal: input.signal,
         // The known object size owns this phase's resource boundary; the generic
         // command default must not truncate a valid admitted image or restore.
         maxOutputBytes: sizeBytes,

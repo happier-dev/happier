@@ -30,7 +30,8 @@ import {
     resolvePullRequestBaseBranch,
 } from './pullRequestStatusProjection.js';
 
-type PullRequestReadRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getPullRequests' | 'buildCompareUrl' | 'detectRemote'>;
+type PullRequestReadRegistry = Pick<ResolvedScmHostingProviderRegistry, 'getPullRequests' | 'buildCompareUrl' | 'detectRemote'>
+    & Partial<Pick<ResolvedScmHostingProviderRegistry, 'getRepositoryPublishing'>>;
 
 export type GitPullRequestReadOperations = Readonly<{
     list(input: Readonly<{
@@ -176,7 +177,8 @@ export function createGitPullRequestReadOperations(
         if (!headBranch) {
             return errorResponse('Cannot list pull requests without a head branch', SCM_OPERATION_ERROR_CODES.INVALID_REQUEST);
         }
-        const baseBranch = request.base ?? resolvePullRequestBaseBranch(resolved.snapshot);
+        // A branch hint can target any base; filter only when the caller chose one.
+        const baseBranch = request.base ?? null;
         const authProfileKey = resolved.adapter ? readAuthProfileKey(resolved.adapter, resolved.provider) : undefined;
         const key = buildCacheKey({
             context,
@@ -202,6 +204,20 @@ export function createGitPullRequestReadOperations(
                 ...(request.state ? { state: request.state } : {}),
                 runtimeServices: readRuntimeServices(),
             });
+            let defaultBranch = cache.getRepositoryDefaultBranch(key);
+            const repositoryAdapter = resolved.registry.getRepositoryPublishing?.(resolved.provider.id);
+            const repository = resolved.provider.nameWithOwner;
+            const separator = repository?.lastIndexOf('/') ?? -1;
+            if (!resolved.snapshot.repo.defaultBranch && repositoryAdapter && repository && separator > 0) {
+                // Optional repository metadata shares the demanded branch observation, not snapshot refreshes.
+                const metadata = await repositoryAdapter.getRepository({
+                    provider: resolved.provider,
+                    owner: repository.slice(0, separator),
+                    repositoryName: repository.slice(separator + 1),
+                    runtimeServices: readRuntimeServices(),
+                }).catch(() => null);
+                defaultBranch = metadata?.defaultBranch?.trim() || null;
+            }
             const currentAuthProfileKey = readAuthProfileKey(resolved.adapter, resolved.provider);
             const writeKey = currentAuthProfileKey === authProfileKey
                 ? key
@@ -215,7 +231,7 @@ export function createGitPullRequestReadOperations(
                     authProfileKey: currentAuthProfileKey,
                 });
             if (currentAuthProfileKey) {
-                cache.setSuccess({ key: writeKey, pullRequests });
+                cache.setSuccess({ key: writeKey, pullRequests, ...(defaultBranch ? { defaultBranch } : {}) });
             }
             return { success: true, pullRequests: [...pullRequests] };
         } catch (error) {

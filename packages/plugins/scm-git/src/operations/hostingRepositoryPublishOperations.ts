@@ -384,6 +384,7 @@ export function createGitHostingRepositoryPublishOperation(
                 return errorResponse(
                     'The created hosting repository did not provide a supported clone URL.',
                     SCM_OPERATION_ERROR_CODES.FEATURE_UNSUPPORTED,
+                    { repository },
                 );
             }
 
@@ -392,6 +393,7 @@ export function createGitHostingRepositoryPublishOperation(
                     `Remote "${remoteName.remoteName}" already exists. Confirm set-url before replacing it.`,
                     SCM_OPERATION_ERROR_CODES.REMOTE_ALREADY_EXISTS,
                     {
+                        repository,
                         remediation: {
                             kind: 'set_url_required',
                         },

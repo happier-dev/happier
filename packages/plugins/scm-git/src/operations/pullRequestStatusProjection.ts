@@ -57,20 +57,11 @@ function selectHostingProvider(
     return null;
 }
 
-function normalizeUpstreamBranch(upstream: string | null): string | null {
-    if (!upstream) return null;
-    const slashIndex = upstream.indexOf('/');
-    if (slashIndex < 0) return upstream;
-    return upstream.slice(slashIndex + 1) || null;
-}
-
 export function resolvePullRequestBaseBranch(snapshot: ScmWorkingSnapshot): string | null {
-    return snapshot.repo.defaultBranch?.trim()
-        ?? normalizeUpstreamBranch(snapshot.branch.upstream)
-        ?? null;
+    return snapshot.repo.defaultBranch?.trim() || null;
 }
 
-function readAuthState(entry: ReturnType<PrStatusCache['getFreshForAnyAuthProfile']>): ScmPullRequestAuthState {
+function readAuthState(entry: ReturnType<PrStatusCache['getLastKnownForAnyAuthProfile']>): ScmPullRequestAuthState {
     if (!entry) return 'unknown';
     if (entry.kind === 'success') return 'authenticated';
     if (entry.errorKind === 'auth') return 'authentication_required';
@@ -83,12 +74,19 @@ export function projectPullRequestStatus(input: Readonly<{
     cache?: PrStatusCache;
     now?: () => number;
 }>): ScmWorkingSnapshot {
-    const snapshot = input.snapshot;
     const registry = input.registry;
     const cache = input.cache ?? defaultPrStatusCache;
+    const provider = registry ? selectHostingProvider(input.snapshot, registry) : null;
+    const defaultBranch = input.snapshot.repo.defaultBranch ?? (provider ? cache.getRepositoryDefaultBranch({
+        workspaceKey: input.snapshot.projectKey,
+        repoRootPath: input.snapshot.repo.rootPath ?? input.snapshot.projectKey,
+        provider,
+    }) : null);
+    const snapshot = defaultBranch && !input.snapshot.repo.defaultBranch
+        ? { ...input.snapshot, repo: { ...input.snapshot.repo, defaultBranch } }
+        : input.snapshot;
     const headBranch = snapshot.branch.head;
     const baseBranch = resolvePullRequestBaseBranch(snapshot);
-    const provider = registry ? selectHostingProvider(snapshot, registry) : null;
 
     if (!provider || !headBranch) {
         return {
@@ -105,11 +103,10 @@ export function projectPullRequestStatus(input: Readonly<{
         };
     }
 
-    const cached = cache.getFreshForAnyAuthProfile({
+    const cached = cache.getLastKnownForAnyAuthProfile({
         workspaceKey: snapshot.projectKey,
         repoRootPath: snapshot.repo.rootPath ?? snapshot.projectKey,
         provider,
-        baseBranch,
         headBranch,
         state: 'open',
     });

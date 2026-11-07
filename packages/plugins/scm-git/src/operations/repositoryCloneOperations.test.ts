@@ -55,7 +55,7 @@ describe('git repository clone operation', () => {
         expect(runGit(join(dirname(remotePath), 'source'), ['branch', '--show-current'])).toBe('main');
     });
 
-    it('creates main at an exact reviewed commit before publishing a fresh clone even when upstream main advanced', async () => {
+    it.each(['main', null] as const)('creates initial %s at an exact reviewed commit before publishing a fresh clone even when upstream main advanced', async branch => {
         const parent = createWorkspace();
         const remotePath = createBareRemoteRepository();
         const source = join(dirname(remotePath), 'source');
@@ -67,21 +67,21 @@ describe('git repository clone operation', () => {
         const newer = runGit(source, ['rev-parse', 'HEAD']);
         runGit(source, ['push', remotePath, 'main']);
         const clone = getRepositoryCloneOperation({ registry: makeProviderRegistry(makeCloneTargetDescription(remotePath)) });
-        const request = { ...makeRequest(parent, remotePath), initialCheckout: { branch: 'main' as const, commit: pin } };
+        const request = { ...makeRequest(parent, remotePath), initialCheckout: { branch, commit: pin } };
         const response = await cloneWithRealGitRuntime(clone, { context: makeContext(parent), request });
         expect(response.success).toBe(true);
         if (!response.success) throw new Error(response.error);
         expect({ current: runGit(response.destinationPath, ['branch', '--show-current']),
             head: runGit(response.destinationPath, ['rev-parse', 'HEAD']),
             main: runGit(response.destinationPath, ['rev-parse', 'main']) })
-            .toEqual({ current: 'main', head: pin, main: pin });
-        expect(runGit(response.destinationPath, ['rev-list', 'main'])).toBe(history);
-        expect(response.snapshot?.branch).toMatchObject({ head: 'main', detached: false });
+            .toEqual({ current: branch ?? '', head: pin, main: branch === null ? newer : pin });
+        expect(runGit(response.destinationPath, ['rev-list', 'HEAD'])).toBe(history);
+        expect(response.snapshot?.branch).toMatchObject({ detached: branch === null, headOid: pin });
         expect(runGit(source, ['rev-parse', 'main'])).toBe(newer);
         const repeated = await cloneWithRealGitRuntime(clone, { context: makeContext(parent),
-            request: { ...request, initialCheckout: { branch: 'main' as const, commit: newer } } });
+            request: { ...request, initialCheckout: { branch, commit: newer } } });
         expect(repeated).toMatchObject({ success: false, errorCode: SCM_OPERATION_ERROR_CODES.INVALID_PATH });
-        expect(runGit(response.destinationPath, ['rev-parse', 'main'])).toBe(pin);
+        expect(runGit(response.destinationPath, ['rev-parse', 'main'])).toBe(branch === null ? newer : pin);
     });
 
     it('refuses an unregistered provider or an unrecognized deployment before creating a checkout', async () => {

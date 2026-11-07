@@ -10,10 +10,9 @@ import { SCM_OPERATION_ERROR_CODES } from '@happier-dev/plugin-sdk/scm';
 
 import { runScmCommand, type ScmExecResult } from './runtime.js';
 import { buildGitSnapshot } from './statusSnapshot.js';
-import { inspectGitCheckoutIdentity, readGitCommonDirPath } from './checkoutIdentity.js';
+import { inspectGitCheckoutIdentity, resolveGitMainWorktreePath } from './checkoutIdentity.js';
 import { enrichGitWorktreesWithStatus, readWorktreeStatusEnrichmentForPaths } from './worktreeStatusEnricher.js';
 import { realpath } from 'node:fs/promises';
-import { dirname } from 'node:path';
 import { tmpdir } from 'node:os';
 import { readGitBranchOperationState } from './operations/branchOperationState.js';
 import { parseGitStatusPorcelainV2Z } from './statusParser.js';
@@ -112,13 +111,16 @@ export async function detectGitRepo(input: { cwd: string; includeRetainedWorktre
 
 export async function getGitSnapshot(input: {
     context: ScmBackendContext;
-    request?: Pick<ScmStatusSnapshotRequest, 'includeWorktreeStatus' | 'operationStateVersion'>;
+    request?: Pick<ScmStatusSnapshotRequest, 'includeWorktreeStatus' | 'operationStateVersion' | 'detail'>;
     resolveHostingProviderRegistry?: () => Promise<PullRequestStatusProjectionRegistry>;
 }): Promise<ScmStatusSnapshotResponse> {
     const { context, request } = input;
     const repoRoot = context.detection.rootPath ?? context.cwd;
+    // A facts reader (checkout picker) reads root, branch, worktrees and remotes: answer from
+    // ref queries and never walk the working copy (no status, numstat or untracked reads).
+    const factsOnly = request?.detail === 'facts';
 
-    const statusResult = await runScmCommand({
+    const statusResult = factsOnly ? await readGitBranchHeaderAsStatus(context.cwd) : await runScmCommand({
         bin: 'git',
         cwd: context.cwd,
         args: ['status', '--porcelain=v2', '-z', '--branch', '--show-stash', '--untracked-files=all'],
@@ -132,13 +134,14 @@ export async function getGitSnapshot(input: {
         };
     }
 
-    const includedResult = await runScmCommand({
+    const noScan: ScmExecResult = { success: true, stdout: '', stderr: '', exitCode: 0 };
+    const includedResult = factsOnly ? noScan : await runScmCommand({
         bin: 'git',
         cwd: context.cwd,
         args: ['diff', '--cached', '--numstat', '-z'],
         timeoutMs: 10_000,
     });
-    const pendingResult = await runScmCommand({
+    const pendingResult = factsOnly ? noScan : await runScmCommand({
         bin: 'git',
         cwd: context.cwd,
         args: ['diff', '--numstat', '-z'],
@@ -162,22 +165,24 @@ export async function getGitSnapshot(input: {
         args: ['for-each-ref', '--format=%(refname:short)%09%(symref:short)', 'refs/remotes/*/HEAD'],
         timeoutMs: 10_000,
     });
-    const commonDirPath = await readGitCommonDirPath({ cwd: context.cwd });
+    const mainWorktreePath = worktreesResult.success ? await resolveGitMainWorktreePath({
+        worktreesOutput: worktreesResult.stdout, currentWorktreePath: context.detection.rootPath,
+    }) : null;
     const statusRaw = statusResult.stdout ?? '';
     const parsedStatus = parseGitStatusPorcelainV2Z(statusRaw);
-    const operationState = await readGitBranchOperationState(context, parsedStatus.branch.oid);
-    const upstreamOidResult = parsedStatus.branch.upstream ? await runScmCommand({
+    const operationState = factsOnly ? null : await readGitBranchOperationState(context, parsedStatus.branch.oid);
+    const upstreamOidResult = parsedStatus.branch.upstream && !factsOnly ? await runScmCommand({
         bin: 'git', cwd: context.cwd, args: ['rev-parse', '--verify', '@{upstream}^{commit}'],
     }) : null;
     const untrackedPaths = parsedStatus.notAdded;
-    const untrackedStatsByPath = repoRoot && untrackedPaths.length > 0 ? await readUntrackedFileStats(repoRoot, untrackedPaths) : {};
+    const untrackedStatsByPath = repoRoot && untrackedPaths.length > 0 && !factsOnly ? await readUntrackedFileStats(repoRoot, untrackedPaths) : {};
 
     const baseSnapshot = buildGitSnapshot({
         projectKey: context.projectKey,
         fetchedAt: Date.now(),
         rootPath: context.detection.rootPath,
         currentWorktreePath: context.cwd,
-        mainWorktreePath: commonDirPath ? dirname(commonDirPath) : null,
+        mainWorktreePath,
         statusOutput: statusResult.stdout ?? '',
         ...(upstreamOidResult?.success ? { upstreamOid: upstreamOidResult.stdout.trim() } : {}),
         includedNumStatOutput: includedResult.success ? (includedResult.stdout ?? '') : '',
@@ -209,6 +214,7 @@ export async function getGitSnapshot(input: {
             success: true,
             snapshot: {
                 ...snapshot,
+                ...(factsOnly ? { detail: 'facts' as const } : {}),
                 repo: {
                     ...snapshot.repo,
                     worktrees,
@@ -219,8 +225,35 @@ export async function getGitSnapshot(input: {
 
     return {
         success: true,
-        snapshot,
+        snapshot: factsOnly ? { ...snapshot, detail: 'facts' } : snapshot,
     };
+}
+
+/**
+ * The porcelain v2 branch header (`# branch.oid/head/upstream/ab`) from ref queries alone, so the
+ * canonical status parser builds the branch facts without a working-copy walk.
+ */
+async function readGitBranchHeaderAsStatus(cwd: string): Promise<ScmExecResult> {
+    const head = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], timeoutMs: 10_000 });
+    const branch = await runScmCommand({ bin: 'git', cwd, args: ['symbolic-ref', '--quiet', '--short', 'HEAD'], timeoutMs: 10_000 });
+    if (!head.success && !branch.success) {
+        // Neither a commit nor a branch: not a readable repository state.
+        return head;
+    }
+    const lines = [
+        `# branch.oid ${head.success ? head.stdout.trim() : '(initial)'}`,
+        `# branch.head ${branch.success ? branch.stdout.trim() : '(detached)'}`,
+    ];
+    if (branch.success) {
+        const upstream = await runScmCommand({ bin: 'git', cwd, args: ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'], timeoutMs: 10_000 });
+        if (upstream.success && upstream.stdout.trim()) {
+            lines.push(`# branch.upstream ${upstream.stdout.trim()}`);
+            const counts = head.success ? await runScmCommand({ bin: 'git', cwd, args: ['rev-list', '--left-right', '--count', 'HEAD...@{upstream}'], timeoutMs: 10_000 }) : null;
+            const [ahead, behind] = counts?.success ? counts.stdout.trim().split(/\s+/) : [];
+            if (ahead !== undefined && behind !== undefined) lines.push(`# branch.ab +${ahead} -${behind}`);
+        }
+    }
+    return { success: true, stdout: lines.map(line => `${line}\0`).join(''), stderr: '', exitCode: 0 };
 }
 
 async function canonicalizeWorktreePathForCompare(path: string): Promise<string> {

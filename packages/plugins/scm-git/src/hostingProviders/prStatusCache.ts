@@ -43,6 +43,7 @@ export type PrStatusCacheSuccessEntry = Readonly<{
     kind: 'success';
     key: PrStatusCacheKey;
     pullRequests: readonly ScmPullRequestSummary[];
+    defaultBranch?: string;
     fetchedAt: number;
     expiresAt: number;
 }>;
@@ -63,10 +64,13 @@ export type PrStatusCacheEntry = PrStatusCacheSuccessEntry | PrStatusCacheErrorE
 
 export type PrStatusCache = Readonly<{
     getFresh(key: PrStatusCacheKey): PrStatusCacheEntry | null;
-    getFreshForAnyAuthProfile(key: Omit<PrStatusCacheKey, 'authProfileKey'> & Readonly<{ authProfileKey?: string }>): PrStatusCacheEntry | null;
+    /** Presentation may retain an expired observation; request reuse still requires getFresh. */
+    getLastKnownForAnyAuthProfile(key: Omit<PrStatusCacheKey, 'authProfileKey' | 'baseBranch'>): PrStatusCacheEntry | null;
+    getRepositoryDefaultBranch(key: Pick<PrStatusCacheKey, 'workspaceKey' | 'repoRootPath' | 'provider'>): string | null;
     setSuccess(input: Readonly<{
         key: PrStatusCacheKey;
         pullRequests: readonly ScmPullRequestSummary[];
+        defaultBranch?: string;
         fetchedAt?: number;
     }>): PrStatusCacheSuccessEntry;
     setError(input: Readonly<{
@@ -104,14 +108,18 @@ function stableCacheKey(key: PrStatusCacheKey): string {
     });
 }
 
-function sameLogicalKey(left: PrStatusCacheKey, right: Omit<PrStatusCacheKey, 'authProfileKey'>): boolean {
+function sameRepositoryKey(left: PrStatusCacheKey, right: Pick<PrStatusCacheKey, 'workspaceKey' | 'repoRootPath' | 'provider'>): boolean {
     return left.workspaceKey === right.workspaceKey
         && left.repoRootPath === right.repoRootPath
         && left.provider.id === right.provider.id
         && left.provider.kind === right.provider.kind
         && left.provider.baseUrl === right.provider.baseUrl
-        && normalizeProviderNameWithOwner(left.provider) === normalizeProviderNameWithOwner(right.provider)
-        && normalizeOptional(left.baseBranch) === normalizeOptional(right.baseBranch)
+        && normalizeProviderNameWithOwner(left.provider) === normalizeProviderNameWithOwner(right.provider);
+}
+
+/** Presentation follows the branch across chosen PR bases; exact request reuse still includes the base. */
+function sameBranchKey(left: PrStatusCacheKey, right: Omit<PrStatusCacheKey, 'authProfileKey' | 'baseBranch'>): boolean {
+    return sameRepositoryKey(left, right)
         && normalizeOptional(left.headBranch) === normalizeOptional(right.headBranch)
         && normalizeOptional(left.headRepositoryNameWithOwner) === normalizeOptional(right.headRepositoryNameWithOwner)
         && (left.state ?? 'open') === (right.state ?? 'open');
@@ -148,14 +156,6 @@ export function createPrStatusCache(input?: Readonly<{
     });
     const entries = new Map<string, PrStatusCacheEntry>();
 
-    function pruneExpired(timestamp: number): void {
-        for (const [key, entry] of entries) {
-            if (!isFresh(entry, timestamp)) {
-                entries.delete(key);
-            }
-        }
-    }
-
     function enforceBound(): void {
         while (entries.size > config.maxEntries) {
             let oldestKey: string | null = null;
@@ -179,30 +179,31 @@ export function createPrStatusCache(input?: Readonly<{
     return Object.freeze({
         getFresh(key) {
             const timestamp = now();
-            pruneExpired(timestamp);
             const entry = entries.get(stableCacheKey(key)) ?? null;
             return entry && isFresh(entry, timestamp) ? entry : null;
         },
-        getFreshForAnyAuthProfile(key) {
-            const timestamp = now();
-            pruneExpired(timestamp);
-            let freshest: PrStatusCacheEntry | null = null;
+        getLastKnownForAnyAuthProfile(key) {
+            let latest: PrStatusCacheEntry | null = null;
             for (const entry of entries.values()) {
-                if (!sameLogicalKey(entry.key, key) || !isFresh(entry, timestamp)) {
-                    continue;
-                }
-                if (!freshest || entry.fetchedAt > freshest.fetchedAt) {
-                    freshest = entry;
-                }
+                if (sameBranchKey(entry.key, key) && (!latest || entry.fetchedAt > latest.fetchedAt)) latest = entry;
             }
-            return freshest;
+            return latest;
         },
-        setSuccess({ key, pullRequests, fetchedAt }) {
+        getRepositoryDefaultBranch(key) {
+            let latest: PrStatusCacheSuccessEntry | null = null;
+            for (const entry of entries.values()) {
+                if (entry.kind === 'success' && entry.defaultBranch && sameRepositoryKey(entry.key, key)
+                    && (!latest || entry.fetchedAt > latest.fetchedAt)) latest = entry;
+            }
+            return latest?.defaultBranch ?? null;
+        },
+        setSuccess({ key, pullRequests, defaultBranch, fetchedAt }) {
             const timestamp = fetchedAt ?? now();
             const entry: PrStatusCacheSuccessEntry = Object.freeze({
                 kind: 'success',
                 key,
                 pullRequests: Object.freeze([...pullRequests]),
+                ...(defaultBranch ? { defaultBranch } : {}),
                 fetchedAt: timestamp,
                 expiresAt: timestamp + config.successTtlMs,
             });

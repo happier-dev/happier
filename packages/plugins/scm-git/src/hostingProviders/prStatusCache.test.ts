@@ -60,9 +60,8 @@ describe('PR status cache', () => {
         });
 
         expect(cache.getFresh(cacheKey('profile-b'))).toBeNull();
-        expect(cache.getFreshForAnyAuthProfile({
+        expect(cache.getLastKnownForAnyAuthProfile({
             ...cacheKey('profile-b'),
-            authProfileKey: undefined,
         })).toMatchObject({
             kind: 'success',
             pullRequests: [pullRequest],
@@ -70,10 +69,9 @@ describe('PR status cache', () => {
 
         now = 1101;
         expect(cache.getFresh(cacheKey('profile-a'))).toBeNull();
-        expect(cache.getFreshForAnyAuthProfile({
+        expect(cache.getLastKnownForAnyAuthProfile({
             ...cacheKey('profile-a'),
-            authProfileKey: undefined,
-        })).toBeNull();
+        })).toMatchObject({ kind: 'success', fetchedAt: 1000, pullRequests: [pullRequest] });
     });
 
     it('bounds entries and invalidates repository branch contexts after status-changing operations', () => {

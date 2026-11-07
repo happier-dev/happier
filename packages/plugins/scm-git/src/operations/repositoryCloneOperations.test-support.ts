@@ -46,40 +46,6 @@ export function createWorkspace(): string {
     return mkdtempSync(join(tmpdir(), 'happier-git-clone-operation-'));
 }
 
-export function readSnapshotFromGit(context: ScmBackendContext): ScmWorkingSnapshot {
-    return {
-        projectKey: context.projectKey,
-        fetchedAt: Date.now(),
-        repo: {
-            isRepo: true,
-            backendId: 'git',
-            mode: '.git',
-            rootPath: runGit(context.cwd, ['rev-parse', '--show-toplevel']),
-            remotes: [],
-            worktrees: [],
-        },
-        capabilities: createScmCapabilities(),
-        branch: {
-            head: runGit(context.cwd, ['branch', '--show-current']) || null,
-            upstream: null,
-            ahead: 0,
-            behind: 0,
-            detached: false,
-        },
-        hasConflicts: false,
-        entries: [],
-        totals: {
-            includedFiles: 0,
-            pendingFiles: 0,
-            untrackedFiles: 0,
-            includedAdded: 0,
-            includedRemoved: 0,
-            pendingAdded: 0,
-            pendingRemoved: 0,
-        },
-    };
-}
-
 export function createInMemorySnapshot(context: ScmBackendContext): ScmWorkingSnapshot {
     return {
         projectKey: context.projectKey,
@@ -117,10 +83,7 @@ export function createInMemorySnapshot(context: ScmBackendContext): ScmWorkingSn
 export function getRepositoryCloneOperation(
     deps?: Parameters<typeof createGitRepositoryCloneOperation>[0],
 ): RepositoryCloneOperation {
-    const operation = createGitRepositoryCloneOperation({
-        ...deps,
-        readSnapshot: deps?.readSnapshot ?? (async ({ context }) => readSnapshotFromGit(context)),
-    });
+    const operation = createGitRepositoryCloneOperation(deps);
     expect(operation.clone).toBeTypeOf('function');
     return operation.clone;
 }

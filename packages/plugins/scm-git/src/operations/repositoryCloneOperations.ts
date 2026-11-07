@@ -394,6 +394,7 @@ export function createGitRepositoryCloneOperation(
                     checkout = await checkoutInitialClone({
                         path: reservedDestination.cloneDestinationPath,
                         commit: request.initialCheckout.commit,
+                        branch: request.initialCheckout.branch,
                         runCommand,
                         timeoutMs: GIT_REPOSITORY_CLONE_TIMEOUT_MS,
                     });

@@ -106,6 +106,29 @@ function createRegistry() {
 }
 
 describe('pull request status projection', () => {
+    it('projects the created branch PR even when its selected base differs from the repository default', () => {
+        const cache = createPrStatusCache({ now: () => 1000 });
+        const pullRequest: ScmPullRequestSummary = { provider, number: 42, title: 'Release fix',
+            url: 'https://github.com/happier-dev/happier/pull/42', baseBranch: 'release', headBranch: 'feature/pr-cache', state: 'open' };
+        cache.setSuccess({ key: { workspaceKey: 'machine-1:/repo', repoRootPath: '/repo', provider,
+            headBranch: 'feature/pr-cache', baseBranch: 'release', state: 'open' }, pullRequests: [pullRequest] });
+        expect(projectPullRequestStatus({ snapshot: createSnapshot(), registry: createRegistry(), cache }).pullRequestStatus?.openPullRequest).toEqual(pullRequest);
+        expect(cache.getFresh({ workspaceKey: 'machine-1:/repo', repoRootPath: '/repo', provider,
+            headBranch: 'feature/pr-cache', baseBranch: 'main', state: 'open' })).toBeNull();
+    });
+    it('retains the last-known branch PR and checkedAt after the read-cache TTL, including after a fresh-cache miss', () => {
+        let now = 1000;
+        const cache = createPrStatusCache({ now: () => now });
+        const key = { workspaceKey: 'machine-1:/repo', repoRootPath: '/repo', provider, baseBranch: 'main', headBranch: 'feature/pr-cache', state: 'open' as const };
+        const pullRequest: ScmPullRequestSummary = { provider, number: 42, title: 'Retained PR', url: 'https://github.com/happier-dev/happier/pull/42', baseBranch: 'main', headBranch: key.headBranch, state: 'open' };
+        cache.setSuccess({ key, pullRequests: [pullRequest] });
+        now += 30_001;
+        expect(cache.getFresh(key)).toBeNull();
+        expect(projectPullRequestStatus({ snapshot: createSnapshot(), registry: createRegistry(), cache, now: () => now }).pullRequestStatus)
+            .toMatchObject({ openPullRequest: pullRequest, checkedAt: 1000, cacheTtlMs: 0 });
+        cache.setSuccess({ key, pullRequests: [] });
+        expect(projectPullRequestStatus({ snapshot: createSnapshot(), registry: createRegistry(), cache, now: () => now }).pullRequestStatus?.openPullRequest).toBeNull();
+    });
     it('preserves draft and unknown review facts from the open-review cache rather than projecting no review', () => {
         const registry = createScmHostingProviderRegistry({ providers: [{ id: 'github', pluginId: 'happier.scm.github', kind: 'github',
             displayName: 'GitHub', capabilities: [] }], runtimeRegistrations: [{ pluginId: 'happier.scm.github', occurrenceId: 'cache-test',
@@ -175,6 +198,7 @@ describe('pull request status projection', () => {
         });
 
         const snapshot = createSnapshot();
+        snapshot.repo.defaultBranch = 'main';
         const projected = projectPullRequestStatus({
             snapshot,
             registry: createRegistry(),
