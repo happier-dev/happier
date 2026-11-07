@@ -1,5 +1,5 @@
 import type { ComposerAttachmentAuthorPresentationV1 } from '@happier-dev/plugin-sdk/ui';
-import type { ComposerHandle, ComposerRequestOptions } from '@happier-dev/plugin-ui';
+import type { ComposerHandle, ComposerRequestOptions, PluginTranslate } from '@happier-dev/plugin-ui';
 import type {
     TriageEntryLocatorV1,
     TriageEntryRefV1,
@@ -18,13 +18,8 @@ import { planTriageEntryAttachmentMutation } from './mutationPlan.js';
  * here, so there is exactly one place that decides how a revision conflict is
  * handled.
  *
- * A conflict is replayed exactly once, and the replay re-reads and **re-plans**
- * rather than resubmitting the same operation with a newer revision. That
- * distinction is the whole point: between the two reads the draft may already
- * have gained or lost this entry, and blindly re-applying would resurrect an
- * attachment the user just removed. A second conflict is reported rather than
- * looped, because a draft changing under two rapid writers is a fact the user
- * should see, not one to retry against forever.
+ * A known revision conflict is returned without another read or apply. The
+ * caller can show the changed draft and let the user choose a fresh mutation.
  *
  * The returned outcome is TOTAL: every trip that starts here ends in one of
  * these three answers. `read` and `apply` are host calls that reject rather
@@ -39,7 +34,7 @@ export type TriageEntryMutationOutcomeV1 =
     | Readonly<{ kind: 'applied' }>
     /** The draft already holds the desired state; nothing needed to change. */
     | Readonly<{ kind: 'settled' }>
-    | Readonly<{ kind: 'refused'; reason: string }>;
+    | Readonly<{ kind: 'refused'; refusal: TriageMutationRefusalV1 }>;
 
 export type TriageEntryMutationRequestV1 = Readonly<{
     handle: ComposerHandle;
@@ -56,30 +51,103 @@ export type TriageEntryMutationRequestV1 = Readonly<{
     | Readonly<{ intent: 'remove' }>
 );
 
-const REFUSAL_MESSAGES: Readonly<Record<string, string>> = Object.freeze({
-    attachmentsUnsupported: 'This composer cannot carry attachments.',
-    invalidValue: 'This entry cannot be attached under that connection.',
-    referencesUnsupported: 'This composer cannot carry references.',
-    invalidCandidate: 'This evidence reference cannot be inserted.',
-    composerUnavailable: 'The composer is no longer open.',
-    notEditable: 'The composer cannot be edited right now.',
-    conflict: 'The draft changed while this was applied. Try again.',
-    unavailable: 'The composer is no longer open.',
+/**
+ * Why a Triage attach or remove was refused, as a code plus the one fact its
+ * sentence needs. The outcome never carries prose: the reader's sentence is
+ * `describeTriageMutationRefusal`, so every refusal is translated by the same
+ * catalog and no raw host code, body or path can reach the screen.
+ */
+export type TriageMutationRefusalV1 =
+    | Readonly<{ code: 'attachmentLimit'; maximum: number }>
+    | Readonly<{ code: Exclude<TriageMutationRefusalCode, 'attachmentLimit'> }>;
+
+const REFUSAL_COPY = {
+    attachmentLimit: {
+        key: 'plugins.triage.picker.refusal.attachmentLimit',
+        fallback: 'Attachment limit reached ({maximum}). Remove one first.',
+    },
+    attachmentsUnsupported: {
+        key: 'plugins.triage.picker.refusal.attachmentsUnsupported',
+        fallback: 'This message can’t carry attachments.',
+    },
+    invalidValue: {
+        key: 'plugins.triage.picker.refusal.invalidValue',
+        fallback: 'Can’t be attached as it is. Refresh the list and retry.',
+    },
+    notAcceptedHere: {
+        key: 'plugins.triage.picker.refusal.notAcceptedHere',
+        fallback: 'This message isn’t accepting PRs & Issues now. Reopen the picker.',
+    },
+    referencesUnsupported: {
+        key: 'plugins.triage.picker.refusal.referencesUnsupported',
+        fallback: 'This message can’t carry references.',
+    },
+    invalidCandidate: {
+        key: 'plugins.triage.picker.refusal.invalidCandidate',
+        fallback: 'This evidence reference can’t be inserted.',
+    },
+    composerUnavailable: {
+        key: 'plugins.triage.picker.refusal.composerUnavailable',
+        fallback: 'The message box was closed. Reopen it and try again.',
+    },
+    notEditable: {
+        key: 'plugins.triage.picker.refusal.notEditable',
+        fallback: 'The message can’t be edited right now.',
+    },
+    conflict: {
+        key: 'plugins.triage.picker.refusal.conflict',
+        fallback: 'The draft changed meanwhile. Try again.',
+    },
     // Deliberately not 'nothing changed': a rejected `apply` may have landed
     // before the answer was lost. The picker re-reads the draft after every
     // outcome, so the canonical snapshot -- not this sentence -- settles what
     // the row actually holds.
-    unreachable: 'The composer could not be reached. Try again.',
-});
+    unreachable: {
+        key: 'plugins.triage.picker.refusal.unreachable',
+        fallback: 'Couldn’t reach the message box. Try again.',
+    },
+    evidenceNotPrepared: {
+        key: 'plugins.triage.picker.refusal.evidenceNotPrepared',
+        fallback: 'Couldn’t prepare the evidence reference. Try again.',
+    },
+    changeRejected: {
+        key: 'plugins.triage.picker.refusal.changeRejected',
+        fallback: 'Couldn’t change the attachment. Try again.',
+    },
+} as const satisfies Readonly<Record<string, Readonly<{ key: string; fallback: string }>>>;
 
-function refused(reason: string): TriageEntryMutationOutcomeV1 {
-    return { kind: 'refused', reason: REFUSAL_MESSAGES[reason] ?? 'The change could not be applied.' };
+type TriageMutationRefusalCode = keyof typeof REFUSAL_COPY;
+
+export function describeTriageMutationRefusal(text: PluginTranslate, refusal: TriageMutationRefusalV1): string {
+    const copy = REFUSAL_COPY[refusal.code];
+    return refusal.code === 'attachmentLimit'
+        ? text(copy.key, copy.fallback, { maximum: refusal.maximum })
+        : text(copy.key, copy.fallback);
+}
+
+/**
+ * The host applier answers a rejected attachment with an open vocabulary of
+ * `invalidOperation` reasons. Only the ones a reader can act on get their own
+ * sentence; anything the host adds later reads as a plain failed change rather
+ * than leaking its code.
+ */
+function refusalForInvalidOperation(reason: string): TriageMutationRefusalV1 {
+    switch (reason) {
+        case 'attachments_unsupported': return { code: 'attachmentsUnsupported' };
+        case 'attachment_authority_mismatch': return { code: 'notAcceptedHere' };
+        case 'attachment_value_invalid': return { code: 'invalidValue' };
+        default: return { code: 'changeRejected' };
+    }
+}
+
+function refused(code: Exclude<TriageMutationRefusalCode, 'attachmentLimit'>): TriageEntryMutationOutcomeV1 {
+    return { kind: 'refused', refusal: { code } };
 }
 
 type TriageRevisionCheckedPlanV1 =
     | Readonly<{ status: 'transaction'; transaction: import('@happier-dev/plugin-sdk/ui').ComposerTransactionV1 }>
     | Readonly<{ status: 'alreadySettled'; reason: string }>
-    | Readonly<{ status: 'refused'; reason: string }>;
+    | Readonly<{ status: 'refused'; reason: 'attachmentsUnsupported' | 'invalidValue' | 'referencesUnsupported' | 'invalidCandidate' }>;
 
 export type TriageRevisionCheckedMutationOutcomeV1 =
     | TriageEntryMutationOutcomeV1
@@ -105,7 +173,7 @@ export async function applyTriageRevisionCheckedMutation(input: Readonly<{
     try {
         const read = await input.handle.read(input.options);
         if (!isCurrent()) return { kind: 'inert' };
-        if (read.status !== 'ready') return refused('unavailable');
+        if (read.status !== 'ready') return refused('composerUnavailable');
 
         const plan = input.plan(read.snapshot);
         if (plan.status === 'alreadySettled') return { kind: 'settled' };
@@ -122,8 +190,15 @@ export async function applyTriageRevisionCheckedMutation(input: Readonly<{
             case 'composerUnavailable':
             case 'notEditable':
                 return refused(applied.status);
-            default:
-                return { kind: 'refused', reason: 'The change could not be applied.' };
+            case 'invalidOperation':
+                return { kind: 'refused', refusal: refusalForInvalidOperation(applied.reason) };
+            case 'limitExceeded':
+                return {
+                    kind: 'refused',
+                    refusal: applied.limit === 'composerAttachments'
+                        ? { code: 'attachmentLimit', maximum: applied.maximum }
+                        : { code: 'changeRejected' },
+                };
         }
     } catch (error) {
         if (!isCurrent()) return { kind: 'inert' };
@@ -153,17 +228,15 @@ async function attempt(
     });
     // Attachment callers have no lifecycle currentness predicate, so `inert`
     // is unreachable here. Keep the public attachment outcome unchanged.
-    return outcome.kind === 'inert' ? refused('unavailable') : outcome;
+    return outcome.kind === 'inert' ? refused('composerUnavailable') : outcome;
 }
 
 export async function applyTriageEntryMutation(
     request: TriageEntryMutationRequestV1,
 ): Promise<TriageEntryMutationOutcomeV1> {
     try {
-        const first = await attempt(request);
-        if (first.kind !== 'conflict') return first;
-        const replay = await attempt(request);
-        return replay.kind === 'conflict' ? refused('conflict') : replay;
+        const outcome = await attempt(request);
+        return outcome.kind === 'conflict' ? refused('conflict') : outcome;
     } catch (error) {
         // A CANCELLED call is not a refusal and must not be settled as one.
         // `hostCancellation.ts` owns that distinction and states why: the
@@ -172,10 +245,6 @@ export async function applyTriageEntryMutation(
         // it behind the exact sentence a real transport failure produces. The
         // two sibling consumers already route through this helper.
         if (isHostCancellation(error, request.options?.signal)) throw error;
-        // Both attempts are covered: the replay reaches the same boundary a
-        // second time, and its rejection has to settle through the same answer
-        // rather than escaping the outcome the first attempt already committed
-        // this call to producing.
         return refused('unreachable');
     }
 }

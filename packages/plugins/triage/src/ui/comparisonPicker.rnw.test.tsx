@@ -2,7 +2,7 @@
 import * as React from 'react';
 import { act } from 'react';
 import { afterEach, describe, expect, it } from 'vitest';
-import { createPluginUiTestkit, createSurfaceContextFixture, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
+import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture, type PluginClientTestkit, type PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { TriageGetInputV1Schema, TriageGetResultV1Schema, TRIAGE_SOURCES_CONTRIBUTION_POINT_ID_V1,
@@ -14,16 +14,24 @@ import { CORPUS_SOURCE_INSTANCE_LIFECYCLE } from '../corpus/collections/ids.js';
 import { listTriageEntries, type TriageAdmittedSourceV1 } from '../actions/listEntries.js';
 import { TriageListEntriesInputV1Schema, TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1 } from '../actions/listEntriesProtocol.js';
 import { readTriageEntryDetail } from '../actions/readEntryDetail.js';
-import { createTestkitSourceSessionRelations } from '../sessions/testkit/entrySessionTestkit.test-support.js';
+import { createTestkitSourceSessionRelations, readTestkitSourceSessionLinks } from '../sessions/testkit/entrySessionTestkit.test-support.js';
 import { TriageReadEntryDetailInputV1Schema, TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 } from '../actions/entryDetailProtocol.js';
 import { createTriageEphemeralSharedScopeFixture } from './window/ephemeralSharedScope.test-support.js';
 import type { EphemeralInputSettlement } from '@happier-dev/plugin-sdk/ui';
+import type { PluginUiContextEnrichmentV1 } from '@happier-dev/plugin-sdk/ui';
+import { PLUGIN_MANIFEST } from '../manifest.js';
+import * as mountedUiArtifact from '../actions/mountedUi.js';
+import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, TriageMountedUiResultV1Schema } from '../actions/mountedUiProtocol.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
-afterEach(async () => { for (const fixture of mounted.splice(0)) await act(() => fixture.dispose()); });
+const clients: PluginClientTestkit[] = [];
+afterEach(async () => {
+  for (const fixture of mounted.splice(0)) await act(() => fixture.dispose());
+  for (const client of clients.splice(0)) await client.dispose();
+});
 
-async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIdentity?: boolean }> = {}) {
+async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIdentity?: boolean; skipSelect?: boolean; paged?: boolean; onGet?: () => void }> = {}) {
   const native = createTriageSourceV1Fixture();
   const source = native.configuredInstance.instance.source;
   const { collections, control } = createTestkitCorpusCollections();
@@ -43,6 +51,9 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
     sourceAction: { action: { pluginId: source.pluginId, localId: 'read-comparison' }, input: { routingToken: 'opaque' } } } };
   const settlements: EphemeralInputSettlement[] = [];
   const getInputs: unknown[] = [];
+  const reads = { scans: 0, details: 0 };
+  const sharedScope = createTriageEphemeralSharedScopeFixture();
+  let published: PluginUiContextEnrichmentV1 | null = null;
   let fixture!: PluginUiTestkit;
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'comparison-picker', mountNonce: 'comparison-picker-mount' },
@@ -53,19 +64,36 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
           contributions: [{ contributor, protocol, descriptor: native.descriptor,
             operations: options.getAvailable === false ? [] : [operation], surfaces: [] }] }] }],
       } }),
-      adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: createTriageEphemeralSharedScopeFixture() }),
+      adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: sharedScope }),
       launchInput: { inputType: { pluginId: 'happier.triage', localId: 'pull-request-comparison' }, semantic: 'scmPullRequestComparison' },
       handlers: {
+        publishCurrentUiContext: ({ enrichment }) => { published = enrichment; },
         executeAction: async ({ action: requested, input }) => {
+          if (requested === 'sessions/read-source-links-v1') return await readTestkitSourceSessionLinks(input, { collections, contributions: admitted });
           if (requested === TRIAGE_LIST_ENTRIES_ACTION_LOCAL_ID_V1) return await listTriageEntries(TriageListEntriesInputV1Schema.parse(input), {
             sourceInstances: collections.sourceInstances, readAdmittedSources: async () => admitted,
-            executeScan: async () => native.scanResult, nowMs: () => Date.now(),
+            executeScan: async (_operation, input) => {
+              reads.scans += 1;
+              if (!options.paged) return native.scanResult;
+              if (native.scanResult.kind === 'failed') throw new Error('Expected scan observations');
+              const observation = native.scanResult.observations.find(item => item.kind === 'present');
+              if (!observation) throw new Error('Expected present observation');
+              return input.page.kind === 'initial'
+                ? { kind: 'page', observations: Array.from({ length: input.page.limit }, (_, index) => ({
+                    ...observation, localRef: { ...observation.localRef, entryId: `first-${index}` },
+                  })), evidence: { kind: 'partial', reason: 'more-pages' }, continuation: { v: 1, token: 'next-page' } }
+                : { kind: 'complete', observations: [{ ...observation,
+                    localRef: { ...observation.localRef, entryId: 'later' },
+                    snapshot: { ...observation.snapshot, title: 'Later pull request' },
+                  }], evidence: { kind: 'walkFinished' } };
+            }, nowMs: () => Date.now(),
           });
-          if (requested === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) return await readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(input), {
+          if (requested === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1) { reads.details += 1; return await readTriageEntryDetail(TriageReadEntryDetailInputV1Schema.parse(input), {
             sourceRelations: createTestkitSourceSessionRelations({ collections, contributions: admitted }), readSessionSummary: async () => null,
-          });
+          }); }
           expect(requested).toEqual(action);
           getInputs.push(TriageGetInputV1Schema.parse(input));
+          options.onGet?.();
           const result = native.getResult;
           if (result.kind !== 'present') throw new Error('Expected present source fixture');
           return TriageGetResultV1Schema.parse({ ...result, comparisonSource: comparison,
@@ -77,11 +105,67 @@ async function mountPicker(options: Readonly<{ getAvailable?: boolean; wrongIden
   });
   mounted.push(fixture);
   await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Refresh' })); });
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: native.detailInput.observation.snapshot.title })); });
-  return { fixture, settlements, getInputs, native, comparison };
+  if (!options.skipSelect) await act(async () => { await fixture.press(await fixture.getByRole('button', { name: native.detailInput.observation.snapshot.title })); });
+  const invoke = async (operation: unknown, signal = new AbortController().signal) => {
+    const declaration = PLUGIN_MANIFEST.contributes.actions.find(item => item.id === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1);
+    if (declaration?.execution.target !== 'client') throw new Error('Missing mounted Action');
+    const client = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST,
+      target: { ...declaration.execution.client, platform: 'web' }, activate: mountedUiArtifact.activate });
+    clients.push(client);
+    const handler = client.registration('actions', declaration.id);
+    if (!handler) throw new Error('Missing mounted Action registration');
+    const detail = published?.detail;
+    const address = detail && typeof detail === 'object' && !Array.isArray(detail) ? detail.mountedAction : undefined;
+    const mountId = address && typeof address === 'object' && !Array.isArray(address) ? address.mountId : undefined;
+    let result;
+    await act(async () => { result = await handler(TriageMountedUiInputV1Schema.parse({ mountId, operation }), {
+      plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+      contribution: { id: declaration.id, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${declaration.id}` },
+      invocationSurface: 'agent', signal,
+      ui: fixture.context.hostApi, ephemeralSharedScope: sharedScope,
+    }); });
+    return TriageMountedUiResultV1Schema.parse(result);
+  };
+  return { fixture, settlements, getInputs, native, comparison, invoke, reads };
 }
 
 describe('mounted Triage comparison picker', () => {
+  it('keeps the opener unchanged on cancellation and permits a later choice', async () => {
+    const controller = new AbortController();
+    let firstRead = true;
+    const { fixture, native, settlements, comparison, invoke } = await mountPicker({ skipSelect: true, onGet: () => {
+      if (firstRead) { firstRead = false; controller.abort(); }
+    } });
+    const operation = { kind: 'attachEntry', entryRef: native.detailInput.observation.entryRef };
+    expect(await invoke(operation, controller.signal)).toEqual({ status: 'unavailable' });
+    expect(settlements).toEqual([]);
+    expect((await fixture.getByRole('button', { name: 'Choose comparison' })).state?.disabled ?? false).toBe(false);
+    expect(await invoke(operation)).toEqual({ status: 'applied' });
+    expect(settlements).toEqual([{ kind: 'completed', input: comparison }]);
+  });
+  it.each(['person', 'agent'] as const)('appends the shared corpus continuation through the %s path', async path => {
+    const { fixture, invoke } = await mountPicker({ paged: true, skipSelect: true });
+    if (path === 'person') {
+      await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Load more' })); });
+    } else {
+      expect(await invoke({ kind: 'loadMore', section: 'entries' })).toEqual({ status: 'applied' });
+    }
+    expect(await invoke({ kind: 'setPickerQuery', query: 'Later pull request' })).toEqual({ status: 'applied' });
+    expect(await fixture.getByRole('button', { name: 'Later pull request' })).toBeDefined();
+    expect(await invoke({ kind: 'loadMore', section: 'entries' })).toEqual({ status: 'unavailable' });
+  });
+  it('chooses through the registered mounted Action and keeps search local to the shared corpus', async () => {
+    const { settlements, native, comparison, invoke, reads } = await mountPicker({ skipSelect: true });
+    const entryRef = native.detailInput.observation.entryRef;
+    const before = { ...reads };
+    expect(await invoke({ kind: 'setPickerQuery', query: 'no matching pull request' })).toEqual({ status: 'applied' });
+    expect(await invoke({ kind: 'attachEntry', entryRef })).toEqual({ status: 'unavailable' });
+    expect(reads).toEqual(before);
+    expect(settlements).toEqual([]);
+    expect(await invoke({ kind: 'setPickerQuery', query: '' })).toEqual({ status: 'applied' });
+    expect(await invoke({ kind: 'attachEntry', entryRef })).toEqual({ status: 'applied' });
+    expect(settlements).toEqual([{ kind: 'completed', input: comparison }]);
+  });
   it('settles exact PR source evidence into its opener without Session navigation', async () => {
     const { fixture, settlements, getInputs, native, comparison } = await mountPicker();
     await act(async () => { await fixture.press(await fixture.findByRole('button', { name: 'Choose comparison' })); });

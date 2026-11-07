@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
+import { URL as NodeURL } from 'node:url';
+import { readPluginTranslationResources } from '../../../../../scripts/testing/readPluginTranslationResources.js';
+
 import { act } from 'react';
-import { createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
-import type { PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
-import { createPluginRegistrationScope } from '@happier-dev/plugin-sdk/host/registration';
-import { derivePluginClientContributionRegistrationRights } from '@happier-dev/protocol/plugins/contributions/catalog';
+import { createPluginClientTestkit, createPluginUiTestkit, createSurfaceContextFixture } from '@happier-dev/plugin-sdk/testing';
+import type { PluginClientTestkit, PluginUiTestkit } from '@happier-dev/plugin-sdk/testing';
 import { ComposerSnapshotV1Schema, ComposerTransactionV1Schema } from '@happier-dev/plugin-sdk/ui';
 import { createPluginUiRnwSemanticSurfaceAdapter } from '@happier-dev/plugin-ui/testing';
 import type {
@@ -41,11 +42,13 @@ import {
 import { refreshTriageListWindow } from '../ui/window/mountedWindow.js';
 import { createTriageEphemeralSharedScopeFixture } from '../ui/window/ephemeralSharedScope.test-support.js';
 import { renderSurface as renderPickerSurface } from './entryPicker.js';
-import { TRIAGE_UI_TRANSLATIONS } from '../ui/translations.js';
+import { renderSurface as renderComparisonSurface } from '../ui/comparisonPicker.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, TriageMountedUiInputV1Schema, TriageMountedUiResultV1Schema } from '../actions/mountedUiProtocol.js';
 import * as mountedUiActionArtifact from '../actions/mountedUi.js';
 import { PLUGIN_MANIFEST } from '../manifest.js';
 import { TriageComposerEntryAttachmentValueV1Schema } from './attachmentValue.js';
+
+const PACKAGED_UI_TRANSLATIONS = readPluginTranslationResources(new NodeURL('../../', import.meta.url));
 
 /**
  * The mounted Composer entry picker (`core/COMPOSER.md` §2, §3).
@@ -157,6 +160,7 @@ function createHarness(options: Readonly<{
 
     const applyCalls: ApplyCall[] = [];
     const openCalls: OpenCall[] = [];
+    const resourceOpenCalls: unknown[] = [];
     const readCalls: unknown[] = [];
     let attachments: ComposerAttachmentViewV1[] = [];
     let revision = 4;
@@ -232,6 +236,7 @@ function createHarness(options: Readonly<{
     return {
         applyCalls,
         openCalls,
+        resourceOpenCalls,
         readCalls,
         snapshot,
         replaceCanonicalAttachments(next: readonly ComposerAttachmentViewV1[]) {
@@ -288,28 +293,24 @@ function createHarness(options: Readonly<{
             openSurface: ({ view, input }: Readonly<{ view: unknown; input?: unknown }>) => {
                 openCalls.push({ view, input });
             },
+            openResource: ({ resource }: Readonly<{ resource: unknown }>) => {
+                resourceOpenCalls.push(resource);
+            },
         },
     };
 }
 
 const mounted: PluginUiTestkit[] = [];
+const clients: PluginClientTestkit[] = [];
 
 async function activateMountedUiAction() {
     const declaration = PLUGIN_MANIFEST.contributes.actions.find(action => action.id === TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1);
     if (declaration?.execution.target !== 'client') throw new Error('Missing mounted client Action');
     const target = { ...declaration.execution.client, platform: 'web' as const };
-    const scope = createPluginRegistrationScope({
-        pluginId: PLUGIN_MANIFEST.id,
-        target: { realm: 'client', ...target },
-        rights: derivePluginClientContributionRegistrationRights(PLUGIN_MANIFEST.contributes, target),
-    });
-    const activate: unknown = Reflect.get(mountedUiActionArtifact, target.exportName);
-    if (typeof activate !== 'function') throw new Error('Missing declared activation');
-    await Reflect.apply(activate, undefined, [scope.api]);
-    const registration = scope.commit().find(entry => entry.family === 'actions' && entry.localId === declaration.id);
-    if (registration?.family !== 'actions') throw new Error('Missing registered mounted Action');
-    // The exact declared client target establishes this opaque SDK capture's handler type.
-    const handler = registration.value as unknown as ReturnType<typeof mountedUiActionArtifact.createTriageMountedUiActionHandler>;
+    const client = await createPluginClientTestkit({ manifest: PLUGIN_MANIFEST, target, activate: mountedUiActionArtifact.activate });
+    clients.push(client);
+    const handler = client.registration('actions', declaration.id);
+    if (!handler) throw new Error('Missing registered mounted Action');
     return { declaration, handler };
 }
 
@@ -329,18 +330,22 @@ async function openPicker(
         locale?: string;
         translations?: Readonly<Record<string, string>>;
     }> = {},
+    comparison = false,
 ): Promise<PluginUiTestkit> {
     let fixture!: PluginUiTestkit;
     await act(async () => {
         fixture = await createPluginUiTestkit({
             identity: { instanceId: 'fixture-instance-168', mountNonce: 'fixture-mount-168' },
             authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-            surface: renderPickerSurface,
+            surface: comparison ? renderComparisonSurface : renderPickerSurface,
             surfaceContext: createSurfaceContextFixture(environment),
             adapter: createPluginUiRnwSemanticSurfaceAdapter({
                 ephemeralSharedScope: harness.ephemeralSharedScope,
             }),
-            launchInput: {
+            launchInput: comparison ? {
+                inputType: { pluginId: 'happier.triage', localId: 'pull-request-comparison' },
+                semantic: 'scmPullRequestComparison',
+            } as never : {
                 v: 1,
                 role: 'attachmentPicker',
                 composer,
@@ -381,11 +386,42 @@ async function mountPicker(
 
 afterEach(async () => {
     for (const fixture of mounted.splice(0)) await fixture.dispose();
+    for (const client of clients.splice(0)) await client.dispose();
 });
 
 describe('the mounted Composer entry picker', () => {
-    it.each([COMPOSER_A, COMPOSER_B, null])('opens mounted details without changing the exact draft (%j)', async (composer) => {
+    it('addresses comparison search and refresh through the same mounted Action without reading providers on search', async () => {
         const harness = createHarness();
+        const picker = await openPicker(harness, null, 'comparison-picker', {}, true);
+        const enrichment = harness.publishedContexts.at(-1) as { detail?: { mountedAction?: { mountId: string } } } | undefined;
+        expect(enrichment?.detail?.mountedAction?.mountId).toBeTypeOf('string');
+        const { declaration, handler } = await activateMountedUiAction();
+        const invoke = async (operation: unknown) => {
+            let result;
+            await act(async () => { result = await handler(TriageMountedUiInputV1Schema.parse({
+                mountId: enrichment?.detail?.mountedAction?.mountId, operation,
+            }), {
+                plugin: { id: PLUGIN_MANIFEST.id, version: PLUGIN_MANIFEST.version },
+                contribution: { id: declaration.id, qualifiedId: `${PLUGIN_MANIFEST.id}/actions/${declaration.id}` },
+                invocationSurface: 'agent', signal: new AbortController().signal,
+                ui: picker.context.hostApi, ephemeralSharedScope: harness.ephemeralSharedScope,
+            }); });
+            return TriageMountedUiResultV1Schema.parse(result);
+        };
+        expect(harness.scanCalls.count).toBe(0);
+        expect(await invoke({ kind: 'setPickerQuery', query: 'normalizer' })).toEqual({ status: 'applied' });
+        expect(harness.scanCalls.count).toBe(0);
+        expect(await invoke({ kind: 'refresh' })).toEqual({ status: 'applied' });
+        expect(harness.scanCalls.count).toBe(1);
+        expect(harness.attachments).toHaveLength(0);
+        await picker.dispose();
+        expect(await invoke({ kind: 'refresh' })).toEqual({ status: 'unavailable' });
+    });
+    it.each([COMPOSER_A, COMPOSER_B, null])('opens mounted details without changing the exact draft (%j)', async (composer) => {
+        const entry = observation('42', 'Replace the duplicated normalizer');
+        const harness = createHarness({ observations: [{ ...entry, locator: {
+            ...entry.locator, webUrl: 'https://github.com/octo/repo/pull/42',
+        } }] });
         const picker = await mountPicker(harness, composer, 'triage-picker-open-detail');
         const enrichment = harness.publishedContexts.at(-1) as { detail: { mountedAction: { mountId: string } } };
         const { declaration, handler } = await activateMountedUiAction();
@@ -413,6 +449,7 @@ describe('the mounted Composer entry picker', () => {
             } }),
         ]) });
         expect(await invoke('42')).toEqual({ status: 'applied' });
+        expect(harness.resourceOpenCalls).toEqual([]);
         expect(harness.openCalls).toHaveLength(1);
         expect(harness.openCalls[0]?.input).toMatchObject({
             entryRef: { source: SOURCE, kindId: 'pull-request', collisionScope: 'example/repository', entryId: '42' },
@@ -684,7 +721,10 @@ describe('the mounted Composer entry picker', () => {
     });
 
     it('opens the entry detail from its own row action without touching the draft', async () => {
-        const harness = createHarness();
+        const entry = observation('42', 'Replace the duplicated normalizer');
+        const harness = createHarness({ observations: [{ ...entry, locator: {
+            ...entry.locator, webUrl: 'https://github.com/octo/repo/pull/42',
+        } }] });
         const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-details');
 
         await picker.press(await picker.getByRole('button', {
@@ -715,6 +755,7 @@ describe('the mounted Composer entry picker', () => {
         // an attach is not a navigation. Carrying an address is not a write:
         // no draft operation followed.
         expect(harness.applyCalls).toEqual([]);
+        expect(harness.resourceOpenCalls).toEqual([]);
     });
 
     it('carries its own mount address, never the other live composer', async () => {
@@ -744,8 +785,7 @@ describe('the mounted Composer entry picker', () => {
         // replacing it. `resolveState` puts freshness ahead of source health for
         // exactly this reason, and the ordering is why the `sourcesUnavailable`
         // arm below cannot fire: a lane that failed also makes the window stale.
-        await expect(picker.getByText('example/repository'))
-            .resolves.toEqual({ content: 'example/repository' });
+        expect((await picker.getByRole('alert')).name).toContain('example/repository');
         expect(await picker.queryByText('No source could be read')).toBeUndefined();
         // The only connection stated its own retry deadline, so the press this
         // control offers is already refused by the one pacing owner. An enabled
@@ -821,7 +861,7 @@ describe('the mounted Composer entry picker', () => {
         const harness = createHarness();
         const picker = await mountPicker(harness, COMPOSER_A, 'triage-picker-ja-actions', {
             locale: 'ja',
-            translations: TRIAGE_UI_TRANSLATIONS.ja,
+            translations: PACKAGED_UI_TRANSLATIONS.ja,
         });
 
         await expect(picker.getByRole('button', {

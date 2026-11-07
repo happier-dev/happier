@@ -3,7 +3,6 @@ import type { PluginUiHostApi, RenderContext, RenderSurface } from '@happier-dev
 import { TRIAGE_SOURCES_TARGET_PLUGIN_ID_V1 } from '@happier-dev/triage-protocol/v1';
 import {
     Banner,
-    BrandMark,
     Button,
     EmptyState,
     ErrorState,
@@ -14,6 +13,7 @@ import {
     Stack,
     TextField,
     defineUiSurface,
+    usePluginTheme,
     usePluginTranslation,
     usePluginUiFocusTarget,
     useComposerView,
@@ -32,7 +32,7 @@ import type { TriageRefreshPacingReasonV1 } from '../refresh/refreshEligibility.
 import { useTriageRefreshEligibilityNowV1 } from '../ui/window/refreshEligibilityClock.js';
 import { useTriageListWindow } from '../ui/window/useTriageListWindow.js';
 import { selectTriageAttachedEntries, type TriageAttachedEntryV1 } from './attachedEntries.js';
-import { applyTriageEntryMutation } from './applyEntryMutation.js';
+import { applyTriageEntryMutation, describeTriageMutationRefusal } from './applyEntryMutation.js';
 import { readTriageComposerPickerMount } from './composerMount.js';
 import { openTriageEntryDetails } from './openEntryDetails.js';
 import { projectTriagePickerCorpusFacts } from './pickerFacts.js';
@@ -41,6 +41,7 @@ import {
     requestTriagePickerRefresh,
     type TriagePickerRowV1,
     type TriagePickerStateV1,
+    type TriagePickerViewV1,
 } from './pickerModel.js';
 import { describeTriageRowActions } from './rowActions.js';
 import {
@@ -52,6 +53,7 @@ import { deriveTriageComposerEntryAttachmentKey } from './attachmentValue.js';
 import { bindTriageMountedUiActions } from '../ui/mountedActions.js';
 import { useTriageCurrentUiContextPublication } from '../ui/currentContextPublication.js';
 import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, type TriageMountedUiResultV1 } from '../actions/mountedUiProtocol.js';
+import { TriageSourceMark } from '../ui/list/sourceMark.js';
 
 /**
  * The Composer entry picker.
@@ -84,6 +86,68 @@ import { TRIAGE_MOUNTED_UI_ACTION_LOCAL_ID_V1, type TriageMountedUiOperationV1, 
 
 const NO_ATTACHMENTS: readonly TriageAttachedEntryV1[] = Object.freeze([]);
 
+/** One search/refresh head for every consumer of the Composer entry picker. */
+export function TriagePickerHead(props: Readonly<{
+    view: TriagePickerViewV1;
+    query: string;
+    onQueryChange: (query: string) => void;
+    onRefresh: () => void | Promise<void>;
+    searchLabel: string;
+    children?: React.ReactNode;
+}>): React.ReactElement {
+    const text = usePluginTranslation();
+    const { spacing } = usePluginTheme();
+    return <Stack gap="small" style={{ paddingHorizontal: spacing.large, paddingVertical: spacing.small }}>
+        <Row gap="small" align="center">
+            <Stack grow>
+                <TextField label={props.searchLabel} presentation="field" value={props.query}
+                    onChange={props.onQueryChange}
+                    placeholder={text('plugins.triage.picker.filter', 'Search by title, number or repository')} />
+            </Stack>
+            <Button accessibilityLabel={text('plugins.triage.surface.refresh', 'Refresh')}
+                variant="plain" size="small" icon={<Icon name="refresh" size="small" tone="secondary" />}
+                disabled={requestTriagePickerRefresh(props.view).status !== 'invoke'}
+                busy={props.view.refresh.kind === 'running'} onPress={props.onRefresh} />
+        </Row>
+        {props.children}
+    </Stack>;
+}
+
+/** Shared entry identity and row anatomy; the caller supplies its selection controls. */
+export function TriagePickerRow(props: Readonly<{
+    row: TriagePickerRowV1;
+    detail?: string;
+    tone?: 'danger';
+    selected?: boolean;
+    onPress?: () => void;
+    accessory?: React.ReactNode;
+}>): React.ReactElement {
+    const surface = useSurfaceContext();
+    const context = readTriageEntryRowContextV1({
+        kindId: props.row.entryRef.kindId,
+        scopeLabel: props.row.scopeLabel,
+        identifierLabel: props.row.identifierLabel,
+        lifecycleLabel: props.row.lifecycleLabel ?? null,
+    }, readTriageSourceDescriptorV1(surface, props.row.entryRef.source), props.row.entryRef.source);
+    return <List.Item
+        title={props.row.title}
+        icon={<TriageSourceMark source={props.row.entryRef.source} />}
+        subtitle={context.label}
+        detail={props.detail}
+        tone={props.tone}
+        accessibilityLabel={props.row.title}
+        accessibilityHint={props.detail === undefined ? context.label : `${context.label}, ${props.detail}`}
+        titleNumberOfLines={2}
+        subtitleNumberOfLines={1}
+        detailNumberOfLines={2}
+        selected={props.selected}
+        onPress={props.onPress}
+        accessoryWraps
+        accessoryOutsidePressable
+        accessory={props.accessory}
+    />;
+}
+
 /**
  * One picker row: a labelled group with two independent controls.
  *
@@ -95,10 +159,10 @@ const NO_ATTACHMENTS: readonly TriageAttachedEntryV1[] = Object.freeze([]);
  * The row carries no `onPress`: pressing the row itself does nothing, which is
  * what keeps a stray Enter on a focused row from committing an attachment.
  */
-function TriagePickerRow(props: Readonly<{
+function TriageComposerPickerRow(props: Readonly<{
     row: TriagePickerRowV1;
     handle: ComposerHandle | null;
-    hostApi: Pick<PluginUiHostApi, 'openSurface'>;
+    hostApi: Pick<PluginUiHostApi, 'openSurface' | 'openResource'>;
     /**
      * The exact scope this picker was mounted on, forwarded to View details as
      * the launch ADDRESS — never as a capability. The row already holds the
@@ -110,13 +174,6 @@ function TriagePickerRow(props: Readonly<{
 }>): React.ReactElement {
     const text = usePluginTranslation();
     const { row, handle, hostApi, onSettled, originComposer } = props;
-    const surfaceContext = useSurfaceContext();
-    const context = readTriageEntryRowContextV1({
-        kindId: row.entryRef.kindId,
-        scopeLabel: row.scopeLabel,
-        identifierLabel: row.identifierLabel,
-        lifecycleLabel: row.lifecycleLabel ?? null,
-    }, readTriageSourceDescriptorV1(surfaceContext, row.entryRef.source), row.entryRef.source);
     const [state, dispatch] = React.useReducer(
         reduceTriageRowInteraction,
         TRIAGE_ROW_INTERACTION_INITIAL_STATE_V1,
@@ -161,14 +218,14 @@ function TriagePickerRow(props: Readonly<{
             throw error;
         }
         if (outcome.kind === 'refused') {
-            dispatch({ kind: 'failed', action: 'attachment', reason: outcome.reason });
+            dispatch({ kind: 'failed', action: 'attachment', reason: describeTriageMutationRefusal(text, outcome.refusal) });
         } else {
             dispatch({ kind: 'settled', action: 'attachment' });
         }
         // The draft is the authority for what is attached, so the picker
         // re-reads it rather than predicting the row's next state.
         await onSettled();
-    }, [handle, onSettled, row]);
+    }, [handle, onSettled, row, text]);
 
     const openDetails = React.useCallback(async () => {
         if (row.viewDetails.kind !== 'open') return;
@@ -230,40 +287,19 @@ function TriagePickerRow(props: Readonly<{
         : failure;
 
     return (
-        <List.Item
-            title={row.title}
-            icon={<BrandMark pluginId={row.entryRef.source.pluginId} size="small" externallyLabelled />}
-            subtitle={context.label}
+        <TriagePickerRow
+            row={row}
             {...(status === null
                 ? {}
                 : failure === null
                     ? { detail: status }
                     : { detail: status, tone: 'danger' as const })}
-            // `core/COMPOSER.md` §2: the row is a labelled GROUP, so it names
-            // the entry once and describes the rest. Without a name of its own
-            // the platform composes one from the row's text descendants, and a
-            // reader hears "Fix the parser crashacme/webAttached" — the same
-            // run-together announcement the shell list already had to fix. The
-            // status is part of the description rather than the name because it
-            // changes while the reader is on the row, and a name that changes
-            // is a name nothing can be pointed at.
-            accessibilityLabel={row.title}
-            accessibilityHint={status === null
-                ? context.label
-                : `${context.label}, ${status}`}
-            // The picker's own list is virtualized too, and its rows are the
-            // same measured-average estimate the shell's are.
-            titleNumberOfLines={2}
-            subtitleNumberOfLines={1}
-            detailNumberOfLines={2}
             // Two real controls, not a trailing affordance. At 320 pt, at the
             // reader's largest type size, or with a long localization they take
             // their own line under the title rather than squeezing it out, and
             // stack one per line when even that will not hold both. Order is
             // always Attach/Remove then View details; RTL mirrors where the
             // line sits and nothing else.
-            accessoryWraps
-            accessoryOutsidePressable
             accessory={(
                 <Row gap="small" align="center" wrap>
                     <Button
@@ -294,6 +330,10 @@ function TriagePickerRow(props: Readonly<{
 
 export function TriageEntryPicker(context: RenderContext): React.ReactElement {
     const text = usePluginTranslation();
+    // The host's list shell hands this surface its whole width and leaves insets to the content (the
+    // rows below carry their own), so the controls above the list take the page gutter themselves.
+    const { spacing } = usePluginTheme();
+    const gutter = { paddingHorizontal: spacing.large, paddingVertical: spacing.small } as const;
     const window = useTriageListWindow();
     const sharedScope = usePluginUiEphemeralSharedScope();
     const surfaceActivity = usePluginSurfaceActivity();
@@ -392,7 +432,7 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
 
     const originComposer = mount.status === 'bound' ? mount.composer : undefined;
     const renderRow = React.useCallback((row: TriagePickerRowV1): React.ReactElement => (
-        <TriagePickerRow
+        <TriageComposerPickerRow
             row={row}
             handle={handle}
             hostApi={context.hostApi}
@@ -425,19 +465,6 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
             onPress={refresh}
         />
     );
-    // Beside the search field Refresh is a quiet glyph, as on the app page;
-    // the states that have nothing else to offer keep the labelled control.
-    const refreshGlyph = (
-        <Button
-            accessibilityLabel={refreshLabel}
-            variant="plain"
-            size="small"
-            icon={<Icon name="refresh" size="small" tone="secondary" />}
-            disabled={!refreshable}
-            busy={view.refresh.kind === 'running'}
-            onPress={refresh}
-        />
-    );
     const pacingReason = view.refresh.kind !== 'blockedUntil'
         ? null
         : resolvePacingReasonDescription(text, view.refresh.reason);
@@ -463,47 +490,40 @@ export function TriageEntryPicker(context: RenderContext): React.ReactElement {
                     description={view.health.map((entry) => entry.displayName).join(', ')}
                     action={refreshControl}
                 />
-                {pacingNotice}
+                {pacingNotice === null ? null : <Stack style={gutter}>{pacingNotice}</Stack>}
             </Stack>
         );
     }
 
+    // The host gives this picker a bounded body (`layout: 'content'`); the
+    // search stays put and the List takes the rest and scrolls itself.
     return (
-        <Stack gap="small">
-            <Row gap="small" align="center">
-                <Stack grow>
-                    <TextField
-                        label={text('plugins.triage.picker.search', `Search ${TRIAGE_DISPLAY_NAME}`)}
-                        presentation="field"
-                        value={query}
-                        onChange={setQuery}
-                        placeholder={text('plugins.triage.picker.filter', 'Filter by title or scope')}
+        <Stack gap="small" grow>
+            <TriagePickerHead view={view} query={query} onQueryChange={setQuery} onRefresh={refresh}
+                searchLabel={text('plugins.triage.picker.search', `Search ${TRIAGE_DISPLAY_NAME}`)}>
+
+                {/*
+                  Healthy says nothing. One quiet line speaks only when the list is
+                  behind, being read, or waiting to be read; never a green "Up to date".
+                */}
+                {pacingNotice ?? (view.state.kind === 'stale' ? (
+                    <FreshnessLine
+                        asOf={view.state.lastMaterializedAtMs}
+                        reason={resolvePickerStateLabel(text, view.state.kind)}
+                        busy={view.refresh.kind === 'running'}
                     />
-                </Stack>
-                {refreshGlyph}
-            </Row>
+                ) : view.state.kind === 'refreshing' && view.rows.length > 0 ? (
+                    <FreshnessLine reason={resolvePickerStateLabel(text, view.state.kind)} busy />
+                ) : null)}
 
-            {/*
-              Healthy says nothing. One quiet line speaks only when the list is
-              behind, being read, or waiting to be read; never a green "Up to date".
-            */}
-            {pacingNotice ?? (view.state.kind === 'stale' ? (
-                <FreshnessLine
-                    asOf={view.state.lastMaterializedAtMs}
-                    reason={resolvePickerStateLabel(text, view.state.kind)}
-                    busy={view.refresh.kind === 'running'}
-                />
-            ) : view.state.kind === 'refreshing' && view.rows.length > 0 ? (
-                <FreshnessLine reason={resolvePickerStateLabel(text, view.state.kind)} busy />
-            ) : null)}
-
-            {view.health.length === 0 ? null : (
-                <Banner
-                    tone="warning"
-                    title={text('plugins.triage.surface.failure.some', 'Some sources could not be read')}
-                    description={view.health.map((entry) => entry.displayName).join(', ')}
-                />
-            )}
+                {view.health.length === 0 ? null : (
+                    <Banner
+                        tone="warning"
+                        title={text('plugins.triage.surface.failure.some', 'Some sources could not be read')}
+                        description={view.health.map((entry) => entry.displayName).join(', ')}
+                    />
+                )}
+            </TriagePickerHead>
 
             <List<TriagePickerRowV1>
                 accessibilityLabel={TRIAGE_DISPLAY_NAME}
@@ -577,14 +597,6 @@ const PACING_REASON_COPY: Readonly<Record<TriageRefreshPacingReasonV1, Readonly<
     sourceRetryDeadline: {
         key: 'plugins.triage.surface.waiting.source',
         fallback: 'A source asked us to wait before reading it again.',
-    },
-    failureBackoff: {
-        key: 'plugins.triage.surface.waiting.backoff',
-        fallback: 'A source could not be read, so the next attempt waits a moment.',
-    },
-    minimumInterval: {
-        key: 'plugins.triage.surface.waiting.recent',
-        fallback: 'These sources were read a moment ago.',
     },
 });
 
