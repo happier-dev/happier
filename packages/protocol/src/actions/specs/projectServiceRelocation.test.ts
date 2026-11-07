@@ -9,7 +9,7 @@ import { createProjectServiceDeclarationTargetIdV1 } from '../../local/services/
 
 function relocationInput(currentTarget: Readonly<Record<string, unknown>>) {
   const destination = { kind: 'workers' as const, destination: { kind: 'machine' as const, machineId: 'new' } };
-  return { workspace: { serverId: 'home', refId: 'workspace' }, serviceName: 'worker', requestId: 'move-1',
+  return { workspace: { serverId: 'home', refId: 'workspace' }, sourceMachineId: 'source-checkout', serviceName: 'worker', requestId: 'move-1',
     currentTarget, destination,
     desiredPlacement: { workspace: { serverId: 'home', refId: 'workspace' }, serviceName: 'worker', expectedRevision: 'absent' as const,
       expected: { kind: 'absent' as const }, value: { runsOn: destination, unavailable: 'fail' as const } },
@@ -56,6 +56,8 @@ describe('service relocation Action', () => {
       .toMatchObject({ ok: true, result: { actionSpecs: [expect.objectContaining({ id: 'projects.service.relocate' })] } });
     expect(await executor.execute('projects.service.relocate', input, context)).toMatchObject({ ok: true, result: { status: 'moved' } });
     expect(runtimeActionExecute).toHaveBeenCalledWith(expect.objectContaining({ actionId: 'projects.service.relocate', input }));
+    const { sourceMachineId: _sourceMachineId, ...withoutSourceMachine } = input;
+    expect(await executor.execute('projects.service.relocate', withoutSourceMachine, context)).toMatchObject({ ok: false });
   });
   it('classifies relocation as dangerous and source-tracked without publishing an unbacked RPC', async () => {
     const actionId = ActionIdSchema.parse('projects.service.relocate');

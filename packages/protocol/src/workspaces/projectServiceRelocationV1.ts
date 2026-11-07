@@ -16,6 +16,8 @@ import { ProjectDefinitionInspectInputSchema } from '../actions/projectDefinitio
 /** Reuses Local Services' exact managed identity; input never establishes control authority. */
 export const ProjectServiceRelocateInputV1Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(ProjectServicePlacementGetV1Schema, {
   requestId: ActionOperationSnapshotV1Schema.shape.requestId._zod.def.innerType,
+  /** The reviewed source checkout Machine; the running service may be on another Machine. */
+  sourceMachineId: z.string().check(z.minLength(1)),
   currentTarget: LocalServiceActionTargetV1Schema._zod.def.options[1],
   /** The sibling-preserving placement CAS that must settle before native Stop. */
   desiredPlacement: ProjectServicePlacementSetV1Schema,
