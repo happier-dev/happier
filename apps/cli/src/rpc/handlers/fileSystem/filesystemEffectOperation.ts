@@ -1,5 +1,5 @@
 import { z } from 'zod/mini';
-import { FILESYSTEM_MUTATION_ACTION_IDS } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { FILESYSTEM_EFFECT_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import type { RpcHandler, RpcHandlerRegistrar } from '@/api/rpc/types';
 import { configuration } from '@/configuration';
 import { createReadFileRpcActionExecutor } from './readFileHandler';
@@ -33,9 +33,7 @@ export type FilesystemEffectConfiguration = Omit<z.infer<typeof FilesystemEffect
   & Readonly<{ accessPolicy: FilesystemAccessPolicy }>;
 
 const actionSchema = z.strictObject({
-  actionId: z.enum(['daemon.filesystem.readFile', 'daemon.filesystem.writeFile',
-    'daemon.filesystem.listDirectory', 'daemon.filesystem.getDirectoryTree',
-    ...FILESYSTEM_MUTATION_ACTION_IDS, 'workspace.files.search', 'daemon.filesystem.listRoots', 'daemon.filesystem.browseDirectory',
+  actionId: z.enum([...FILESYSTEM_EFFECT_ACTION_IDS, 'workspace.files.search',
     RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST, RPC_METHODS.STAT_FILE]),
   input: z.unknown(),
 });
@@ -66,8 +64,8 @@ export async function executeConfiguredFilesystemEffect(configurationInput: File
     getAdditionalAllowedReadDirs: () => configurationInput.additionalAllowedReadDirs ?? [],
     getAdditionalAllowedWriteDirs: () => configurationInput.additionalAllowedWriteDirs ?? [],
     getAdditionalAllowedReadFiles: () => configurationInput.additionalAllowedReadFiles ?? [], assertCurrentAuthority };
-  if (operation.actionId === 'daemon.filesystem.listRoots' || operation.actionId === 'daemon.filesystem.browseDirectory') {
-    const method = operation.actionId === 'daemon.filesystem.listRoots'
+  if (operation.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listRoots || operation.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory) {
+    const method = operation.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listRoots
       ? RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS : RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY;
     let browse: RpcHandler<unknown, unknown> | undefined;
     const registrar: RpcHandlerRegistrar = { registerHandler(name, handler) {
@@ -80,10 +78,11 @@ export async function executeConfiguredFilesystemEffect(configurationInput: File
     signal?.throwIfAborted();
     return result;
   }
-  if (operation.actionId === RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST || operation.actionId === RPC_METHODS.STAT_FILE) {
+  if (operation.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles || operation.actionId === RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST || operation.actionId === RPC_METHODS.STAT_FILE) {
+    const method = operation.actionId === FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles ? RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST : operation.actionId;
     let read: RpcHandler<unknown, unknown> | undefined;
-    const registrar: RpcHandlerRegistrar = { registerHandler(method, handler) {
-      if (method === operation.actionId) read = handler as RpcHandler<unknown, unknown>;
+    const registrar: RpcHandlerRegistrar = { registerHandler(registeredMethod, handler) {
+      if (registeredMethod === method) read = handler as RpcHandler<unknown, unknown>;
     } };
     if (operation.actionId === RPC_METHODS.STAT_FILE) registerPathMutationHandlers(registrar, deps);
     else registerWorkspaceFileListHandler(registrar, configurationInput.workingDirectory, { accessPolicy: configurationInput.accessPolicy });

@@ -110,6 +110,9 @@ function resetCaptures(): void {
     state.selectionList = null;
 }
 
+// Collect the cold dependency graph before the interaction test's timeout starts.
+await import('./AgentInputSelectionListPopover');
+
 describe('AgentInputSelectionListPopover', () => {
     it('mounts the SelectionList inside the shared selection popover shell with the surface scroll disabled', async () => {
         resetCaptures();

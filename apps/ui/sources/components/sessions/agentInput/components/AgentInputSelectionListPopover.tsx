@@ -1,5 +1,6 @@
 import * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 import { SelectionList, resolvePopoverSelectionListHeightBehavior } from '@/components/ui/selectionList';
 import type { SelectionListHeightBehavior, SelectionListOptionPresentation, SelectionListSelection, SelectionListStep } from '@/components/ui/selectionList';
@@ -26,7 +27,7 @@ export type AgentInputSelectionListPopoverProps = Readonly<{
     selectedOptionId?: string | null;
     /** Several choices at once (`kind: 'multiple'`): rows toggle and the popover stays open. */
     selection?: SelectionListSelection;
-    onSelect: (id: string, context?: ActionExecutorContext) => void;
+    onSelect: (id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => void;
     onRequestClose: (context?: ActionExecutorContext) => void;
     maxHeightCap?: number;
     maxWidthCap?: number;
@@ -74,11 +75,11 @@ export function AgentInputSelectionListPopover(props: AgentInputSelectionListPop
                         rootStep={props.rootStep}
                         {...(props.selection ? { selection: props.selection } : { selectedOptionId: props.selectedOptionId })}
                         autoFocusInputOnWeb
-                        onSelect={(id, _option, context) => {
+                        onSelect={(id, _option, context, invocation) => {
                             // The caller's onSelect runs synchronously so any
                             // per-row mutation/state update is committed against
                             // the still-valid synthetic event.
-                            if (context) props.onSelect(id, context);
+                            if (context || invocation) props.onSelect(id, context, invocation);
                             else props.onSelect(id);
                             // A multiple choice toggles in place; only a single choice is terminal.
                             if (props.selection?.kind === 'multiple') return;

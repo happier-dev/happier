@@ -28,6 +28,7 @@ import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSet
 import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
 import { AccountSettingsV2GetResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
 import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { createServedHomeAccountToken } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 /**
  * The Workflow "Where" row consumes New Session's project/checkout owners.
@@ -121,6 +122,11 @@ function workspaceRef(id: string, rootPath: string, serverId = HOME_ID) {
 beforeEach(async () => {
     restorePopoverGlobals = withPopoverWebGlobals();
     browserReadRequests.length = 0;
+    const { clearCachedMachineFileBrowserRoots, clearCachedMachineFileBrowserEntries } = await import('@/sync/domains/input/machineFileBrowser');
+    for (const machine of MACHINES) {
+        clearCachedMachineFileBrowserRoots({ machineId: machine.id });
+        clearCachedMachineFileBrowserEntries({ machineId: machine.id });
+    }
     machineRpc.mockReset();
     machineRpc.mockImplementation(async ({ method, payload }: { method: string; payload: unknown }) => {
         if (method === RPC_METHODS.SCM_WORKTREES_ENRICHMENT) return { success: true, entries: [] };
@@ -162,7 +168,8 @@ beforeEach(async () => {
         ...(machine.id === 'machine-1' ? { installationPublicKey: readActions[0]!.machine.installationPublicKey } : {}),
         metadata: encodePlainMachineStoredContent(machine.metadata),
     }));
-    account = await restoreServerAccountForTest({ serverUrl: 'https://workflow-where.test', serverIdentityId: HOME_ID, accountId: 'account-a', request: async (url, init) => {
+    account = await restoreServerAccountForTest({ serverUrl: 'https://workflow-where.test', serverIdentityId: HOME_ID, accountId: 'account-a',
+        credentials: { token: createServedHomeAccountToken('account-a', true) }, request: async (url, init) => {
         const path = new URL(String(url)).pathname;
         if (path === '/v2/account/settings' && (init?.method ?? 'GET') === 'GET') return Response.json(
             AccountSettingsV2GetResponseSchema.parse({ content: { t: 'plain', v: settings }, version: 1 }));
@@ -285,12 +292,24 @@ describe('workflow project target control', () => {
         expect(screen.findByTestId('coach-placement-where-popover')).not.toBeNull();
         await invoke('browse');
         await vi.waitFor(() => expect(screen.findByTestId(getPathBrowserRowTestId('/repo/payments-feature-auth'))).not.toBeNull());
-        expect(browserReadRequests.length).toBeGreaterThan(0);
+        const browserContext = screen.findAllByType(MachinePathBrowserView)[0]?.props.callerContext as
+            import('@happier-dev/protocol/actions/executor/types').ActionExecutorContext | undefined;
+        const { readCredentialAuthorityKind } = await import('@/auth/context/credentialAuthority');
+        expect(browserReadRequests.length, JSON.stringify({
+            credentialAuthorityKind: readCredentialAuthorityKind(account!.credentials.token),
+            browserCaller: browserContext && { surface: browserContext.surface, authority: browserContext.authority,
+                callerKind: browserContext.actionCaller?.kind, externalCredential: Boolean(browserContext.externalActionCredential),
+                externalAuthorization: Boolean(browserContext.externalActionExecutionAuthorization),
+                sessionAuthorization: Boolean(browserContext.rpcSessionAuthorization) },
+            nativeMethods: machineRpc.mock.calls.map(([request]) => request.method),
+        })).toBeGreaterThan(0);
         expect(browserReadRequests).toEqual(expect.arrayContaining([expect.objectContaining({
             actionId: FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory,
-            requestId: 'trigger-placement-agent-2', surface: 'agent', authority: 'account_automation',
+            surface: 'agent', authority: 'account_automation',
         })]));
         expect(browserReadRequests.every(request => request.surface === 'agent' && request.authority === 'account_automation')).toBe(true);
+        expect(browserReadRequests.every(request => Boolean(request.requestId) && request.requestId !== 'trigger-placement-agent-2')).toBe(true);
+        expect(new Set(browserReadRequests.map(request => request.requestId)).size).toBe(browserReadRequests.length);
         await invoke('browser.activate', { path: '/repo/payments-feature-auth' });
         await invoke('browser.confirm');
         expect(onChange, JSON.stringify({ profileScope: storage.getState().profileScope,

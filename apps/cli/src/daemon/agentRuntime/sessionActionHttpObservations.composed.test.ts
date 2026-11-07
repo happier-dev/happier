@@ -13,6 +13,11 @@ import {
   FeaturesResponseSchema, type ActionsSettingsV1,
 } from '@happier-dev/protocol';
 import { EXTERNAL_ACTION_EXECUTION_AUTHORIZATION_HEADER, ExternalActionExecutionAuthorizationV1Schema } from '@happier-dev/protocol/actions';
+import { ExternalActionActionIdV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { UiActionDispatchRequestV1Schema } from '@happier-dev/protocol/actions/clientDispatchV1';
+import { createClientActionReverseDispatcher } from '@/session/actions/clientActionReverseDispatch';
+import { executeAdmittedClientActionChild } from '@/session/actions/admittedClientActionChildren';
 import { ACCOUNT_SECURITY_PATH_V1, AccountSecurityGetResponseV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { connectedServiceProfileKey } from '@happier-dev/protocol/connect/connectedServiceProfilePreferences';
@@ -281,7 +286,8 @@ function installClientMachineControlHttp(clientAction: Pick<Awaited<ReturnType<t
 async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Promise<void>, bypassActionInterception = false,
   accountRelease = false, accountCurrentProcess = true,
   clientAction?: Awaited<ReturnType<typeof admittedClientActionFixture>>,
-  accountMachine?: Readonly<{ sessionMachineId: string; executionRunTargetMachineId?: string }>) {
+  accountMachine?: Readonly<{ sessionMachineId: string; executionRunTargetMachineId?: string }>,
+  clientActionExecute?: ActionExecutorDeps['clientActionExecute']) {
   storage.state.sessionId = sessionId;
   storage.state.bound = true;
   storage.state.publisherBound = true;
@@ -455,7 +461,9 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
   const execute = createDaemonSessionAccountActionExecutor({ serverId, serverHttpBaseUrl, token, credentials,
     ...(accountMachine ? { machineId: accountMachine.sessionMachineId } : {}),
     ...(accountRelease ? {} : { machineId: storage.state.machineId,
-      prepareExternalActionAuthorization: ({ operation, sessionActionOrigin }: Parameters<NonNullable<Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['prepareExternalActionAuthorization']>>[0]) => prepare(operation, sessionActionOrigin) }),
+      prepareExternalActionAuthorization: ({ operation, sessionActionOrigin }: Parameters<NonNullable<Parameters<typeof createDaemonSessionAccountActionExecutor>[0]['prepareExternalActionAuthorization']>>[0]) =>
+        // The production preparer leaves private client Actions on their existing Session channel.
+        ExternalActionActionIdV1Schema.safeParse(operation.actionId).success ? prepare(operation, sessionActionOrigin) : Promise.resolve(undefined) }),
     createExecutor: (_depth, _current, _post, options) => {
       const accountPorts = createAccountServerActionDeps({ token, credentials, serverId,
         serverIdentityId: storage.state.homeId, serverHttpBaseUrl,
@@ -469,6 +477,7 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
         actionsSettingsProvider,
         ...(resolveServerFeaturesSnapshot ? { resolveServerFeaturesSnapshot } : {}),
         ...(sessionActionRpcTransport ? { sessionActionRpcTransport } : {}),
+        ...(clientActionExecute ? { clientActionExecute } : {}),
         ...(accountRelease && accountCurrentProcess ? { pluginActionExecutionOwner: 'current_process' as const,
           invokeContributedAction: createCommittedContributedActionInvoker() } : {}),
         ...(clientAction ? {
@@ -510,6 +519,42 @@ async function fixture(metadataLayout: 0 | 1 = 1, observeSubtreeQuery?: () => Pr
     omitCallerWorkspace: () => { callerWorkspaceMissing = true; },
     close: async () => { restore(); await app.close(); } };
 }
+
+it('preserves the incumbent refusal of an unsupported asynchronous Session browser child after its mounted command returns', async () => {
+  let mountedRequest: ReturnType<typeof UiActionDispatchRequestV1Schema.parse> | undefined;
+  const dispatch = createClientActionReverseDispatcher(() => ({
+    hasConnectedClientRpcHandler: () => true,
+    // The connected App socket is the boundary. Native Session admission,
+    // caller projection and the daemon child owner remain real.
+    callConnectedClientRpc: async (_method, raw, options) => {
+      mountedRequest = UiActionDispatchRequestV1Schema.parse(raw);
+      options.onIssued();
+      return { ok: true, result: { v: 1, execution: { ok: true, result: null } } };
+    },
+  }));
+  const f = await fixture(1, undefined, false, false, true, undefined, undefined, dispatch);
+  try {
+    const parentActionId = 'ui.current_context.command.invoke';
+    const readActionId = FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory;
+    f.setActionsSettings(normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: {
+      [parentActionId]: ['agent'], [readActionId]: ['agent'],
+    } }));
+    const operation = f.operation(parentActionId, { commandId: 'mounted-directory-open' });
+    const opened = await f.execute(operation, { sessionId, isCurrent: async () => true });
+    expect(opened, JSON.stringify(opened)).toMatchObject({ ok: true });
+    expect(mountedRequest?.context).toMatchObject({ surface: 'agent', authority: 'account_automation',
+      actionCaller: { kind: 'session', sessionId }, actionRequestId: operation.requestId });
+    // A chooser's initial read and later warming start after its open command
+    // acknowledges. The incumbent child carrier has no supported continuation.
+    const read = await executeAdmittedClientActionChild({ v: 1, parentRequestId: operation.requestId,
+      sessionId, actionId: readActionId, input: { path: '/workspace' } }, {
+      machineAdmission: { actorAccountId: storage.account.id, custodianAccountId: storage.account.id,
+        machineId: storage.state.machineId, installationId: storage.state.installationId,
+        role: 'manage', encryptionMode: 'plain' },
+    });
+    expect(read.execution, JSON.stringify(read.execution)).toMatchObject({ ok: false, errorCode: 'invalid_action_input' });
+  } finally { await f.close(); }
+});
 
 function publicProfileAccountingFixture(body: unknown) {
   const query = UsageAnalyticsQueryRequestSchema.parse(body);

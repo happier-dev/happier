@@ -1056,6 +1056,10 @@ Declared `uiConfirmationForInput` retains the designed in-place product review.
 Otherwise `uiConfirmation: 'policy'` retains local confirmation; an irreversible
 declaration also retains it unless `uiConfirmation: 'direct'` overrides that default.
 A completed confirmation for that exact Action consumes this default once.
+A declared `uiConfirmation: 'direct'` press keeps its direct default on the
+executor that Home admitted that exact Account press for (the signed binding
+names the Action and carries no Session or Workflow origin); every other
+external origin keeps the executor's floor.
 A host-discovered consequence uses `defaultUiConfirmation`
 through the shared approval owner and still asks unless that exact consequence
 was already confirmed or the person waived it.
@@ -9588,6 +9592,16 @@ platform returns a typed refusal. File content stays in the live invocation and
 is omitted from approval Artifacts and observations, as with `clipboard.write`.
 
 `ui.current_context.read` and `ui.current_context.command.invoke` are client-local host Actions available to UI, Voice, Agent, MCP and CLI callers. In development source, the canonical CLI projections are `happier ui current-context read` and `happier ui current-context command invoke <commandId>`. The read returns the current navigation snapshot and complete opaque command inventory; invocation accepts only a currently published command id. Context data is strict JSON, and executable declarations and descriptors remain closed. The snapshot has no independent command-count or aggregate-byte ceiling: a growing filter or view inventory must not erase its entity or commands. Semantic command launch inputs retain their own operation boundary. The answering AppShell uses the same current-context reader and semantic dispatcher as Voice, retaining mount retirement, current Action availability, declared caller surfaces and approval policy. CLI invocation requires that answering client; headless CLI/RPC hosts have no mounted execution owner and cannot substitute a successful local result.
+
+In unreleased 0.3 source, mounted local-command dispatch binds the original caller
+to the invocation. Effectful handlers pass their existing mounted execution engine
+to `invocation.execute(...)`, including when an existing queued or deferred flow
+retains that invocation. The canonical ordinary-child owner derives the child
+request identity and strips inherited parent consent; the mounted engine retains
+its captured Account, private delivery ports and effect lifetime. Caller
+cancellation remains effective, while an existing successor view can supply its
+own effect signal. This preserves Agent attribution without a per-control caller
+override, and leaves genuine touch confirmation on its existing path.
 
 Plugin pages publish finite `executeAction` or route-owned `openSurface` commands rather than raw UI state. PRs & Issues uses this seam for its [mounted-page operations](triage-sources.md#mounted-page-actions-03-development); the current context carries that page's ephemeral Action address for typed operations requiring entry references or a lens.
 

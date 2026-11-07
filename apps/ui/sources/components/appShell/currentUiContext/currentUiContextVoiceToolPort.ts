@@ -74,6 +74,8 @@ export type CurrentUiContextVoiceCommandInvocationInput = Readonly<{
     commandId: string;
     input?: PluginUiJsonValueV1;
     signal?: AbortSignal;
+    /** Host-private Settings ingress retains its admitted caller through the same mounted command. */
+    context?: ActionExecutorContext;
     spokenActionRequest?: DispatchPluginSurfaceActionInput['spokenActionRequest'];
 }>;
 
@@ -460,7 +462,7 @@ export function createCurrentUiContextVoiceToolPort(
                 // The local update may itself republish this mount. Preserve
                 // its known settlement; the callback fences its effect boundary.
                 return await resolved.command.invoke({ signal: mergedSignal.signal,
-                    context: input.hostAction?.context ?? { surface: input.invocationSurface ?? 'voice' },
+                    context: request.context ?? input.hostAction?.context ?? { surface: input.invocationSurface ?? 'voice' },
                     ...(request.input === undefined ? {} : { input: request.input }) });
             } catch {
                 return isCurrent() ? internalError() : stale();

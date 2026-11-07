@@ -60,9 +60,11 @@ export async function executeOriginalAccountFilesystemAction(
     { actionId, input, context }: FilesystemActionExecution,
     timeoutMs?: number,
 ): Promise<ActionExecuteResult | null> {
-    if (!account || account.credentialAuthorityKind !== 'account' || context.externalActionCredential
-        || context.externalActionExecutionAuthorization || context.rpcSessionAuthorization
-        || context.actionCaller && context.actionCaller.kind !== 'host') return null;
+    if (context.externalActionCredential || context.externalActionExecutionAuthorization || context.rpcSessionAuthorization
+        || context.actionCaller && context.actionCaller.kind !== 'host') {
+        return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
+    }
+    if (!account || account.credentialAuthorityKind !== 'account') return null;
     account.assertCurrent();
     const target = context.externalActionTarget;
     const requestId = context.actionRequestId;
@@ -75,7 +77,7 @@ export async function executeOriginalAccountFilesystemAction(
         caller: context.actionCaller ?? { kind: 'host' }, surface: context.surface ?? 'rpc',
         authority: context.authority ?? 'account_automation', callerPermissionMode: context.callerPermissionMode,
         callerInputConstraints: context.callerInputConstraints, workspaceWrites: context.workspaceWrites,
-        defaultSessionId: context.defaultSessionId,
+        ...(context.defaultSessionId != null ? { defaultSessionId: context.defaultSessionId } : {}),
     });
     if (!invocation.success) return { ok: false, errorCode: 'admission_unavailable', error: 'admission_unavailable' };
     const result = await withActionAccountRequestSignal(account, context.signal, signal => executeOriginalAccountMachineAction({

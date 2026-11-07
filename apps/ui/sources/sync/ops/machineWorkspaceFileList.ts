@@ -5,15 +5,18 @@ import {
     type DaemonWorkspaceFileListResponse,
     type DaemonWorkspaceFileListErrorCode,
 } from '@happier-dev/protocol/machines/workspaceFiles';
-import { RPC_METHODS } from '@happier-dev/protocol/rpc';
-
-import { machineRpcWithServerScope } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedMachineRpc';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { ActionExecuteFailure } from '@happier-dev/protocol/actions/actionExecutionResult';
+import type { FilesystemEffectFailureDetailsV1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { invokeWorkspaceFileSystemAction, projectWorkspaceFileSystemActionFailure } from './workspaceFileSystem/actionInvocation';
 import { classifyWorkspaceFileRpcError, type WorkspaceFileRpcErrorCode } from './machineWorkspaceFileRpcError';
+import { resolveMachineRpcTimeoutMs } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcTypes';
 
 // Client failures are not daemon wire responses and must not expand its schema.
-export type MachineWorkspaceFileListErrorCode = DaemonWorkspaceFileListErrorCode | WorkspaceFileRpcErrorCode | 'invalid_response';
+export type MachineWorkspaceFileListErrorCode = DaemonWorkspaceFileListErrorCode | WorkspaceFileRpcErrorCode | ActionExecuteFailure['errorCode'] | 'invalid_response';
 export type MachineWorkspaceFileListResponse = DaemonWorkspaceFileListResponse
-    | Readonly<{ ok: false; errorCode: WorkspaceFileRpcErrorCode | 'invalid_response' }>;
+    | Readonly<{ ok: false; error: string; errorCode: MachineWorkspaceFileListErrorCode; details?: FilesystemEffectFailureDetailsV1 }>;
 
 export async function machineWorkspaceFileList(
     machineId: string,
@@ -23,27 +26,27 @@ export async function machineWorkspaceFileList(
         accountId?: string | null;
         timeoutMs?: number;
         signal?: AbortSignal;
+        callerContext?: ActionExecutorContext;
     }>,
 ): Promise<MachineWorkspaceFileListResponse> {
     const payload = DaemonWorkspaceFileListRequestSchema.parse(input);
+    // Bind the native scan allowance before Action admission/signing. Approval
+    // wait precedes the scan and must not consume its execution budget.
+    const admittedInput = { ...payload, budgetMs: payload.budgetMs ?? resolveMachineRpcTimeoutMs(options?.timeoutMs) };
     try {
-        const response = await machineRpcWithServerScope<unknown, DaemonWorkspaceFileListRequest>({
-            machineId,
-            method: RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST,
-            payload,
-            preparePayload: (budgetMs) => ({ ...payload, budgetMs }),
-            serverId: options?.serverId ?? null,
-            accountId: options?.accountId ?? null,
-            timeoutMs: options?.timeoutMs,
-            // The scan spends the remaining caller budget and returns partial
-            // results. A competing ACK timer would discard that terminal page.
-            operationTimeoutMs: null,
-            ...(options?.signal ? { signal: options.signal } : {}),
-        });
+        const result = await invokeWorkspaceFileSystemAction({ machineId, serverId: options?.serverId, rootPath: payload.rootPath },
+            FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles, admittedInput, { ...options, accountId: options?.accountId ?? undefined });
+        if (!result.ok) {
+            const failure = projectWorkspaceFileSystemActionFailure(result);
+            return { ok: false, error: failure.error, errorCode: failure.errorCode ?? 'invalid_response',
+                ...(failure.details ? { details: failure.details } : {}) };
+        }
+        const response = result.result;
         const parsed = DaemonWorkspaceFileListResponseSchema.safeParse(response);
-        return parsed.success ? parsed.data : { ok: false, errorCode: 'invalid_response' };
+        return parsed.success ? parsed.data : { ok: false, error: 'invalid_response', errorCode: 'invalid_response' };
     } catch (error) {
         if (options?.signal?.aborted) throw error;
-        return { ok: false, errorCode: classifyWorkspaceFileRpcError(error) };
+        const errorCode = classifyWorkspaceFileRpcError(error);
+        return { ok: false, error: errorCode, errorCode };
     }
 }

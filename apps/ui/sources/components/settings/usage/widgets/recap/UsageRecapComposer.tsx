@@ -23,7 +23,8 @@ import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Icon } from '@/components/ui/icons/Icon';
 import { useFeatureDecision } from '@/hooks/server/useFeatureDecision';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import {
@@ -74,7 +75,7 @@ export type UsageRecapComposerProps = Readonly<{
   initialPeriod?: UsagePeriod;
   /** Where the sheet opens: a just-published page lands on its badge. Ignored where public profiles are off. */
   initialOutput?: UsageRecapPublicOutputKind;
-  callerContext?: ActionExecutorContext;
+  invocation?: CurrentUiContextCommandInvocation;
 }>;
 
 /** The one way to open Share: the recap widget's button and the published profile's Badge both arrive here. */
@@ -146,13 +147,13 @@ export function UsageRecapComposer(
   const [fields, setFields] =
     React.useState<readonly UsageRecapField[]>(DEFAULT_FIELDS);
   const [sourceSelection, setSourceSelection] = React.useState<UsageRecapSourceSelection>('whole_usage');
-  // A selection keeps its caller policy; the mounted output supplies its own read lifetime.
-  const callerContext = React.useRef(props.callerContext);
+  // A selection keeps its bound invocation; the mounted output supplies its own read lifetime.
+  const invocation = React.useRef(props.invocation);
   const shown = publicProfiles ? output : 'image';
   const commands = useCurrentUiContextLocalCommands([
     ...(publicProfiles ? OUTPUTS.map(({ id }) => ({ key: `output:${id}`,
       title: `${t('publicIdentity.share.outputLabel')}: ${t(`publicIdentity.share.output_${id}`)}`,
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { callerContext.current = context; setOutput(id); } })) : []),
+      invoke: (_input: unknown, _context: unknown, origin: CurrentUiContextCommandInvocation) => { invocation.current = origin; setOutput(id); } })) : []),
   ], { foregroundOverlay: true });
   return (
     <View style={styles.root} testID="usage-recap-composer">
@@ -179,7 +180,7 @@ export function UsageRecapComposer(
         <UsageRecapImageOutput
           query={props.query}
           serverId={props.serverId}
-          callerContext={callerContext}
+          invocation={invocation}
           selection={{ style, format, period, fields, sourceSelection }}
           setStyle={setStyle}
           setFormat={setFormat}
@@ -188,7 +189,7 @@ export function UsageRecapComposer(
           setSourceSelection={setSourceSelection}
         />
       ) : (
-        <UsageRecapPublicOutput kind={shown} serverId={props.serverId} onClose={props.onClose} callerContext={callerContext} />
+        <UsageRecapPublicOutput kind={shown} serverId={props.serverId} onClose={props.onClose} invocation={invocation} />
       )}
     </View>
   );
@@ -213,7 +214,7 @@ function UsageRecapImageOutput(
   props: Readonly<{
     query: UsageQuery;
     serverId: string;
-    callerContext: React.MutableRefObject<ActionExecutorContext | undefined>;
+    invocation: React.MutableRefObject<CurrentUiContextCommandInvocation | undefined>;
     selection: Readonly<{ style: UsageRecapStyle; format: UsageRecapFormat; period: UsagePeriod; fields: readonly UsageRecapField[];
       sourceSelection: UsageRecapSourceSelection }>;
     setStyle: (style: UsageRecapStyle) => void;
@@ -238,7 +239,7 @@ function UsageRecapImageOutput(
   const cardRef = React.useRef<React.ElementRef<typeof View>>(null);
   const execution = useMountedActionExecution(props.serverId);
   const CommandBridge = useCurrentUiContextCommandBridge();
-  const { execute: runAction, isCurrent: executionIsCurrent } = execution;
+  const { isCurrent: executionIsCurrent } = execution;
   // The compose effect keys on the selection, never on the hook's per-render callbacks.
   const executionRef = React.useRef(execution);
   executionRef.current = execution;
@@ -256,7 +257,7 @@ function UsageRecapImageOutput(
   React.useEffect(() => {
     const controller = new AbortController();
     const { execute, isCurrent, binding, resolution } = executionRef.current;
-    const origin = props.callerContext.current;
+    const origin = props.invocation.current;
     const retirement = binding?.onRetire(() => {
       controller.abort();
       setState({ kind: 'failed', code: 'usage_scope_unavailable' });
@@ -280,17 +281,17 @@ function UsageRecapImageOutput(
         granularity: getUsagePeriodDefinition(period).granularity,
         period: resolveUsageQueryPeriod({ period: { relative: period }, timeZoneOffsetMinutes: offset }, nowMs),
       });
-      const executed = await execute(
-        'usage.recap.private.compose',
-        {
+      const input = {
           query,
           sourceSelection,
           style,
           format,
           selectedFields: [...selectedFields],
-        },
-        { signal: controller.signal, callerContext: origin ? { ...origin, signal: undefined } : undefined },
-      );
+        };
+      const operation = { signal: controller.signal };
+      const executed = origin
+        ? await origin.execute(executionRef.current, 'usage.recap.private.compose', input, operation)
+        : await execute('usage.recap.private.compose', input, operation);
       if (controller.signal.aborted || !isCurrent()) return;
       if (!executed.ok) {
         setState({ kind: 'failed', code: queryFailureDiagnostic(executed) });
@@ -332,19 +333,20 @@ function UsageRecapImageOutput(
   );
 
   const deliver = React.useCallback(
-    async (intent: 'copy' | 'save' | 'share', context?: ActionExecutorContext) => {
+    async (intent: 'copy' | 'save' | 'share', invocation: CurrentUiContextCommandInvocation, commandSignal?: AbortSignal) => {
       if (!composed || state.kind !== 'ready' || !cardRef.current) return;
       if (!executionIsCurrent()) return;
       const controller = new AbortController();
       deliveryController.current?.abort();
       deliveryController.current = controller;
+      const cancellation = mergeAbortSignals([controller.signal, commandSignal]);
       setDelivery(intent);
       setNotice(null);
       try {
         // The render port captures this mounted preview, so it travels with the invocation.
-        const executed = await runAction('usage.recap.private.deliver',
+        const executed = await invocation.execute(execution, 'usage.recap.private.deliver',
           { query: state.query, sourceSelection, style, format, selectedFields: [...fields], intent },
-          { signal: controller.signal, callerContext: context, executorOptions: { usageRecapRender: async (result, context) => {
+          { signal: cancellation.signal, executorOptions: { usageRecapRender: async (result, context) => {
             // Capture the existing preview only when its exact selected/as-of model is still current.
             if (JSON.stringify(result) !== JSON.stringify(composed) || !cardRef.current) {
               return (await import('./renderUsageRecapImage')).renderUsageRecapImage(result, context, CommandBridge);
@@ -352,12 +354,12 @@ function UsageRecapImageOutput(
             return { kind: 'rendered', base64: await captureUsageViewPng(cardRef.current,
               { signal: context.signal, isCurrent: executionIsCurrent }) };
           } } });
-        controller.signal.throwIfAborted();
+        cancellation.signal.throwIfAborted();
         if (!executionIsCurrent() || !executed.ok) throw new Error('usage_recap_export_unavailable');
         const result = UsageRecapDeliveryResultSchema.parse(executed.result);
         if (result.compose.kind !== 'composed') throw new Error('usage_recap_export_unavailable');
         setState({ kind: 'ready', result: result.compose, query: state.query });
-        if (controller.signal.aborted || !executionIsCurrent()) return;
+        if (cancellation.signal.aborted || !executionIsCurrent()) return;
         setNotice(
           result.kind === 'cancelled' ? null : result.kind === 'delivered'
             ? intent === 'copy'
@@ -368,15 +370,16 @@ function UsageRecapImageOutput(
               : t('usage.board.recap.exportFailed'),
         );
       } catch {
-        if (!controller.signal.aborted && executionIsCurrent()) setNotice(t('usage.board.recap.exportFailed'));
+        if (!cancellation.signal.aborted && executionIsCurrent()) setNotice(t('usage.board.recap.exportFailed'));
       } finally {
+        cancellation.dispose();
         if (deliveryController.current === controller) {
           deliveryController.current = null;
           setDelivery(null);
         }
       }
     },
-    [composed, state, runAction, executionIsCurrent, sourceSelection, style, format, fields, CommandBridge],
+    [composed, state, execution, executionIsCurrent, sourceSelection, style, format, fields, CommandBridge],
   );
 
   const toggle = React.useCallback((field: UsageRecapField, on: boolean) => {
@@ -392,23 +395,23 @@ function UsageRecapImageOutput(
   const commands = useCurrentUiContextLocalCommands([
     ...USAGE_STAT_CARD_STYLES.map(id => ({ key: `style:${id}`,
       title: `${t('usage.board.recap.styleLabel')}: ${t(`usage.board.recap.style_${id}`)}`,
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setStyle(id); } })),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setStyle(id); } })),
     ...FORMATS.map(id => ({ key: `format:${id}`,
       title: t(`usage.board.recap.format_${id === 'link-preview' ? 'linkPreview' : id}`),
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setFormat(id); } })),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setFormat(id); } })),
     ...PERIODS.map(id => ({ key: `period:${id}`,
       title: `${t('usage.board.recap.periodLabel')}: ${t(getUsagePeriodDefinition(id).shortTranslationKey)}`,
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setPeriod(id); } })),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setPeriod(id); } })),
     ...USAGE_RECAP_SOURCE_SELECTIONS.map(id => ({ key: `source:${id}`,
       title: `${t('usage.board.recap.sourceLabel')}: ${t(`usage.board.recap.source_${id}`)}`,
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setSourceSelection(id); } })),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setSourceSelection(id); } })),
     ...USAGE_RECAP_FIELDS.map(field => ({ key: `field:${field}`,
       title: `${t('usage.board.recap.fieldsLabel')}: ${t(`usage.board.recap.field_${field}`)}`,
-      invoke: (input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; toggle(field, typeof input === 'boolean' ? input : !fields.includes(field)); } })),
+      invoke: (input: PluginUiJsonValueV1 | undefined, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; toggle(field, typeof input === 'boolean' ? input : !fields.includes(field)); } })),
     ...(state.kind === 'failed' ? [{ key: 'retry', title: t('common.retry'),
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; retryCompose(); } }] : []),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; retryCompose(); } }] : []),
     ...(composed && delivery === null ? (['copy', 'save', 'share'] as const).map(intent => ({ key: `deliver:${intent}`,
-      title: t(`usage.board.recap.${intent}`), invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => deliver(intent, context) })) : []),
+      title: t(`usage.board.recap.${intent}`), invoke: (_input: unknown, context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => deliver(intent, invocation, context.signal) })) : []),
   ], { foregroundOverlay: true });
 
   const styleOptions = React.useMemo(

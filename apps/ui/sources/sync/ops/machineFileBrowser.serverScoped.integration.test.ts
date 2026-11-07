@@ -1,11 +1,20 @@
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, renderHook } from '@/dev/testkit';
 import { RPC_ERROR_CODES, RPC_ERROR_MESSAGES, RPC_METHODS } from '@happier-dev/protocol/rpc';
+import { createRpcCallError, MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@happier-dev/protocol/rpcErrors';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionFamily';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { readActionFailureEnvelope } from '@happier-dev/protocol/actions/executor/actionFailureEnvelope';
 import { installSessionOpsNetworkBoundary } from '@/dev/testkit/harness/sessionOpsNetworkBoundary';
+import { createExternalActionAccountHttpBoundary } from '@/dev/testkit/harness/externalActionAccountHttpBoundary';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 
 // Only socket/HTTP transport and device credential storage are replaced. Home
 // admission, routing, response decoding and the file-browser owners stay real.
 const boundary = await installSessionOpsNetworkBoundary();
+const { createCliActionDeps } = await import('../../../../cli/src/session/actions/createCliActionDeps');
+const { decodeStoredCredentials } = await import('../../../../cli/src/persistence');
 const { socketRpcCodec } = await import('@happier-dev/sync-client');
 const { loadSyncSingletonForTests } = await import('@/dev/testkit/harness/syncSingletonLoader');
 await loadSyncSingletonForTests();
@@ -13,20 +22,73 @@ const { resetScopedMachineTransportCacheForTests } = await import('@/sync/runtim
 const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
 const { resetServerReachabilitySupervisors } = await import('@/sync/runtime/connectivity/serverReachabilitySupervisorPool');
 const { machineFilesystemListRoots, machineFilesystemListDirectory } = await import('./machineFileBrowser');
+const { callAdmittedFilesystemActionRpc } = await import('./actions/filesystemActionDeps');
 const { resolveFilesystemErrorReason } = await import('@/components/ui/filesystemBrowser/filesystemErrorReason');
 const { t } = await import('@/text');
 let home: Awaited<ReturnType<typeof boundary.addHome>>;
+let actionHomes: Awaited<ReturnType<typeof serveActionHomes>> | undefined;
 
 beforeEach(async () => {
     boundary.resetRequests();
     resetScopedMachineTransportCacheForTests();
-    home = await boundary.addHome('https://filesystem.example.test', 'account-a');
-    boundary.setHttpResponder(async input => new URL(String(input)).pathname === '/v1/account/encryption'
-        ? Response.json({ mode: 'plain', updatedAt: 1 }) : null);
+    const serverUrl = 'https://filesystem.example.test';
+    const serverIdentityId = 'srv_filesystem_home';
+    home = await boundary.addHome(serverUrl, 'account-a', { serverIdentityId });
+    const actionsSettingsV1 = ActionsSettingsV1Schema.parse({ v: 1, actions: {},
+        approvalWaivedSurfaces: Object.fromEntries(Object.values(FILESYSTEM_BROWSER_ACTION_IDS_V1)
+            .map(actionId => [actionId, ['ui', 'agent']])),
+    });
+    const actions = await Promise.all(Object.values(FILESYSTEM_BROWSER_ACTION_IDS_V1).map(actionId =>
+        createExternalActionAccountHttpBoundary({ serverUrl, serverIdentityId, accountId: 'account-a',
+            machineId: 'machine-1', actionId, tokenEpoch: 0, requesterInvocation: 'required',
+            failure: readActionFailureEnvelope,
+            execute: async (input, context) => {
+                expect(context.invocation).toMatchObject({ surface: 'ui', authority: 'present_user' });
+                const credentials = decodeStoredCredentials(context.requesterAccountContext);
+                if (!credentials) throw new Error('Requester credentials unavailable');
+                // Native Action projection and settlement stay real; only its OS
+                // effect crosses the fixture's scoped Socket transport boundary.
+                const executor = createActionExecutor(createCliActionDeps({
+                    token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+                    serverId: home.id, serverIdentityId, serverHttpBaseUrl: serverUrl,
+                    actionsSettingsProvider: { getActionsSettings: () => actionsSettingsV1,
+                        getAccountSettings: () => ({ actionsSettingsV1 }) },
+                    machineActionDirectTargetTransport: { machineId: context.target.machineId,
+                        invoke: async (_method, request, options) => await callAdmittedFilesystemActionRpc({
+                            actionId, machineId: context.target.machineId, serverId: home.id,
+                            accountId: 'account-a', input: request, requestId: context.requestId,
+                            signal: options?.signal,
+                        }),
+                    },
+                }));
+                const result = await executor.execute(actionId, input, {
+                    ...context.invocation, actionCaller: context.invocation.caller,
+                    serverId: home.id, runtimeAccountId: 'account-a',
+                    externalActionTarget: context.target, actionRequestId: context.requestId,
+                    signal: context.signal ?? undefined,
+                });
+                return result.ok ? result.result : result;
+            },
+        })));
+    actionHomes = await serveActionHomes({ homes: [{ key: 'filesystem', serverUrl, serverIdentityId,
+        accountId: 'account-a', currentAccount: true, settings: {
+            actionsSettingsV1,
+        },
+    }], route: async request => {
+        const init = { method: request.method, headers: request.headers,
+            ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }), signal: request.signal };
+        for (const action of actions) {
+            const response = await action.handle(request.url, init);
+            if (response) return response;
+        }
+        return await boundary.request(request.url, init);
+    } });
 });
 afterEach(async () => {
     await serverScopedRpcSocketPool.stopAll();
     await resetServerReachabilitySupervisors();
+    await actionHomes?.dispose();
+    actionHomes = undefined;
 });
 afterAll(() => boundary.dispose());
 
@@ -174,11 +236,11 @@ describe('file-browser failures across the scoped network boundary', () => {
         expect(boundary.requests).toContainEqual(expect.objectContaining({ serverUrl: home.serverUrl, targetId: 'machine-1' }));
     });
 
-    it.each(listings)('does not disguise the live server ReferenceError as a missing %s method', async (_name, list) => {
+    it.each(listings)('keeps an untyped relay exception as a generic Action failure for %s', async (_name, list) => {
         boundary.setRpcAckResponder(async () => ({ ok: false, error: 'verifiedWorkspaceSyncTargetContinuation is not defined' }));
         const result = await list(home.id);
         expect(boundary.requests.length).toBeGreaterThan(0);
-        expect(result).toEqual({ ok: false, error: 'MACHINE_RPC_FAILED', errorCode: 'MACHINE_RPC_FAILED' });
+        expect(result).toEqual({ ok: false, error: 'action_failed', errorCode: 'action_failed' });
         if (!result.ok) expect(resolveFilesystemErrorReason(result.error)).toBe(t('errors.operationFailed'));
     });
 
@@ -199,8 +261,32 @@ describe('file-browser failures across the scoped network boundary', () => {
         expect(resolveFilesystemErrorReason(RPC_ERROR_MESSAGES.METHOD_NOT_AVAILABLE)).toBe(t('errors.daemonUnavailableBody'));
     });
 
+    // A guest read on a Machine that cannot run it under member isolation is refused by the daemon
+    // handler with this exact envelope (no `ok`); the tree names that cause, not a generic failure.
+    it('presents the daemon isolation refusal as its own reason, not a format or generic failure', async () => {
+        boundary.setRpcResponder(async request => {
+            const decoded = await socketRpcCodec.decodeRequestParams({ mode: 'plain' }, request.payload, `${request.targetId}:${request.method}`);
+            return socketRpcCodec.encodeResponse({ mode: 'plain' }, {
+                error: 'Requester execution protection is unavailable', errorCode: 'agent_isolation_unavailable',
+            }, decoded.callId);
+        });
+        for (const [, list] of listings) {
+            const result = await list(home.id);
+            expect(result).toMatchObject({ ok: false, errorCode: 'agent_isolation_unavailable' });
+            if (result.ok) throw new Error('Expected listing refusal');
+            expect(result.error).not.toContain('Requester execution protection');
+            const reason = resolveFilesystemErrorReason(result.error);
+            expect(reason).toBe(t('errors.agentIsolationUnavailable'));
+            expect([t('errors.operationFailed'), t('errors.invalidFormat')]).not.toContain(reason);
+        }
+    });
+
     it('distinguishes an acknowledgement timeout from unsupported methods', async () => {
-        boundary.setRpcAckResponder(async () => { throw new Error('operation has timed out'); });
+        // The native CLI transport converts its Socket ACK deadline into this
+        // typed RPC failure before the Action executor settles it.
+        boundary.setRpcAckResponder(async () => { throw createRpcCallError({
+            error: 'Machine RPC call timeout', errorCode: MACHINE_RPC_TIMEOUT_ERROR_CODE,
+        }); });
         const result = await machineFilesystemListRoots('machine-1', { serverId: home.id, timeoutMs: 1_000 });
         expect(result).toEqual({ ok: false, error: 'MACHINE_RPC_TIMEOUT', errorCode: 'MACHINE_RPC_TIMEOUT' });
         if (!result.ok) expect(resolveFilesystemErrorReason(result.error)).toBe(t('errors.connectionTimeout'));

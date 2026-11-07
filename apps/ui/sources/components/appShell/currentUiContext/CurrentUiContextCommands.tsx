@@ -11,19 +11,39 @@ import type { CurrentUiContextVoiceInvocationOutcome } from './currentUiContextV
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 
 type LocalCommandResult = boolean | void | CurrentUiContextVoiceInvocationOutcome;
+export type CurrentUiContextMountedCommandExecution = Pick<ReturnType<typeof useMountedActionExecution>, 'execute' | 'executeForCaller' | 'binding'>;
+
+/** A command retains its original caller while the chosen mounted engine owns delivery and lifetime. */
+export type CurrentUiContextCommandInvocation = Readonly<{
+    execute(engine: CurrentUiContextMountedCommandExecution,
+        ...args: Parameters<CurrentUiContextMountedCommandExecution['execute']>): ReturnType<CurrentUiContextMountedCommandExecution['execute']>;
+}>;
+
+function bindCommandInvocation(context: ActionExecutorContext): CurrentUiContextCommandInvocation {
+    return { execute: (engine, actionId, input, operation) => {
+        const execute = (childId: typeof actionId, childInput: unknown, caller: ActionExecutorContext) =>
+            engine.executeForCaller(childId, childInput, caller, operation);
+        const signal = operation?.signal ?? context.signal;
+        return context.executeOrdinaryChildAction
+            ? context.executeOrdinaryChildAction(actionId, input, { serverId: engine.binding?.scope.serverId,
+                expectedAccountId: engine.binding?.scope.accountId, signal, execute })
+            : execute(actionId, input, { ...context, signal });
+    } };
+}
 
 export type CurrentUiContextLocalCommand = Readonly<{
     key: string;
     title: string;
     description?: string;
     setting?: Extract<CurrentUiContextMountedCommand, { kind: 'hostLocal' }>['setting'];
-    invoke(input?: PluginUiJsonValueV1, context?: ActionExecutorContext): LocalCommandResult | Promise<LocalCommandResult>;
+    invoke(input: PluginUiJsonValueV1 | undefined, context: ActionExecutorContext,
+        invocation: CurrentUiContextCommandInvocation): LocalCommandResult | Promise<LocalCommandResult>;
 }>;
 
 type ComposedCommands = NonNullable<CurrentUiContextMountedEnrichment['commands']>;
 type CommandComposition = Readonly<{
     authority: ServerAccountScopeLifetime | null;
-    execute: ReturnType<typeof useMountedActionExecution>['execute'];
+    execution: CurrentUiContextMountedCommandExecution;
     isCurrent(): boolean;
     register(owner: object, commands: ComposedCommands): () => void;
 }>;
@@ -55,7 +75,8 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
     active?: boolean;
     children: React.ReactNode;
 }>): React.ReactElement {
-    const { execute } = useMountedActionExecution(props.authority?.scope);
+    const { execute, executeForCaller, binding } = useMountedActionExecution(props.authority?.scope);
+    const execution = React.useMemo(() => ({ execute, executeForCaller, binding }), [execute, executeForCaller, binding]);
     const [entries, setEntries] = React.useState<readonly Readonly<{ owner: object; commands: ComposedCommands }>[]>([]);
     const latest = React.useRef(props);
     latest.current = props;
@@ -67,11 +88,11 @@ export function CurrentUiContextCommandsProvider(props: Readonly<{
     }, []);
     const composition = React.useMemo<CommandComposition>(() => ({
         authority: props.authority,
-        execute,
+        execution,
         isCurrent: () => mounted.current && latest.current.active !== false
             && latest.current.authority === props.authority && props.authority?.isCurrent() === true,
         register,
-    }), [props.authority, execute, register]);
+    }), [props.authority, execution, register]);
     const [retired, setRetired] = React.useState<ServerAccountScopeLifetime | null>(null);
     React.useLayoutEffect(() => {
         const authority = props.authority;
@@ -141,7 +162,7 @@ export function useCurrentUiContextLocalCommandDefinitions(
                     if (signal.aborted || !lifetime.mounted || !isCurrent() || !current) {
                         return { ok: false as const, code: 'stale_surface' as const };
                     }
-                    const applied = await current.invoke(input, context);
+                    const applied = await current.invoke(input, context, bindCommandInvocation(context));
                     if (typeof applied === 'object' && applied !== null) return applied;
                     return applied === false ? { ok: false as const, code: 'stale_surface' as const } : { ok: true as const };
                 },
@@ -165,7 +186,8 @@ export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiCon
      * admission with the caller context; this grants no authority. Retired/inactive providers never fall back. */
     unbound?: 'local';
 }>): Readonly<{
-    invoke(key: string, input?: PluginUiJsonValueV1, callerContext?: ActionExecutorContext): Promise<boolean>;
+    invoke(key: string, input?: PluginUiJsonValueV1, callerContext?: ActionExecutorContext,
+        invocation?: CurrentUiContextCommandInvocation): Promise<boolean>;
 }> {
     const composition = React.useContext(CompositionContext);
     const reader = useOptionalCurrentUiContextReader();
@@ -180,17 +202,22 @@ export function useCurrentUiContextLocalCommands(commands: readonly CurrentUiCon
     React.useLayoutEffect(() => {
         return composition?.register(definitions, mountedDefinitions);
     }, [composition, definitions, mountedDefinitions]);
-    const invoke = React.useCallback(async (key: string, input?: PluginUiJsonValueV1, callerContext?: ActionExecutorContext): Promise<boolean> => {
+    const invoke = React.useCallback(async (key: string, input?: PluginUiJsonValueV1, callerContext?: ActionExecutorContext,
+        invocation?: CurrentUiContextCommandInvocation): Promise<boolean> => {
         if (!composition) {
             const local = options?.unbound === 'local' ? latest.current.find(candidate => candidate.key === key) : undefined;
             if (!local) return false;
-            const applied = await local.invoke(input, callerContext);
+            const caller = callerContext ?? { surface: 'ui' as const, authority: 'present_user' as const,
+                actionCaller: { kind: 'host' as const } };
+            const applied = await local.invoke(input, caller, invocation ?? bindCommandInvocation(caller));
             return typeof applied === 'object' && applied !== null ? applied.ok : applied !== false;
         }
         if (!composition.isCurrent()) return false;
         const command = definitions.find(candidate => candidate.key === key)?.command;
-        const execute: typeof composition.execute = (actionId, actionInput) => composition.execute(actionId, actionInput,
-            callerContext ? { callerContext } : undefined);
+        const origin = invocation ?? (callerContext ? bindCommandInvocation(callerContext) : undefined);
+        const execute: CurrentUiContextMountedCommandExecution['execute'] = (actionId, actionInput) => origin
+            ? origin.execute(composition.execution, actionId, actionInput)
+            : composition.execution.execute(actionId, actionInput);
         return (await executeMountedCurrentUiContextCommand({ reader, command, execute, input })).ok;
     }, [composition, definitions, options?.unbound, reader]);
     return React.useMemo(() => ({ invoke }), [invoke]);

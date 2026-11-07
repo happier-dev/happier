@@ -1,7 +1,6 @@
 import { resolveSessionContinuationDaemonGeneration } from '@/components/sessions/agentPicker/resolveSessionAgentContinuationEligibility';
 import { providerDeclarationContext } from '@/providers/catalog/accountProviderDeclarations';
 import type { PromptPickerOpenRequest } from '@/components/sessions/agentInput/commandMenu/promptPickerActionPort';
-import { resolveSessionAutoResumeAdmissionV1 } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
 import type { CliAuthStatusData } from "@/sync/api/capabilities/capabilitiesProtocol";
 import { createStoredReadSchema } from "@happier-dev/protocol/json/storedReadSchema";
 import { resolveEffectiveApiTokenPermissionModeV1 } from "@happier-dev/protocol/auth/apiTokenGrant";
@@ -247,13 +246,13 @@ import { useEnabledAgentIds } from "@/agents/hooks/useEnabledAgentIds";
 import { resolveSessionGoalActionCapabilityProfile, supportsEditableSessionGoals } from "@/agents/registry/registryUiBehavior";
 import type { SessionParticipantTarget } from "@/sync/domains/session/participants/participantTargets";
 import type { PendingMessage } from "@/sync/domains/state/storageTypes";
-import { resolvePendingActivationBanner } from "@/components/sessions/pending/resolvePendingActivationBanner";
 import { useManagedWakeRecovery } from "@/components/sessions/pending/useManagedWakeRecovery";
 import { submitPendingActivationRequest } from "@/components/sessions/pending/pendingActivationRequest";
+import { useSessionPendingActivationPresentation } from "@/components/sessions/pending/useSessionPendingActivationPresentation";
 import { findExchangeCheckInRoot, SessionExchangeCheckInBanner } from "@/components/sessions/pending/ExchangeCheckInBanner";
 import { useManagedPendingWakeObservation } from "@/components/sessions/pending/useManagedPendingWakeObservation";
 import { useMachineListStatusForServer } from "@/sync/domains/state/storage";
-import { deriveManagedWakeProjection } from "@/sync/domains/pending/managedWakeProjection";
+import { readManagedWakeAuthorization } from "@/sync/domains/pending/managedWakeProjection";
 import { ManagedWakePopover, describeManagedWakeLabel } from "@/components/sessions/pending/ManagedWakePopover";
 import { getMachineSentenceName } from "@/utils/sessions/machineDisplayNames";
 import { describeMachinePresenceLine } from "@/utils/sessions/machinePresenceLine";
@@ -1530,10 +1529,7 @@ export function useSessionComposerController({
     // Reconnect and the existing exact Home AccountChange edge reread native
     // observations; this does not submit Start or introduce a consumer timer.
     const socketConnectionGeneration = useSocketStatus().lastConnectedAt;
-    const managedWakeAuthorization = session.pendingActivationAuthorization
-        && session.pendingActivationAuthorization.requestedAt > session.activeAt
-        && session.pendingActivationAuthorization.managedWakeTargetV1
-        ? session.pendingActivationAuthorization : null;
+    const managedWakeAuthorization = readManagedWakeAuthorization(session);
     const managedPendingObservation = useManagedPendingWakeObservation({
         sessionId, authorization: managedWakeAuthorization,
         accountLifetime: sessionAccountLifetime,
@@ -1543,40 +1539,16 @@ export function useSessionComposerController({
     const managedWakeInventoryStatus = useMachineListStatusForServer(sessionAccountScope?.serverId ?? '');
     const managedWakeController = useServerScopedMachine(sessionAccountScope?.serverId ?? '',
         managedPendingMachine?.controller?.machineId ?? managedWakeAuthorization?.managedWakeTargetV1?.controller?.machineId ?? '');
-    const managedWakeProjection = React.useMemo(() => managedWakeAuthorization
-        ? deriveManagedWakeProjection({
-            managed: managedPendingMachine, activation: managedWakeAuthorization,
-            machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
-            pending: pendingMessages.find((message) => message.localId === managedWakeAuthorization.requestId) ?? null,
-            runtimeResuming: sessionRuntimeStatusSource.resumingAt != null,
-            pendingLoaded: pendingMessagesLoaded,
-            pendingReadState,
-            managedReadState: managedPendingObservation.kind,
-            machineInventoryState: managedWakeInventoryStatus === 'loading' ? 'loading' : 'read',
-        })
-        : null, [isMachineReachable, machineReachability, managedPendingMachine, managedPendingObservation.kind, managedWakeInventoryStatus, managedWakeAuthorization, pendingMessages, pendingMessagesLoaded, pendingReadState, sessionRuntimeStatusSource.resumingAt]);
-    const autoResumeAdmission = resolveSessionAutoResumeAdmissionV1({ metadata: ownerMetadata,
-        archivedAt: session.archivedAt, machineAvailable: isMachineReachable, authorityAvailable: ownerMetadata !== null });
-    const pendingActivationPresentation = React.useMemo(() => {
-        // A Pending row can synchronize before an in-flight Agent transition
-        // answers. The composer already owns that live submission and shows its
-        // spinner, so the generic inactive-Session recovery must not compete with
-        // it or imply that the reader should resume the source Agent. Once the
-        // submission settles, the existing pending-activation owner resumes its
-        // normal role without any transition-specific recovery path.
-        if (isComposerSending) return null;
-        return resolvePendingActivationBanner({
-            authorization: session.pendingActivationAuthorization,
-            activeAt: session.activeAt,
-            active: session.active,
-            machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
-            canWrite: hasWriteAccess,
-            resumingAt: sessionRuntimeStatusSource.resumingAt,
-            pendingMessages,
-            managedWakeProjection,
-            autoResumeAdmission,
-        });
-    }, [autoResumeAdmission, hasWriteAccess, isComposerSending, isMachineReachable, machineReachability, managedWakeProjection, pendingMessages, session.active, session.activeAt, session.pendingActivationAuthorization, sessionRuntimeStatusSource.resumingAt]);
+    // One owner for the managed wake projection, the explicit-stop hold and an in-flight resume: the Inbox's
+    // wake row reads the same presentation. A live composer submission owns the moment (`suppressed`).
+    const { presentation: pendingActivationPresentation, autoResumeAdmission } = useSessionPendingActivationPresentation({
+        sessionId, session, ownerMetadata,
+        machineReachable: machineReachability === 'unknown' ? null : isMachineReachable,
+        canWrite: hasWriteAccess, pendingMessages, pendingLoaded: pendingMessagesLoaded, pendingReadState,
+        managed: managedPendingMachine, managedReadState: managedPendingObservation.kind,
+        machineInventoryState: managedWakeInventoryStatus === 'loading' ? 'loading' : 'read',
+        suppressed: isComposerSending,
+    });
     // The delivery-state presenter's one Session-level failure (a queued message blocked by this
     // Session's Agent account): the status line says it with its recovery; nothing else repeats it.
     const sessionDeliveryFailure = React.useMemo(() => resolveSessionDeliveryFailure(pendingMessages, {

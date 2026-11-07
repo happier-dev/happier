@@ -7,7 +7,8 @@ import { readSessionBotFaceV1 } from '@happier-dev/protocol/sessions/identity/se
 import type { ActionExecuteResult } from '@happier-dev/protocol/actions/actionExecutionResult';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation,
+    type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
 import type { Session } from '@/sync/domains/state/storageTypes';
 import { t } from '@/text';
@@ -60,21 +61,29 @@ export function useOpenBotTemplate(session: SessionBotTemplateSource | null, ser
     current.current = session;
     const available = session !== null && readSessionBotV1(session.metadata?.bot)?.kind === 'bot'
         && (readSessionTemplateDraftRef(session) !== null || session.access?.capabilities.submitAgentInput === true);
-    const invoke = React.useCallback(async () => {
+    const invoke = React.useCallback(async (invocation?: CurrentUiContextCommandInvocation) => {
         const source = current.current;
         if (!source) return;
         const ref = readSessionTemplateDraftRef(source);
-        const result = ref ? await actions.execute('template.open', { draftArtifactId: ref.artifactId,
+        const execute: typeof actions.execute = (actionId, input, operation) => invocation
+            ? invocation.execute(actions, actionId, input, operation) : actions.execute(actionId, input, operation);
+        const result = ref ? await execute('template.open', { draftArtifactId: ref.artifactId,
             sourceSessionRef: { serverId: ref.serverId, sessionId }, presentation: 'pane' })
-            : await requestBotTemplateDraft(actions.execute, source, serverId);
+            : await requestBotTemplateDraft(execute, source, serverId);
         // Taking Info's pane retires its mounted command. That cancellation says
         // nothing about the template now presented by the successor view.
         if (!result.ok && actions.isCurrent()) await Modal.alert(t('common.error'), t('botTemplates.unavailable'));
-    }, [actions.execute, actions.isCurrent, serverId, sessionId]);
-    const commands = React.useMemo(() => registerCommand && available ? [{ key: BOT_TEMPLATE_EDITOR_DESTINATION,
-        title: t('botTemplates.giveCopy'), description: t('botTemplates.giveCopyDescription'), invoke }] : [], [invoke, registerCommand, available]);
+        return result;
+    }, [actions.execute, actions.executeForCaller, actions.binding, actions.isCurrent, serverId, sessionId]);
+    const commands = React.useMemo<readonly CurrentUiContextLocalCommand[]>(() => registerCommand && available ? [{ key: BOT_TEMPLATE_EDITOR_DESTINATION,
+        title: t('botTemplates.giveCopy'), description: t('botTemplates.giveCopyDescription'),
+        invoke: async (_input, _caller, invocation) => {
+            const result = await invoke(invocation);
+            return result?.ok === false ? { ok: false, code: 'denied', errorCode: result.errorCode } : { ok: true };
+        } }] : [], [invoke, registerCommand, available]);
     useCurrentUiContextLocalCommands(commands);
-    return available ? invoke : null;
+    const touch = React.useCallback(() => invoke(), [invoke]);
+    return available ? touch : null;
 }
 
 export function usePresentBotTemplate(sessionId: string, serverId: string) {

@@ -9,8 +9,10 @@ import { resolveAgentIdFromSessionMetadata } from '@happier-dev/agents';
 
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Item } from '@/components/ui/lists/Item';
-import { ItemGroup } from '@/components/ui/lists/ItemGroup';
+import { ItemGroup, ItemGroupDefaultSurfaceProvider } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { PageRowDensityProvider } from '@/components/ui/lists/useResolvedItemDensity';
+import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { Switch } from '@/components/ui/forms/Switch';
@@ -18,13 +20,14 @@ import { Icon } from '@/components/ui/icons/Icon';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { Modal } from '@/modal';
 import { t } from '@/text';
+import { useSettingsValues } from '@/sync/store/settingsReadHooks';
 import { useSessionArchivePending } from '@/hooks/session/useSessionArchivePending';
 import {
   useWorkspaceRefs,
   storage,
   useProfile,
   useSetting,
-  useSettings,
+  useActiveServerAccountScope,
   useSessionOrganizationProjection,
   useMachineListByServerId,
 } from '@/sync/domains/state/storage';
@@ -44,7 +47,7 @@ import { HappyError } from '@/utils/errors/errors';
 import { getAgentCore, isBundledAgentId } from '@/agents/catalog/catalog';
 import { formatAgentLikeIdForDisplay } from '@/agents/catalog/formatAgentLikeIdForDisplay';
 import { getAgentVendorResumeId } from '@/agents/runtime/resumeCapabilities';
-import { useSessionCollaborationDestinationAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
+import { useSessionCollaborationDestinationEntryAdmitted } from '@/hooks/session/useSessionCollaborationAvailability';
 import { useOpenSessionCollaboration } from '@/components/sessions/collaboration/useOpenSessionCollaboration';
 import type { SessionAddress } from '@/sync/domains/session/sessionAddress';
 import {
@@ -57,13 +60,11 @@ import { createDefaultActionExecutor } from '@/sync/ops/actions/defaultActionExe
 import { isActionEnabledInState } from '@/sync/domains/settings/actionsSettings';
 import { canForkConversation } from '@/sync/domains/sessionFork/forkUiSupport';
 import { openSessionForkStrategyFlow } from '@/components/sessions/fork/openSessionForkStrategyFlow';
-import { runSessionHandoffPickerFlow } from '@/sync/domains/sessionHandoff/runSessionHandoffPickerFlow';
-import { resolveSessionHandoffSourceMachineId } from '@/sync/domains/sessionHandoff/resolveSessionHandoffSourceMachineId';
-import { resolveSessionHandoffUiAvailability } from '@/sync/domains/sessionHandoff/resolveSessionHandoffUiAvailability';
+import { useSessionHandoffAction } from '@/sync/domains/sessionHandoff/useSessionHandoffAction';
 import { buildScopedSessionRouteHref } from '@/hooks/session/sessionRouteServerScope';
 import { useServerFeaturesSnapshotForServerId } from '@/sync/domains/features/featureDecisionRuntime';
-import { useSessionHandoffSourceReachability } from '@/sync/domains/sessionHandoff/useSessionHandoffSourceReachability';
 import { useSessionReachableMachineTarget } from '@/components/sessions/model/useSessionMachineReachability';
+import { useSessionActionNavigation } from '@/hooks/session/useSessionActionNavigation';
 import { confirmSessionDelete } from '@/components/sessions/actions/confirmSessionDelete';
 import { selectSessionViewShellSessionForRouteState, useSessionViewShellSession } from '@/components/sessions/shell/sessionViewStableSession';
 import { safeRouterBack } from '@/utils/navigation/safeRouterBack';
@@ -73,6 +74,7 @@ import { useEnabledAgentIds } from '@/agents/hooks/useEnabledAgentIds';
 import { getResolvedBackendCatalogEntries } from '@/agents/backendCatalog/getResolvedBackendCatalogEntries';
 import { useAcpCatalogForServer } from '@/sync/store/useAcpCatalog';
 import { useDaemonMergedProjectionInputs } from '@/agents/backendCatalog/useDaemonMergedProjectionInputs';
+import { DAEMON_AGENT_CATALOG_SECTIONS } from '@/agents/backendCatalog/agentCatalogSections';
 import { readCurrentProjectedAgentCapabilities } from '@/agents/backendCatalog/currentAgentCapabilities';
 import {
   resolveSessionActionDefaultBackend,
@@ -88,7 +90,7 @@ import {
 } from '@/components/sessions/work/SessionSetupSections';
 import { readSessionFollowHeaderPreset } from '@/components/sessions/follow/sessionFollowHeaderPreset';
 import { sessionFollowPresetLabel } from '@/components/sessions/follow/SessionFollowHeaderChip';
-import { executeSessionAction } from '@/components/sessions/actions/sessionActionExecution';
+import { executeSessionAction, executeSessionLifecycleAction } from '@/components/sessions/actions/sessionActionExecution';
 import {
   SESSION_ACTION_ARCHIVE_ID,
   SESSION_ACTION_DELETE_ID,
@@ -112,7 +114,9 @@ import { useMountedActionExecution } from '@/components/approvals/useMountedActi
 import { requireActionSuccess } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { sessionSetManualReadStateWithServerScope } from '@/sync/ops/sessionReadState';
 import { SessionAuthoringOpenResultV1Schema } from '@happier-dev/protocol/plugins/ui';
-import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { buildSessionDestinationRouteHref } from '@/components/workspaceCockpit/session/sessionCockpitNavigation';
+import { useMobileWorkspaceExperienceState } from '@/components/workspaceCockpit/useMobileWorkspaceExperienceState';
 import { sessionTagKey } from '@/components/sessions/shell/sessionTagUtils';
 import { openSessionFolderSelection } from '@/components/sessions/organization/SessionFolderSelection';
 import { useSessionSectionChoiceLabels } from '@/sync/domains/session/organization/useSessionSectionChoiceLabels';
@@ -146,7 +150,7 @@ import {
   emitSessionResumeRequest,
   useSessionResumeRequestAvailable,
 } from '@/components/sessions/model/sessionResumeRequests';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
 import { readSessionModelsState } from '@/sync/domains/sessionControl/readSessionControlMetadata';
 
@@ -157,6 +161,10 @@ import {
   type SessionInfoContextAction,
 } from './SessionInfoIdentity';
 import { useSessionRetentionSummary } from './SessionRetentionNotice';
+import {
+  SessionInfoSectionSummaryProvider,
+  useSessionInfoSectionSummaryHost,
+} from './sessionInfoSectionSummaries';
 
 export type SessionInfoPresentation = 'pane' | 'route';
 
@@ -242,7 +250,12 @@ function SessionInfoContent({
     : readSessionOwnerMetadataView(session);
   const { theme } = useUnistyles();
   const router = useRouter();
+  const { cockpitEnabled } = useMobileWorkspaceExperienceState();
+  const openSessionSkills = React.useCallback(() => router.push(buildSessionDestinationRouteHref({
+    sessionId: session.id, serverId: sessionServerId, cockpitEnabled, surface: 'skills', rightTabId: 'skills',
+  }) as never), [router, session.id, sessionServerId, cockpitEnabled]);
   const sessionActions = useMountedActionExecution(sessionServerId);
+  const writeClipboard = useClipboardWrite(sessionServerId);
   const profile = useProfile();
   const sessionPluginAddress = useSessionAddressForSessionId(
     session.id,
@@ -282,7 +295,7 @@ function SessionInfoContent({
   const backendEnabledByTargetKey = useSetting('backendEnabledByTargetKey');
   const actionsSettingsV1 = useSetting('actionsSettingsV1');
   const sessionReplayEnabled = useSetting('sessionReplayEnabled') === true;
-  const settings = useSettings();
+  const settings = useSettingsValues(['experiments', 'featureToggles']);
   const workspaceRefsV1 = useWorkspaceRefs();
   const machineListByServerId = useMachineListByServerId();
   const workspaceDisplay = React.useMemo(
@@ -295,8 +308,7 @@ function SessionInfoContent({
     [metadata, sessionServerId, workspaceRefsV1],
   );
   const hideInactiveSessions = useSetting('hideInactiveSessions') === true;
-  const collaborationAdmitted =
-    useSessionCollaborationDestinationAdmitted(sessionServerId);
+  const collaborationAdmitted = useSessionCollaborationDestinationEntryAdmitted(sessionServerId);
   const collaborationTarget = React.useMemo(
     () => ({ serverId: sessionServerId, sessionId: session.id }),
     [session.id, sessionServerId],
@@ -331,6 +343,8 @@ function SessionInfoContent({
     return trimmed.length > 0 ? trimmed : null;
   }, [metadata]);
   const daemonMergedProjection = useDaemonMergedProjectionInputs({
+    // Agent capabilities and backend entries read Agent declarations only.
+    sections: DAEMON_AGENT_CATALOG_SECTIONS,
     machineId: daemonProjectionMachineId,
     serverId: sessionServerId,
   });
@@ -481,17 +495,14 @@ function SessionInfoContent({
     sessionServerId,
   );
   const reachableMachineId = reachableMachineTarget?.machineId ?? null;
-  const sourceMachineIdForHandoff = React.useMemo(
-    () =>
-      resolveSessionHandoffSourceMachineId({
-        reachableMachineId,
-        sessionMetadata: readSessionOwnerMetadataView(session) as any,
-      }),
-    [reachableMachineId, session],
-  );
-  const runtimeAvailability = useSessionHandoffSourceReachability({
+  const { availability: handoffAvailability, run: runHandoff, sourceMachineId: sourceMachineIdForHandoff } = useSessionHandoffAction({
+    sessionId: session.id,
+    session,
     serverId: sessionServerId,
-    sourceMachineId: sourceMachineIdForHandoff,
+    reachableMachineId,
+    sessionHandoffFeatureEnabled: sessionHandoffEnabled,
+    execute: executor.execute,
+    placement: 'session_info',
   });
   const currentExecutionMachineId =
     reachableMachineId ?? sourceMachineIdForHandoff;
@@ -511,15 +522,6 @@ function SessionInfoContent({
         session: { machineId: metadata?.machineId, host: metadata?.host },
       })
     : null;
-  const handoffAvailability = resolveSessionHandoffUiAvailability({
-    sessionId: session.id,
-    serverId: sessionServerId,
-    reachableMachineId,
-    session,
-    sessionHandoffFeatureEnabled: sessionHandoffEnabled,
-    serverSnapshot,
-    runtimeAvailability,
-  });
   const handoffSupported = handoffAvailability.available;
   // The empty Workspace sync section offers the one thing sync starts with: another machine for this folder.
   const workspaceSyncSource = workspaceDisplay.workspaceScope;
@@ -553,35 +555,40 @@ function SessionInfoContent({
     [agentId, core],
   );
 
-  const handleOpenSameSetup = React.useCallback(async () => {
-    const result = await sessionActions.execute('session.authoring.open', {
+  const handleOpenSameSetup = React.useCallback(async (invocation?: CurrentUiContextCommandInvocation) => {
+    const input = {
       sourceSession: { serverId: sessionServerId, sessionId: session.id },
-    });
+    };
+    const result = await (invocation ? invocation.execute(sessionActions, 'session.authoring.open', input)
+      : sessionActions.execute('session.authoring.open', input));
     requireActionSuccess(result);
     const opened = SessionAuthoringOpenResultV1Schema.parse(result.result);
     if (opened.kind !== 'opened') throw new HappyError(t('errors.unknownError'), false,
       { code: opened.reason });
-  }, [sessionActions.execute, session.id, sessionServerId]);
-  const [openingSameSetup, handleNewSessionSameSetup] = useHappyAction(handleOpenSameSetup);
+  }, [sessionActions.execute, sessionActions.executeForCaller, sessionActions.binding, session.id, sessionServerId]);
+  const [openingSameSetup, handleNewSessionSameSetup] = useHappyAction(async () => { await handleOpenSameSetup(); });
 
   // The route leaves for the Session, then the list; the panel's host decides where its pane goes.
-  const handleExitAfterSessionMutation = React.useCallback(() => {
-    if (presentation === 'pane') {
-      onRequestClose();
-      return;
-    }
-    safeRouterBack({
-      router,
-      fallbackHref: buildScopedSessionRouteHref({
-        sessionId: session.id,
-        serverId: sessionServerId,
-      }),
-    });
-    safeRouterBack({
-      router,
-      fallbackHref: '/',
-    });
-  }, [onRequestClose, presentation, router, session.id, sessionServerId]);
+  const handleExitAfterSessionMutation = useSessionActionNavigation({
+    sessionId: session.id, serverId: sessionServerId,
+    onNavigate: React.useCallback(() => {
+      if (presentation === 'pane') {
+        onRequestClose();
+        return;
+      }
+      safeRouterBack({
+        router,
+        fallbackHref: buildScopedSessionRouteHref({
+          sessionId: session.id,
+          serverId: sessionServerId,
+        }),
+      });
+      safeRouterBack({
+        router,
+        fallbackHref: '/',
+      });
+    }, [onRequestClose, presentation, router, session.id, sessionServerId]),
+  });
 
   const organizationProjection =
     useSessionOrganizationProjection(sessionServerId);
@@ -836,6 +843,7 @@ function SessionInfoContent({
                 scope,
                 sessionId: session.id,
                 tags: [...tags],
+                executeAction: sessionActions.execute,
               });
             },
           },
@@ -964,14 +972,17 @@ function SessionInfoContent({
   }, [hideInactiveSessions, sessionActionTarget]);
   const [archivingSession, performArchive] = useHappyAction(handleArchive);
 
-  const handleUnarchive = React.useCallback(async () => {
+  const handleUnarchive = React.useCallback(async (invocation?: CurrentUiContextCommandInvocation) => {
     await executeSessionAction({
       actionId: SESSION_ACTION_UNARCHIVE_ID,
       target: sessionActionTarget,
+      ...(invocation ? { context: { operations: { unarchiveSession: (sessionId: string, options?: { serverId?: string | null }) =>
+        executeSessionLifecycleAction('session.unarchive', sessionId, { ...options,
+          mountedCommand: { invocation, engine: sessionActions } }) } } } : {}),
     });
-  }, [sessionActionTarget]);
+  }, [sessionActionTarget, sessionActions.execute, sessionActions.executeForCaller, sessionActions.binding]);
   const [unarchivingSession, performUnarchive] =
-    useHappyAction(handleUnarchive);
+    useHappyAction(async () => { await handleUnarchive(); });
 
   // Resume belongs to the Session's own composer (its reachability, pending activation and folder
   // recovery): Info only asks it, and only while that exact Home's composer is listening.
@@ -979,20 +990,20 @@ function SessionInfoContent({
     session.id,
     sessionServerId,
   );
-  const handleResume = React.useCallback(async () => {
-    await executeSessionAction({
+  const handleResume = React.useCallback(async (invocation?: CurrentUiContextCommandInvocation) => {
+    return await executeSessionAction({
       actionId: SESSION_ACTION_RESUME_ID,
       target: sessionActionTarget,
       context: {
         operations: {
           resumeSession: async (sessionId: string) => {
-            await emitSessionResumeRequest(sessionId, sessionServerId);
+            return await emitSessionResumeRequest(sessionId, sessionServerId, invocation);
           },
         },
       },
     });
   }, [sessionActionTarget, sessionServerId]);
-  const [resumingSession, performResume] = useHappyAction(handleResume);
+  const [resumingSession, performResume] = useHappyAction(async () => { await handleResume(); });
   const openSessionToResume = React.useCallback(() => {
     router.push(
       buildScopedSessionRouteHref({
@@ -1015,7 +1026,7 @@ function SessionInfoContent({
         readSessionOwnerMetadataView(session)?.machineId ??
         null,
       forkPoint: { type: 'latest' },
-      settings,
+      settings: storage.getState().settings,
       replayEnabled: sessionReplayEnabled,
       currentAgentCapabilities,
       executionRunsEnabled,
@@ -1045,20 +1056,8 @@ function SessionInfoContent({
   ]);
 
   const handleHandoffAction = React.useCallback(async () => {
-    const res = await runSessionHandoffPickerFlow({
-      execute: executor.execute as any,
-      sessionId: session.id,
-      sourceMachineId: sourceMachineIdForHandoff,
-      serverId: sessionServerId,
-      placement: 'session_info',
-    });
-    if (!res?.ok) return;
-  }, [
-    executor.execute,
-    session.id,
-    sessionServerId,
-    sourceMachineIdForHandoff,
-  ]);
+    await runHandoff();
+  }, [runHandoff]);
   const [handingOffSession, performHandoff] =
     useHappyAction(handleHandoffAction);
 
@@ -1088,6 +1087,7 @@ function SessionInfoContent({
   const handleDeleteSession = React.useCallback(async () => {
     const deleteTarget = sessionActionTarget;
     const confirmed = await confirmSessionDelete({
+      target: deleteTarget,
       metadata,
       machineOnline: currentExecutionMachinePresence.reachability === 'unknown'
         ? null : currentExecutionMachinePresence.reachability === 'reachable',
@@ -1226,23 +1226,55 @@ function SessionInfoContent({
           },
         ]
       : [];
+  const openAllAutomations = React.useCallback(() => router.push(buildScopedSessionRouteHref({
+    sessionId: session.id, serverId: sessionServerId, suffix: '/automations',
+  }) as never), [router, session.id, sessionServerId]);
+  const openRemotePermissions = React.useCallback(() => router.push(buildScopedSessionRouteHref({
+    sessionId: session.id, serverId: sessionServerId, suffix: '/permissions',
+  }) as never), [router, session.id, sessionServerId]);
 
   useCurrentUiContextLocalCommands(React.useMemo(() => contentUnavailable ? [] : [
-    { key: 'session.info.same-setup', title: t('sessionInfo.newSessionSameSetup'), invoke: handleOpenSameSetup },
+    { key: 'session.info.skills', title: t('capabilities.skills.title'), invoke: openSessionSkills },
+    { key: 'session.info.same-setup', title: t('sessionInfo.newSessionSameSetup'),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => handleOpenSameSetup(invocation) },
     ...(followEditor.enabled ? [{ key: 'session.info.follow', title: t('sessionPages.info.follow'), invoke: handleOpenFollow }] : []),
     ...(collaborationAdmitted ? [
       { key: 'session.info.people', title: t('sessionPages.info.people'), invoke: openSessionCollaboration },
       { key: 'session.info.sharing', title: t('sessionPages.info.sharing'), invoke: openSessionSharing },
     ] : []),
-    ...(showUnarchive ? [{ key: 'session.info.unarchive', title: t('sessionPages.info.unarchive'), invoke: handleUnarchive }] : []),
-    ...(contextAction?.id === 'resume' ? [{ key: 'session.info.resume', title: t('sessionPages.info.resume'), invoke: handleResume }] : []),
+    ...(showUnarchive ? [{ key: 'session.info.unarchive', title: t('sessionPages.info.unarchive'),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => handleUnarchive(invocation) }] : []),
+    ...(contextAction?.id === 'resume' ? [{ key: 'session.info.resume', title: t('sessionPages.info.resume'),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => handleResume(invocation) }] : []),
     ...(contextAction?.id === 'open-to-resume' ? [{ key: 'session.info.open-to-resume', title: t('sessionPages.info.openToResume'), invoke: openSessionToResume }] : []),
-  ], [collaborationAdmitted, contentUnavailable, contextAction?.id, followEditor.enabled,
+    ...(showAutomations ? [{ key: 'session.info.all-automations', title: t('sessionPages.info.allAutomations'), invoke: openAllAutomations }] : []),
+    ...(addMachineToWorkspace ? [{ key: 'session.info.another-machine', title: t('settings.addMachine'), invoke: addMachineToWorkspace }] : []),
+    ...(sessionActionTarget.isOwnedByCurrentUser ? [{ key: 'session.info.permissions', title: t('sessionRemotePermissionGrants.entryTitle'), invoke: openRemotePermissions }] : []),
+  ], [collaborationAdmitted, contentUnavailable, contextAction?.id, followEditor.enabled, openSessionSkills,
     handleOpenSameSetup, handleOpenFollow, openSessionCollaboration, openSessionSharing,
-    openSessionToResume, handleResume, handleUnarchive, showUnarchive]));
+    openSessionToResume, handleResume, handleUnarchive, showUnarchive, showAutomations,
+    addMachineToWorkspace, openAllAutomations, openRemotePermissions, sessionActionTarget.isOwnedByCurrentUser]));
+
+  // I2min: a section its own mounted read proves empty folds into one "Add to this session" row; unknown
+  // keeps its slot. Pressing the row unfolds the real section in its place (its own add flow is there).
+  const summaryScope = useActiveServerAccountScope(sessionServerId);
+  const sectionSummaries = useSessionInfoSectionSummaryHost({ address: collaborationTarget, scope: summaryScope });
+  const [unfolded, setUnfolded] = React.useState<Readonly<{ habits?: true; anotherMachine?: true }>>({});
+  const foldHabits = !contentUnavailable && sectionSummaries.facts.habits === 'empty' && !unfolded.habits;
+  const foldAnotherMachine = !contentUnavailable && sectionSummaries.facts.anotherMachine === 'empty'
+    && !unfolded.anotherMachine;
+  const unfoldHabits = React.useCallback(() => setUnfolded((current) => ({ ...current, habits: true })), []);
+  const addAnotherMachine = React.useCallback(() => {
+    if (addMachineToWorkspace) addMachineToWorkspace();
+    else setUnfolded((current) => ({ ...current, anotherMachine: true }));
+  }, [addMachineToWorkspace]);
 
   return (
+    <SessionInfoSectionSummaryProvider value={sectionSummaries.host}>
     <ItemList style={{ paddingTop: 0 }}>
+      {/* An inspector, not a settings page (lab csinfo I2): flat sections, small type, 36px rows. */}
+      <PageRowDensityProvider value="inspector">
+      <ItemGroupDefaultSurfaceProvider value="flat">
       <SessionInfoIdentity
         presentation={presentation}
         session={session}
@@ -1291,7 +1323,7 @@ function SessionInfoContent({
             action={{
               label: t('common.copy'),
               onPress: () => {
-                void setClipboardStringSafe(updateCommand);
+                void writeClipboard(updateCommand);
               },
             }}
           />
@@ -1300,25 +1332,17 @@ function SessionInfoContent({
 
       {/* Setup: how the agent works here. Habits: what starts from it and what writes into it. */}
       {!contentUnavailable ? (
-        <SessionSetupSections session={session} serverId={sessionServerId} />
+        <SessionSetupSections session={session} serverId={sessionServerId} onOpenSkills={openSessionSkills} />
       ) : null}
       {!contentUnavailable ? (
-        <SessionHabitsSection
-          sessionId={session.id}
-          serverId={sessionServerId}
-          onOpenAllAutomations={
-            showAutomations
-              ? () =>
-                  router.push(
-                    buildScopedSessionRouteHref({
-                      sessionId: session.id,
-                      serverId: sessionServerId,
-                      suffix: '/automations',
-                    }) as any,
-                  )
-              : undefined
-          }
-        />
+        // Folded, the section stays mounted (its read is what proves it empty) but draws nothing.
+        <View style={foldHabits ? stylesheet.folded : undefined}>
+          <SessionHabitsSection
+            sessionId={session.id}
+            serverId={sessionServerId}
+            onOpenAllAutomations={showAutomations ? openAllAutomations : undefined}
+          />
+        </View>
       ) : null}
 
       {/* Organize: where this session shows up in your lists, and what reaches you about it. */}
@@ -1368,7 +1392,6 @@ function SessionInfoContent({
               testID={pinInfoItemProps.testID}
               title={t('sessionPages.info.pinned')}
               icon={<Icon name="push-pin" />}
-              onPress={performTogglePinned}
               loading={pinningSession}
               showChevron={false}
               rightElement={
@@ -1400,7 +1423,6 @@ function SessionInfoContent({
               title={t('sessionPages.info.keepInNeedsYou')}
               subtitle={t('sessionPages.info.keepInNeedsYouSubtitle')}
               icon={<Icon name="tray" />}
-              onPress={performAttentionStandingAction}
               loading={updatingAttentionStanding}
               showChevron={false}
               rightElement={
@@ -1421,6 +1443,31 @@ function SessionInfoContent({
               showChevron={false}
               onPress={performReadStateAction}
               loading={updatingReadState}
+            />
+          ) : null}
+        </ItemGroup>
+      ) : null}
+
+      {foldHabits || foldAnotherMachine ? (
+        <ItemGroup testID="session-info-add-to" title={t('sessionPages.info.addToSessionTitle')}>
+          {foldHabits ? (
+            <Item
+              testID="session-info-add-to:habit"
+              title={t('sessionPages.info.aHabit')}
+              detail={t('sessionPages.info.aHabitDetail')}
+              icon={<Icon name="timer" />}
+              showChevron={false}
+              onPress={unfoldHabits}
+            />
+          ) : null}
+          {foldAnotherMachine ? (
+            <Item
+              testID="session-info-add-to:another-machine"
+              title={t('sessionPages.info.anotherMachine')}
+              detail={t('sessionPages.info.anotherMachineDetail')}
+              icon={<Icon name="arrows-clockwise" />}
+              showChevron={false}
+              onPress={addAnotherMachine}
             />
           ) : null}
         </ItemGroup>
@@ -1475,7 +1522,7 @@ function SessionInfoContent({
               testID="session-info-collaboration"
               icon={<Icon name="users" />}
               title={t('sessionPages.info.people')}
-              onPress={openSessionCollaboration}
+              onPress={() => openSessionCollaboration()}
             />
           ) : null}
           {collaborationAdmitted ? (
@@ -1483,7 +1530,7 @@ function SessionInfoContent({
               testID="session-info-sharing"
               icon={<Icon name="share" />}
               title={t('sessionPages.info.sharing')}
-              onPress={openSessionSharing}
+              onPress={() => openSessionSharing()}
             />
           ) : null}
           {sessionActionTarget.isOwnedByCurrentUser ? (
@@ -1491,47 +1538,44 @@ function SessionInfoContent({
               testID="session-info-remote-permission-grants"
               icon={<Icon name="shield-check" />}
               title={t('sessionRemotePermissionGrants.entryTitle')}
-              onPress={() =>
-                router.push(
-                  buildScopedSessionRouteHref({
-                    sessionId: session.id,
-                    serverId: sessionServerId,
-                    suffix: '/permissions',
-                  }) as any,
-                )
-              }
+              onPress={openRemotePermissions}
             />
           ) : null}
         </ItemGroup>
       ) : null}
 
       {!contentUnavailable ? (
-        <WorkspaceSyncRelationshipList
-          workspaceRefId={workspaceDisplay.workspaceRefId}
-          onAddMachine={addMachineToWorkspace}
-        />
+        <View style={foldAnotherMachine ? stylesheet.folded : undefined}>
+          <WorkspaceSyncRelationshipList
+            workspaceRefId={workspaceDisplay.workspaceRefId}
+            onAddMachine={addMachineToWorkspace}
+          />
+        </View>
       ) : null}
 
+      {/* A plugin section is a section of this inspector: its loading, empty and error states are one line. */}
       {sessionInfoSections.map(({ section, policy }) => (
         <ItemGroup key={section.id} surface="none">
-          <PluginInlineSurfaceHost
-            placement={section.placement}
-            inlineMount={{
-              role: 'sessionInfoSection',
-              presentation: 'content',
-            }}
-            sessionId={session.id}
-            machineId={pluginRuntime.machineId}
-            serverId={pluginRuntime.serverId}
-            pluginUiProjection={pluginRuntime.pluginUiProjection}
-            platform={pluginRuntime.platform}
-            projectionInteractionEnabled={
-              pluginRuntime.phase === 'current' &&
-              pluginRuntime.interactionEnabled === true &&
-              policy.enabled
-            }
-            policyContext={pluginPolicyContext}
-          />
+          <SurfaceStateSizeProvider size="line">
+            <PluginInlineSurfaceHost
+              placement={section.placement}
+              inlineMount={{
+                role: 'sessionInfoSection',
+                presentation: 'content',
+              }}
+              sessionId={session.id}
+              machineId={pluginRuntime.machineId}
+              serverId={pluginRuntime.serverId}
+              pluginUiProjection={pluginRuntime.pluginUiProjection}
+              platform={pluginRuntime.platform}
+              projectionInteractionEnabled={
+                pluginRuntime.phase === 'current' &&
+                pluginRuntime.interactionEnabled === true &&
+                policy.enabled
+              }
+              policyContext={pluginPolicyContext}
+            />
+          </SurfaceStateSizeProvider>
         </ItemGroup>
       ))}
 
@@ -1564,7 +1608,6 @@ function SessionInfoContent({
           metadata={metadata}
           serverId={sessionServerId}
           providerDisplayName={providerDisplayName}
-          vendorResumeIdField={core?.resume.vendorResumeIdField}
           status={sessionStatus}
         />
       ) : null}
@@ -1639,7 +1682,10 @@ function SessionInfoContent({
           </View>
         </ItemGroup>
       ) : null}
+      </ItemGroupDefaultSurfaceProvider>
+      </PageRowDensityProvider>
     </ItemList>
+    </SessionInfoSectionSummaryProvider>
   );
 }
 
@@ -1664,5 +1710,8 @@ const stylesheet = StyleSheet.create((theme) => ({
   // Pushes "Delete" to the far edge when the row fits, apart from the recoverable actions.
   leaveSpacer: {
     flexGrow: 1,
+  },
+  folded: {
+    display: 'none',
   },
 }));

@@ -16,6 +16,10 @@ import type { MachineRpcReadAdmission } from './machineRpcReadAdmission';
  */
 export const DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS = 30_000;
 
+export function resolveMachineRpcTimeoutMs(timeoutMs: number | undefined): number {
+    return typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
+}
+
 export type ServerScopedMachineRpcParams<A, R = unknown> = Readonly<{
     machineId: string;
     method: string;
@@ -42,6 +46,12 @@ export type ServerScopedMachineRpcParams<A, R = unknown> = Readonly<{
     onIssued?: () => void;
     /** Transport dispatch hook; unlike exact-action issuance, preserves peer routing. */
     onDispatched?: () => void;
+    /**
+     * Reports the Machine content mode this call is sealed with (plain or E2EE),
+     * so a caller binds its own payload privacy to this owner's decision. Such a
+     * call uses the content-bearing transport; the host-local direct route has none.
+     */
+    onContentMode?: (mode: 'plain' | 'e2ee') => void;
     /** Read-only consumers may join acquisition only after per-borrower admission. */
     readAdmission?: MachineRpcReadAdmission;
     /** Stable pure decoder, applied once inside the admitted physical read. */
@@ -95,7 +105,7 @@ export type ScopedRpcEncryptionContext = Readonly<{
  */
 export type ScopedRpcSessionEncryptionContext = Readonly<{
     anonID?: string;
-    decryptEncryptionKey: (value: string) => Promise<Uint8Array | null>;
+    decryptEncryptionKey: Encryption['decryptEncryptionKey'];
     /**
      * The batch opener, declared for the same reason as the generation methods: the producer is the
      * Account encryption owner, which owns native-worker routing and cooperative opening, so a

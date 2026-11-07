@@ -14,9 +14,8 @@ import {
 } from '@happier-dev/protocol/account/publicProfilePublication';
 import { HappierSkeletonBlock } from '@happier-dev/plugin-ui/presentation';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -74,7 +73,7 @@ export function UsageRecapPublicOutput(
     kind: UsageRecapPublicOutputKind;
     serverId: string;
     onClose: () => void;
-    callerContext: React.MutableRefObject<ActionExecutorContext | undefined>;
+    invocation: React.MutableRefObject<CurrentUiContextCommandInvocation | undefined>;
   }>,
 ): React.ReactElement {
   const execution = useMountedActionExecution(props.serverId);
@@ -88,13 +87,13 @@ export function UsageRecapPublicOutput(
     invoke: openProfile }], { foregroundOverlay: true });
   const previewProfile = () => { void commands.invoke('profile'); };
   return props.kind === 'profile_link' ? (
-    <ProfileLinkOutput execution={execution} openProfile={previewProfile} callerContext={props.callerContext} />
+    <ProfileLinkOutput execution={execution} openProfile={previewProfile} invocation={props.invocation} />
   ) : (
     <EmbedOutput
       kind={props.kind}
       execution={execution}
       openProfile={previewProfile}
-      callerContext={props.callerContext}
+      invocation={props.invocation}
     />
   );
 }
@@ -106,14 +105,14 @@ function useCopyText(execution: Execution, text: string | null) {
   const [notice, setNotice] = React.useState<CopyNotice>(null);
   const [copying, setCopying] = React.useState(false);
   React.useEffect(() => setNotice(null), [text]);
-  const { execute, isCurrent } = execution;
-  const copy = React.useCallback(async (context?: ActionExecutorContext) => {
+  const { isCurrent } = execution;
+  const copy = React.useCallback(async (invocation: CurrentUiContextCommandInvocation) => {
     if (text === null) return;
     setCopying(true);
     setNotice(null);
     let next: CopyNotice = 'failed';
     try {
-      const result = await execute('clipboard.write', { text }, { callerContext: context });
+      const result = await invocation.execute(execution, 'clipboard.write', { text });
       next = result.ok
         ? 'copied'
         : isActionApprovalDeclinedErrorCode(result.errorCode)
@@ -125,10 +124,10 @@ function useCopyText(execution: Execution, text: string | null) {
     if (!isCurrent()) return;
     setNotice(next);
     setCopying(false);
-  }, [execute, isCurrent, text]);
+  }, [execution, isCurrent, text]);
   const commands = useCurrentUiContextLocalCommands(text !== null && !copying
     ? [{ key: 'copy', title: t('common.copy'),
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => copy(context) }] : [], { foregroundOverlay: true });
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => copy(invocation) }] : [], { foregroundOverlay: true });
   return { notice, copying, copy: () => commands.invoke('copy') };
 }
 
@@ -222,7 +221,7 @@ type LinkState =
   | Readonly<{ kind: 'failed'; code: string }>;
 
 function ProfileLinkOutput(
-  props: Readonly<{ execution: Execution; openProfile: () => void; callerContext: React.MutableRefObject<ActionExecutorContext | undefined> }>,
+  props: Readonly<{ execution: Execution; openProfile: () => void; invocation: React.MutableRefObject<CurrentUiContextCommandInvocation | undefined> }>,
 ) {
   const { theme } = useUnistyles();
   const { execute, ready } = props.execution;
@@ -230,13 +229,16 @@ function ProfileLinkOutput(
   const [attempt, retry] = React.useReducer((value: number) => value + 1, 0);
   const commands = useCurrentUiContextLocalCommands(state.kind === 'failed'
     ? [{ key: 'retry', title: t('common.retry'),
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; retry(); } }] : [], { foregroundOverlay: true });
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; retry(); } }] : [], { foregroundOverlay: true });
   React.useEffect(() => {
     if (!ready) return;
     let live = true;
-    const origin = props.callerContext.current;
+    const origin = props.invocation.current;
     void (async () => {
-      const result = await execute('account.public_profile.get', {}, { callerContext: origin ? { ...origin, signal: undefined } : undefined });
+      const operation = { signal: props.execution.getSignal() };
+      const result = origin
+        ? await origin.execute(props.execution, 'account.public_profile.get', {}, operation)
+        : await execute('account.public_profile.get', {}, operation);
       if (!live) return;
       if (!result.ok)
         return setState({ kind: 'failed', code: result.errorCode });
@@ -406,7 +408,7 @@ function EmbedOutput(
     kind: 'badge' | 'card';
     execution: Execution;
     openProfile: () => void;
-    callerContext: React.MutableRefObject<ActionExecutorContext | undefined>;
+    invocation: React.MutableRefObject<CurrentUiContextCommandInvocation | undefined>;
   }>,
 ) {
   const { theme } = useUnistyles();
@@ -422,23 +424,23 @@ function EmbedOutput(
   const commands = useCurrentUiContextLocalCommands([
     ...(kind === 'badge' ? METRICS.map(id => ({ key: `metric:${id}`,
       title: `${t('publicIdentity.share.shows')}: ${metricLabel(id)}`,
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setMetric(id); setMetricMenuOpen(false); } })) : []),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setMetric(id); setMetricMenuOpen(false); } })) : []),
     ...THEMES.map(id => ({ key: `theme:${id}`,
       title: `${t('publicIdentity.share.theme')}: ${t(`publicIdentity.share.theme_${id}`)}`,
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setEmbedTheme(id); } })),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setEmbedTheme(id); } })),
     ...SYNTAXES.map(id => ({ key: `syntax:${id}`,
       title: `${t('publicIdentity.share.copyAs')}: ${t(`publicIdentity.share.syntax_${id}`)}`,
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; setSyntax(id); } })),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; setSyntax(id); } })),
     ...(kind === 'badge' ? [{ key: 'metric-menu', title: t('publicIdentity.share.shows'),
       invoke: (input?: PluginUiJsonValueV1) => setMetricMenuOpen(typeof input === 'boolean' ? input : !metricMenuOpen) }] : []),
     ...(state.kind === 'failed' || state.kind === 'unavailable' ? [{ key: 'retry', title: t('common.retry'),
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => { props.callerContext.current = context; retry(); } }] : []),
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => { props.invocation.current = invocation; retry(); } }] : []),
   ], { foregroundOverlay: true, contextKey: kind });
 
   React.useEffect(() => {
     if (!ready) return;
     let live = true;
-    const origin = props.callerContext.current;
+    const origin = props.invocation.current;
     // A new choice keeps the shown previews and snippet until the Home formats the new one.
     setState((previous) => ({
       kind: 'loading',
@@ -452,11 +454,11 @@ function EmbedOutput(
     const read = async (
       input: Readonly<{ theme: EmbedTheme; syntax: Syntax }>,
     ): Promise<PublicEmbedResultV1> => {
-      const result = await execute(
-        'account.public_profile.embed.get',
-        kind === 'badge' ? { kind, metric, ...input } : { kind, ...input },
-        { callerContext: origin ? { ...origin, signal: undefined } : undefined },
-      );
+      const request = kind === 'badge' ? { kind, metric, ...input } : { kind, ...input };
+      const operation = { signal: props.execution.getSignal() };
+      const result = origin
+        ? await origin.execute(props.execution, 'account.public_profile.embed.get', request, operation)
+        : await execute('account.public_profile.embed.get', request, operation);
       if (!result.ok) throw new EmbedReadError(result.errorCode);
       const parsed = PublicEmbedResultV1Schema.safeParse(result.result);
       if (!parsed.success)

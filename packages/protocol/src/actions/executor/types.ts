@@ -1,4 +1,5 @@
 import type { SessionSpaceMembershipSetInputV1 } from '../sessionSpaceMembership.js';
+import type { SessionAgentReadinessActionIdV1 } from '../../machines/managed/actionIdsV1.js';
 import type { SessionRunnerRuntimeRefreshActionInputV1 } from '../../sessions/control/sessionRunnerRestartV2.js';
 import type { QualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
 import type { BrowserProfileLoginsImportV1, BrowserProfileLoginsImportResultV1 } from '../../browser/profile/loginsV1.js';
@@ -638,7 +639,10 @@ export type AdmittedClientActionContext = ActionExecutorContext & Readonly<{
 export type ActionExecutorContext = Readonly<{
   /** Host-local ordinary child ingress retained by a mounted command. Never Action/RPC input or an admission bypass. */
   executeOrdinaryChildAction?: (actionId: ActionId, input: unknown,
-    options?: Pick<ActionExecutorContext, 'signal' | 'externalActionTarget'>) => Promise<ActionExecuteResult>;
+    options?: Pick<ActionExecutorContext, 'signal' | 'externalActionTarget' | 'serverId' | 'expectedAccountId'> & Readonly<{
+      /** Keep a mounted engine's private delivery ports; the parent executor still derives ordinary child admission. */
+      execute?: (actionId: ActionId, input: unknown, context: ActionExecutorContext) => Promise<ActionExecuteResult>;
+    }>) => Promise<ActionExecuteResult>;
   /** Host-stamped native Realtime input: ordinary Actions only, never approval decisions. Not Action/RPC input. */
   nativeRealtimeInput?: true;
   /** Exact dependency census retained from this host's reviewed Delete click; never Action input or execution authority. */
@@ -1918,6 +1922,8 @@ export type ActionExecutorDeps = Readonly<{
   sessionSpawnNew?: (args: SessionSpawnNewInputV2 & SessionCreateOriginFieldsV1 & Readonly<{
     /** Exact admitted public intent for requester transport, before host launch expansion; never a wire field. */
     admittedInput?: SessionSpawnNewInputV2;
+    /** Ordinary reviewed Actions, bound to this exact admitted Session and requester. */
+    invokeAgentReadinessAction?: (actionId: SessionAgentReadinessActionIdV1, input: unknown) => Promise<ActionExecuteResult>;
     /** Host-only invocation binding for post-commit private material preparation; never sent in the spawn payload. */
     context?: ActionExecutorContext;
     /** Complete host-resolved spawn snapshot; memory remains subject to target owner proof. */
@@ -2171,7 +2177,11 @@ export type ActionExecutorDeps = Readonly<{
     context?: ActionExecutorContext;
     effectActionId?: 'machines.agents.install' | 'machines.agents.uninstall';
   }) => Promise<DaemonAgentInstallStartResponse | ActionExecuteFailure>;
-  machineAgentInstallRead?: (args: DaemonAgentInstallReadRequest & { machineId: string; serverId?: string; signal?: AbortSignal }) => Promise<DaemonAgentInstallReadResponse>;
+  machineAgentInstallRead?: (args: DaemonAgentInstallReadRequest & {
+    machineId: string; serverId?: string; signal?: AbortSignal;
+    context?: ActionExecutorContext;
+    effectActionId?: 'machines.agents.install.status';
+  }) => Promise<DaemonAgentInstallReadResponse | ActionExecuteFailure>;
   machineAgentInstallCancel?: (args: DaemonAgentInstallCancelRequest & { machineId: string; serverId?: string; signal?: AbortSignal }) => Promise<DaemonAgentInstallCancelResponse>;
   agentsModelsList?: (args: Readonly<{
     purpose?: 'scm_diff_summary';

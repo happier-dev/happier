@@ -1,3 +1,5 @@
+import { BROWSER_RECORDING_ACTION_IDS_V1, COMPUTER_RECORDING_ACTION_IDS_V1 } from './recordingActionIds.js';
+export { BROWSER_RECORDING_ACTION_IDS_V1, COMPUTER_RECORDING_ACTION_IDS_V1, isComputerRecordingActionIdV1, type ComputerRecordingActionIdV1 } from './recordingActionIds.js';
 import { REGISTRY_ACTION_IDS_V1 } from '../registries/registryActionIdsV1.js';
 export { REGISTRY_SOURCE_DELETE_ACTION_ID_V1 } from '../registries/registryActionIdsV1.js';
 import { BOT_TEMPLATE_ACTION_IDS_V1 } from '../bots/templates/botTemplateActionIdsV1.js';
@@ -7,6 +9,10 @@ export const SESSION_SPAWN_CONNECTED_SERVICES_LIST_ACTION_ID_V1 = 'sessions.spaw
 
 export const MACHINE_ADD_LOCAL_CANCEL_ACTION_ID_V1 = 'machines.add.local.cancel' as const;
 export const SESSION_SPAWN_NEW_ACTION_ID_V1 = 'session.spawn_new' as const;
+/** A verified new-Session invocation is accepted input before the Session exists. */
+export function isSessionSpawnNewActionIdV1(actionId: string): actionId is typeof SESSION_SPAWN_NEW_ACTION_ID_V1 {
+  return actionId === SESSION_SPAWN_NEW_ACTION_ID_V1;
+}
 export const SESSION_OPEN_ACTION_ID_V1 = 'session.open' as const;
 export const SESSION_MESSAGE_SEND_ACTION_ID_V1 = 'session.message.send' as const;
 
@@ -609,8 +615,6 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
   ],
   bug_report_submission: BUG_REPORT_SUBMISSION_ACTION_IDS,
   daemon_admin: [
-    'daemon.filesystem.listRoots',
-    'daemon.filesystem.browseDirectory',
     'bugreport.collectDiagnostics',
     'bugreport.getLogTail',
     'bugreport.uploadArtifact',
@@ -706,17 +710,9 @@ export const ACTION_ID_FAMILIES_V1 = Object.freeze({
     'computer.control.interrupt',
     'computer.control.handBack',
     'computer.target.close',
+    ...Object.values(COMPUTER_RECORDING_ACTION_IDS_V1),
   ],
-  browser_recording: [
-    'browser.recording.start',
-    'browser.recording.stop',
-    'browser.recording.cancel',
-    'browser.recording.status',
-    'browser.recording.listForView',
-    'browser.recording.discard',
-    'browser.recording.cleanupExpired',
-    'browser.recording.attachToComposer',
-  ],
+  browser_recording: Object.values(BROWSER_RECORDING_ACTION_IDS_V1),
   local_services_inventory: [
     'localServices.inventory.list',
     'localServices.inventory.refresh',

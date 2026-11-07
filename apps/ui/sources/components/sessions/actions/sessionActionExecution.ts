@@ -11,8 +11,8 @@ import { publishPresentationNotice, retirePresentationNotice } from '@/component
 import { getStorage } from '@/sync/domains/state/storageStore';
 
 import * as React from 'react';
-import { Avatar } from '@/components/ui/avatar/Avatar';
-import { getSessionAvatarId, getSessionName, getSessionStatus } from '@/utils/sessions/sessionUtils';
+import { SessionAvatar } from '@/components/sessions/bots/face/SessionAvatar';
+import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 import { resolveSessionToolCallsMenuState } from './sessionToolCallsMenuState';
 import { sessionOrganizationActions } from '@/sync/ops/sessionOrganization/sessionOrganizationActions';
@@ -26,6 +26,7 @@ import { classifyHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { VoiceConversationActionOutputSchemas } from '@happier-dev/protocol/actions/voiceConversationActionFamily';
 import { SessionArchiveActionResultV1Schema } from '@happier-dev/protocol/sessions/control/contract';
 import type { SessionStopIntent } from '@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1';
+import type { CurrentUiContextCommandInvocation, CurrentUiContextMountedCommandExecution } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { archiveSessionReports } from './confirmSessionArchive';
 import {
     sessionSetManualReadStateWithServerScope,
@@ -91,12 +92,22 @@ export async function executeSessionLifecycleAction(
         confirmed?: true;
         signal?: AbortSignal;
         expectedAccountId?: string;
+        mountedCommand?: Readonly<{
+            invocation: CurrentUiContextCommandInvocation;
+            engine: CurrentUiContextMountedCommandExecution;
+        }>;
     }>,
     title?: string,
 ): Promise<SessionActionOperationResult> {
-    const outcome = await (options?.confirmed ? executeVoiceAction.confirmed : executeVoiceAction)(actionId, { sessionId, ...(title === undefined ? {} : { title }),
+    const input = { sessionId, ...(title === undefined ? {} : { title }),
         ...(actionId === 'session.stop' && options?.stopIntent ? { stopIntent: options.stopIntent } : {}),
-        ...(actionId === 'session.archive' && options?.alsoArchiveReports !== undefined ? { alsoArchiveReports: options.alsoArchiveReports } : {}) }, createSessionLifecycleActionContext(sessionId, options));
+        ...(actionId === 'session.archive' && options?.alsoArchiveReports !== undefined ? { alsoArchiveReports: options.alsoArchiveReports } : {}) };
+    // A bound command keeps its caller; legacy UI confirmation is not fresh child consent.
+    const outcome = await (options?.mountedCommand
+        ? options.mountedCommand.invocation.execute(options.mountedCommand.engine, actionId, input,
+            options.signal ? { signal: options.signal } : undefined)
+        : (options?.confirmed ? executeVoiceAction.confirmed : executeVoiceAction)(actionId, input,
+            createSessionLifecycleActionContext(sessionId, options)));
     return readSessionLifecycleActionOutcome(actionId, outcome);
 }
 
@@ -165,8 +176,9 @@ function publishSessionBotChangeNotice(params: Readonly<{
         severity: 'info',
         message: params.accepted ? t('bots.promoted', { name }) : t('bots.demoted', { name }),
         // Lab `b-promote T`: the session's own picture, then its name in the stronger weight.
-        leading: React.createElement(Avatar, {
-            id: getSessionAvatarId(params.target.session, params.target.serverId),
+        leading: React.createElement(SessionAvatar, {
+            session: params.target.session,
+            serverId: params.target.serverId,
             size: BOT_CHANGE_NOTICE_AVATAR_SIZE_PX,
         }),
         emphasis: name,
@@ -259,7 +271,10 @@ function resolveSetAttentionStanding(context: SessionActionExecutionContext | un
 }
 
 function resolveSetPinned(context: SessionActionExecutionContext | undefined) {
-    return context?.operations?.setPinned;
+    return context?.operations?.setPinned ?? (async (sessionId: string, pinned: boolean, options?: Readonly<{ serverId?: string | null }>) => {
+        const result = await sessionOrganizationActions.setPin(sessionId, pinned, { ...options, surface: 'list' });
+        if (!result.ok) throw new HappyError(result.error, false, { code: result.errorCode });
+    });
 }
 
 function resolveSetTags(context: SessionActionExecutionContext | undefined) {
@@ -457,7 +472,7 @@ export async function executeSessionAction(params: Readonly<{
         case SESSION_ACTION_RESUME_ID: {
             const resumeSession = resolveResumeSession(params.context);
             if (!resumeSession) throwUnsupportedSingleTargetAction();
-            await resumeSession(params.target.sessionId);
+            if (await resumeSession(params.target.sessionId) === false) return false;
             return;
         }
         case SESSION_ACTION_STOP_ID:
@@ -490,7 +505,6 @@ export async function executeSessionAction(params: Readonly<{
         case SESSION_ACTION_PIN_ID:
         case SESSION_ACTION_UNPIN_ID: {
             const setPinned = resolveSetPinned(params.context);
-            if (!setPinned) throwUnsupportedSingleTargetAction();
             throwIfFailed(
                 await setPinned(params.target.sessionId, params.actionId === SESSION_ACTION_PIN_ID, { serverId: params.target.serverId }),
                 t('errors.unknownError'),

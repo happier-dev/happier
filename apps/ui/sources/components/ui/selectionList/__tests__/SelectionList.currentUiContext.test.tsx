@@ -153,12 +153,19 @@ describe('SelectionList mounted commands', () => {
         const results: ActionExecuteResult[] = [];
         function CopySelection() {
             const execution = useMountedActionExecution(server.id);
-            const nested = useCurrentUiContextLocalCommands([{ key: 'copy', title: 'Copy selected value', invoke: async (_input, callerContext) => {
-                results.push(await execution.execute('clipboard.write', { text: 'selected destination' }, { callerContext }));
+            const nested = useCurrentUiContextLocalCommands([{ key: 'copy', title: 'Copy selected value', invoke: async (_input, _context, invocation) => {
+                results.push(await invocation.execute(execution, 'clipboard.write', { text: 'selected destination' }));
             } }]);
             return <SelectionList currentUiContextCommandScope="usage.policy" testID="policy-picker" disableTransitions
-                rootStep={{ id: 'policy', sections: [{ kind: 'static', id: 'copy', options: [{ id: 'copy', label: 'Copy destination' }] }] }}
-                onSelect={(_id, _option, callerContext) => { void nested.invoke('copy', undefined, callerContext); }} onRequestClose={() => {}} />;
+                rootStep={{ id: 'policy', sections: [{ kind: 'static', id: 'copy', options: [
+                    { id: 'copy', label: 'Copy destination' }, { id: 'direct', label: 'Copy directly' },
+                ] }] }}
+                onSelect={(id, _option, callerContext, invocation) => {
+                    if (id === 'direct') {
+                        void (invocation ? invocation.execute(execution, 'clipboard.write', { text: 'selected destination' })
+                            : execution.execute('clipboard.write', { text: 'selected destination' })).then(result => results.push(result));
+                    } else void nested.invoke('copy', undefined, callerContext);
+                }} onRequestClose={() => {}} />;
         }
         const screen = await renderMountedCurrentUiContext(<CopySelection />);
         const command = readCurrentUiContextActionReader({ surface: 'agent' })!.readCurrentUiContext()!.commands
@@ -169,9 +176,17 @@ describe('SelectionList mounted commands', () => {
         await vi.waitFor(() => expect(results).toHaveLength(1));
         expect(results[0]).toMatchObject({ ok: false, errorCode: 'action_disabled' });
         expect(writeText).not.toHaveBeenCalled();
-        await screen.pressByTestIdAsync('policy-picker:policy:option:copy');
+        await act(async () => { await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+            { commandId: command!.id, input: { id: 'direct' } }, { surface: 'agent' }); });
         await vi.waitFor(() => expect(results).toHaveLength(2));
-        expect(results[1]).toMatchObject({ ok: true, result: { status: 'copied' } });
+        expect(results[1]).toMatchObject({ ok: false, errorCode: 'action_disabled' });
+        expect(writeText).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('policy-picker:policy:option:direct');
+        await vi.waitFor(() => expect(results).toHaveLength(3));
+        expect(results[2]).toMatchObject({ ok: true, result: { status: 'copied' } });
+        await screen.pressByTestIdAsync('policy-picker:policy:option:copy');
+        await vi.waitFor(() => expect(results).toHaveLength(4));
+        expect(results[3]).toMatchObject({ ok: true, result: { status: 'copied' } });
         expect(writeText).toHaveBeenCalledWith('selected destination');
     });
 });

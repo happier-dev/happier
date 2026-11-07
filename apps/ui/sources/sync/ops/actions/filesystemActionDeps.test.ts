@@ -3,6 +3,7 @@ import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecut
 import { ActionIdSchema } from '@happier-dev/protocol/actions/actionIds';
 import { createActionExecutorBoundaryFixture } from '@/dev/testkit/fixtures/actionExecutorBoundary';
 import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '@happier-dev/protocol/actions/filesystemActionIdsV1';
 import { createUiFilesystemAction } from './filesystemActionDeps';
 import { subscribeAcknowledgedWorkspaceFileWrites } from '@/sync/domains/workspaces/files/workspaceFileAcknowledgements';
 
@@ -18,6 +19,21 @@ const context = { surface: 'ui', authority: 'present_user', actionsSettings: nor
 }) } as const;
 
 describe('UI filesystem Action transport', () => {
+    it('refuses an unsupported Session carrier without borrowing the host Account RPC', async () => {
+        transport.mockClear();
+        const actionId = FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory;
+        const executor = createActionExecutor(createActionExecutorBoundaryFixture({ filesystemActionExecute: createUiFilesystemAction() }));
+        const result = await executor.execute(actionId, { path: '/repo' }, {
+            surface: 'agent', authority: 'account_automation', serverId: 'home', runtimeAccountId: 'account',
+            actionRequestId: 'session-browser-read', actionCaller: { kind: 'session', sessionId: 'session', starterDepth: 0, turnDepth: 0 },
+            rpcSessionAuthorization: { kind: 'session.write', sessionId: 'session' },
+            externalActionTarget: { kind: 'machine', machineId: 'machine' },
+            actionsSettings: normalizeActionsSettingsV1({ v: 1, approvalWaivedSurfaces: { [actionId]: ['agent'] } }),
+        });
+        expect(result, JSON.stringify(result)).toMatchObject({ ok: false, errorCode: 'admission_unavailable' });
+        expect(transport).not.toHaveBeenCalled();
+    });
+
     it('acknowledges only successful saved bytes on the admitted Account, including mounted byte delivery', async ({ onTestFinished }) => {
         const writes: Array<string | null> = [];
         const target = { serverId: 'home', accountId: 'account', machineId: 'machine', rootPath: '/repo' };

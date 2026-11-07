@@ -1,6 +1,7 @@
 import type { BotTemplateDraftV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
 import type { McpServerCatalogEntryTransportV1 } from '@happier-dev/protocol/mcp/servers/settingsV1';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 export type BotTemplateRevision = Readonly<{ headerVersion: number; bodyVersion: number }>;
 /** Unconfirmed authoring inputs travel with the pane/page buffer, never the saved template. */
@@ -27,7 +28,8 @@ export type BotTemplateEditorSnapshot = Readonly<{
     releaseOptions: Readonly<{ version: string; changelog: string }>;
     needAuthoring: BotTemplateNeedAuthoring;
 }>;
-export type BotTemplateSave = (input: Readonly<{ draft: BotTemplateDraftV1; revision: BotTemplateRevision }>) => Promise<
+export type BotTemplateSave = (input: Readonly<{ draft: BotTemplateDraftV1; revision: BotTemplateRevision }>,
+    invocation?: CurrentUiContextCommandInvocation) => Promise<
     Readonly<{ ok: true; revision: BotTemplateRevision }> | Readonly<{ ok: false; code: string }>>;
 
 export function createBotTemplateEditorBuffer(opening: Pick<BotTemplateEditorSnapshot, 'draft' | 'revision'>) {

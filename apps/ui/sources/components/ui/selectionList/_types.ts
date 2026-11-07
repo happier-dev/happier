@@ -1,5 +1,6 @@
 import type * as React from 'react';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { GestureResponderEvent } from 'react-native';
 import type { SelectionListDynamicSectionCache } from './selectionListDynamicSectionCache';
 
@@ -210,7 +211,7 @@ type SelectionListOptionBase = Readonly<{
 export type SelectionListOption =
     | (SelectionListOptionBase & Readonly<{
         /** When the option just selects (default), called on press / Enter. */
-        onSelect?: (event?: GestureResponderEvent, context?: ActionExecutorContext) => void;
+        onSelect?: (event?: GestureResponderEvent, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => void;
         openStep?: undefined;
     }>)
     | (SelectionListOptionBase & Readonly<{
@@ -800,7 +801,7 @@ export type SelectionListFilter = Readonly<{
     selectedId?: string | null;
     /** Several choices at once: these rows are checked, the popover stays open, `onChange` gets the toggled id. */
     selectedIds?: ReadonlySet<string>;
-    onChange?: (id: string, context?: ActionExecutorContext) => void;
+    onChange?: (id: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => void;
     /** The canonical owner's own chooser. `close` dismisses the popover. */
     renderPopoverContent?: (context: Readonly<{ close: () => void; maxHeight: number }>) => React.ReactNode;
     /** Controlled popover state, for a page state that opens the filter ("Choose another"). */
@@ -820,13 +821,13 @@ export type SelectionListFilter = Readonly<{
      * An on/off filter that is on: the chip ends in × and pressing it turns the filter off. Such a
      * chip has no chooser; `clearAccessibilityLabel` names what pressing it does ("Show all files").
      */
-    onClear?: () => void;
+    onClear?: (context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => void;
     clearAccessibilityLabel?: string;
     /**
      * An on/off choice drawn as a chip ("Also add to: ✓ Home"): pressing it turns it on or off. It has no
      * chooser; `selected` draws the check and the accent edge, and announces the chip as checked.
      */
-    onToggle?: () => void;
+    onToggle?: (context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => void;
     selected?: boolean;
     /** The chip's testID; its popover list is `<testID>.list` and each option `<testID>:<optionId>`. */
     testID?: string;
@@ -963,7 +964,7 @@ export type SelectionListProps = Readonly<{
     inputValueEllipsizeMode?: SelectionListTextEllipsizeMode;
     onChangeInputValue?: (next: string) => void;
     /** Called when an option is selected (may close the popover). */
-    onSelect: (id: string, option: SelectionListOption, context?: ActionExecutorContext) => void;
+    onSelect: (id: string, option: SelectionListOption, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => void;
     /**
      * Cmd/Ctrl+Enter on the focused row: the row's secondary commit ("Add and place"). Without it,
      * Cmd/Ctrl+Enter selects like Enter.

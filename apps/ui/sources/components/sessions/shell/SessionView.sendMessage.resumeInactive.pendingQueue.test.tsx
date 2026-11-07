@@ -5,12 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Socket } from 'socket.io-client';
 import {
     DaemonContributionRegistryProjectionDescribeResponseSchema,
-    SessionPendingMessageComposerAdmissionPrepareRequestV1Schema,
-    MachineAgentInventoryItemSchema,
     PluginProjectionV2Schema,
     type PluginProjectedComposerAttachmentEntryV1,
     type PluginProjectionV2,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    SessionPendingMessageComposerAdmissionPrepareRequestV1Schema} from '@happier-dev/protocol/sessions/userMessageRpc';
+import {
+    MachineAgentInventoryItemSchema} from '@happier-dev/protocol/capabilities/machineAgentInventory';
 import { RPC_METHODS, SESSION_RPC_METHODS, RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
 import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
@@ -27,6 +29,7 @@ import { installSessionShellCommonModuleMocks } from './sessionShellTestHelpers'
 import { createAccountTokenForTests } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { createArtifactStoreBoundary } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { replayApprovedAsDaemon } from '@/dev/testkit/harness/approvalInbox';
 import { StoredApprovalRequestSchema } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { PendingResetStartBindingV1Schema } from '@happier-dev/protocol/sessions/pending/pendingRequestedActionV1';
 import { buildProviderAccountUsageRecordId, ProviderAccountUsageSnapshotV1Schema, type ProviderAccountUsageSnapshotV1 } from '@happier-dev/protocol/connect/account-usage-primitives';
@@ -39,6 +42,8 @@ import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/age
 import type { SessionViewPresentation } from './embedded/embeddedSessionPresentation';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { readSessionOwnerMetadataView } from '@/sync/domains/session/readSessionOwnerMetadataView';
+import { readComposerText } from '@/dev/testkit/readComposerText';
+import { getSessionDraftDocumentFieldValue } from '@/sync/ops/sessionDrafts/sessionDraftDocumentFields';
 
 // The shell statically imports Sync before the pane harness can bind its Socket.
 vi.mock('socket.io-client', async (importOriginal) => (
@@ -191,8 +196,8 @@ vi.doUnmock('@/agents/registry/registryUiBehavior');
 vi.mock('@/components/sessions/transcript/AgentContentView', () => ({
     AgentContentView: (props: any) => React.createElement('AgentContentView', props, props.input ?? null),
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-    ChatHeaderView: () => null,
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
+    SessionPaneHeader: () => null,
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
     ChatList: () => null,
@@ -237,6 +242,7 @@ let resetQuotaSnapshot: ProviderAccountUsageSnapshotV1 | null = null;
 let heldResetQuotaRead: Readonly<{ entered(): void; release: Promise<void> }> | null = null;
 let managedInspectAskFirst = false;
 let managedWakeMachine: ManagedMachineV1 | null = null;
+let managedRecoveryCreatesAsk = false;
 let pendingReadOverride: (() => Response | Promise<Response>) | null = null;
 let inventoryReadOverride: (() => Promise<Response>) | null = null;
 let managedReadGate: Promise<void> | null = null;
@@ -409,6 +415,12 @@ const runtime = installSessionPaneRuntimeTestHarness({
             if (url.pathname === '/v2/sessions/s1/pending/wake-message/withdraw') return Response.json({ ok: true, outcome: 'removed' });
             if (url.pathname === '/v2/sessions/s1/pending' && method === 'POST') return enqueueResponse(write);
             if (url.pathname.startsWith('/v2/sessions/s1/pending/') && method === 'PATCH') {
+                // The controller is outside this UI process. Its new Ask uses
+                // the real Artifact writer and replay owner below; native
+                // policy admission is exercised in managedMachineActionAdapter.test.ts.
+                if (managedRecoveryCreatesAsk && write.body.resumeWhenAvailable === true) {
+                    await createManagedStartAsk('fresh-wake-request');
+                }
                 // The route acknowledges the stored action it accepted, as the canonical result schema requires.
                 return Response.json({ ok: true, didUpdate: true, requestedAction: write.body.requestedAction });
             }
@@ -423,7 +435,7 @@ const { emitSessionResumeRequest } = await import('@/components/sessions/model/s
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjection');
 const { clearDaemonMergedProjectionCacheForTests, loadDaemonMergedProjectionCacheEntry } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { patchAgentInputLocalUiState, readAgentInputLocalUiState, clearAgentInputLocalUiState } = await import('@/sync/domains/input/draftValues/agentInputLocalUiStateStore');
-const { writeExistingSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
+const { getSessionDraftSnapshot, writeExistingSessionDraft } = await import('@/sync/ops/sessionDrafts/sessionDraftRepository');
 const { loadPendingOutboxForSession, removePendingOutboxMessage } = await import('@/sync/domains/state/pendingOutboxPersistence');
 
 function scope() { return { serverId: runtime.serverId, accountId: 'account-a' }; }
@@ -440,6 +452,23 @@ function setMachineOnline(online: boolean) {
 }
 function pendingWrites() { return httpWrites.filter(write => write.url.pathname === '/v2/sessions/s1/pending' && write.method === 'POST'); }
 function actionWrites() { return httpWrites.filter(write => write.url.pathname.startsWith('/v2/sessions/s1/pending/') && write.method === 'PATCH'); }
+
+async function createManagedStartAsk(requestId: string): Promise<string> {
+    if (!managedWakeMachine?.controller) throw new Error('Missing managed wake controller fixture');
+    const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
+    const actionId = 'machines.managed.power.set';
+    const request = StoredApprovalRequestSchema.parse({ v: 2, status: 'open', createdAtMs: Date.now(), updatedAtMs: Date.now(),
+        createdBy: { surface: 'system' }, requestedSurface: 'cli', approval: { flow: 'blocking', result: 'required' }, actionId,
+        actionArgs: { homeId: managedWakeMachine.homeId, managedId: managedWakeMachine.id, intent: 'start', when: 'now', expectedRevision: 1 },
+        summary: 'Start Build box', executionOriginV1: { v: 1, authority: 'account_automation', surface: 'cli', caller: { kind: 'host' },
+            serverId: runtime.serverId, serverIdentityId: managedWakeMachine.homeId, accountId: 'account-a',
+            machineId: managedWakeMachine.controller.machineId, target: { kind: 'machine', machineId: managedWakeMachine.controller.machineId },
+            actionId, requestId },
+    });
+    const account = await captureLazyActionAccountContext(runtime.serverId);
+    try { return await account.createArtifact(buildApprovalRequestArtifactHeaderV1(request), JSON.stringify(request)); }
+    finally { account.dispose(); }
+}
 function resumeCalls() { return rpcCalls.filter(call => call.method === RPC_METHODS.SPAWN_HAPPY_SESSION || call.method === RPC_METHODS.SPAWN_HAPPY_SESSION_PROVIDER_SAFE); }
 function acceptedEnqueue(write: HttpWrite, didWrite = true) {
     return Response.json({ didWrite, requestedAction: write.body.requestedAction, pending: { localId: write.body.localId } });
@@ -485,8 +514,8 @@ async function setComposerAttachmentProjection(entriesById: Readonly<Record<stri
     projection = PluginProjectionV2Schema.parse({ v: 2, generation, familiesById: {
         composerAttachments: { family: 'composerAttachments', entriesById },
     } });
-    publishMachineContributionRegistryProjectionInvalidation({ machineId: 'm-target', serverId: runtime.serverId });
-    await loadDaemonMergedProjectionCacheEntry({ machineId: 'm-target', serverId: runtime.serverId });
+    publishMachineContributionRegistryProjectionInvalidation({ machineId: 'm-target', serverId: runtime.serverId }, 'authority');
+    await loadDaemonMergedProjectionCacheEntry({ sections: 'complete', machineId: 'm-target', serverId: runtime.serverId });
     await flushHookEffects();
 }
 function durablePendingRow(localId: string, action: 'send_now' | 'enqueue' = 'send_now'): PendingMessage {
@@ -561,6 +590,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         heldResetQuotaRead = null;
         managedInspectAskFirst = false;
         managedWakeMachine = null;
+        managedRecoveryCreatesAsk = false;
         pendingReadOverride = null;
         inventoryReadOverride = null;
         managedReadGate = null;
@@ -598,6 +628,27 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         (globalThis as { __DEV__?: boolean }).__DEV__ = previousDev;
     });
 
+    it('keeps the owner app composer unavailable when owner facts prove context cannot be restored', async () => {
+        updateSession({ metadata: { ...currentSession().metadata!, codexSessionId: '', forkV1: {
+            v: 1, parentSessionId: 'parent', parentCutoffSeqInclusive: 7,
+            createdAtMs: 1000, strategy: 'replay', agentHint: { agentId: 'codex' },
+        } } });
+        const screen = await renderSessionView();
+        try {
+            expect(readSessionOwnerMetadataView(currentSession())).not.toBeNull();
+            expect(screen.tree.findAllByType('AgentInput' as never)).toHaveLength(0);
+            // The presentation boundary receives the existing unsupported-context notice,
+            // not merely an input hidden for some unrelated reason.
+            const content = screen.tree.findByType('AgentContentView' as never).props.content;
+            expect(React.Children.toArray(content.props.children)).toEqual(expect.arrayContaining([
+                expect.objectContaining({ props: expect.objectContaining({ bottomNotice: {
+                    title: 'session.inactiveNotResumableNoticeTitle', body: expect.stringContaining('session.inactiveNotResumableNoticeBody'),
+                } }) }),
+            ]));
+            expect(resumeCalls()).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
     it.each(['managed_power_required', null, 'initial-pending-failure'] as const)(
         'keeps the mounted wake line loading until Sync inventory and the protected read answer (hold: %s)', async holdReason => {
         const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
@@ -607,7 +658,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             resource: { contributionRef: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, value: {} },
             controller, enrolledMachineId: 'm-target', creationState: 'active', allocation: 'bound',
             desired: 'stop', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: true,
-            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' },
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' },
         });
         const inventory = deferred<void>();
         const observation = deferred<void>();
@@ -653,14 +704,17 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
                 expect(storage.getState().sessionPending.s1?.isLoaded ?? false).toBe(false);
                 pendingReadOverride = pendingResponse;
                 await act(async () => { await getSyncSingleton().fetchPendingMessages('s1'); });
-                await vi.waitFor(() => expect(badge()?.testID).toBe('session.managedWake.agentStartFailed.badge'));
+                await vi.waitFor(() => expect(queueLine(screen)?.action?.label).toBe('session.pendingActivation.actions.process_when_online'));
                 const retained = storage.getState().sessionPending.s1!.messages;
                 pendingReadOverride = () => { throw new Error('Pending refresh unavailable'); };
                 await act(async () => {
                     await expect(getSyncSingleton().fetchPendingMessages('s1')).rejects.toThrow('Pending refresh unavailable');
                 });
                 expect(storage.getState().sessionPending.s1!.messages).toBe(retained);
-                expect(badge()?.testID).toBe('session.managedWake.agentStartFailed.badge');
+                // A failed transport read can make Machine reachability
+                // unknown; keep the retained queued state without promising
+                // a currently admissible power action.
+                expect(queueLine(screen)?.text).toMatch(/^session\.pendingActivation\.queued(?:_offline)?\.title$/);
                 expect(pendingWrites()).toHaveLength(0);
                 expect(actionWrites()).toHaveLength(0);
                 expect(resumeCalls()).toHaveLength(0);
@@ -687,7 +741,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
                 expect(storage.getState().machineListStatusByServerId[runtime.serverId]).not.toBe('idle');
                 expect(badge()?.testID).toBe('session.managedWake.loading.badge');
                 await act(async () => { inventory.resolve(); await inventoryRead; });
-                await vi.waitFor(() => expect(badge()?.testID).toBe('session.managedWake.agentStartFailed.badge'));
+                await vi.waitFor(() => expect(queueLine(screen)?.action?.label).toBe('session.pendingActivation.actions.process_when_online'));
             }
             expect(pendingWrites()).toHaveLength(0);
             expect(actionWrites()).toHaveLength(0);
@@ -707,13 +761,12 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             resource: { contributionRef: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1, value: {} },
             controller, enrolledMachineId: 'm-target', creationState: 'active', allocation: 'bound',
             desired: 'start', desiredWhen: 'now', intentRevision: 1,
-            retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true,
+            retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: kind !== 'waiting',
             ...(kind === 'unknown' ? {} : { observation: { observedAt: 10,
                 availability: kind === 'resourceAbsent' ? 'absent' as const : kind === 'unavailable' ? 'unavailable' as const : 'present' as const,
                 power: kind === 'resourceAbsent' || kind === 'unavailable' ? 'unknown' as const
                     : kind === 'waiting' || kind === 'starting' ? 'stopped' as const : 'running' as const,
-                storage: kind === 'storageLost' ? 'lost' as const : 'retained' as const,
-                daemon: kind === 'resuming' || kind === 'agentStartFailed' ? 'connected' as const : 'disconnected' as const } }),
+                storage: kind === 'storageLost' ? 'lost' as const : 'retained' as const } }),
             ...(kind === 'starting' ? { submittedNativeEffect: { intent: 'start', intentRevision: 1, requestId: 'start-a', controller } } : {}) });
         setMachineOnline(kind === 'resuming' || kind === 'agentStartFailed');
         storage.getState().applyMachines([createMachineFixture({ id: 'controller', active: false, activeAt: 0,
@@ -759,7 +812,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
                     nativeRequest: httpWrites.find(write => write.url.pathname === '/v1/actions/machines.managed.inspect')?.body })
                     .toMatchObject({ failures: [], nativeRequest: { v: 1, target: { kind: 'machine', machineId: 'controller' },
                         input: { homeId: runtime.serverIdentityId, managedId: 'managed-guest' } } }));
-                expect(findAgentInput(screen).props.value).toBe('Another unsent draft');
+                expect(readComposerText(findAgentInput(screen))).toBe('Another unsent draft');
                 expect(storage.getState().sessionPending.s1.messages).toMatchObject([{ localId: 'wake-message', pendingDeliveryStatus: 'server_queued' }]);
                 expect(pendingWrites()).toHaveLength(0);
                 expect(actionWrites()).toHaveLength(0);
@@ -788,7 +841,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
                 });
                 expect(httpWrites.filter(write => write.url.pathname === '/v1/actions/machines.managed.inspect')).toHaveLength(2);
                 expect(modalMockState.current?.spies.alert.mock.calls).toEqual([]);
-                expect(findAgentInput(screen).props.value).toBe('Another unsent draft');
+                expect(readComposerText(findAgentInput(screen))).toBe('Another unsent draft');
                 expect(storage.getState().sessionPending.s1.messages).toMatchObject([{ localId: 'wake-message', pendingDeliveryStatus: 'server_queued' }]);
             }
             if (kind === 'agentStartFailed') {
@@ -804,7 +857,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             }
             if (kind === 'storageLost') {
                 await act(async () => { content.props.onWithdraw?.(); });
-                await vi.waitFor(() => expect(findAgentInput(screen).props.value).toBe('Original typed wake request'));
+                await vi.waitFor(() => expect(readComposerText(findAgentInput(screen))).toBe('Original typed wake request'));
                 expect(storage.getState().sessionPending.s1.messages).toEqual([]);
                 expect(httpWrites.find(write => write.url.pathname === '/v2/sessions/s1/pending/wake-message/withdraw')?.body).toEqual({});
                 expect(pendingWrites()).toHaveLength(0);
@@ -849,10 +902,11 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             expect(StoredApprovalRequestSchema.parse(JSON.parse(body))).toMatchObject({
                 status: 'open', actionId: 'session.pending.resetStart.set',
                 actionArgs: { sessionId: 's1', reset, localId: expect.any(String),
-                    initialInput: { content: { t: 'plain', v: { content: { text: 'Wait for capacity' } } } } },
+                    initialInput: { content: { t: 'plain', v: { content: { text: 'Wait for capacity' } } },
+                        usageTimingV1: { v: 1, minMs: null, maxMs: null } } },
             });
             await waitForSubmittedDraft(screen);
-            expect(findAgentInput(screen).props.value).toBe('Wait for capacity');
+            expect(readComposerText(findAgentInput(screen))).toBe('Wait for capacity');
         } finally { await screen.unmount(); }
     });
 
@@ -877,7 +931,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
                         permissionMode: 'default', model: 'restricted-model', modelSelectionV1: { ref: allowedModel } } } },
             });
             await waitForSubmittedDraft(screen);
-            expect(findAgentInput(screen).props.value).toBe('');
+            expect(readComposerText(findAgentInput(screen))).toBe('');
             expect(readSessionDraftValue(scope(), 's1', 'structuredInput.composerAttachments') ?? []).toEqual([]);
             expect(resumeCalls()).toHaveLength(0);
             expect(actionWrites()).toHaveLength(0);
@@ -903,7 +957,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             await vi.waitFor(() => expect(modalMockState.current?.spies.alert).toHaveBeenCalled());
             expect(modalMockState.current?.spies.alert).toHaveBeenCalledWith('common.error', 'usage.board.plans.resetStartStale');
             await waitForSubmittedDraft(screen);
-            expect(findAgentInput(screen).props.value).toBe('Keep this stale draft');
+            expect(readComposerText(findAgentInput(screen))).toBe('Keep this stale draft');
             expect(pendingWrites()).toHaveLength(0);
             expect(actionWrites()).toHaveLength(0);
             expect(resumeCalls()).toHaveLength(0);
@@ -974,7 +1028,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         expect(pendingWrites()).toHaveLength(0);
         expect(httpWrites.filter(write => write.url.pathname.includes('/messages'))).toHaveLength(0);
         expect(modalMockState.current?.spies.alert).toHaveBeenCalledWith('common.error', 'common.unavailable');
-        expect(findAgentInput(screen).props.value).toBe('Keep this unavailable Session draft');
+        expect(readComposerText(findAgentInput(screen))).toBe('Keep this unavailable Session draft');
         expect(readSessionDraftValue(scope(), 's1', 'structuredInput.composerAttachments')).toEqual(composerAttachments);
         const reinstalled = { ...issueAttachmentCatalogEntry, occurrenceId: 'issues-generation-2' };
         await act(async () => { await setComposerAttachmentProjection({ [reinstalled.id]: reinstalled }, 3); });
@@ -993,7 +1047,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await waitForSubmittedDraft(screen);
         expect(pendingWrites()).toHaveLength(0);
         expect(modalMockState.current?.spies.alert).toHaveBeenCalledWith('common.error', 'common.unavailable');
-        expect(findAgentInput(screen).props.value).toBe('Keep this invalid Session draft');
+        expect(readComposerText(findAgentInput(screen))).toBe('Keep this invalid Session draft');
         expect(readSessionDraftValue(scope(), 's1', 'structuredInput.composerAttachments')).toEqual(composerAttachments);
         await screen.unmount();
     });
@@ -1061,7 +1115,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
                 expect.objectContaining({ localId: acceptedPendingLocalId, deliveryStatus: 'accepted', text: 'hello' }),
             ]));
             expect(await loadPendingOutboxForSession('s1', scope())).toEqual([]);
-            expect(findAgentInput(screen).props.value).toBe('');
+            expect(readComposerText(findAgentInput(screen))).toBe('');
             expect(findAgentInput(screen).props.isSending).toBe(false);
             const resumingAt = currentSession().resumingAt;
             expect(resumingAt).toEqual(expect.any(Number));
@@ -1179,7 +1233,53 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             expect(resumeCalls()).toHaveLength(1);
             expect(pendingWrites()).toHaveLength(1);
             expect(call.payload).toMatchObject({ sessionId: 's1', directory: '/tmp/target', resume: 'codex-session-1' });
-            expect(findAgentInput(screen).props.value).toBe('');
+            expect(readComposerText(findAgentInput(screen))).toBe('');
+        } finally { await screen.unmount(); }
+    });
+
+    it('says a launch-owned first message is starting, without Resume or a queued count, on a not-yet-active Session', async () => {
+        setMachineOnline(true);
+        updateSession({ active: false, presence: 0 });
+        storage.getState().upsertPendingMessage('s1', {
+            id: 'launch-first-turn', localId: 'launch-first-turn', createdAt: 1, updatedAt: 1,
+            source: 'local_outbound', pendingLaunch: { state: 'starting' }, text: 'Start here', rawRecord: {},
+        } as never);
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await vi.waitFor(() => expect(queueLine(screen)?.text).toBe('newSession.startingSession'));
+            // No Resume: a second runner for the same creation. Other offers on the line are unrelated.
+            expect(JSON.stringify(queueLine(screen))).not.toMatch(/resume|inactiveResumable/i);
+            expect(JSON.stringify(queueLine(screen))).not.toContain('session.pendingMessages.indicator');
+            expect(resumeCalls()).toHaveLength(0);
+        } finally { await screen.unmount(); }
+    });
+
+    it('explains a person-held ordinary message on the existing status line with Resume', async () => {
+        storage.setState({ settings: { ...storage.getState().settings, sessionInactiveResumePolicy: 'online_only' } });
+        setMachineOnline(true);
+        const { writeSessionExplicitStopV1ToMetadata } = await import('@happier-dev/protocol/sessions/metadata/sessionExplicitStopV1');
+        const { SessionGuardStateV1Schema } = await import('@happier-dev/protocol/machines/guard/sessionGuardStateV1');
+        const ownerMetadataView = writeSessionExplicitStopV1ToMetadata({ ...readSessionOwnerMetadataView(currentSession())!,
+            sessionGuardStateV1: SessionGuardStateV1Schema.parse({ v: 1, kind: 'stopped', at: 5, rule: 'idle_sessions', freedBytes: 1 }) },
+            { v: 1, cause: 'explicit_stop', requestId: 'person-stop', requestedAtMs: 100 });
+        updateSession({ metadataLayoutVersion: 1, ownerMetadataView, active: false, presence: 0 });
+        resumeResponse = async () => ({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED',
+            errorMessage: 'Automatic Session resume refused',
+            errorDetail: { kind: 'launch_error', code: 'held_by_person', message: 'Automatic Session resume refused' } });
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await changeText(screen, 'Keep this until I resume.');
+            await send(screen);
+            await waitForSubmittedDraft(screen);
+            await publishDurablePendingState(durablePendingRow('held-input', 'enqueue'));
+            expect(resumeCalls()).toHaveLength(1);
+            expect(pendingWrites()).toHaveLength(1);
+            expect(queueLine(screen)).toMatchObject({ text: 'session.pendingActivation.held.title',
+                detail: 'session.pendingActivation.held.body', action: { label: 'session.pendingActivation.actions.resume' } });
+            expect(readComposerText(findAgentInput(screen))).toBe('');
+            expect(storage.getState().sessionPending.s1.messages).toMatchObject([{ localId: 'held-input', pendingDeliveryStatus: 'server_queued' }]);
+            expect(readSessionOwnerMetadataView(currentSession())?.sessionExplicitStopV1).toEqual(ownerMetadataView.sessionExplicitStopV1);
+            expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
         } finally { await screen.unmount(); }
     });
 
@@ -1204,7 +1304,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             await vi.waitFor(() => expect(pendingWrites()).toHaveLength(1));
             expect(pendingWrites()[0]?.body).toMatchObject({ requestedAction: { v: 1, kind: action } });
             await waitForSubmittedDraft(screen);
-            expect(findAgentInput(screen).props.value).toBe('');
+            expect(readComposerText(findAgentInput(screen))).toBe('');
         } finally { await screen.unmount(); }
     });
 
@@ -1233,7 +1333,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             expect(actionWrites()[0]?.url.pathname).toContain('/pending/queue-head/');
             expect(actionWrites()[0]?.body).toMatchObject({ requestedAction: { v: 1, kind: action } });
             expect(pendingWrites()).toHaveLength(0);
-            expect(findAgentInput(screen).props.value).toBe('');
+            expect(readComposerText(findAgentInput(screen))).toBe('');
             expect(storage.getState().sessionPending.s1.messages.map(message => message.localId)).toEqual(['queue-head', 'second-row']);
         } finally { await screen.unmount(); }
     });
@@ -1251,7 +1351,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         patchAgentInputLocalUiState(scope(), draftOwner, { scrollY: 12, textLength: 9, fontScale: 1 });
         await send(screen, { forceImmediate: true });
         await vi.waitFor(() => expect(pendingWrites()).toHaveLength(1));
-        expect(findAgentInput(screen).props.value).toBe('hello now');
+        expect(readComposerText(findAgentInput(screen))).toBe('hello now');
         expect(readAgentInputLocalUiState(scope(), draftOwner)?.scrollY).toBe(12);
         // The real durable outbox creates its local projection before HTTP handoff.
         expect(await loadPendingOutboxForSession('s1', scope())).toEqual(expect.arrayContaining([expect.objectContaining({ localId: pendingWrites()[0]?.body.localId })]));
@@ -1261,20 +1361,21 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         });
         await act(async () => { handoff.resolve(acceptedEnqueue(pendingWrites()[0]!)); });
         await waitForSubmittedDraft(screen);
-        expect(findAgentInput(screen).props.value).toBe('');
+        expect(readComposerText(findAgentInput(screen))).toBe('');
         expect(readAgentInputLocalUiState(scope(), draftOwner)?.scrollY).toBeUndefined();
         expect(resumeCalls()).toHaveLength(0);
         expect(httpWrites.filter(write => write.url.pathname.includes('/messages'))).toHaveLength(0);
         await screen.unmount();
     });
 
-    it('does not alert from a Pending send that completes after its Session view unmounts', async () => {
+    it.each([false, true])('clears its accepted durable draft without alerting after its Session view unmounts (reset-start: %s)', async resetStart => {
+        if (resetStart) await enableResetStartProtocol();
         updateSession({ active: true, presence: 'online', agentStateVersion: 1 });
         const handoff = deferred<Response>();
         enqueueResponse = async () => handoff.promise;
         const screen = await renderSessionView({ routeServerId: runtime.serverId });
         await changeText(screen, 'Send before leaving this Session');
-        await send(screen);
+        await send(screen, resetStart ? { resetStart: configureResetQuota() } : undefined);
         await vi.waitFor(() => expect(pendingWrites()).toHaveLength(1));
         await screen.unmount();
 
@@ -1284,6 +1385,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         expect(modalMockState.current?.spies.alert.mock.calls).toEqual([]);
         expect(pendingWrites()).toHaveLength(1);
         expect(resumeCalls()).toHaveLength(0);
+        expect(getSessionDraftDocumentFieldValue(getSessionDraftSnapshot(scope(), draftOwner)?.document, { kind: 'composer', field: 'text' }) ?? '').toBe('');
     });
 
     it('keeps admitting a Pending send when the same destination replaces its responsive Session shell', async () => {
@@ -1322,7 +1424,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await send(screen, { forceImmediate: true });
         await vi.waitFor(() => expect(pendingWrites()).toHaveLength(1));
         await waitForSubmittedDraft(screen);
-        expect(findAgentInput(screen).props.value).toBe('');
+        expect(readComposerText(findAgentInput(screen))).toBe('');
         expect(readAgentInputLocalUiState(scope(), draftOwner)?.scrollY).toBeUndefined();
         expect(await loadPendingOutboxForSession('s1', scope())).toEqual(expect.arrayContaining([expect.objectContaining({ localId: pendingWrites()[0]?.body.localId })]));
         await screen.unmount();
@@ -1337,7 +1439,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await send(screen, { forceImmediate: true });
         await vi.waitFor(() => expect(pendingWrites()).toHaveLength(1));
         await waitForSubmittedDraft(screen);
-        expect(findAgentInput(screen).props.value).toBe('retry me');
+        expect(readComposerText(findAgentInput(screen))).toBe('retry me');
         expect(readAgentInputLocalUiState(scope(), draftOwner)?.scrollY).toBe(12);
         expect(httpWrites.filter(write => write.url.pathname.includes('/messages'))).toHaveLength(0);
         await screen.unmount();
@@ -1389,7 +1491,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await screen.unmount();
     });
 
-    it.each(['resume', 'process_when_online', 'refused'] as const)(
+    it.each(['resume', 'process_when_online', 'refused', 'stale-start', 'stale-start-use'] as const)(
         'recovers a failed stopped managed wake through the ordinary pending owner (%s)', async entry => {
         const controller = { machineId: 'controller', installationId: 'controller-installation' };
         managedWakeMachine = ManagedMachineV1Schema.parse({ id: 'managed-guest', homeId: runtime.serverIdentityId, custodianAccountId: 'account-a',
@@ -1398,11 +1500,11 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             controller, enrolledMachineId: 'm-target', creationState: 'active', allocation: 'bound',
             desired: 'stop', desiredWhen: 'now', intentRevision: 1,
             retention: { kind: 'unused', afterMs: 3600000, effect: 'stop' }, wakeOnAcceptedMessage: true,
-            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained', daemon: 'disconnected' },
+            observation: { observedAt: 10, availability: 'present', power: 'stopped', storage: 'retained' },
         });
         setMachineOnline(false);
         const row = { ...durablePendingRow('wake-message', 'enqueue'),
-            ...(entry === 'resume' ? {} : { pendingActivationHoldReason: entry === 'refused'
+            ...(entry === 'resume' || entry === 'stale-start' ? {} : { pendingActivationHoldReason: entry === 'refused' || entry === 'stale-start-use'
                 ? 'managed_power_required' as const : 'resume_not_requested' as const }),
         };
         // The Home read must retain its admitted row when PATCH invalidates the
@@ -1413,11 +1515,24 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             ...(row.pendingActivationHoldReason ? { activationHoldReason: row.pendingActivationHoldReason } : {}),
         }] });
         await publishDurablePendingState(row, { requestId: row.localId!, requestedAt: 200,
-            status: 'failed', failureCode: 'managed_start_denied',
+            ...(entry === 'stale-start' || entry === 'stale-start-use'
+                ? { status: 'waiting' as const }
+                : { status: 'failed' as const, failureCode: 'managed_start_denied' as const }),
             managedWakeTargetV1: { homeId: runtime.serverIdentityId, managedId: 'managed-guest', enrolledMachineId: 'm-target', expectedIntentRevision: 1, controller,
                 reason: 'admitted-work', origin: { kind: 'session-input', session: { homeId: runtime.serverIdentityId, sessionId: 's1' },
                     pendingRequestId: row.localId!, requestedAt: 200 } },
         });
+        const staleStart = entry === 'stale-start' || entry === 'stale-start-use';
+        if (staleStart) {
+            const artifactId = await createManagedStartAsk('lost-live-invocation');
+            await replayApprovedAsDaemon({ serverId: runtime.serverId, machineId: controller.machineId, artifactId, decision: 'approve' });
+            const body = approvalArtifacts.readPlainBody(artifactId);
+            expect(body).not.toBeNull();
+            expect(StoredApprovalRequestSchema.parse(JSON.parse(body!))).toMatchObject({ status: 'failed',
+                execution: { ok: false, errorCode: 'approval_stale', effectAttempted: false,
+                    details: { reason: 'live_invocation_unavailable' } } });
+            managedRecoveryCreatesAsk = true;
+        }
         writeExistingSessionDraft({ scope: scope(), sessionId: 's1', patch: { text: 'Keep my other draft' } });
         const screen = await renderSessionView();
         try {
@@ -1425,9 +1540,9 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             await vi.waitFor(() => expect((findAgentInput(screen).props.statusBadges as AgentInputStatusBadge[])
                 .some(badge => badge.testID === 'session.managedWake.agentStartFailed.badge') || queueLine(screen)?.text === 'managedWake.refused'
                 || queueLine(screen)?.action?.label === 'session.pendingActivation.actions.process_when_online').toBe(true));
-            if (entry === 'process_when_online') await pressQueueLineAction(screen, 'session.pendingActivation.actions.process_when_online');
+            if (entry === 'process_when_online' || entry === 'stale-start') await pressQueueLineAction(screen, 'session.pendingActivation.actions.process_when_online');
             else await act(async () => { await emitSessionResumeRequest('s1'); });
-            if (entry === 'refused') {
+            if (entry === 'refused' || entry === 'stale-start-use') {
                 expect(queueLine(screen)?.text).toBe('managedWake.refused');
                 expect(actionWrites()).toHaveLength(0);
                 expect(modalMockState.current?.spies.alert).toHaveBeenCalledWith('common.error', 'managedWake.refused');
@@ -1440,9 +1555,22 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             expect(resumeCalls()).toHaveLength(0);
             expect(pendingWrites()).toHaveLength(0);
             expect(httpWrites.filter(write => write.url.pathname.includes('power.set'))).toHaveLength(0);
-            expect(findAgentInput(screen).props.value).toBe('Keep my other draft');
+            expect(readComposerText(findAgentInput(screen))).toBe('Keep my other draft');
             expect(storage.getState().sessionPending.s1.messages).toMatchObject([{ localId: 'wake-message', pendingDeliveryStatus: 'server_queued' }]);
             expect(readSessionOwnerMetadataView(currentSession())?.codexSessionId).toBe('codex-session-1');
+            if (staleStart) {
+                // HTTP dispatch is recorded before the controller's Artifact write settles.
+                await vi.waitFor(() => expect(approvalArtifacts.list()).toHaveLength(entry === 'stale-start' ? 2 : 1));
+                if (entry === 'stale-start') {
+                    const fresh = approvalArtifacts.list().find(artifact => {
+                        const body = approvalArtifacts.readPlainBody(artifact.id);
+                        return body && StoredApprovalRequestSchema.parse(JSON.parse(body)).status === 'open';
+                    });
+                    expect(fresh).toBeDefined();
+                    expect(StoredApprovalRequestSchema.parse(JSON.parse(approvalArtifacts.readPlainBody(fresh!.id)!)))
+                        .toMatchObject({ actionId: 'machines.managed.power.set', actionArgs: { managedId: 'managed-guest', intent: 'start', expectedRevision: 1 } });
+                }
+            }
         } finally { await screen.unmount(); }
     });
 
@@ -1525,6 +1653,39 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         }
     });
 
+    it('keeps an agent Resume command behind session.open policy across the exact-Home composer event', async () => {
+        const { useCurrentUiContextLocalCommands } = await import('@/components/appShell/currentUiContext/CurrentUiContextCommands');
+        type Invocation = import('@/components/appShell/currentUiContext/CurrentUiContextCommands').CurrentUiContextCommandInvocation;
+        type CommandPort = ReturnType<typeof useCurrentUiContextLocalCommands>;
+        let port: CommandPort | undefined;
+        const emit: (id: string, home: string, invocation: Invocation) => Promise<boolean> = emitSessionResumeRequest;
+        function ResumeCommand() {
+            port = useCurrentUiContextLocalCommands(React.useMemo(() => [{ key: 'composer-resume', title: 'Resume',
+                invoke: (_input: unknown, _context: unknown, invocation: Invocation) => emit('s1', runtime.serverId, invocation),
+            }], []), { unbound: 'local' });
+            return null;
+        }
+        storage.setState({ settings: { ...storage.getState().settings,
+            actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1, actions: { 'session.open': {
+                disabledSurfaces: ['agent'], approvalRequiredSurfaces: [],
+            } } }),
+        } });
+        resumeResponse = async () => ({ type: 'success', sessionId: 's1' });
+        if (!storage.getState().machines['m-target']) setMachineOnline(true);
+        const screen = await renderScreen(<><ResumeCommand />{sessionViewFrame()}</>, { wrapper: runtime.Wrapper });
+        await flushHookEffects();
+        try {
+            await act(async () => { await port!.invoke('composer-resume', undefined, {
+                serverId: runtime.serverId, surface: 'agent', authority: 'account_automation', defaultSessionId: 's1',
+                actionCaller: { kind: 'session', sessionId: 's1', starterDepth: 0, turnDepth: 0 },
+            }); });
+            expect.soft(resumeCalls()).toHaveLength(0);
+            expect.soft(currentSession().resumingAt ?? null).toBeNull();
+            await act(async () => { await port!.invoke('composer-resume'); });
+            expect(resumeCalls()).toHaveLength(1);
+        } finally { await screen.unmount(); }
+    });
+
     it('parks a mounted manual resume behind the owning Home Ask-first approval before launching a process', async () => {
         sessionOpenAskFirst = true;
         storage.setState({ settings: { ...storage.getState().settings,
@@ -1567,6 +1728,38 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         }
     });
 
+    it('keeps accepted input and exposes the pool cause when its direct wake fails', async () => {
+        storage.setState({ settings: { ...storage.getState().settings, sessionInactiveResumePolicy: 'online_only' } });
+        setMachineOnline(true);
+        resumeResponse = async () => ({ type: 'error', errorCode: 'SPAWN_VALIDATION_FAILED', errorMessage: 'Private launch diagnostic',
+            errorDetail: { kind: 'launch_error', code: 'no_eligible_member', message: 'Private launch diagnostic',
+                connectedAccountPool: { serviceId: 'happier.agent.codex/openai-codex', excluded: [
+                    { profileId: 'private-profile', reason: 'auth_invalid' },
+                ] } } });
+        const screen = await renderSessionView({ routeServerId: runtime.serverId });
+        try {
+            await changeText(screen, 'Keep this input for recovery');
+            await send(screen);
+            await waitForSubmittedDraft(screen);
+            expect(pendingWrites()).toHaveLength(1);
+            expect(readComposerText(findAgentInput(screen))).toBe('');
+            const alert = modalMockState.current?.spies.alert.mock.calls.at(-1);
+            expect(alert).toBeDefined();
+            expect(alert?.[1]).not.toContain('Private launch diagnostic');
+            expect(alert?.[1]).not.toContain('private-profile');
+            const recovery = alert?.[2]?.find(button => button.text === 'connectedServices.title');
+            expect(recovery?.onPress).toBeTypeOf('function');
+            await act(async () => { recovery?.onPress?.(); });
+            expect(routerPushSpy).toHaveBeenCalledWith('/(app)/settings/connected-services');
+            const technical = alert?.[2]?.find(button => button.text === 'approvals.technicalDetails');
+            expect(technical?.onPress).toBeTypeOf('function');
+            await act(async () => { technical?.onPress?.(); });
+            expect(JSON.parse(String(modalMockState.current?.spies.alert.mock.calls.at(-1)?.[1]))).toMatchObject({
+                code: 'SPAWN_VALIDATION_FAILED', phase: 'session.open', reasonCode: 'no_eligible_member',
+            });
+        } finally { await screen.unmount(); }
+    });
+
     it('keeps the queued message accepted while exposing missing-folder recovery after an automatic wake', async () => {
         updateSession({ metadata: { ...currentSession().metadata!, sessionDirectoryV1: { v: 1, kind: 'managed' } } });
         resumeResponse = async () => ({ type: 'error', errorCode: 'SESSION_DIRECTORY_MISSING', errorMessage: 'missing' });
@@ -1575,14 +1768,23 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         await send(screen);
         await vi.waitFor(() => expect(screen.findByTestId('session-directory-missing')).toBeTruthy());
         expect(pendingWrites()).toHaveLength(1);
-        expect(findAgentInput(screen).props.value).toBe('');
+        expect(readComposerText(findAgentInput(screen))).toBe('');
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
         expect(actionWrites()).toHaveLength(0);
+        await screen.pressByTestIdAsync('session-directory-missing-details');
+        const details = modalMockState.current?.spies.alert.mock.calls.at(-1);
+        expect(details?.[0]).toBe('approvals.technicalDetails');
+        expect(JSON.parse(String(details?.[1]))).toMatchObject({ code: 'SESSION_DIRECTORY_MISSING', phase: 'session.open' });
+        expect(resumeCalls()).toHaveLength(1);
         await screen.unmount();
     });
 
-    it('offers fresh-folder recovery inline and requests recreation only after explicit consent', async () => {
-        updateSession({ metadata: { ...currentSession().metadata!, sessionDirectoryV1: { v: 1, kind: 'managed' } } });
+    it('names the target Machine in fresh-folder recovery and requests recreation only after explicit consent', async () => {
+        updateSession({ metadata: { ...currentSession().metadata!, host: 'Controller Mac', sessionDirectoryV1: { v: 1, kind: 'managed' } } });
+        storage.getState().applyMachines([createMachineFixture({ id: 'm-target', storageMode: 'plain', active: true, activeAt: Date.now(),
+            metadata: { ...createMachineFixture().metadata!, displayName: 'Worker Mac', host: 'worker.local' },
+        })], true, { sourceServerId: runtime.serverId });
+        observeMachinePresenceForTest(scope(), ['m-target']);
         resumeResponse = async () => resumeCalls().length === 1
             ? { type: 'error', errorCode: 'SESSION_DIRECTORY_MISSING', errorMessage: 'Session folder is missing' }
             : { type: 'success', sessionId: 's1' };
@@ -1591,10 +1793,12 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         expect(resumeCalls()).toHaveLength(1);
         expect(resumeCalls()[0]?.payload).not.toMatchObject({ approvedNewDirectoryCreation: true });
         expect(screen.findByTestId('session-directory-missing')).toBeTruthy();
+        expect(screen.tree.findAll(node => typeof node.type === 'string'
+            && node.props.children === 'sessionDirectoryRecovery.title(machine=Worker Mac)')).not.toHaveLength(0);
         expect(modalMockState.current?.spies.alert).not.toHaveBeenCalled();
         await screen.pressByTestIdAsync('session-directory-missing-continue');
-        expect({ resumes: resumeCalls().length, alerts: modalMockState.current?.spies.alert.mock.calls })
-            .toMatchObject({ resumes: 2, alerts: [] });
+        await vi.waitFor(() => expect({ resumes: resumeCalls().length, alerts: modalMockState.current?.spies.alert.mock.calls })
+            .toMatchObject({ resumes: 2, alerts: [] }));
         expect(resumeCalls()[1]?.payload).toMatchObject({ approvedNewDirectoryCreation: true });
         await screen.unmount();
     });
@@ -1613,7 +1817,7 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
             await waitForSubmittedDraft(screen);
             expect(modalMockState.current?.spies.alert.mock.calls).toEqual([]);
             expect(pendingWrites()).toHaveLength(1);
-            expect(findAgentInput(screen).props.value).toBe('');
+            expect(readComposerText(findAgentInput(screen))).toBe('');
             expect(resumeCalls()).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
@@ -1622,7 +1826,10 @@ describe('SessionView (sendMessage resumeInactive pendingQueue)', () => {
         setMachineOnline(true);
         const screen = await renderSessionView();
         try {
-            await act(async () => { storage.setState({ machineListByServerId: { [runtime.serverId]: [] }, machineListStatusByServerId: { [runtime.serverId]: 'idle' } }); });
+            await act(async () => {
+                storage.getState().applyMachines([], true, { sourceServerId: runtime.serverId });
+                storage.getState().markMachineListSettled(runtime.serverId);
+            });
             expect(storage.getState().machineListByServerId[runtime.serverId]).toEqual([]);
             expect(screen.findByTestId('session-requester-access-removed')).toBeTruthy();
             expect(readSessionOwnerMetadataView(currentSession())?.codexSessionId).toBe('codex-session-1');

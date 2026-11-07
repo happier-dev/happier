@@ -1,8 +1,6 @@
 import * as React from 'react';
 import { USAGE_COACH_DETECTOR_IDS } from '@happier-dev/protocol/usage/coach/coachFinding';
 import type { UsageCoachPreferencesV1 } from '@happier-dev/protocol/account/settings/usageCoachPreferencesV1';
-import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import { SettingAnchor } from '@/components/settings/shell/SettingRow';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
@@ -12,7 +10,7 @@ import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { useSetting } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { USAGE_SETTINGS } from './usageSettings';
-import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation, type CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 const MODEL_MODES = ['off', 'suggest_with_estimates', 'complete_only'] as const;
 
@@ -21,28 +19,28 @@ export function UsageCoachSettingsGroup(props: Readonly<{ serverId: string; test
     const preferences = useSetting('usageCoachPreferencesV1');
     const { setSetting, isCurrent } = useSettingActionFeedback({ serverId: props.serverId });
     const [modelOpen, setModelOpen] = React.useState(false);
-    const write = (next: UsageCoachPreferencesV1, callerContext?: ActionExecutorContext) => {
+    const write = (next: UsageCoachPreferencesV1, invocation: CurrentUiContextCommandInvocation) => {
         if (!isCurrent()) return false;
         return setSetting(USAGE_SETTINGS.settings.coachPreferences, {
             v: next.v, disabledChecks: next.disabledChecks, modelSuggestion: next.modelSuggestion,
-        }, { callerContext });
+        }, { invocation });
     };
     const modelMode = preferences.disabledChecks.includes('model_misfit') ? 'off' : preferences.modelSuggestion;
     const checks = USAGE_COACH_DETECTOR_IDS.filter(id => id !== 'model_misfit');
     const commands = useCurrentUiContextLocalCommands([
-        ...checks.map(id => ({ key: `check:${id}`, title: t(`usage.board.coach.detector_${id}`),
-            invoke: (input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => {
+        ...checks.map<CurrentUiContextLocalCommand>(id => ({ key: `check:${id}`, title: t(`usage.board.coach.detector_${id}`),
+            invoke: (input, _context, invocation) => {
                 const enabled = !preferences.disabledChecks.includes(id);
                 const next = typeof input === 'boolean' ? input : !enabled;
                 return write({ ...preferences, disabledChecks: next ? preferences.disabledChecks.filter(check => check !== id)
-                    : [...preferences.disabledChecks.filter(check => check !== id), id] }, context);
+                    : [...preferences.disabledChecks.filter(check => check !== id), id] }, invocation);
             } })),
         { key: 'model-menu', title: t('usage.board.coach.detector_model_misfit'),
             invoke: (input) => setModelOpen(typeof input === 'boolean' ? input : !modelOpen) },
-        ...(modelOpen ? MODEL_MODES.map(modelSuggestion => ({ key: `model:${modelSuggestion}`,
+        ...(modelOpen ? MODEL_MODES.map<CurrentUiContextLocalCommand>(modelSuggestion => ({ key: `model:${modelSuggestion}`,
             title: `${t('usage.board.coach.detector_model_misfit')}: ${t(`usage.board.coach.modelMode_${modelSuggestion}`)}`,
-            invoke: async (_input, context) => {
-                const result = await write({ ...preferences, disabledChecks: preferences.disabledChecks.filter(id => id !== 'model_misfit'), modelSuggestion }, context);
+            invoke: async (_input, _context, invocation) => {
+                const result = await write({ ...preferences, disabledChecks: preferences.disabledChecks.filter(id => id !== 'model_misfit'), modelSuggestion }, invocation);
                 setModelOpen(false);
                 return result;
             } })) : []),

@@ -19,7 +19,8 @@ import type { ActionExecutorContext } from '@happier-dev/protocol/actions/execut
 import { getPreferredLanguage, t } from '@/text';
 import { exportUsageTextDocument } from '../usageExportFile';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
-import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextCommandBridge, useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { mergeAbortSignals } from '@/utils/runtime/abortSignals';
 import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import {
@@ -67,19 +68,20 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     return field.success ? [field.data] : [];
   }), [props.slice.accounting]);
   const execution = useMountedActionExecution(props.serverId);
-  const exportFacts = async (format: UsageExportInput['format'], context?: ActionExecutorContext) => {
+  const exportFacts = async (format: UsageExportInput['format'], invocation: CurrentUiContextCommandInvocation, commandSignal?: AbortSignal) => {
     if (!execution.isCurrent()) return;
     const controller = new AbortController();
     delivery.current?.abort();
     delivery.current = controller;
-    const isCurrent = () => !controller.signal.aborted && execution.isCurrent();
+    const cancellation = mergeAbortSignals([controller.signal, commandSignal]);
+    const isCurrent = () => !cancellation.signal.aborted && execution.isCurrent();
     setExporting(format);
     setExportFailed(false);
     try {
-      const executed = await execution.execute('usage.export', {
+      const executed = await invocation.execute(execution, 'usage.export', {
         query: shownQuery, format, fields: format === 'text' ? ['totals']
           : [...new Set([...exportFields, 'contributions' as const])],
-      }, { signal: controller.signal, callerContext: context });
+      }, { signal: cancellation.signal });
       if (!isCurrent()) return;
       if (!executed.ok) {
         // A declined approval is the person's own answer, not a failed export.
@@ -90,7 +92,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
       const content = new TextDecoder().decode(decodeBase64(file.base64));
       let delivered: boolean;
       if (format === 'text') {
-        const copied = await execution.execute('clipboard.write', { text: content }, { signal: controller.signal, callerContext: context });
+        const copied = await invocation.execute(execution, 'clipboard.write', { text: content }, { signal: cancellation.signal });
         delivered = copied.ok && ClipboardWriteResultSchema.safeParse(copied.result).success;
       } else {
         delivered = await exportUsageTextDocument({ content, fileName: file.fileName, mimeType: file.mediaType, isCurrent });
@@ -99,6 +101,7 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     } catch {
       if (isCurrent()) setExportFailed(true);
     } finally {
+      cancellation.dispose();
       if (delivery.current === controller) { delivery.current = null; setExporting(null); }
     }
   };
@@ -155,9 +158,9 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
     }),
   );
 
-  const openComposer = React.useCallback((context?: ActionExecutorContext) => {
+  const openComposer = React.useCallback((invocation: CurrentUiContextCommandInvocation) => {
     openUsageRecapComposer({ query: shownQuery, serverId: props.serverId,
-      callerContext: context ? { ...context, signal: undefined } : undefined }, Bridge);
+      invocation }, Bridge);
   }, [shownQuery, props.serverId, Bridge]);
   const playStory = React.useCallback(() => {
     if (!viewModel) return;
@@ -179,17 +182,17 @@ function UsageRecapWidgetOriginal(props: UsageBodyProps): React.ReactElement {
         cacheSavings: viewModel.cacheSavings,
         sessionId,
         onDismiss: close,
-        onShare: (context?: ActionExecutorContext) => { close(); openComposer(context); },
+        onShare: (invocation: CurrentUiContextCommandInvocation) => { close(); openComposer(invocation); },
       },
     });
   }, [viewModel, filters, shownQuery, sessionId, openComposer, Bridge]);
   const commands = useCurrentUiContextLocalCommands(viewModel && highlights.length ? [
     { key: 'composer', title: t('usage.board.recap.shareCard'),
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => openComposer(context) },
+      invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => openComposer(invocation) },
     { key: 'story', title: t('usage.recap.play'), invoke: playStory },
     { key: 'exports', title: t('common.moreActions'), invoke: (input?: PluginUiJsonValueV1) => setExportsOpen(typeof input === 'boolean' ? input : !exportsOpen) },
     ...(exporting === null ? exportActions.map(action => ({ key: `export:${action.format}`, title: action.title,
-      invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => exportFacts(action.format, context) })) : []),
+      invoke: (_input: unknown, context: ActionExecutorContext, invocation: CurrentUiContextCommandInvocation) => exportFacts(action.format, invocation, context.signal) })) : []),
   ] : []);
   if (!viewModel)
     return (

@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as React from 'react';
 import { act, renderHook } from '@/dev/testkit/hooks/renderHook';
-import { renderScreen } from '@/dev/testkit';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
 import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
@@ -11,6 +10,9 @@ import { ARTIFACT_PLAIN_DATA_KEY_MARKER, encodePlainArtifactStoredContent } from
 import { projectBotTemplateArtifactHeaderV1, type BotTemplateDraftV1 } from '@happier-dev/protocol/bots/templates/botTemplateV1';
 import { useBotTemplateEditor } from './useBotTemplateEditor';
 import { publishHomeAccountChangeWake } from '@/sync/runtime/orchestration/homeAccountChange';
+import { BOT_TEMPLATE_ACTION_IDS_V1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
+import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { t } from '@/text';
 
 const push = vi.hoisted(() => vi.fn());
 vi.mock('expo-router', async () => (await import('@/dev/testkit/mocks/router')).createExpoRouterMock({ router: { push } }).module);
@@ -23,6 +25,77 @@ let home: Awaited<ReturnType<typeof createPlainArtifactHomeFixture>> | undefined
 afterEach(async () => { standardCleanup(); await home?.dispose(); home = undefined; });
 
 describe('template pane and page Account buffer', () => {
+    it('keeps dirty Publish saves under the invoking agent policy while UI Publish still saves and opens', async () => {
+        push.mockClear();
+        const serverUrl = 'https://template-publish-invocation.test';
+        const serverIdentityId = 'srv_template_publish';
+        const artifactId = '18cc7cc8-6742-415c-a628-c80fb4cd19ca';
+        const draftActionId = BOT_TEMPLATE_ACTION_IDS_V1[0];
+        const settings = { actionsSettingsV1: ActionsSettingsV1Schema.parse({ v: 1,
+            actions: { [draftActionId]: { disabledSurfaces: ['agent'] } },
+            approvalWaivedSurfaces: { [draftActionId]: ['ui'] },
+        }) };
+        let sourceResponse: ReturnType<typeof createPlainSessionByIdResponseFixture> | undefined;
+        const sourceReads = createSessionReadBatchFetchBoundary(async input =>
+            new URL(String(input)).pathname === '/v2/sessions/source' && sourceResponse ? Response.json(sourceResponse) : null);
+        const { adoptHomeProfile } = await import('@/sync/domains/server/serverProfiles');
+        await adoptHomeProfile({ descriptor: { serverUrl, homeServerIdentityId: serverIdentityId, displayName: 'Publish' },
+            source: 'manual', suggestedName: 'Publish' });
+        const features = createRootLayoutFeaturesResponse({ features: { bots: { enabled: true } },
+            capabilities: { serverIdentity: { serverIdentityId } } });
+        home = await createPlainArtifactHomeFixture(serverUrl, { currentAccount: true, serverFeatures: features,
+            handleRequest: async (path, init) => path === '/v1/features/authenticated' ? Response.json(features)
+                : path === '/v2/account/settings' ? Response.json({ version: 1, content: { t: 'plain', v: settings } })
+                    : sourceReads(`${serverUrl}${path}`, init) });
+        await home.hydrateAccountSettings();
+        const serverId = home.home.id;
+        sourceResponse = createPlainSessionByIdResponseFixture(createSessionFixture({ id: 'source',
+            metadata: { path: '/garden', host: 'author', work: { templateDraftRef: { serverId, artifactId } } } }));
+        const draft: BotTemplateDraftV1 = { v: 1, state: 'draft', sourceSessionRef: { serverId, sessionId: 'source' },
+            releaseArtifactId: '08798d24-e9f7-4d6d-855d-400acfcf0296',
+            content: { v: 1, identity: { name: 'Garden', description: 'Plant care' }, instructions: { markdown: 'Original' },
+                memoryRules: [], skills: [], needs: { software: [], connectedAccounts: [], mcpServers: [] } },
+            candidates: { memoryRules: [], skills: [] } };
+        home.boundary.replaceStoredRow({ id: artifactId, ownerAccountId: 'artifact-account', access: 'owner', publicAudience: 'none',
+            encryptionMode: 'plain', dataEncryptionKey: ARTIFACT_PLAIN_DATA_KEY_MARKER,
+            header: encodePlainArtifactStoredContent(projectBotTemplateArtifactHeaderV1(draft)), headerVersion: 1,
+            body: encodePlainArtifactStoredContent({ body: JSON.stringify(draft) }), bodyVersion: 1,
+            seq: 1, createdAt: 1, updatedAt: 1 });
+        const { BotTemplatePublishButton } = await import('./BotTemplatePublishButton');
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        let editor: ReturnType<typeof useBotTemplateEditor> | undefined;
+        function Editor() {
+            editor = useBotTemplateEditor(artifactId, serverId);
+            return editor.buffer ? React.createElement(BotTemplatePublishButton, { artifactId, serverId,
+                buffer: editor.buffer, save: editor.save }) : null;
+        }
+        const screen = await renderMountedCurrentUiContext(React.createElement(Editor));
+        await vi.waitFor(() => expect(editor?.buffer).toBeTruthy());
+        const buffer = editor!.buffer!;
+        await act(async () => { buffer.edit(current => ({ ...current, content: { ...current.content,
+            instructions: { markdown: 'Private changes' } } })); });
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        const command = await vi.waitFor(() => {
+            const selected = readCurrentUiContextActionReader({ surface: 'agent' })?.readCurrentUiContext()?.commands
+                .find(row => row.title === t('botTemplates.publishEllipsis'));
+            expect(selected).toBeDefined();
+            return selected!;
+        });
+        const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const executor = (await import('@/sync/ops/actions/defaultActionExecutor')).createDefaultActionExecutor();
+        await act(async () => { await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command.id }, {
+            surface: 'agent', authority: 'account_automation', expectedAccountId: 'artifact-account', serverId,
+            actionRequestId: 'template-publish-dirty-agent',
+        }); });
+        expect(buffer.getSnapshot()).toMatchObject({ status: 'failed', errorCode: 'action_disabled' });
+        expect(JSON.parse(home.boundary.readPlainBody(artifactId)!)).toMatchObject({ content: { instructions: { markdown: 'Original' } } });
+        expect(push).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('bot-template-publish');
+        await vi.waitFor(() => expect(buffer.getSnapshot().status).toBe('saved'));
+        expect(JSON.parse(home.boundary.readPlainBody(artifactId)!)).toMatchObject({ content: { instructions: { markdown: 'Private changes' } } });
+        expect(push).toHaveBeenCalled();
+    });
+
     it('follows pushed and reopened clean revisions while retaining dirty pane/page edits and CAS recovery', async () => {
         let sourceResponse: ReturnType<typeof createPlainSessionByIdResponseFixture> | undefined;
         const sourceReads = createSessionReadBatchFetchBoundary(async input =>
@@ -115,7 +188,8 @@ describe('template pane and page Account buffer', () => {
             draft: { content: { instructions: { markdown: 'Retain me' } } } });
         buffer.useRevision({ headerVersion: 5, bodyVersion: 5 });
         const { BotTemplatePublishButton } = await import('./BotTemplatePublishButton');
-        const screen = await renderScreen(React.createElement(BotTemplatePublishButton, {
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const screen = await renderMountedCurrentUiContext(React.createElement(BotTemplatePublishButton, {
             artifactId, serverId, buffer, save: page.getCurrent().save,
         }));
         await screen.pressByTestIdAsync('bot-template-publish');

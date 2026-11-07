@@ -1,10 +1,11 @@
 import { lazyActionSpecArray } from '../lazyActionSpecValue.js';
 import { describeCreateDirectoryApprovalSummary, describeDeleteApprovalSummary, describeRenameApprovalSummary, describeUploadApprovalSummary, describeWriteFileApprovalSummary, projectWriteFileApprovalInput } from './filesystemApprovalPresentation.js';
 import { FilesystemReadFileInputSchema, FilesystemReadFileOutputSchema, FilesystemWriteFileInputSchema, FilesystemWriteFileOutputSchema, FilesystemListDirectoryInputSchema, FilesystemListDirectoryOutputSchema, FilesystemGetDirectoryTreeInputSchema, FilesystemGetDirectoryTreeOutputSchema, FilesystemCreateDirectoryInputSchema, FilesystemRenameInputSchema, FilesystemDeleteInputSchema, FilesystemCopyInputSchema, FilesystemCopyOutputSchema, FilesystemMutationOutputSchema, FilesystemUploadInputSchema, FilesystemUploadOutputSchema, FilesystemDownloadInputSchema, FilesystemDownloadOutputSchema, FilesystemTransferCancelInputSchema, FilesystemTransferCancelOutputSchema } from '../filesystemActionFamily.js';
-import { DaemonFilesystemListDirectoryRequestSchema } from '../../machines/fileBrowser.js';
+import { DaemonFilesystemListDirectoryRequestSchema, DaemonFilesystemListDirectoryResponseSchema, DaemonFilesystemListRootsResponseSchema } from '../../machines/fileBrowser.js';
+import { DaemonWorkspaceFileListRequestSchema, DaemonWorkspaceFileListResponseSchema } from '../../machines/workspaceFiles.js';
+import { FILESYSTEM_BROWSER_ACTION_IDS_V1 } from '../filesystemActionIdsV1.js';
 import { RPC_METHODS } from '../../rpc/methods.js';
-import { StrictJsonValueSchema } from '../../json/strictJsonValue.js';
-import { DAEMON_ADMIN_RPC_SURFACES, DAEMON_ADMIN_INPUT_HINTS, EmptyObjectSchema } from './common.js';
+import { EmptyObjectSchema } from './common.js';
 import type { PreNormalizedActionSpec } from './definition.js';
 
 
@@ -219,30 +220,46 @@ function createFilesystemActionSpecs() {
     ] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.listRoots', executionPlacement: 'machine', approval: {result: 'required'},
+    id: FILESYSTEM_BROWSER_ACTION_IDS_V1.listRoots, executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
     title: 'List filesystem roots',
     description: 'List bounded machine file-browser roots resolved from daemon filesystem access policy.',
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: 'daemon.filesystem.listRoots' },
-    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_FILESYSTEM_LIST_ROOTS },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     sideEffectClass: 'read',
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: DaemonFilesystemListRootsResponseSchema,
     inputSchema: EmptyObjectSchema,
-    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+    inputHints: { fields: [] },
   } satisfies PreNormalizedActionSpec,
   {
-    id: 'daemon.filesystem.browseDirectory', executionPlacement: 'machine', approval: {result: 'required'},
+    id: FILESYSTEM_BROWSER_ACTION_IDS_V1.browseDirectory, executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
     title: 'Browse filesystem directory',
     description: 'List a machine file-browser directory constrained to a configured browse root.',
     safety: 'safe',
     placements: [],
-    bindings: { rpcMethod: 'daemon.filesystem.listDirectory' },
-    surfaces: DAEMON_ADMIN_RPC_SURFACES,
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
     sideEffectClass: 'read',
-    outputSchema: StrictJsonValueSchema,
+    outputSchema: DaemonFilesystemListDirectoryResponseSchema,
     inputSchema: DaemonFilesystemListDirectoryRequestSchema,
-    inputHints: DAEMON_ADMIN_INPUT_HINTS,
+    inputHints: { fields: [{ path: 'path', title: 'Directory path', widget: 'text', required: true }] },
+  } satisfies PreNormalizedActionSpec,
+  {
+    id: FILESYSTEM_BROWSER_ACTION_IDS_V1.listFiles, executionPlacement: 'machine', approvalPolicy: { rpcConfirmation: true }, approval: {result: 'required'},
+    title: 'List workspace filenames',
+    description: 'Find filenames under the admitted workspace root using the existing bounded native file list.',
+    safety: 'safe',
+    placements: [],
+    bindings: { rpcMethod: RPC_METHODS.DAEMON_WORKSPACE_FILES_LIST },
+    surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: true },
+    sideEffectClass: 'read',
+    inputSchema: DaemonWorkspaceFileListRequestSchema,
+    outputSchema: DaemonWorkspaceFileListResponseSchema,
+    inputHints: { fields: [
+      { path: 'rootPath', title: 'Workspace root', widget: 'text', required: true },
+      { path: 'query', title: 'Filename query', widget: 'text' },
+    ] },
   } satisfies PreNormalizedActionSpec,
 ] as const);
 }

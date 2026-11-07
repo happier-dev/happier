@@ -5,12 +5,17 @@ import { randomBytes } from 'node:crypto';
 import tweetnacl from 'tweetnacl';
 import Fastify from 'fastify';
 import { io } from 'socket.io-client';
-import { computeContentPublicKeyFingerprint, computeMachineOwnerEnvelopeFingerprintV1, encodeBase64,
-    signAccountContentKeyBindingV1, signMachineInstallationProof } from '@happier-dev/protocol';
+import { computeContentPublicKeyFingerprint } from '@happier-dev/protocol/machines/identity/contentPublicKeyFingerprint';
+import { computeMachineOwnerEnvelopeFingerprintV1 } from '@happier-dev/protocol/machines/machineOwnerEnvelopeFingerprintV1';
+import { encodeBase64 } from '@happier-dev/protocol/crypto/base64';
+import { signAccountContentKeyBindingV1 } from '@happier-dev/protocol/crypto/accountContentKeyBindingV1';
+import { signMachineInstallationProof } from '@happier-dev/protocol/machines/identity/installationIdentity';
 import { DaemonFilesystemListDirectoryResponseSchema } from '@happier-dev/protocol/machines/fileBrowser';
 import { SOCKET_RPC_EVENTS, type SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { callSocketRpc } from '@happier-dev/sync-client';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1 } from '@happier-dev/protocol/actions/externalActionApi';
 import type { Fastify as AppFastify } from '../../../../server/sources/app/api/types';
 import { createLightSqliteHarness, type LightSqliteHarness } from '../../../../server/sources/testkit/lightSqliteHarness';
 import { enableSchemaValidation } from '../../../../server/sources/app/api/utils/enableSchemaValidation';
@@ -19,22 +24,33 @@ import { enableAuthentication } from '../../../../server/sources/app/api/utils/e
 import { currentAccountStoredContentCompatibilitySocketAuth } from '../../../../server/sources/app/api/testkit/accountStoredContentCompatibility';
 import { registerAccountProfileRoute } from '../../../../server/sources/app/api/routes/account/registerAccountProfileRoute';
 import { registerAccountEncryptionRoutes } from '../../../../server/sources/app/api/routes/account/registerAccountEncryptionRoutes';
+import { registerAccountSettingsRoutes } from '../../../../server/sources/app/api/routes/account/registerAccountSettingsRoutes';
+import { registerExternalActionRoutes } from '../../../../server/sources/app/api/routes/actions/registerExternalActionRoutes';
 import { registerAuthPingRoute } from '../../../../server/sources/app/api/routes/auth/registerAuthPingRoute';
 import { machinesRoutes } from '../../../../server/sources/app/api/routes/machines/machinesRoutes';
 import { featuresRoutes } from '../../../../server/sources/app/api/routes/features/featuresRoutes';
 import { startSocket } from '../../../../server/sources/app/api/socket';
 import { auth } from '../../../../server/sources/app/auth/auth';
 import { db } from '../../../../server/sources/storage/db';
+import { getOrCreateServerIdentityId } from '../../../../server/sources/app/serverIdentity/serverIdentity';
 import { RpcHandlerManager } from '../../../../cli/src/api/rpc/RpcHandlerManager';
 import { registerMachineFileBrowserHandlers } from '../../../../cli/src/rpc/handlers/machineFileBrowser/registerMachineFileBrowserHandlers';
 import { authorizeMachineRpcRequest, verifyMachineRpcAdmissionCurrent } from '../../../../cli/src/api/machine/machineRpcAuthorization';
 import { encrypt } from '../../../../cli/src/api/encryption';
+import { registerExternalActionRpcHandler } from '../../../../cli/src/rpc/handlers/externalAction';
+import { createDaemonExternalActionTargetResolver } from '../../../../cli/src/daemon/externalActions/daemonExternalActionTargetResolver';
+import { verifyExternalActionExecutionAuthorizationCurrent } from '../../../../cli/src/api/externalActionExecutionAuthorization';
+import { prepareRequesterAccountActionContext } from '../../../../cli/src/daemon/sessionEncryption/requesterAccountActionProjection';
+import { createCliActionDeps } from '../../../../cli/src/session/actions/createCliActionDeps';
+import type { StoredCredentials } from '../../../../cli/src/persistence';
+import { runWithServerHttpBaseUrl } from '../../../../cli/src/api/client/serverHttpBaseUrl';
 import { Encryption } from '@/sync/encryption/encryption';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
-import { upsertServerProfile } from '@/sync/domains/server/serverProfiles';
+import { adoptHomeProfile } from '@/sync/domains/server/serverProfiles';
 import { machineFilesystemListDirectory } from './machineFileBrowser';
 import { serverScopedRpcSocketPool } from '@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool';
 import { resetServerReachabilitySupervisors } from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
+import integrationConfig from '../../../vitest.integration.config';
 
 describe('recipient directory through real Home, socket and daemon filesystem owners', () => {
     let database: LightSqliteHarness;
@@ -76,6 +92,8 @@ describe('recipient directory through real Home, socket and daemon filesystem ow
         await mkdir(join(root, 'src'), { recursive: true });
         const machine = await db.machine.create({ data: { id: crypto.randomUUID(), accountId: owner.id, active: true,
             installationId, installationPublicKey: new Uint8Array(installationKeys.publicKey),
+            operationProtocolCapabilitiesRevision: 1,
+            operationProtocolCapabilities: { externalActionExecutionAuthorization: { protocolVersions: [1] } },
             dataEncryptionKey: new Uint8Array(ownerEnvelope), metadata: encodeBase64(encrypt(machineKey, 'dataKey', {
                 host: 'recipient-directory', platform: 'linux', happyCliVersion: '0.3', homeDir: database.baseDir,
                 happyHomeDir: database.baseDir,
@@ -88,7 +106,9 @@ describe('recipient directory through real Home, socket and daemon filesystem ow
         const app = Fastify({ logger: false }) as unknown as AppFastify;
         enableSchemaValidation(app); enableErrorHandlers(app); enableAuthentication(app);
         registerAccountProfileRoute(app); registerAccountEncryptionRoutes(app); registerAuthPingRoute(app);
+        registerAccountSettingsRoutes(app);
         machinesRoutes(app); featuresRoutes(app); startSocket(app);
+        registerExternalActionRoutes(app);
         onTestFinished(async () => { await app.close(); });
         const endpoint = await app.listen({ host: '127.0.0.1', port: 0 });
         const manager = new RpcHandlerManager({ scopePrefix: machine.id, localMachineId: machine.id,
@@ -98,6 +118,44 @@ describe('recipient directory through real Home, socket and daemon filesystem ow
                     daemonToken: ownerToken, privateKey: installationPrivateKey }),
             }) });
         registerMachineFileBrowserHandlers({ rpcHandlerManager: manager, workingDirectory: root });
+        const serverIdentityId = await getOrCreateServerIdentityId();
+        const ownerCredentials: StoredCredentials = { token: ownerToken, encryption: { type: 'dataKey',
+            machineKey: ownerEncryption.getContentPrivateKey(), publicKey: ownerEncryption.contentDataKey } };
+        const nativeTarget = { machineId: machine.id,
+            invoke: (method: string, input: unknown, options: Parameters<RpcHandlerManager['invokeLocal']>[2]) =>
+                manager.invokeLocal(method, input, options),
+        };
+        const actionParams = { token: ownerToken, credentials: ownerCredentials, sessionId: '', mode: 'e2ee' as const,
+            ctx: { encryptionKey: machineKey, encryptionVariant: 'dataKey' as const },
+            serverId: serverIdentityId, serverIdentityId, serverHttpBaseUrl: endpoint,
+            machineActionDirectTargetTransport: nativeTarget,
+            externalActionMachineInstallationId: installationId,
+            externalActionMachineRequestPrivateKey: installationPrivateKey,
+        };
+        const verifyRoot: Parameters<typeof registerExternalActionRpcHandler>[1]['verifyExecutionAuthorization'] = input =>
+            verifyExternalActionExecutionAuthorizationCurrent({ ...input, privateKey: installationPrivateKey,
+                installationId, serverHttpBaseUrl: endpoint });
+        registerExternalActionRpcHandler(manager, { machineId: machine.id, currentServerId: serverIdentityId,
+            currentServerHttpBaseUrl: endpoint, resolveAccountId: async () => owner.id,
+            resolveInstallationId: () => installationId, externalActionMachineRequestPrivateKey: installationPrivateKey,
+            verifyExecutionAuthorization: verifyRoot,
+            resolveTarget: createDaemonExternalActionTargetResolver({ credentials: ownerCredentials, serverApiUrl: endpoint }),
+            executor: createActionExecutor(createCliActionDeps(actionParams)),
+            prepareRequesterAccountContext: request => prepareRequesterAccountActionContext({ ...request,
+                purpose: request.purpose ?? { kind: 'external_action' }, machineId: machine.id, installationId,
+                installationPrivateKey: installationKeys.secretKey, serverId: serverIdentityId, serverIdentityId,
+                serverHttpBaseUrl: endpoint, ownCredentials: ownerCredentials,
+                isCurrent: () => verifyRoot({ authorization: request.authorization,
+                    effectActionId: request.authorization.binding.actionId,
+                    target: request.authorization.binding.target, signal: request.signal }),
+                createExecutor: context => createActionExecutor(createCliActionDeps({ ...actionParams,
+                    token: context.credentials.token, credentials: context.credentials,
+                    savedSecretOperationContext: context.savedSecretOperationContext,
+                    actionsSettingsProvider: { getActionsSettings: () => context.accountSettingsContext.settings.actionsSettingsV1,
+                        getAccountSettings: () => context.accountSettingsContext.settings },
+                })),
+            }),
+        });
         const daemonSocket = io(endpoint, { path: '/v1/updates', transports: ['websocket'], reconnection: false, autoConnect: false,
             auth: { ...currentAccountStoredContentCompatibilitySocketAuth, token: ownerToken, clientType: 'machine-scoped',
                 machineId: machine.id, installationId, installationPublicKey: encodeBase64(installationKeys.publicKey, 'base64url'),
@@ -107,12 +165,16 @@ describe('recipient directory through real Home, socket and daemon filesystem ow
         let daemonReceipts = 0;
         daemonSocket.on(SOCKET_RPC_EVENTS.REQUEST, (request: SocketRpcRequestPayload, acknowledge: (reply: unknown) => void) => {
             daemonReceipts += 1;
-            void manager.handleRequest(request).then(acknowledge, error => acknowledge({ error: String(error) }));
+            void runWithServerHttpBaseUrl(endpoint, () => manager.handleRequest(request))
+                .then(acknowledge, error => acknowledge({ error: String(error) }));
         });
+        daemonSocket.on('connect', () => manager.onSocketConnect(daemonSocket));
+        daemonSocket.on('disconnect', () => manager.onSocketDisconnect());
         await new Promise<void>((resolve, reject) => { daemonSocket.once('connect', resolve); daemonSocket.once('connect_error', reject); daemonSocket.connect(); });
-        await new Promise<void>(resolve => { daemonSocket.once(SOCKET_RPC_EVENTS.REGISTERED, () => resolve());
-            daemonSocket.emit(SOCKET_RPC_EVENTS.REGISTER, { method: `${machine.id}:${RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY}` }); });
-        const profile = await upsertServerProfile({ serverUrl: endpoint });
+        expect(await manager.waitForRegisteredHandlers([RPC_METHODS.DAEMON_FILESYSTEM_LIST_DIRECTORY,
+            EXTERNAL_ACTION_DAEMON_RPC_METHOD_V1], { timeoutMs: integrationConfig.test!.testTimeout! })).toEqual({ status: 'ready' });
+        const profile = await adoptHomeProfile({ descriptor: { serverUrl: endpoint, homeServerIdentityId: serverIdentityId,
+            displayName: 'Recipient directory' }, source: 'manual' });
         const credentials = await TokenStorage.setCredentialsForServerUrlWithRollback(endpoint, { serverId: profile.id }, {
             token: requesterToken, secret: encodeBase64(requesterSecret, 'base64url'),
         });

@@ -66,7 +66,7 @@ import { SelectionListDetailPaneContext } from './SelectionListDetailPaneContext
 import { renderSelectionListAccessory } from './renderSelectionListAccessory';
 import { useContainingGlassSurfaceGroup } from '@/components/ui/glass/GlassSurface';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import type { CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import type { CurrentUiContextCommandInvocation, CurrentUiContextLocalCommand } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { SelectionListActivationCommandContext, SelectionListCommandHost, type SelectionListCommandInvoke } from './SelectionListCommandHost';
 
 const stylesheet = StyleSheet.create((theme) => ({
@@ -561,11 +561,12 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
     );
 
     const handleActivate = React.useCallback(
-        (optionId: string, context?: ActionExecutorContext) => {
+        (optionId: string, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => {
             const option = findOptionById(optionId);
             if (!option) return false;
             return activateSelectionListRow({
                 context,
+                invocation,
                 option,
                 onSelect: props.onSelect,
                 onPushStep: stack.pushStep,
@@ -974,9 +975,9 @@ export function SelectionList(props: SelectionListProps): React.ReactElement {
         })));
         return [
             { key: 'activate', title: currentStep.title ?? props.listAccessibilityLabel ?? t('common.choose'),
-                description: `${commandScope}.activate ${JSON.stringify(options)}; input: {id}`, invoke: (input, context) => {
+                description: `${commandScope}.activate ${JSON.stringify(options)}; input: {id}`, invoke: (input, context, invocation) => {
                     if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.id !== 'string') return false;
-                    return handleActivate(input.id, context);
+                    return handleActivate(input.id, context, invocation);
                 } },
             ...(showSearchHeader && !currentStep.inputReadOnly ? [{ key: 'search', title: currentStep.inputPlaceholder ?? props.rootStep.inputPlaceholder ?? t('common.search'),
                 description: `${commandScope}.search; input: {value}`, invoke: (input: Parameters<CurrentUiContextLocalCommand['invoke']>[0]) => {

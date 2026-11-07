@@ -32,7 +32,7 @@ import {
 } from '@/sync/domains/machines/peer/mediation/rpc/productionRoute';
 import { resolveProductionMachineRpcRelayFallbackForServer } from '@/sync/domains/machines/peer/mediation/rpc/productionRelayFallback';
 import { recordMachineRpcPeerMediationReceipt } from '@/sync/domains/machines/peer/mediation/rpc/receiptLog';
-import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS } from './serverScopedRpcTypes';
+import { DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS, resolveMachineRpcTimeoutMs } from './serverScopedRpcTypes';
 import type { ScopedSocketClient, ServerScopedMachineRpcParams } from './serverScopedRpcTypes';
 import { isGuardedMachineRpcMethod, resolveTransferPolicyAllowsMachineRpcDirect } from './guardedMachineRpcPolicy';
 import {
@@ -190,10 +190,6 @@ async function withMachineRpcAbort<T>(
             },
         );
     });
-}
-
-function resolveMachineRpcTimeoutMs(timeoutMs: number | undefined): number {
-    return typeof timeoutMs === 'number' && timeoutMs > 0 ? timeoutMs : DEFAULT_SERVER_SCOPED_RPC_TIMEOUT_MS;
 }
 
 async function withMachineRpcTimeout<T>(

@@ -1,6 +1,4 @@
 import * as React from 'react';
-import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
-import type { PluginUiJsonValueV1 } from '@happier-dev/protocol/plugins/ui';
 import { Pressable, View } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -37,7 +35,7 @@ import { usageSignatureAccent, withUsageAccentAlpha } from '../../usageAccent';
 import { formatIdentifierLabel } from '@/utils/format/usageNumbers';
 import { buildRecapStorySlides, type RecapStorySlide, type RecapStorySlideId } from '@/sync/domains/usage/recap/buildRecapStorySlides';
 import { Icon } from '@/components/ui/icons/Icon';
-import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 
 /**
  * Opt-in recap story mode (L6 T4) — the ONLY place the theatrical layer lives.
@@ -55,7 +53,7 @@ export type RecapStorySurfaceProps = Readonly<{
     cacheSavings: UsageCacheSavingsViewModel | null;
     sessionId?: string;
     onDismiss?: () => void;
-    onShare?: (context?: ActionExecutorContext) => void;
+    onShare?: (invocation: CurrentUiContextCommandInvocation) => void;
     testID?: string;
 }>;
 
@@ -276,14 +274,14 @@ export function RecapStorySurface(props: RecapStorySurfaceProps): React.ReactEle
         setIndex((current) => Math.max(0, current - 1));
     }, []);
 
-    const share = React.useCallback((context?: ActionExecutorContext) => {
-        props.onShare?.(context);
+    const share = React.useCallback((invocation: CurrentUiContextCommandInvocation) => {
+        props.onShare?.(invocation);
     }, [props.onShare]);
     const commands = useCurrentUiContextLocalCommands(slide ? [
         { key: 'forward', title: t('common.continue'), invoke: goForward },
         { key: 'back', title: t('common.back'), invoke: goBack },
         ...(props.onShare ? [{ key: 'share', title: t('usage.recap.shareImage'),
-            invoke: (_input?: PluginUiJsonValueV1, context?: ActionExecutorContext) => share(context) }] : []),
+            invoke: (_input: unknown, _context: unknown, invocation: CurrentUiContextCommandInvocation) => share(invocation) }] : []),
         ...(props.onDismiss ? [{ key: 'close', title: t('common.close'), invoke: props.onDismiss }] : []),
     ] : [], { foregroundOverlay: true });
 

@@ -27,17 +27,28 @@ import { DEFAULT_THEME_PROFILES_LOCAL_STATE } from '@/theme/profiles/themeProfil
 import { decideApprovalAsInbox } from '@/dev/testkit/harness/approvalInbox';
 import { getCurrentAuth, setCurrentAuth } from '@/auth/context/currentAuth';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
-import { useDeclaredSettingsWrite } from '@/components/settings/shell/useDeclaredSettingsWrite';
+import { renderMountedCurrentUiContext } from '@/dev/testkit/harness/mountedCurrentUiContext';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { executeCurrentUiContextAction } from '@/components/appShell/currentUiContext/currentUiContextActionRuntime';
+import { CurrentUiContextSnapshotV1Schema } from '@happier-dev/protocol/plugins/ui/currentUiContext';
+
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { Modal } from '@/modal';
 import { readDirectConnectionsEnabled } from '@happier-dev/protocol/account/settings/peerMediationPreferencesV1';
 import { usePaneArrangement } from '@/components/appShell/panes/arrangement/usePaneArrangement';
 import { publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { Slider } from '@/components/ui/forms/Slider';
+import { useSettingPreview } from '@/sync/store/settingsPreview';
+import { useGlassMaterialSettings } from '@/components/ui/glass/useGlassMaterialSettings';
+import { useSetting, useSettingsSelector } from '@/sync/store/settingsReadHooks';
 
 const routerPush = vi.hoisted(() => vi.fn());
 const routeParams = vi.hoisted(() => ({ current: {} as Record<string, string> }));
+const native = vi.hoisted(() => ({ os: 'web' as 'web' | 'ios' }));
 
-vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock({
+    Platform: { get OS() { return native.os; } },
+}));
 vi.mock('react-native-unistyles', async () => (await import('@/dev/testkit/mocks/unistyles')).createUnistylesMock());
 vi.mock('@/text', async () => (await import('@/dev/testkit/mocks/text')).createTextModuleMock());
 vi.mock('@/modal', async () => (await import('@/dev/testkit/mocks/modal')).createModalModuleMock().module);
@@ -58,16 +69,163 @@ const { AllMachinesIndex } = await import('@/components/machines/index/AllMachin
 const { NewSessionWizardSettingsView } = await import('@/components/settings/session/NewSessionWizardSettingsView');
 const { AccountDirectConnectionsSection } = await import('@/components/settings/connections/DirectConnectionSettings');
 const { SessionComposerSettingsView } = await import('@/components/settings/session/SessionComposerSettingsView');
+const { PluginUpdateReviewSettingsEntry } = await import('@/components/settings/plugins/PluginUpdateReviewSettingsEntry');
+const { ConnectedServicesIndexView } = await import('@/components/settings/connectedServices/index/ConnectedServicesIndexView');
 (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
 
 const originalState = storage.getState();
 let previousAuth: ReturnType<typeof getCurrentAuth>;
 beforeEach(() => { previousAuth = getCurrentAuth(); });
-afterEach(() => { standardCleanup(); setCurrentAuth(previousAuth); storage.setState(originalState, true); routeParams.current = {}; });
+afterEach(() => { standardCleanup(); setCurrentAuth(previousAuth); storage.setState(originalState, true); routeParams.current = {}; native.os = 'web'; });
 
 describe('declared setting Action writer', () => {
+    it('retains an agent caller restriction through the declared setting writer', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
+            usageCoachPreferencesV1: { v: 1, disabledChecks: [], modelSuggestion: 'complete_only' },
+            actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['agent'] } },
+                approvalWaivedSurfaces: { 'settings.set': ['ui', 'agent'] } },
+        }) });
+        function PreferenceCommand() {
+            const feedback = useSettingActionFeedback();
+            useCurrentUiContextLocalCommands([{ key: 'write', title: 'Change Coach preference',
+                invoke: (_input, _context, invocation) => feedback.setSetting({ anchor: 'usage.coachPreferences' },
+                    { v: 1, disabledChecks: [], modelSuggestion: 'off' }, { invocation }) }]);
+            return null;
+        }
+        await renderMountedCurrentUiContext(<PreferenceCommand />);
+        try {
+            const read = await executeCurrentUiContextAction({ actionId: 'ui.current_context.read', input: {}, context: { surface: 'agent' } });
+            if (!read.ok) throw new Error(read.errorCode);
+            const command = CurrentUiContextSnapshotV1Schema.parse(read.result).commands.find(row => row.title === 'Change Coach preference');
+            expect(command).toBeDefined();
+            await act(async () => { await executeCurrentUiContextAction({ actionId: 'ui.current_context.command.invoke',
+                input: { commandId: command!.id }, context: { surface: 'agent' } }); });
+            expect(account.settingsWrites).toHaveLength(0);
+            expect(storage.getState().settings.usageCoachPreferencesV1.modelSuggestion).toBe('complete_only');
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+    it('presents a rejected Look choice with its actionable typed reason through independent feedback authors', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
+            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
+        }) });
+        const feedback = await renderHook(useSettingActionFeedback);
+        const declared = await renderHook(() => useSettingActionFeedback().setSetting);
+        try {
+            for (const write of [feedback.getCurrent().setSetting, declared.getCurrent()]) {
+                vi.mocked(Modal.alert).mockClear();
+                await act(async () => { expect(await write({ anchor: 'appearance.atmosphereShowOn' }, ['unsupported-place'])).toBe(false); });
+                expect(Modal.alert).toHaveBeenCalledWith('common.error', 'settings.writeValueRefused');
+                expect(account.settingsWrites).toHaveLength(0);
+            }
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+
+    it('keeps the searchable plugin update preference writable without a Machine and quiet for unrelated settings', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({
+            pluginUpdateReviewModeV1: 'confirmAccessChanges',
+            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
+        }) });
+        let commits = 0;
+        try {
+            const screen = await renderScreen(<React.Profiler id="plugin-update-preference" onRender={() => { commits += 1; }}>
+                <PluginUpdateReviewSettingsEntry />
+            </React.Profiler>);
+            expect(screen.tree.findAll(node => node.props.setting?.anchor === 'plugins.updateReview').length).toBeGreaterThan(0);
+            expect(storage.getState().machines).toEqual({});
+            const control = screen.findAll(node => node.props.testID === 'settings.plugins.updateReview'
+                && typeof node.props.onChange === 'function')[0]!;
+            await act(async () => { control.props.onChange('autoApply'); });
+            await vi.waitFor(() => expect(storage.getState().settings.pluginUpdateReviewModeV1).toBe('autoApply'));
+            await flushHookEffects();
+            commits = 0;
+            await act(async () => { account.replaceSettings(settingsParse({ ...storage.getState().settings,
+                mcpServersStrictMode: !storage.getState().settings.mcpServersStrictMode,
+            })); });
+            expect(commits).toBe(0);
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+
+    it('admits the side-rail opt-out through the declared device setting without an Account write', async () => {
+        native.os = 'ios';
+        const baseline = settingsParse({ actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } } });
+        const account = await createSecretSettingsTestHarness({ settings: baseline });
+        try {
+            const hook = await renderHook(() => useSettingActionWriter());
+            const write = (value: boolean) => hook.getCurrent()({ anchor: 'appearance.systemTabBar' }, value);
+            await act(async () => { expect(await write(false)).toMatchObject({ ok: false }); });
+            await act(async () => { account.replaceSettings(settingsParse({ ...baseline,
+                actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
+            })); });
+            await act(async () => { expect(await write(false)).toMatchObject({ ok: true }); });
+            expect(storage.getState().localSettings).toMatchObject({ systemTabBarEnabled: false });
+            await act(async () => { expect(await write(true)).toMatchObject({ ok: true }); });
+            expect(storage.getState().localSettings).toMatchObject({ systemTabBarEnabled: true });
+            expect(account.settingsWrites).toEqual([]);
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+    it('previews a long slider drag live and persists exactly once through the real Settings Action writer', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ glassTintIntensity: 50,
+            actionsSettingsV1: { v: 1, approvalWaivedSurfaces: { 'settings.set': ['ui'] } },
+        }) });
+        let preview: number | undefined;
+        let unrelatedRenders = 0;
+        function UnrelatedPreference() {
+            useSetting('showFlavorIcons'); useSettingsSelector(settings => settings.showFlavorIcons, ["showFlavorIcons"]);
+            unrelatedRenders++; return null;
+        }
+        function Control() {
+            const write = useSettingActionWriter();
+            const previewTint = useSettingPreview('glassTintIntensity');
+            const settings = useGlassMaterialSettings();
+            return <Slider testID="gesture" value={settings.glassTintIntensity ?? 50} min={0} max={100} step={1}
+                onValuePreview={(value: number | undefined) => { preview = value; previewTint(value); }}
+                onValueChange={next => { void write({ anchor: 'appearance.glassTint' }, next); }} />;
+        }
+        try {
+            const screen = await renderScreen(<><Control /><UnrelatedPreference /></>);
+            const initialUnrelatedRenders = unrelatedRenders;
+            const track = screen.findByTestId('gesture-track')!;
+            await act(async () => {
+                track.props.onLayout({ nativeEvent: { layout: { width: 100, height: 40, x: 0, y: 0 } } });
+                track.props.onResponderGrant({ nativeEvent: { locationX: 10, pageX: 210 } });
+            });
+            for (let x = 11; x <= 80; x++) {
+                await act(async () => { track.props.onResponderMove({ nativeEvent: { pageX: 200 + x } }); });
+            }
+            expect(account.settingsWrites).toHaveLength(0);
+            expect(storage.getState().settings.glassTintIntensity).toBe(50);
+            expect(preview).toBe(80);
+            expect(screen.findByTestId('gesture')!.props.accessibilityValue.now).toBe(80);
+            expect(unrelatedRenders).toBe(initialUnrelatedRenders);
+            await act(async () => { track.props.onResponderRelease(); });
+            await vi.waitFor(() => expect(account.settingsWrites).toHaveLength(1));
+            expect(account.persistedSettings.glassTintIntensity).toBe(80);
+            expect(preview).toBeUndefined();
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+    it('withdraws gesture drafts on unmount and keeps an old Account draft out of the next Account', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ glassTintIntensity: 50 }) });
+        let previewTint: ReturnType<typeof useSettingPreview<'glassTintIntensity'>> | undefined;
+        let shown = 0;
+        function Draft() { previewTint = useSettingPreview('glassTintIntensity'); return null; }
+        function Reader() { shown = useSetting('glassTintIntensity'); return null; }
+        try {
+            const screen = await renderScreen(<><Draft /><Reader /></>);
+            await act(async () => { previewTint!(80); });
+            expect(shown).toBe(80);
+            expect(storage.getState().settings.glassTintIntensity).toBe(50);
+            const previousPreview = previewTint!;
+            await act(async () => { storage.setState({ settingsScope: { ...account.scope, accountId: 'other-account' } }); });
+            expect(shown).toBe(50);
+            await act(async () => { previousPreview(90); });
+            expect(shown).toBe(50);
+            await screen.update(<Reader />);
+            expect(shown).toBe(50);
+            expect(account.settingsWrites).toEqual([]);
+        } finally { standardCleanup(); await account.dispose(); }
+    });
     it('admits pane arrangement after the same Account runtime becomes available', async () => {
-        const account = await createSecretSettingsTestHarness();
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({}) });
         const scope = storage.getState().settingsScope;
         storage.setState({ localSettings: { ...storage.getState().localSettings, paneArrangement: 'session' } });
         publishAppliedActiveServerRuntimeAvailability(false);
@@ -135,6 +293,11 @@ describe('declared setting Action writer', () => {
             await act(async () => {
                 screen.tree.findAll(node => node.props?.testID === 'settings-session-tmux-name'
                     && typeof node.props?.onChangeText === 'function')[0]!.props.onChangeText('work');
+                screen.tree.findAll(node => node.props?.testID === 'settings-session-tmux-name'
+                    && typeof node.props?.onBlur === 'function')[0]!.props.onBlur();
+            });
+            await vi.waitFor(() => expect(account.persistedSettings.sessionTmuxSessionName).toBe('work'));
+            await act(async () => {
                 screen.tree.findAll(node => node.props?.testID === 'settings-session-terminal-host-item'
                     && typeof node.props?.onChange === 'function')[0]!.props.onChange('herdr');
             });
@@ -226,15 +389,15 @@ describe('declared setting Action writer', () => {
             expect(account.settingsWrites).toHaveLength(writes);
         } finally { clearPluginAccountAvailabilityProjection(); standardCleanup(); await account.dispose(); }
     });
-    it.each(['reject', 'cancel'] as const)('keeps %s quiet through both mounted feedback owners and still reports real failures', async decision => {
+    it.each(['reject', 'cancel'] as const)('keeps %s quiet through independent mounted authors and still reports real failures', async decision => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({ memoryUseInNewSessions: false,
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { approvalRequiredSurfaces: ['ui'] } } },
         }) });
         let feedback: ReturnType<typeof useSettingActionFeedback> | undefined;
-        let declared: ReturnType<typeof useDeclaredSettingsWrite> | undefined;
+        let declared: ReturnType<typeof useSettingActionFeedback>['setSetting'] | undefined;
         function Probe() {
             feedback = useSettingActionFeedback();
-            declared = useDeclaredSettingsWrite(useMountedActionExecution(account.scope));
+            declared = useSettingActionFeedback().setSetting;
             return null;
         }
         const setting = PROMPTS_CONTEXT_SETTINGS.settings.memoryUseInNewSessions;
@@ -268,10 +431,10 @@ describe('declared setting Action writer', () => {
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
         }) });
         let feedback: ReturnType<typeof useSettingActionFeedback> | undefined;
-        let declared: ReturnType<typeof useDeclaredSettingsWrite> | undefined;
+        let declared: ReturnType<typeof useSettingActionFeedback>['setSetting'] | undefined;
         function Probe() {
             feedback = useSettingActionFeedback();
-            declared = useDeclaredSettingsWrite(useMountedActionExecution(account.scope));
+            declared = useSettingActionFeedback().setSetting;
             return null;
         }
         const setting = PROMPTS_CONTEXT_SETTINGS.settings.memoryUseInNewSessions;
@@ -283,13 +446,58 @@ describe('declared setting Action writer', () => {
                 await act(async () => { expect(await write(setting, true)).toBe(false); });
                 expect(Modal.alert).toHaveBeenCalledTimes(1);
                 const [title, , buttons] = vi.mocked(Modal.alert).mock.calls[0]!;
-                expect(title).toBe('actionConfirmations.turnedOffTitle');
+                // The notice names the Action that is off (its catalog title), not a generic "Action".
+                expect(title).toMatch(/^actionConfirmations\.turnedOffTitle\(action=.+\)$/);
+                expect(title).not.toContain('workflows.page.blocks.menuAction');
                 await act(async () => { buttons!.find(button => button.style !== 'cancel')!.onPress!(); });
                 expect(routerPush).toHaveBeenCalledWith('/settings/actions/settings.set');
                 expect(account.persistedSettings.memoryUseInNewSessions).toBe(false);
             }
         } finally { standardCleanup(); await account.dispose(); }
     });
+    it('reopens the Connected services view after its mutable hook commits through Settings policy', async () => {
+        const account = await createSecretSettingsTestHarness({ settings: settingsParse({ actionsSettingsV1: {
+            v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } },
+        } }) });
+        let view: ReturnType<typeof useLocalSettingMutable<'connectedServicesIndexViewV1'>> | undefined;
+        function Probe() {
+            view = useLocalSettingMutable('connectedServicesIndexViewV1');
+            return <ConnectedServicesIndexView model={{ sheets: [], connectable: [] }} labelsByKey={{}}
+                present={() => ({ label: null, email: null, accountId: null })} now={0}
+                presentation={view[0]} onPresentationChange={view[1]} compact={false}
+                summary={{ needsYouCount: 0, asOf: null }} connectMore={null} fixProminence="secondary" settled={null}
+                renderAccount={() => <React.Fragment />} renderPool={() => <React.Fragment />} renderStar={() => null}
+                onAddAccount={() => {}} onSignInAgain={() => {}} onOpenAccount={() => {}} onOpenPool={() => {}} />;
+        }
+        try {
+            const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+            const executor = createDefaultActionExecutor();
+            const anchor = 'connectedServices.indexView';
+            const agent = { surface: 'agent', authority: 'account_automation', serverId: account.scope.serverId } as const;
+            storage.getState().applyLocalSettings({ connectedServicesIndexViewV1: 'list' });
+            const screen = await renderScreen(<Probe />);
+            const switcher = () => screen.findAll(node => node.props.testIDPrefix === 'connected-services-index.view'
+                && typeof node.props.onSelectTab === 'function')[0]!;
+            await act(async () => { switcher().props.onSelectTab('grid'); });
+            expect(view![0]).toBe('list');
+            await act(async () => { account.replaceSettings(settingsParse({ actionsSettingsV1: { v: 1,
+                approvalWaivedSurfaces: { 'settings.set': ['ui'] },
+            } })); });
+            await act(async () => { expect(await executor.execute('settings.set', { anchor, value: 'grid' }, agent))
+                .toEqual({ ok: true, result: { anchor, value: 'grid' } }); });
+            await vi.waitFor(() => expect(view![0]).toBe('grid'));
+            expect(switcher().props.activeTabId).toBe('grid');
+            await act(async () => { switcher().props.onSelectTab('list'); });
+            await vi.waitFor(() => expect(view![0]).toBe('list'));
+            expect(await executor.execute('settings.get', { anchor }, agent)).toMatchObject({ ok: true, result: { value: 'list' } });
+            await screen.unmount();
+            const reopened = await renderScreen(<Probe />);
+            expect(reopened.findAll(node => node.props.testIDPrefix === 'connected-services-index.view'
+                && typeof node.props.onSelectTab === 'function')[0]!.props.activeTabId).toBe('list');
+            expect(account.settingsWrites).toEqual([]);
+        } finally { standardCleanup(); await account.dispose(); }
+    });
+
     it('admits device-local hook edits and bulk Reset values through settings.set policy', async () => {
         const account = await createSecretSettingsTestHarness({ settings: settingsParse({
             actionsSettingsV1: { v: 1, actions: { 'settings.set': { disabledSurfaces: ['ui'] } } },
@@ -385,7 +593,7 @@ describe('declared setting Action writer', () => {
         const terminalToken = `test.${Buffer.from(JSON.stringify({ sub: 'account-a',
             provenance: { v: 1, kind: 'terminal', authority: 'account_automation' },
         })).toString('base64url')}.test`;
-        const account = await createSecretSettingsTestHarness({ token: terminalToken });
+        const account = await createSecretSettingsTestHarness({ token: terminalToken, settings: settingsParse({}) });
         const { AuthProvider, getCurrentAuth } = await import('@/auth/context/AuthContext');
         const screen = await renderScreen(<AuthProvider initialCredentials={account.credentials}><React.Fragment /></AuthProvider>);
         try {
@@ -413,15 +621,16 @@ describe('declared setting Action writer', () => {
         let write: ReturnType<typeof useSettingActionWriter> | undefined;
         function Probe() { apply = useApplyThemeSelection(); write = useSettingActionWriter(); return null; }
         try {
-            const initialProfiles = { profiles: [], activeProfileIds: { light: null, dark: 'nightDark' } };
-            storage.getState().applyLocalSettings({ themePreference: 'light', themeProfiles: initialProfiles });
+            const initialSelection = { light: null, dark: 'nightDark' };
+            storage.getState().applyLocalSettings({ themePreference: 'light', themeProfileSelection: initialSelection });
             await renderScreen(<Probe />);
             await act(async () => { await apply!('dark', DEFAULT_THEME_PROFILES_LOCAL_STATE); });
             expect(storage.getState().localSettings.themePreference).toBe('light');
-            expect(storage.getState().localSettings.themeProfiles).toEqual(initialProfiles);
+            expect(storage.getState().localSettings.themeProfileSelection).toEqual(initialSelection);
             await act(async () => { account.replaceSettings(settingsParse({})); });
             await act(async () => { await apply!('dark', DEFAULT_THEME_PROFILES_LOCAL_STATE); });
-            expect(storage.getState().localSettings).toMatchObject({ themePreference: 'dark', themeProfiles: DEFAULT_THEME_PROFILES_LOCAL_STATE });
+            expect(storage.getState().localSettings).toMatchObject({ themePreference: 'dark',
+                themeProfileSelection: DEFAULT_THEME_PROFILES_LOCAL_STATE.activeProfileIds });
             await act(async () => {
                 // Scalar consumers remain supported; structured input is strict and does not weaken neighbors.
                 expect(await write!({ anchor: 'appearance.themeMode' }, 'light')).toMatchObject({ ok: true });
@@ -572,7 +781,7 @@ describe('declared setting Action writer', () => {
                 usageCoachPreferencesV1: settingsParse({ usageCoachPreferencesV1: { modelSuggestion: 'off' } }).usageCoachPreferencesV1,
                 sessionUsageGaugeLabels: true }); });
             await act(async () => { await vi.waitFor(() => expect(account.persistedSettings).toMatchObject({
-                useProfiles: true, sessionListSectionModeV1: 'activity', usageCoachPreferencesV1: { modelSuggestion: 'off' }, sessionUsageGaugeLabels: true,
+                useProfiles: true, sessionListLayoutV1: 'recent_activity', usageCoachPreferencesV1: { modelSuggestion: 'off' }, sessionUsageGaugeLabels: true,
             })); });
             const retained = apply!;
             const writes = account.settingsWrites.length;

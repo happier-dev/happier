@@ -1,20 +1,18 @@
 import { FILESYSTEM_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_TRANSFER_ACTION_IDS } from './filesystemActionIdsV1.js';
-export { FILESYSTEM_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_TRANSFER_ACTION_IDS } from './filesystemActionIdsV1.js';
+export { FILESYSTEM_ACTION_IDS, FILESYSTEM_EFFECT_ACTION_IDS, FILESYSTEM_MUTATION_ACTION_IDS, FILESYSTEM_TRANSFER_ACTION_IDS, FILESYSTEM_BROWSER_ACTION_IDS_V1 } from './filesystemActionIdsV1.js';
 import { z } from 'zod/mini';
 import { lazyZodSchema } from '../lazyZodSchema.js';
-import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { TransferEndpointCandidateSchema } from '../machines/transfer/transferStream.js';
 import { WorkspaceSyncEntryExpectationV1Schema } from '../sessions/control/handoff/workspaceSyncSchemas.js';
+import { projectZodProtocolSchema } from '../plugins/actions/internalProtocolZodAdapter.js';
+import { FilesystemEffectFailureDetailsV1Schema } from '../machines/filesystemFailure.js';
+export { FilesystemEffectFailureDetailsV1Schema, type FilesystemEffectFailureDetailsV1 } from '../machines/filesystemFailure.js';
 
 export const FILESYSTEM_WRITE_GUARD_ERROR_CODES = ['hash_mismatch', 'expected_file_missing', 'expected_file_absent'] as const;
 export type FilesystemWriteGuardErrorCode = typeof FILESYSTEM_WRITE_GUARD_ERROR_CODES[number];
 export function isFilesystemWriteGuardErrorCode(value: unknown): value is FilesystemWriteGuardErrorCode {
   return typeof value === 'string' && (FILESYSTEM_WRITE_GUARD_ERROR_CODES as readonly string[]).includes(value);
 }
-
-
-
-
 
 export type FilesystemActionId = typeof FILESYSTEM_ACTION_IDS[number];
 export type FilesystemMutationActionId = typeof FILESYSTEM_MUTATION_ACTION_IDS[number];
@@ -26,6 +24,7 @@ export function isFilesystemActionId(value: string): value is FilesystemActionId
 
 const FilesystemFailureSchema = lazyZodSchema(() => z.strictObject({
   success: z.literal(false), error: z.string(), errorCode: z.optional(z.string()),
+  details: z.optional(FilesystemEffectFailureDetailsV1Schema),
 }));
 
 export const FilesystemReadFileInputSchema = lazyZodSchema(() => z.strictObject({
@@ -188,6 +187,7 @@ const PreparedFilesystemEndpointSchema = lazyZodSchema(() => z.intersection(Tran
 const FilesystemTransferFailureSchema = lazyZodSchema(() => z.strictObject({
   success: z.literal(false), status: z.enum(['failed', 'cancelled', 'unknown']),
   error: z.string(), errorCode: z.optional(z.string()),
+  details: z.optional(FilesystemEffectFailureDetailsV1Schema),
 }));
 export const FilesystemPreparedImportSchema = lazyZodSchema(() => z.strictObject({
   uploadId: z.string().check(z.minLength(1)), destDisplayPath: z.string().check(z.minLength(1)), expectedSizeBytes: z.number().check(z.int(), z.nonnegative()),
@@ -221,7 +221,7 @@ export const FileDownloadResultV1ProtocolSchema = projectZodProtocolSchema(Files
 export type FileDownloadResultV1 = z.infer<typeof FilesystemDownloadOutputSchema>;
 export const FilesystemTransferCancelOutputSchema = lazyZodSchema(() => z.union([
   z.strictObject({ success: z.literal(true), aborted: z.boolean() }),
-  z.strictObject({ success: z.literal(false), error: z.string(), errorCode: z.optional(z.string()) }),
+  FilesystemFailureSchema,
 ]));
 export type FilesystemUploadInput = z.infer<typeof FilesystemUploadInputSchema>;
 export type FilesystemUploadOutput = z.infer<typeof FilesystemUploadOutputSchema>;
@@ -239,5 +239,3 @@ export const FilesystemCopyOutputSchema = lazyZodSchema(() => z.union([
 ]));
 export type FilesystemCopyOutput = z.infer<typeof FilesystemCopyOutputSchema>;
 export type FilesystemEntryTreeDescriptor = z.infer<typeof FilesystemEntryTreeDescriptorSchema>;
-
-export { type FilesystemEffectFailureDetailsV1 } from '../machines/filesystemFailure.js';

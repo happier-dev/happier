@@ -91,7 +91,7 @@ export async function invokeCurrentUiContextSettingCommand(input: Readonly<{
             && areServerAccountScopesEqual(command.setting.scope, input.accountScope);
     });
     if (!descriptor) return false;
-    return (await port.invokeCurrentUiCommand?.({ commandId: descriptor.id, signal: input.context.signal }))?.ok === true;
+    return (await port.invokeCurrentUiCommand?.({ commandId: descriptor.id, signal: input.context.signal, context: input.context }))?.ok === true;
 }
 
 export async function executeCurrentUiContextAction(

@@ -20,8 +20,6 @@ type MountedExecutorOptions = Omit<NonNullable<Parameters<typeof createFrontDoor
 type MountedOperation = UiActionOperation & Readonly<{ retainInvocation?: true; executorOptions?: MountedExecutorOptions;
     /** Deliver an input admission receipt to its durable draft owner after navigation. */
     retainEffectResult?: true;
-    /** A mounted command retains its caller; the nested Action owns fresh admission and approval. */
-    callerContext?: Pick<ActionExecutorContext, 'surface' | 'callerSurface' | 'authority' | 'actionCaller' | 'signal' | 'approvalProfileId' | 'defaultSessionId' | 'callerPermissionMode' | 'callerInputConstraints' | 'workspaceWrites'>;
     onApprovalPending?: () => void }>;
 
 /** Reconnect a mounted author's original public Action to its typed approval result. */
@@ -72,7 +70,7 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
     // Multi-Home collections bind this hook to null and provide the source's existing credential
     // lifetime. The same invocation engine owns admission, approval custody and retirement.
     const executeCaptured = React.useCallback(async (capturedBinding: ServerCredentialAccountScopeBinding,
-        actionId: ActionId, input: unknown, operation?: MountedOperation): Promise<ActionExecuteResult> => {
+        actionId: ActionId, input: unknown, operation?: MountedOperation, callerContext?: ActionExecutorContext): Promise<ActionExecuteResult> => {
         // Once admitted, every Settings mutation belongs to the executor's captured
         // Account/credential lifetime, not the author's view or projection binding.
         const accountWrite = actionId === 'settings.set' || actionId === 'settings.reset';
@@ -86,11 +84,13 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         let capturedInput = input;
         try { capturedInput = projectNativeJsonValueForTransport(input); } catch { /* The Action input owner reports invalid JSON. */ }
         const capturedScope = capturedBinding.scope;
+        const caller = callerContext;
+        const requestId = callerContext?.actionRequestId ?? operation?.actionRequestId;
         // Retained approval custody requires a concrete signal even without a caller signal.
         const retirement = new AbortController();
         const subscription = accountWrite ? undefined : executionLifetime.onRetire(() => retirement.abort());
         const cancellation = mergeAbortSignals([retainEffect ? undefined : lifetime.controller.signal,
-            retirement.signal, operation?.signal, operation?.callerContext?.signal]);
+            retirement.signal, operation?.signal ?? callerContext?.signal]);
         const invocationCurrent = () => (accountWrite || capturedBinding.isCurrent()) && !cancellation.signal.aborted;
         if (!capturedBinding.isCurrent() || cancellation.signal.aborted) { subscription?.dispose(); cancellation.dispose(); return retired(); }
         const frontDoorOptions = {
@@ -113,21 +113,15 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         const invoke = !retainInvocation && capturedBinding === binding && areServerAccountScopesEqual(capturedScope, scope)
             ? frontDoor : createFrontDoorActionExecute(undefined, { ...frontDoorOptions,
                 ...(retainInvocation ? {
-                    hostActionApprovalLifetime: { actionId, signal: cancellation.signal, surface: 'ui' as const },
+                    hostActionApprovalLifetime: { actionId, signal: cancellation.signal, surface: caller?.surface ?? 'ui' },
                 } : {}),
             });
         const result = await (operation?.confirmed ? invoke.confirmed : invoke)(actionId, capturedInput, {
-            ...(operation?.callerContext ? {
-                surface: operation.callerContext.surface, callerSurface: operation.callerContext.callerSurface,
-                authority: operation.callerContext.authority, actionCaller: operation.callerContext.actionCaller,
-                approvalProfileId: operation.callerContext.approvalProfileId, defaultSessionId: operation.callerContext.defaultSessionId,
-                callerPermissionMode: operation.callerContext.callerPermissionMode, callerInputConstraints: operation.callerContext.callerInputConstraints,
-                workspaceWrites: operation.callerContext.workspaceWrites,
-            } : { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } }),
+            ...(caller ?? { surface: 'ui' as const, authority: 'present_user' as const, actionCaller: { kind: 'host' as const } }),
             serverId: capturedScope.serverId, expectedAccountId: capturedScope.accountId,
             signal: cancellation.signal,
             ...(operation?.defaultSessionId ? { defaultSessionId: operation.defaultSessionId } : {}),
-            ...(operation?.actionRequestId ? { actionRequestId: operation.actionRequestId } : {}),
+            ...(requestId ? { actionRequestId: requestId } : {}),
             ...(operation?.onTransportIssued ? { onTransportIssued: operation.onTransportIssued } : {}),
             ...(operation?.sessionMessageDisplayText !== undefined ? { sessionMessageDisplayText: operation.sessionMessageDisplayText } : {}),
             ...(operation?.isPluginSettingsIntentCurrent ? { isPluginSettingsIntentCurrent: operation.isPluginSettingsIntentCurrent } : {}),
@@ -145,7 +139,7 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         if (!pending.success) return result;
         if (!invocationCurrent()) return retired();
         return await resumeActionExecutionResult({ result, actionId, actionInput: capturedInput, scope: capturedScope,
-            signal: cancellation.signal, ...(operation?.actionRequestId ? { requestId: operation.actionRequestId } : {}),
+            signal: cancellation.signal, ...(requestId ? { requestId } : {}),
             onApprovalPending: registration => {
                 operation?.onApprovalPending?.();
                 approval.requestApproval(registration);
@@ -162,11 +156,17 @@ export function useMountedActionExecution(scopeOrHome: ServerAccountScope | stri
         if (!binding || !scope || !isCurrent()) return retired();
         return executeCaptured(binding, actionId, input, operation);
     }, [binding, executeCaptured, isCurrent, scope]);
+    /** The mounted command dispatcher binds an ordinary child to this same engine and its private ports. */
+    const executeForCaller = React.useCallback(async (actionId: ActionId, input: unknown, caller: ActionExecutorContext,
+        operation?: MountedOperation): Promise<ActionExecuteResult> => {
+        if (!binding || !scope || !isCurrent()) return retired();
+        return executeCaptured(binding, actionId, input, operation, caller);
+    }, [binding, executeCaptured, isCurrent, scope]);
     /** Value-parsing clients unwrap only the terminal receipt delivered by this same mounted owner. */
     const executeValue = React.useCallback(async (actionId: ActionId, input: unknown, operation?: MountedOperation): Promise<unknown> => {
         const result = await execute(actionId, input, operation);
         requireActionSuccess(result);
         return result.result;
     }, [execute]);
-    return { execute, executeCaptured, executeValue, ready: isCurrent(), isCurrent, cancel, getSignal, approval, binding, resolution };
+    return { execute, executeForCaller, executeCaptured, executeValue, ready: isCurrent(), isCurrent, cancel, getSignal, approval, binding, resolution };
 }

@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { BotTemplateActionOutputSchemasV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
+import { BOT_TEMPLATE_ACTION_IDS_V1, BotTemplateActionOutputSchemasV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionsV1';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { readUiBotTemplateAuthorDraft } from '@/sync/ops/actions/botTemplateActionDeps';
@@ -43,13 +43,15 @@ export function useBotTemplateEditor(artifactId: string, serverId: string) {
         });
         return () => { mounted = false; };
     }, [key, binding, execution.ready, artifactId, serverId, attempt]);
-    const save = React.useCallback<BotTemplateSave>(async ({ draft, revision }) => {
-        const result = await execution.execute('template.draft', { sourceSessionRef: draft.sourceSessionRef, draftArtifactId: artifactId,
-            expectedRevision: revision, content: draft.content, candidates: draft.candidates });
+    const save = React.useCallback<BotTemplateSave>(async ({ draft, revision }, invocation) => {
+        const actionId = BOT_TEMPLATE_ACTION_IDS_V1[0];
+        const input = { sourceSessionRef: draft.sourceSessionRef, draftArtifactId: artifactId,
+            expectedRevision: revision, content: draft.content, candidates: draft.candidates };
+        const result = await (invocation ? invocation.execute(execution, actionId, input) : execution.execute(actionId, input));
         if (!result.ok) return { ok: false, code: result.errorCode ?? result.error };
         const saved = BotTemplateActionOutputSchemasV1['template.draft'].safeParse(result.result);
         return saved.success ? { ok: true, revision: saved.data.revision } : { ok: false, code: 'invalid_action_output' };
-    }, [artifactId, execution.execute]);
+    }, [artifactId, execution]);
     return { buffer: read?.key === key ? read.buffer : null, failed: read?.key === key && read.failed,
         errorCode: read?.key === key ? read.errorCode : undefined, retry, save, execute: execution.execute, scope: binding?.scope ?? null };
 }

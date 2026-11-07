@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { useRouter } from '@/components/appShell/workspace/destinationRoute';
-import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
+import { useCurrentUiContextLocalCommands, type CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { t } from '@/text';
 import type { BotTemplateEditorBuffer, BotTemplateSave } from './botTemplateEditorBuffer';
 
@@ -11,11 +11,11 @@ export function BotTemplatePublishButton(props: Readonly<{
 }>) {
     const router = useRouter();
     const [saving, setSaving] = React.useState(false);
-    const open = async () => {
+    const open = async (invocation?: CurrentUiContextCommandInvocation) => {
         if (saving) return false;
         setSaving(true);
         try {
-            await props.buffer.commit(props.save);
+            await props.buffer.commit(input => props.save(input, invocation));
             if (props.buffer.getSnapshot().status !== 'saved') return false;
             router.pushRetainingCurrent({ pathname: '/settings/plugins/publish',
                 params: { templateArtifactId: props.artifactId, templateServerId: props.serverId } } as never);
@@ -23,7 +23,8 @@ export function BotTemplatePublishButton(props: Readonly<{
         } finally { setSaving(false); }
     };
     const title = t('botTemplates.publishEllipsis');
-    useCurrentUiContextLocalCommands([{ key: 'bot-template.publish', title, invoke: open }]);
+    useCurrentUiContextLocalCommands([{ key: 'bot-template.publish', title,
+        invoke: (_input, _context, invocation) => open(invocation) }]);
     return <RoundButton testID="bot-template-publish" title={title} display="secondary" size="normal"
         loading={saving} disabled={saving} onPress={() => { void open(); }} />;
 }

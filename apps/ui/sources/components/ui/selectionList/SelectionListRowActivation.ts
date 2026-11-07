@@ -24,13 +24,15 @@
 
 import type { GestureResponderEvent } from 'react-native';
 import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
+import type { CurrentUiContextCommandInvocation } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import type { SelectionListOption, SelectionListStep } from './_types';
 
 export type ActivateSelectionListRowArgs = Readonly<{
     option: SelectionListOption;
     event?: GestureResponderEvent;
-    onSelect: (id: string, option: SelectionListOption, context?: ActionExecutorContext) => void;
+    onSelect: (id: string, option: SelectionListOption, context?: ActionExecutorContext, invocation?: CurrentUiContextCommandInvocation) => void;
     context?: ActionExecutorContext;
+    invocation?: CurrentUiContextCommandInvocation;
     onPushStep: (step: SelectionListStep) => void;
     /**
      * Invoked instead of select/navigate when the option declares
@@ -52,9 +54,9 @@ export function activateSelectionListRow(args: ActivateSelectionListRowArgs): bo
         onPushStep(option.openStep);
         return true;
     }
-    if (args.context) {
-        option.onSelect?.(args.event, args.context);
-        onSelect(option.id, option, args.context);
+    if (args.context || args.invocation) {
+        option.onSelect?.(args.event, args.context, args.invocation);
+        onSelect(option.id, option, args.context, args.invocation);
     } else {
         option.onSelect?.(args.event);
         onSelect(option.id, option);

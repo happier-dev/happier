@@ -6,7 +6,8 @@ import { formatWithCachedDateTimeFormatter } from '@/utils/datetime/cachedIntlFo
  * the cron they are stored as. The summary and the popover both read a cron through this one parser,
  * so a trigger never reads as "Every day" in one place and as its expression in another.
  */
-export type SimpleScheduleRepeat = 'daily' | 'weekdays' | 'weekly';
+export const SIMPLE_SCHEDULE_REPEATS = ['daily', 'weekdays', 'weekly'] as const;
+export type SimpleScheduleRepeat = typeof SIMPLE_SCHEDULE_REPEATS[number];
 
 export type SimpleSchedule = Readonly<{
     repeat: SimpleScheduleRepeat;
