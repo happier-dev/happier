@@ -1,7 +1,7 @@
 import type { PluginCancellationOptions, PluginInvocationContext } from '@happier-dev/plugin-sdk';
 import type { PluginContributionIdentity } from '@happier-dev/plugin-sdk/manifest';
 
-import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../manifest.js';
+import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
 import type { TriageAdmittedSourceV1 } from './listEntries.js';
 
 type TriageCallerContext = Pick<PluginInvocationContext, 'caller' | 'surface' | 'signal'> & Readonly<{
@@ -11,10 +11,8 @@ type TriageCallerContext = Pick<PluginInvocationContext, 'caller' | 'surface' | 
 /**
  * The one owner of "who is calling a caller-bound Triage Action".
  *
- * Plugin callers remain bound to their own admitted contribution. Authenticated
- * host UI/Voice/agent/MCP/CLI/API invocations may select an admitted source address; that
- * address is never caller provenance. Nested plugin calls cannot inherit host
- * authority merely by claiming an origin surface.
+ * Explicit reads select any admitted source in the invoking Account. Writes
+ * retain their caller-bound source provenance; an address is never provenance.
  */
 
 export type TriageCallerSourceV1 = Readonly<{
@@ -26,12 +24,7 @@ export type TriageCallerSourceV1 = Readonly<{
 
 export type TriageCallerSourceResolutionV1 =
     | Readonly<{ kind: 'source'; caller: TriageCallerSourceV1 }>
-    | Readonly<{ kind: 'invalidCaller' }>
-    /**
-     * The admitted view moved under this invocation, so the caller just
-     * resolved is no longer the one the answer would belong to.
-     */
-    | Readonly<{ kind: 'currentnessConflict' }>;
+    | Readonly<{ kind: 'invalidCaller' }>;
 
 const INVALID_CALLER: TriageCallerSourceResolutionV1 = Object.freeze({ kind: 'invalidCaller' });
 
@@ -43,8 +36,7 @@ export function isTriageHostActionCaller(context: TriageCallerContext): boolean 
 
 type TriageCallerSourcesResolutionV1 =
     | Readonly<{ kind: 'sources'; callers: readonly TriageCallerSourceV1[] }>
-    | Readonly<{ kind: 'invalidCaller' }>
-    | Readonly<{ kind: 'currentnessConflict' }>;
+    | Readonly<{ kind: 'invalidCaller' }>;
 
 function sameSource(left: PluginContributionIdentity, right: PluginContributionIdentity): boolean {
     return left.pluginId === right.pluginId && left.localId === right.localId;
@@ -72,30 +64,29 @@ function callerSourcesFrom(
 }
 
 /**
- * Read the caller's own admitted source contribution from the live admitted
- * view, holding an invalidation watch for the length of the read.
+ * Select a named admitted source for any Account reader, retaining the existing
+ * host inventory and caller-bound defaults when no source is named.
  */
 export async function resolveTriageCallerSources(
     context: TriageCallerContext,
     options?: PluginCancellationOptions,
     requestedSource?: PluginContributionIdentity,
 ): Promise<TriageCallerSourcesResolutionV1> {
-    let invalidated = false;
     const observation = context.services.targetedContributions.observeForSelf(
         TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1,
-        { onInvalidated: () => { invalidated = true; } },
+        { onInvalidated: () => {} },
     );
     try {
         const snapshot = await observation.readCurrent(options);
         const callers = callerSourcesFrom(context, snapshot.contributions, requestedSource);
         if (!callers) return { kind: 'invalidCaller' };
-        if (invalidated) return { kind: 'currentnessConflict' };
         return Object.freeze({ kind: 'sources', callers });
     } finally {
         observation.dispose();
     }
 }
 
+/** Write provenance stays bound to the plugin's own admitted contribution. */
 export async function resolveTriageCallerSource(
     context: TriageCallerContext,
     options?: PluginCancellationOptions,
