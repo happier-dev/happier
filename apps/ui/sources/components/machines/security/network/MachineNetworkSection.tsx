@@ -50,7 +50,7 @@ type ReviewControls = Readonly<{
   draft: MachineReachabilityPostureV1 | null;
   onDraft: (next: MachineReachabilityPostureV1 | null) => void;
   onPrepare: () => void;
-  /** Prepare one exact change the person chose (join, leave, confirm the console) through the same review. */
+  /** Review a saved-base posture draft or an exact Join/Leave selection through the same review. */
   onPrepareChange: (change: MachineReachabilityChangeV1) => void;
   onApply: () => void;
   onCancel: () => void;
@@ -965,6 +965,7 @@ function NetworkReviewFoot(
     );
   }
   if (review.kind === 'failed') {
+    const planChanged = review.failure.errorCode === 'plan_changed';
     return (
       <ItemGroup surface="none">
         <SurfaceStateCard
@@ -977,10 +978,16 @@ function NetworkReviewFoot(
               : 'machineDetailPage.network.prepareFailed',
             { machine },
           )}
-          diagnosticCode={review.failure.errorCode}
+          reason={t(planChanged
+            ? 'machineDetailPage.network.planChanged'
+            : review.plan ? 'machineDetailPage.network.applyRecovery' : 'machineDetailPage.network.prepareRecovery')}
           action={{
-            label: t('common.retry'),
-            onPress: props.controls.onPrepare,
+            label: t('common.refresh'),
+            onPress: () => {
+              props.controls.onCancel();
+              if (planChanged) props.controls.onDraft(null);
+              void props.network.refresh();
+            },
           }}
           secondaryAction={{
             label: t('common.cancel'),
@@ -1099,6 +1106,8 @@ function NetworkReviewFoot(
             if (sshClosureWarning && saved?.management.publicSsh.kind === 'open') {
               props.controls.onDraft({
                 ...sshClosureWarning,
+                // Returning from review edits the same saved base, not the proposed write's revision.
+                revision: plan?.basis.currentPostureRevision ?? saved.revision,
                 management: { ...sshClosureWarning.management, publicSsh: saved.management.publicSsh },
               });
             }
@@ -1158,6 +1167,8 @@ function describePublicSsh(
   observed: 'open' | 'closed' | 'unknown',
   machine: string,
 ): string {
+  if (desired?.kind === 'closed' && saved?.kind === 'open')
+    return t('machineDetailPage.network.publicSshWillClose');
   const said =
     desired?.kind === 'open'
       ? desired.sourceCidrs.every((cidr) => ANYWHERE_CIDRS.has(cidr))

@@ -208,6 +208,7 @@ describe('Machine → Network page', () => {
     });
     const proposed = MachineReachabilityPostureV1Schema.parse({
       ...(plan.basis.change.kind === 'posture' ? plan.basis.change.posture : posture),
+      revision: saved.revision + 1,
       defaultServiceIngress: { kind: 'provider', selection: { provider: { kind: 'builtin', id: 'caddy' }, config: {}, credentialRefs: [] } },
     });
     const reviewed = MachineReachabilityPlanV1Schema.parse({
@@ -237,7 +238,7 @@ describe('Machine → Network page', () => {
     screen.pressByTestId('machine-network-keep-ssh');
     expect(onCancel).toHaveBeenCalledOnce();
     expect(onDraft).toHaveBeenCalledWith({
-      ...proposed, management: { ...proposed.management, publicSsh: saved.management.publicSsh },
+      ...proposed, revision: saved.revision, management: { ...proposed.management, publicSsh: saved.management.publicSsh },
     });
     expect(onApply).not.toHaveBeenCalled();
   });
@@ -400,7 +401,7 @@ describe('Machine → Network page', () => {
     ).toBe('machineDetailPage.network.off');
   });
 
-  it('states an unsaved SSH choice without reporting the Machine as disagreeing with it', async () => {
+  it('labels staged SSH closure as pending while the observed Machine remains open', async () => {
     const { MachineNetworkView } = await import('./MachineNetworkSection');
     const draft = plan.basis.change.kind === 'posture' ? plan.basis.change.posture : null;
     const screen = await renderScreen(
@@ -416,7 +417,28 @@ describe('Machine → Network page', () => {
     );
     // Saved open and observed open agree; the draft (closed) is the person's pending choice, not a mismatch.
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-network-public-ssh' })?.props.subtitle)
-      .toBe('machineDetailPage.network.publicSshClosed');
+      .toBe('machineDetailPage.network.publicSshWillClose');
+  });
+
+  it.each(['plan_changed', 'machine_unavailable'])('gives a readable prepare failure and refresh remedy for %s without retrying the same draft', async errorCode => {
+    const refresh = vi.fn(async () => {});
+    const onCancel = vi.fn();
+    const onDraft = vi.fn();
+    const onPrepare = vi.fn();
+    const screen = await render(model({ kind: 'settled' }, true, refresh), true,
+      { kind: 'failed', plan: null, failure: { ok: false, errorCode, error: errorCode } },
+      { onCancel, onDraft, onPrepare });
+    const card = findTestInstanceByTypeWithProps(screen, SurfaceStateCard, { testID: 'machine-network-review-failed' });
+    expect(card?.props.reason).toBe(errorCode === 'plan_changed'
+      ? 'machineDetailPage.network.planChanged' : 'machineDetailPage.network.prepareRecovery');
+    expect(card?.props.diagnosticCode).toBeUndefined();
+    expect(card?.props.action.label).toBe('common.refresh');
+    await card?.props.action.onPress();
+    if (errorCode === 'plan_changed') expect(onDraft).toHaveBeenCalledWith(null);
+    else expect(onDraft).not.toHaveBeenCalled();
+    expect(onCancel).toHaveBeenCalledOnce();
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(onPrepare).not.toHaveBeenCalled();
   });
 
   it('says when the Machine last answered beside the Happier way in, and nothing when it never has', async () => {

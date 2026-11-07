@@ -155,6 +155,42 @@ const inspected = MachineReachabilityInspectResultV1Schema.parse({
 });
 
 describe('Machine → Network reviewed change', () => {
+  it('prepares the #83 saved revision-zero SSH draft at the next posture revision, including a repeated review', async () => {
+    // MACH-QA-NET-83/owner-inspect.json: metadata 87, observation 14,
+    // saved posture 0. Observation/metadata versions do not version this draft.
+    const saved = MachineReachabilityChangeV1Schema.parse({ kind: 'posture', posture: {
+      revision: 0, management: { providers: [], publicSsh: {
+        kind: 'open', port: 22, sourceCidrs: ['0.0.0.0/0', '::/0'],
+      } }, defaultServiceIngress: { kind: 'none' },
+    } });
+    if (saved.kind !== 'posture') throw new Error('Expected captured posture');
+    const draft = { kind: 'posture' as const, posture: { ...saved.posture,
+      management: { ...saved.posture.management, publicSsh: { kind: 'closed' as const } } } };
+    const next = { ...draft, posture: { ...draft.posture, revision: 1 } };
+    const reviewedPlan = MachineReachabilityPlanV1Schema.parse({ ...plan, basis: {
+      ...plan.basis, currentPostureRevision: 0, change: next,
+    } });
+    executions['machines.reachability.inspect'] = { ok: true, result: {
+      ...inspected, metadataVersion: 87, posture: saved.posture,
+      observation: { ...inspected.observation, revision: 14,
+        management: { daemon: 'ready', providers: [], publicSsh: 'open' }, privateNetworks: [] },
+      plan: reviewedPlan,
+    } };
+    const hook = await renderHook(() => useMachineNetworkReview({ serverId, machineId: 'network-machine' }));
+    try {
+      await act(async () => { await hook.getCurrent().prepare(draft); });
+      expect(requests[0]?.input).toMatchObject({ change: next });
+      expect(hook.getCurrent().review).toMatchObject({ kind: 'review', plan: reviewedPlan });
+      await act(async () => { hook.getCurrent().cancel(); });
+      await act(async () => { await hook.getCurrent().prepare(draft); });
+      expect(requests.map(request => request.input)).toEqual([
+        { serverId, machineId: 'network-machine', change: next },
+        { serverId, machineId: 'network-machine', change: next },
+      ]);
+      expect(draft.posture.revision).toBe(0);
+    } finally { await hook.unmount(); }
+  });
+
   it.each([
     { scenario: 'posture', change },
     { scenario: 'private-network Join', change: MachineReachabilityChangeV1Schema.parse({
@@ -163,7 +199,9 @@ describe('Machine → Network reviewed change', () => {
       },
     }) },
   ])('applies exactly the host-reviewed $scenario plan once; waiting for approval leaves no second Apply', async ({ change }) => {
-    const reviewedPlan = MachineReachabilityPlanV1Schema.parse({ ...plan, basis: { ...plan.basis, change } });
+    const proposedChange = change.kind === 'posture'
+      ? { ...change, posture: { ...change.posture, revision: change.posture.revision + 1 } } : change;
+    const reviewedPlan = MachineReachabilityPlanV1Schema.parse({ ...plan, basis: { ...plan.basis, change: proposedChange } });
     executions['machines.reachability.inspect'] = {
       ok: true,
       result: { ...inspected, plan: reviewedPlan },
@@ -190,7 +228,7 @@ describe('Machine → Network reviewed change', () => {
       expect(requests).toEqual([
         {
           actionId: 'machines.reachability.inspect',
-          input: { serverId, machineId: 'network-machine', change },
+          input: { serverId, machineId: 'network-machine', change: proposedChange },
         },
       ]);
 
@@ -213,7 +251,7 @@ describe('Machine → Network reviewed change', () => {
       expect(configures[0]?.input).toMatchObject({
         reviewedPlanDigest: reviewedPlan.reviewedPlanDigest,
         reviewedPlanBasis: reviewedPlan.basis,
-        change,
+        change: proposedChange,
       });
     } finally {
       await hook.unmount();
