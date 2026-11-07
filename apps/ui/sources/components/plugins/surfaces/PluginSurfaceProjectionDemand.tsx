@@ -13,8 +13,9 @@ import { usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin'
  * An opened Machine-backed surface needs discovery before Administration can
  * select an executable origin. Administration ranks Account descriptors into
  * one read intent before admitting that Machine's actual source. Surfaces
- * presenting every Machine's contributions (the Store) ask each installation
- * for its UI sections.
+ * presenting every Machine's contributions ask each installation for its UI
+ * sections. A directory with complete Availability declarations needs no live
+ * execution facts until a contributed surface is opened.
  */
 export function PluginSurfaceProjectionDemand(props: Readonly<{
     pluginId?: string;
@@ -34,6 +35,7 @@ export function PluginSurfaceProjectionDemand(props: Readonly<{
             for (const plugin of installed.plugins) {
                 if (props.pluginId !== undefined && plugin.pluginId !== props.pluginId) continue;
                 for (const installation of plugin.installations) {
+                    if (props.pluginId === undefined && installation.contributorDeclaration !== null) continue;
                     const { serverIdentityId, machineId } = installation.materialization;
                     const key = JSON.stringify([serverIdentityId, machineId]);
                     if (!targets.has(key)) targets.set(key, { serverIdentityId, machineId });

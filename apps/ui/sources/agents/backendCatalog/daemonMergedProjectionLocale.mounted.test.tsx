@@ -1,6 +1,6 @@
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
 import { flushHookEffects } from '@/dev/testkit/hooks/flushHookEffects';
@@ -34,10 +34,11 @@ const { prepareWarmCacheEncryptionKey } = await import('@/sync/domains/state/war
 const { forgetPluginUiProjectionAdmissionSnapshots, readPluginUiProjectionAdmissionSnapshot } = await import('@/sync/domains/plugins/ui/projectionWarmCache');
 const { normalizePluginUiProjection } = await import('@/sync/domains/plugins/ui/projection');
 const { resolvePluginUiText } = await import('@/sync/domains/plugins/ui/i18n');
-const { usePluginUiProjectionCurrentness } = await import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness');
-const { getPreferredLanguage } = await import('@/text');
+const { usePluginUiProjectionCurrentness, PLUGIN_UI_SECTIONS } = await import('@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness');
+const { getPreferredLanguage, preloadTranslations } = await import('@/text');
 const { clearDaemonMergedProjectionCacheForTests } = await import('./loadDaemonMergedProjectionInputs');
 const { useDaemonMergedProjectionInputs } = await import('./useDaemonMergedProjectionInputs');
+const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 
 const accountScope = { serverId: 'server-1', accountId: 'account-locale-mounted' };
 
@@ -74,6 +75,9 @@ describe('mounted locale-narrowed daemon projection readers', () => {
         await homes.reset();
         accountScope.serverId = await homes.addHome({ name: 'Locale Home', serverUrl: 'https://locale.example.test', accountId: accountScope.accountId });
         await prepareWarmCacheEncryptionKey();
+        // Locale activation waits for its platform bundle; test the projection
+        // refresh independently of the worker's first translation compilation.
+        await preloadTranslations('fr');
         retireActiveServerAccountScopeLifetime();
         clearDaemonMergedProjectionCacheForTests();
         forgetPluginUiProjectionAdmissionSnapshots(accountScope);
@@ -99,10 +103,56 @@ describe('mounted locale-narrowed daemon projection readers', () => {
         await homes.reset();
     });
 
+    it('describes each Machine revision once across mounted projection callers and ignores unrelated revision pushes', async () => {
+        storage.setState({ machines: {
+            ...storage.getState().machines,
+            'machine-2': createMachineFixture({ id: 'machine-2', activeAt: Date.now() }),
+        } });
+        let generation = 41;
+        machineRpc.mockImplementation(async ({ payload }: { payload: { locale: string } }) => ({
+            protocolVersion: 1,
+            projection: { ...localeProjection(payload.locale), generation },
+        }));
+        const usePresentedProjection = (machineId: string) => ({
+            currentness: usePluginUiProjectionCurrentness({ machineId }),
+            merged: useDaemonMergedProjectionInputs({ sections: PLUGIN_UI_SECTIONS, machineId }),
+        });
+        const first = await renderHook(() => usePresentedProjection('machine-1'));
+        const second = await renderHook(() => usePresentedProjection('machine-2'));
+        await vi.waitFor(() => {
+            expect(first.getCurrent().merged.phase).toBe('ready');
+            expect(second.getCurrent().merged.phase).toBe('ready');
+            expect(first.getCurrent().currentness.phase).toBe('current');
+            expect(second.getCurrent().currentness.phase).toBe('current');
+        });
+        const counts = () => ['machine-1', 'machine-2'].map(machineId => machineRpc.mock.calls
+            .filter(([request]) => request.payload.machineId === machineId).length);
+        expect(counts()).toEqual([1, 1]);
+        const lateSubscriber = await renderHook(() => usePresentedProjection('machine-1'));
+        await vi.waitFor(() => expect(lateSubscriber.getCurrent().merged.phase).toBe('ready'));
+        expect(counts()).toEqual([1, 1]);
+        const unchanged = first.getCurrent().merged.inputs;
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({
+            machineId: 'unrelated-machine', serverId: accountScope.serverId,
+        }, 'refresh'));
+        await flushHookEffects();
+        expect(counts()).toEqual([1, 1]);
+        generation = 42;
+        await act(async () => publishMachineContributionRegistryProjectionInvalidation({
+            machineId: 'machine-2', serverId: accountScope.serverId,
+        }, 'refresh'));
+        await vi.waitFor(() => expect(second.getCurrent().merged.inputs?.pluginProjectionV2?.generation).toBe(42));
+        expect(counts()).toEqual([1, 2]);
+        expect(first.getCurrent().merged.inputs).toBe(unchanged);
+        await lateSubscriber.unmount();
+        await second.unmount();
+        await first.unmount();
+    });
+
     it('refreshes mounted successful readers after a remote language update and preserves unrelated-setting identities', async () => {
         const hook = await renderHook(() => ({
             currentness: usePluginUiProjectionCurrentness({ machineId: 'machine-1' }),
-            merged: useDaemonMergedProjectionInputs({ machineId: 'machine-1' }),
+            merged: useDaemonMergedProjectionInputs({ sections: PLUGIN_UI_SECTIONS, machineId: 'machine-1' }),
         }));
         await vi.waitFor(() => {
             expect(hook.getCurrent().currentness).toEqual(expect.objectContaining({ phase: 'current' }));

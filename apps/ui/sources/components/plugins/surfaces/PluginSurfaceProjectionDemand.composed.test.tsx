@@ -17,9 +17,13 @@ import { configureConnectedServerSocketBoundary, installDisconnectedServerSocket
 import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
+import { PluginPagePresentation } from '@/components/plugins/pages/PluginPagePresentation';
 import { AppShellPluginUiProjectionProvider, AppShellPluginUiProjectionValueProvider, useAppShellPluginUiProjection,
     useProjectedConnectedServicesRegistry } from '@/components/appShell/plugins/AppShellPluginUiProjection';
 import { useConnectedServicesAgents } from '@/components/settings/connectedServices/model/useConnectedServicesAgents';
+import PluginStoreKindSurface from '@/components/store/StorePluginKindSurface';
+import { listStoreKindContributions } from '@/components/store/catalog/storeKindContributions';
+import { projectPluginStoreKindDeclarationV1 } from '@happier-dev/protocol/plugins/contributions/storeKinds';
 import { PluginSurfaceProjectionDemand } from './PluginSurfaceProjectionDemand';
 import { usePluginSurfaceExecutionOrigin } from './pluginSurfaceExecutionOrigin';
 import { InputTypePickerHostProvider } from '@/components/sessions/actions/InputTypePickerHostProvider';
@@ -31,6 +35,7 @@ import { ModalProvider } from '@/modal';
 import { PluginPresentedExecutionOriginProjectionDemand } from '@/sync/domains/machines/administration/usePluginExecutionOriginProjectionDemand';
 import { isPluginMachineExecutionOriginCandidateSelectable } from '@/sync/domains/machines/administration/pluginExecutionOrigin';
 import { readCurrentAppShellPluginUiExecutionOriginCandidates, subscribeCommittedAppShellPluginUiProjection } from '@/components/appShell/plugins/committedPluginUiProjection';
+import { WidgetSurface } from '@/components/widgets/surface/WidgetSurface';
 import { readWidgetDescriptor } from '@/components/widgets/widgetCatalog';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { readPluginAccountAvailability } from '@/sync/domains/plugins/availability/projection';
@@ -51,6 +56,190 @@ afterEach(async () => {
     const { serverScopedRpcSocketPool } = await import('@/sync/runtime/orchestration/serverScopedRpc/serverScopedRpcSocketPool');
     await serverScopedRpcSocketPool.stopAll();
     installDisconnectedServerSocketBoundary();
+});
+
+it.each(['page', 'widget', 'store', 'store-directory', 'store-declared-directory'] as const)('shows Machine-installed contributions for a presented %s, with no closed or settled reads', async surface => {
+    const accountId = 'presented-demand-account';
+    const serverIdentityId = `srv_presented_demand_${surface}`;
+    const machine = createMachineFixture({ id: 'presented-machine', activeAt: 0, storageMode: 'plain' });
+    const row = createPlainMachineRowFixture({ id: machine.id, accountId, machine });
+    const pluginId = 'acme.preview';
+    let materialization = PluginMachineMaterializationV1Schema.parse({ serverIdentityId, machineId: machine.id,
+        materializationId: 'preview-install', pluginId, version: '1.0.0', sourceClass: 'localPath',
+        portableRelease: false, uiArtifacts: [], enabled: true, trustState: 'trusted', observedAt: 1 });
+    const widget = widgetProjectionEntry({ pluginId, localId: 'conversations', target: 'app' });
+    // A Machine-local installation reports its runtime occurrence: Administration selects it from these facts.
+    const { PluginMachineExecutionOriginV1Schema } = await import('@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1');
+    const sourceCustody = { kind: 'development', registeredRootId: 'preview-root' } as const;
+    const executionOrigin = PluginMachineExecutionOriginV1Schema.parse({ serverIdentityId,
+        sourceRef: { machineId: machine.id, pluginId, sourceCustody } });
+    const storeKind = projectPluginStoreKindDeclarationV1({ pluginId, pluginVersion: '1.0.0', definition: {
+        id: 'theme', title: 'Themes', viewId: 'store', operations: {
+            list: 'list', read: 'read', installed: 'installed', prepare: 'prepare', acquire: 'acquire', manage: 'manage',
+        },
+    } });
+    const declaredDirectory = surface === 'store-declared-directory';
+    if (declaredDirectory) materialization = PluginMachineMaterializationV1Schema.parse({ ...materialization,
+        // Directory metadata does not depend on acquiring renderer declarations.
+        declaredManifest: {
+            schemaVersion: 2, id: pluginId, version: '1.0.0', displayName: 'Preview', engines: { happier: '^1.0.0' },
+            contributes: { ui: { renderers: [{ id: 'body', kind: 'reactNative', artifact: 'body' }],
+                views: [{ id: 'store', container: 'appPage', target: { kind: 'app' }, renderer: 'body', title: 'Store' }] },
+            storeKinds: [storeKind.definition], actions: Object.values(storeKind.definition.operations).map(id => ({
+                id, title: id, scopes: ['global'], surfaces: ['ui'], placementBindings: [], dangerLevel: 'safe',
+                execution: { target: 'daemon' },
+            })) },
+        },
+    });
+    const deferred = buildDeferredDaemonProjectionSections({ protocolVersion: 1, projectionDigest: 'e'.repeat(64),
+        projection: PluginProjectionV2Schema.parse({ v: 2, generation: 41,
+            installedPackagesById: { [pluginId]: { id: pluginId, displayName: 'Preview', version: '1.0.0',
+                enabled: true, source: { kind: 'localPath', locator: 'preview-install' }, occurrenceId: widget.occurrenceId,
+                executionOrigin, sourceCustody } },
+            familiesById: {
+                storeKinds: { family: 'storeKinds', entriesById: { [storeKind.id]: storeKind } },
+                pluginUi: { family: 'pluginUi', entriesById: { [widget.id]: widget } },
+                skills: { family: 'skills', entriesById: { 'acme.unopened/unopened': {
+                    id: 'acme.unopened/unopened', pluginId: 'acme.unopened', pluginVersion: '1.0.0',
+                    definition: { id: 'unopened', directory: 'skills/unopened' },
+                } } },
+            },
+        }) });
+    const requests: ReturnType<typeof DaemonContributionRegistryProjectionDescribeRequestSchema.parse>[] = [];
+    // Only the Socket transport is substituted. Admission, cache, section
+    // hydration, Account publication, currentness and mounted consumers are real.
+    installDisconnectedServerSocketBoundary(socket => {
+        configureConnectedServerSocketBoundary(socket);
+        vi.spyOn(socket, 'timeout').mockReturnValue(socket);
+        vi.spyOn(socket, 'emitWithAck').mockImplementation(async (event, packet) => {
+            if (event !== 'rpc-call') return { v: 1, ok: true, admittedSessionIds: [] };
+            if (!packet || typeof packet !== 'object' || !('method' in packet)
+                || typeof packet.method !== 'string' || !('params' in packet)) throw new Error('Invalid fixture RPC');
+            expect(packet.method).toBe(`${machine.id}:${RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE}`);
+            const content = { mode: 'plain' as const };
+            const decoded = await socketRpcCodec.decodeRequestParams(content, packet.params, packet.method);
+            const request = DaemonContributionRegistryProjectionDescribeRequestSchema.parse(decoded.params);
+            requests.push(request);
+            const result = request.sectionRead ? deferred.read(request.sectionRead.digest, request.sectionRead.offset,
+                request.sectionRead.includeDigests) : deferred.manifest;
+            return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, decoded.callId) };
+        });
+    });
+    let availabilityCursor = 1;
+    const home = await serveAccountHomes({ homes: [{ key: 'home', serverUrl: `https://presented-${surface}.test`,
+        serverIdentityId, accountId, accountMode: 'plain' }], route: request => {
+        if (request.path === '/v1/machines') return Response.json([row]);
+        if (request.path === '/v1/machines/read-batch') return createMachineReadBatchResponseFixture(request.body,
+            id => id === machine.id ? row : null);
+        if (request.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.materializations.read'])
+            return Response.json(PluginAvailabilityMaterializationsReadActionOutputV1Schema.parse({ availabilityCursor,
+                snapshots: [{ serverIdentityId, machineId: machine.id, materializations: [materialization] }] }));
+        if (request.path === PluginAvailabilityActionHttpPathsV1['account.plugins.availability.intents.list'])
+            return Response.json(PluginAvailabilityIntentsListActionOutputV1Schema.parse({ availabilityCursor, pluginIds: [],
+                intentReads: [{ pluginId, response: PluginAccountAvailabilityIntentReadResponseV1Schema.parse({ availabilityCursor,
+                    hostingCapability: { enabled: false }, intent: null, release: null, packageAssets: [], uiArtifacts: [] }) }], failedPluginIds: [] }));
+        return undefined;
+    } });
+    let tree: Awaited<ReturnType<typeof renderWithAppProviders>> | undefined;
+    try {
+        await waitForHomeGovernance(() => expect(storage.getState().isDataReady).toBe(true));
+        const serverId = home.homes.home!.id;
+        storage.getState().applyMachines([machine], true, { sourceServerId: serverId });
+        observeMachinePresenceForTest({ serverId, accountId }, [machine.id]);
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshPluginAccountAvailability();
+        const lifetime = captureActiveServerAccountScopeLifetime()!;
+        if (declaredDirectory) expect(readPluginAccountAvailability(lifetime.scope).readInstalledPlugins()).toMatchObject({
+            kind: 'available', plugins: [{ pluginId, installations: [{ declarationState: 'known',
+                contributorDeclaration: { contributes: { storeKinds: [storeKind.definition] } },
+                uiModel: { storeKindsById: { [storeKind.id]: { id: storeKind.id } } } }] }],
+        });
+        const target = { machineId: machine.id, serverId, accountLifetime: lifetime };
+        const partial = declaredDirectory ? null : await loadDaemonMergedProjectionCacheEntry({ ...target, sections: [] });
+        if (!declaredDirectory) expect(partial).toMatchObject({ kind: 'ready' });
+        requests.length = 0;
+        let current: ReturnType<typeof usePluginUiProjectionCurrentness> | undefined;
+        function DeclaredDirectoryKinds() {
+            const projection = useAppShellPluginUiProjection();
+            return <>{listStoreKindContributions(projection.pluginUiProjection).filter(kind => kind.key === storeKind.id)
+                .map(kind => React.createElement('StoreKind', { key: kind.key, testID: kind.key }))}</>;
+        }
+        const definition = { kind: 'installed', surface: { pluginId, localId: 'conversations' } } as const;
+        function Presented({ visible }: Readonly<{ visible: boolean }>) {
+            current = usePluginUiProjectionCurrentness({ ...target, load: false });
+            if (declaredDirectory) return <AppShellPluginUiProjectionProvider>
+                <PluginSurfaceProjectionDemand accountScope={lifetime.scope} enabled={visible} />
+                <DeclaredDirectoryKinds />
+            </AppShellPluginUiProjectionProvider>;
+            if (surface === 'store' || surface === 'store-directory') return <AppShellPluginUiProjectionValueProvider
+                value={{ ...current, reloadConnectedAccountProjection: () => {}, clientExecutableActivation: { status: 'ready' },
+                    reloadClientExecutables: () => {} }}>
+                {surface === 'store' ? <PluginStoreKindSurface kind={storeKind.id}
+                    input={{ mode: 'browse', presented: visible }} />
+                    : <PluginSurfaceProjectionDemand accountScope={lifetime.scope} enabled={visible} />}
+                {listStoreKindContributions(current.pluginUiProjection).filter(kind => kind.key === storeKind.id)
+                    .map(kind => React.createElement('StoreKind', { key: kind.key, testID: kind.key }))}
+            </AppShellPluginUiProjectionValueProvider>;
+            // A presented page or widget shows one Administration-selected origin; the app shell owns that selection.
+            return <AppShellPluginUiProjectionProvider>{surface === 'page' ? <PluginPagePresentation pluginId={pluginId} localId="channels"
+                accountScope={lifetime.scope} visible={visible} demandProjection actions={null} /> : <WidgetSurface
+                scope={{ ...lifetime.scope, owner: { kind: 'home' } }}
+                instance={{ v: 1, id: 'cold-widget', definition, bindings: {} }}
+                descriptor={readWidgetDescriptor(current.pluginUiProjection, definition)} appRuntime={current}
+                providedContext={{}} enabled={visible} recordRevision="cold:1" presentation="content" testID="cold-widget"
+                reference={React.createElement('ReadyWidgetReference', { testID: 'cold-widget-ready' })} />}</AppShellPluginUiProjectionProvider>;
+        }
+        tree = await renderWithAppProviders(<Presented visible={false} />);
+        expect(current?.phase).toBe('establishing');
+        expect(requests).toEqual([]);
+        if (surface === 'store' || surface === 'store-directory') expect(tree.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(0);
+        await tree.update(<Presented visible />);
+        if (declaredDirectory) {
+            await waitForHomeGovernance(() => expect(tree!.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(1));
+            await flushHookEffects();
+            expect(requests).toHaveLength(0);
+            expect(current?.phase).toBe('establishing');
+            await tree.update(<Presented visible={false} />);
+            await tree.update(<Presented visible />);
+            await flushHookEffects();
+            expect(requests).toHaveLength(0);
+            // When the census no longer supplies these declarations, discovery
+            // must acquire the live source rather than treating unread as empty.
+            materialization = PluginMachineMaterializationV1Schema.parse({ ...materialization,
+                declaredManifest: undefined, declaredUiEntries: undefined, observedAt: 2 });
+            availabilityCursor += 1;
+            await act(async () => { await sync.refreshPluginAccountAvailability(); });
+            await waitForHomeGovernance(() => expect(current?.phase).toBe('current'));
+            expect(requests.length).toBeGreaterThan(0);
+            expect(tree.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(1);
+            return;
+        }
+        await waitForHomeGovernance(() => expect(current?.phase).toBe('current'));
+        expect(requests.length).toBeGreaterThan(0);
+        // The ready target manifest is reused. Framing remains the section
+        // owner's concern; every needed digest/page is acquired at most once.
+        expect(requests.every(request => request.sectionRead !== undefined)).toBe(true);
+        expect(new Set(requests.map(request => JSON.stringify([request.sectionRead?.digest, request.sectionRead?.offset]))).size)
+            .toBe(requests.length);
+        const complete = readCachedDaemonMergedProjectionCacheEntry({ ...target, sections: PLUGIN_UI_SECTIONS });
+        expect(complete).toMatchObject({ kind: 'ready' });
+        expect(complete?.deferredProjection?.loadedSections).toEqual(expect.arrayContaining([
+            ...(partial?.deferredProjection?.loadedSections ?? []), ...demandedDaemonProjectionSections(deferred.manifest, PLUGIN_UI_SECTIONS),
+        ]));
+        expect(complete?.deferredProjection?.loadedSections).not.toContain('familiesById.skills');
+        if (surface === 'widget') expect(tree.tree.root.findAllByProps({ testID: 'cold-widget-ready' })).toHaveLength(1);
+        if (surface === 'store' || surface === 'store-directory') expect(tree.tree.root.findAllByProps({ testID: storeKind.id })).toHaveLength(1);
+        const settledReads = requests.length;
+        await tree.update(<Presented visible />);
+        await tree.update(<Presented visible={false} />);
+        vi.useFakeTimers();
+        await flushHookEffects({ cycles: 1, advanceTimersMs: 180_000 });
+        expect(requests).toHaveLength(settledReads);
+    } finally {
+        vi.useRealTimers();
+        if (tree) await act(async () => tree.unmount());
+        await home.dispose();
+    }
 });
 
 /** The measured 20-Machine cold fleet; only the Socket and HTTP transports are substituted. */
