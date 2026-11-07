@@ -20,7 +20,9 @@ export function resolveAttachedRunRuntimeContext(params: Readonly<{
       session: params.session as ApiSessionClient,
       metadata: resolvedMetadata,
     })
-    : resolvedMetadata.path;
+    // Attached compatibility metadata can omit the workspace. The launch
+    // metadata still holds this process's actual working directory.
+    : resolvedMetadata.path || params.metadata.path || undefined;
 
   return {
     resolvedMetadata,

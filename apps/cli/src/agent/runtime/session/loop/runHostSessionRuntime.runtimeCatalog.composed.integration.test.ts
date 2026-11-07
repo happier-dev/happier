@@ -51,6 +51,9 @@ import { prepareSessionRunnerRestartAdmission } from '../input/sessionProviderIn
 import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
 import { CheckpointCodeRollbackResultSchema } from '@happier-dev/protocol/sessions/control/rollback/checkpointCodeRollback';
 import { buildRepositoryCheckpointRefs } from '@/scm/checkpoints';
+import { createRunnerPluginMcpPort } from '../process/runnerPluginMcp';
+import { AgentRuntimeDaemonServiceRequestV1Schema } from '../process/agentRuntimeDaemonServiceProtocol';
+import type { DaemonAgentRuntimeTurnContributionsBridge } from '../process/agentRuntimeDaemonTurnContributionsBridge';
 
 import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
@@ -1143,7 +1146,7 @@ describe('runHostSessionRuntime', () => {
     await pluginReloadController.shutdown({ timeoutMs: 5_000 });
   });
 
-  it.each(['create', 'resume', 'missing-skill', 'admitted-route', 'retired-during-skills', 'parallel-capabilities', 'parallel-capabilities-retired', 'capabilities-timing', 'selected-role', 'selected-role-account-wake', 'selected-role-later-turn', 'selected-role-loading', 'selected-role-loading-unavailable', 'selected-role-settings-refresh'] as const)(
+  it.each(['create', 'resume', 'attached-empty-path', 'missing-skill', 'admitted-route', 'retired-during-skills', 'parallel-capabilities', 'parallel-capabilities-retired', 'capabilities-timing', 'selected-role', 'selected-role-account-wake', 'selected-role-later-turn', 'selected-role-loading', 'selected-role-loading-unavailable', 'selected-role-settings-refresh'] as const)(
     'starts the real host runner with a skipped optional MCP server once for %s', async scenario => {
       const harness = createHarness('session-1', { managedMcpSelection: 'account-default' });
       if (!runtimeRegistryLease) throw new Error('Missing runtime fixture');
@@ -1165,6 +1168,49 @@ describe('runHostSessionRuntime', () => {
       } };
       harness.opts.credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'optional-account' })).toString('base64url')}.signature`, encryption: null };
       if (scenario === 'resume') harness.opts.resume = 'vendor-optional-session';
+      const preparedDirectories: string[] = [];
+      if (scenario === 'attached-empty-path') {
+        // A direct local runner holds stored sign-in provenance; the offline
+        // transport must not manufacture a remote requester custody grant.
+        harness.opts.credentials = { ...harness.opts.credentials, credentialProvenance: 'stored_session' };
+        harness.config.localWorkflow = true;
+        await harness.session.updateMetadata((metadata: Metadata) => ({ ...metadata, path: '' }));
+        harness.config.startupBootstrap = { create: async () => ({
+          api: { push: () => null }, session: harness.session, machineId: 'machine-1',
+          metadata: createTestMetadata({ path: '/tmp/workspace' }), attachedToExistingSession: true,
+          reconnectionHandle: null,
+        }) };
+        const pluginMcp = createRunnerPluginMcpPort({ sessionId: harness.session.sessionId,
+          signal: new AbortController().signal,
+          // The daemon process is the boundary. Keep the runner port and its
+          // strict request schema real, including operation.directory admission.
+          dispatch: async operation => {
+            AgentRuntimeDaemonServiceRequestV1Schema.parse({ v: 1,
+              context: { token: 'A'.repeat(43), sessionId: harness.session.sessionId }, operation });
+            if (operation.kind === 'mcp.plugin.prepare') {
+              preparedDirectories.push(operation.directory);
+              return { ok: true, result: { kind: 'mcp.plugin.prepared', items: [] } };
+            }
+            if (operation.kind === 'mcp.plugin.discover') return { ok: true,
+              result: { kind: 'mcp.plugin.discovered', detectedServers: [] } };
+            if (operation.kind === 'mcp.plugin.close') return { ok: true, result: { kind: 'mcp.plugin.closed' } };
+            throw new Error(`Unexpected daemon operation: ${operation.kind}`);
+          } });
+        onTestFinished(() => pluginMcp.dispose());
+        const daemonBridge: DaemonAgentRuntimeTurnContributionsBridge = {
+          pluginMcp: pluginMcp.port,
+          resolvePrompt: async () => ({ kind: 'prompt', toolContributions: [], assetContributions: [] }),
+          resolveAgentComposition: async () => ({ kind: 'composition', managedPluginIds: [], selectedTools: [],
+            selectedToolBindings: [], promptAssetBlocks: [], toolPromptContributions: [], additionalInstructions: [] }),
+          resolveComposerReference: async () => { throw new Error('No composer reference in this launch'); },
+          resolveComposerAttachment: async () => { throw new Error('No composer attachment in this launch'); },
+          afterComposerAttachmentMessageAccepted: async () => undefined,
+          transformAgentContext: async ({ payload }) => payload,
+          transformSessionInput: async ({ payload }) => payload,
+          transformAgentRequest: async ({ payload }) => payload,
+        };
+        harness.deps.sessionLoopLifecycleDeps = { daemonTurnContributionsBridge: daemonBridge };
+      }
       const selectedRole = scenario.startsWith('selected-role');
       const loadingRole = scenario.startsWith('selected-role-loading');
       const settingsRefresh = scenario === 'selected-role-settings-refresh';
@@ -1422,6 +1468,7 @@ describe('runHostSessionRuntime', () => {
         }
         expect(constructionDiagnostic.mock.calls.filter(([message]) => message.includes('Session construction failed'))).toEqual([]);
         expect(opened).toBe(true);
+        if (scenario === 'attached-empty-path') expect(preparedDirectories).toEqual(['/tmp/workspace']);
         if (scenario === 'capabilities-timing') {
           console.info('PERF4 host capability boundary measurement', { durationMs: Math.round(boundaryFinishedAt - boundaryStartedAt!), peak: boundaryPeak });
           expect(boundaryPeak).toBe(2);
