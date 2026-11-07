@@ -924,12 +924,14 @@ function useAccountLocalBindingEnablement(input: Readonly<{
   onCommitted: () => void;
 }>): BindingEnablementOperation {
   const { collection } = input;
+  const host = usePluginHostApi();
   const commit = React.useCallback(async (
     write: BindingEnablementInput,
     signal: AbortSignal,
-  ): Promise<ConversationBindingEnablementResult> => (
-    await setConversationBindingEnabledInAccountCollection({ collection, ...write, signal })
-  ), [collection]);
+  ): Promise<ConversationBindingEnablementResult | null> => {
+    if (!await host.admitAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled, write, { signal })) return null;
+    return await setConversationBindingEnabledInAccountCollection({ collection, ...write, signal });
+  }, [collection, host]);
   return useAccountLocalMutation({
     signal: input.signal,
     onCommitted: input.onCommitted,
@@ -999,12 +1001,14 @@ function useAccountLocalConnectionPolicy(input: Readonly<{
   onCommitted: () => void;
 }>): ConnectionPolicyOperation {
   const { collection } = input;
+  const host = usePluginHostApi();
   const commit = React.useCallback(async (
     write: ConnectionPolicyInput,
     signal: AbortSignal,
-  ): Promise<ConversationConnectionLifecycleMutationResult> => (
-    await updateConversationConnectionInAccountCollection({ collection, ...write, signal })
-  ), [collection]);
+  ): Promise<ConversationConnectionLifecycleMutationResult | null> => {
+    if (!await host.admitAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate, write, { signal })) return null;
+    return await updateConversationConnectionInAccountCollection({ collection, ...write, signal });
+  }, [collection, host]);
   return useAccountLocalMutation({
     signal: input.signal,
     onCommitted: input.onCommitted,
@@ -1050,17 +1054,19 @@ function useAccountLocalDeliveryResolution(input: Readonly<{
   onCommitted: () => void;
 }>): DeliveryResolveOperation {
   const { deliveriesCollection, stateCollection } = input;
+  const host = usePluginHostApi();
   const commit = React.useCallback(async (
     write: DeliveryResolveInput,
     signal: AbortSignal,
-  ) => (
-    await resolveConversationOutwardDeliveryCustodyInAccountCollection({
+  ) => {
+    if (!await host.admitAction(CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryResolve, write, { signal })) return null;
+    return await resolveConversationOutwardDeliveryCustodyInAccountCollection({
       stateCollection,
       deliveriesCollection,
       ...write,
       signal,
-    })
-  ), [deliveriesCollection, stateCollection]);
+    });
+  }, [deliveriesCollection, host, stateCollection]);
   return useAccountLocalMutation({
     signal: input.signal,
     onCommitted: input.onCommitted,

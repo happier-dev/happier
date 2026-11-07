@@ -1112,6 +1112,7 @@ function createOfflineChannelStateFixture() {
     async query(request: Readonly<{
       index: string;
       prefix?: readonly unknown[];
+      prefixes?: readonly (readonly unknown[])[];
       range?: Readonly<{ lower?: unknown; upper?: unknown }>;
       limit?: number;
     }>) {
@@ -1121,13 +1122,13 @@ function createOfflineChannelStateFixture() {
         return { rows: [], changeCursor: 1 };
       }
       const matching = [...deliveryRows.values()]
-        .filter((row) => row.value['connection-id'] === request.prefix?.[0]
+        .filter((row) => (request.prefixes ?? [request.prefix]).some(prefix => row.value['connection-id'] === prefix?.[0]
           && (request.index === CHANNEL_DELIVERIES_INDEX_ID.byOwnerAttention
             || (row.value.attention === true
               // The attention owner uses a full prefix; the resolution page
               // selects the same scalar with an equality range.
-              && (request.prefix?.[1] === true
-                || (request.range?.lower === true && request.range?.upper === true)))))
+              && (prefix?.[1] === true
+                || (request.range?.lower === true && request.range?.upper === true))))))
         .sort((left, right) => left.rowId.localeCompare(right.rowId));
       return { rows: matching, changeCursor: 1 };
     },
@@ -8630,6 +8631,84 @@ describe('Channels connection lifecycle actions', () => {
 });
 
 describe('Channels offline Account-local binding policy', () => {
+  describe.each([
+    { operation: 'connection', action: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.connectionUpdate },
+    { operation: 'binding', action: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.bindingSetEnabled },
+    { operation: 'accept', action: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryResolve },
+    { operation: 'discard', action: CONVERSATION_MANAGEMENT_ACTION_IDS_V1.deliveryResolve },
+  ] as const)('$operation admission', ({ operation, action }) => {
+    it.each(['Off', 'Ask', 'Allow'] as const)('honors the host %s decision before an offline Collection write', async policy => {
+      const account = createOfflineChannelStateFixture();
+      const ambiguous = offlineAmbiguousDeliveryRow();
+      if (operation === 'accept' || operation === 'discard') account.deliveries.rows.set(ambiguous.rowId, ambiguous);
+      let answer: ((admitted: boolean) => void) | undefined;
+      // Admission crosses the host IPC boundary. Saved-policy evaluation stays
+      // with the real host; this surface consumes its refusal/approval result.
+      const admitAction = vi.fn<NonNullable<PluginUiTestkitHostHandlers['admitAction']>>(async () => {
+        if (policy === 'Off') throw new PluginError({ code: 'action_disabled' });
+        if (policy === 'Ask') return await new Promise<boolean>(resolve => { answer = resolve; });
+        return true;
+      });
+      const fixture = await createPluginUiTestkit({
+        identity: { instanceId: 'channels-offline-admission', mountNonce: 'channels-offline-admission' },
+        authorPlugin: { id: 'happier.channels', version: '0.0.0' },
+        surface: renderSurface,
+        surfaceContext: operation === 'binding' ? createChannelsPageSurfaceContext() : createChannelsSurfaceContext(),
+        ...(operation === 'binding' ? { subPath: 'binding-1' } : {}),
+        adapter: createChannelsSemanticAdapter(account.dataClient),
+        handlers: { admitAction },
+      });
+      const row = () => operation === 'connection'
+        ? account.collection.rows.get('connection-1')
+        : operation === 'binding'
+          ? account.collection.rows.get('binding-1')
+          : account.deliveries.rows.get(ambiguous.rowId);
+      const originalRevision = row()?.revision;
+      const submit = async () => {
+        if (operation === 'connection') {
+          await pressByTestId('channels-connection-save');
+        } else if (operation === 'binding') {
+          await fixture.press(await fixture.findByRole('button', { name: 'Turn on' }));
+        } else {
+          await pressByTestId(`channels-delivery-resolution-${operation}-${OFFLINE_AMBIGUOUS_CUSTODY_ID}`);
+        }
+      };
+      try {
+        if (operation === 'connection') {
+          await vi.waitFor(() => expect(document.querySelector('[data-testid="channels-connection-connection-1"]')).not.toBeNull());
+          await pressByTestId('channels-connection-connection-1');
+          await pressByTestId('channels-connection-enabled');
+        } else if (operation !== 'binding') {
+          await pressButtonWithAccessibleLabelFragment('Example conversation');
+          await vi.waitFor(() => expect(document.querySelector('[data-testid="channels-delivery-resolution-controls"]')).not.toBeNull());
+          await openDeliveryDecision(OFFLINE_AMBIGUOUS_CUSTODY_ID);
+        }
+        await submit();
+        if (policy !== 'Allow') {
+          expect(row()?.revision).toBe(originalRevision);
+          expect(account.collection.batches).toHaveLength(0);
+        }
+        await vi.waitFor(() => expect(admitAction).toHaveBeenCalledWith(expect.objectContaining({ action })));
+        if (policy === 'Ask') {
+          await act(async () => { answer?.(false); });
+          expect(row()?.revision).toBe(originalRevision);
+          await submit();
+          await vi.waitFor(() => expect(admitAction).toHaveBeenCalledTimes(2));
+          expect(row()?.revision).toBe(originalRevision);
+          await act(async () => { answer?.(true); });
+        }
+        if (policy !== 'Off') {
+          await vi.waitFor(() => expect(row()?.revision).toBe((originalRevision ?? 0) + 1));
+          expect(row()?.value.payload).toMatchObject(operation === 'connection'
+            ? { enabled: false }
+            : operation === 'binding'
+              ? { enabled: true }
+              : { state: 'resolved', outcome: operation === 'accept' ? 'accepted' : 'discarded' });
+        }
+      } finally { await fixture.dispose(); }
+    });
+  });
+
   it('does not present an unread Resource as retained binding details after its first read fails', async () => {
     const fixture = await createPluginUiTestkit({
       identity: { instanceId: 'channels-unread', mountNonce: 'channels-unread' },
@@ -8807,6 +8886,7 @@ describe('Channels offline Account-local binding policy', () => {
       surfaceContext: createChannelsSurfaceContext(),
       adapter: createChannelsSemanticAdapter(account.dataClient),
       handlers: {
+        admitAction: async () => true,
         selectActionInput: async () => ({ kind: 'cancelled' as const }),
       },
     });
@@ -10184,6 +10264,7 @@ describe('Channels collapsed row identity', () => {
       surfaceContext: createChannelsSurfaceContext(),
       adapter: createChannelsSemanticAdapter(account.dataClient),
       handlers: {
+        admitAction: async () => true,
         selectActionInput: async () => ({ kind: 'cancelled' as const }),
       },
     });
