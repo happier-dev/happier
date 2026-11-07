@@ -8,13 +8,22 @@ import { useKeyboardShortcutHandlers } from '@/keyboard/KeyboardShortcutProvider
 import type { KeyboardShortcutHandlers } from '@/keyboard/runtime';
 import { Modal } from '@/modal';
 import { t } from '@/text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
+import { useOptionalSessionTranscriptSource } from '@/components/sessions/transcript/source/SessionTranscriptSourceContext';
 
 import type { TranscriptBulkCopyFormat, TranscriptSelectableMessageText } from './_types';
 import { formatSelectedMessagesForClipboard } from './formatSelectedMessagesForClipboard';
 import { useTranscriptSelectionActions, useTranscriptSelectionState } from './TranscriptMessageSelectionContext';
 
 export type TranscriptSelectionToolbarMessage = TranscriptSelectableMessageText & Readonly<{ id: string }>;
+
+export type TranscriptSelectionToolbarAction = Readonly<{
+    testID: string;
+    label: string;
+    accessibilityLabel?: string;
+    primary?: boolean;
+    onPress: (messages: ReadonlyArray<TranscriptSelectionToolbarMessage>) => void | Promise<void>;
+}>;
 
 const TRANSCRIPT_SELECTION_COPY_FEEDBACK_MS = 1200;
 
@@ -27,15 +36,17 @@ export function TranscriptSelectionToolbar(props: Readonly<{
     /** Allows another canonical message owner to supply the same neutral selection text. */
     formatSelection?: (messages: ReadonlyArray<TranscriptSelectionToolbarMessage>) => string | null;
     selectionUnavailableText?: string;
-    additionalAction?: Readonly<{
-        testID: string;
-        label: string;
-        accessibilityLabel?: string;
-        onPress: (messages: ReadonlyArray<TranscriptSelectionToolbarMessage>) => void | Promise<void>;
-    }>;
+    /**
+     * The caller's own selection actions. At most one is `primary` (what this selection was made for,
+     * e.g. Ask an agent); it stays beside Copy, and Send to session then waits under ⋯ with the rest,
+     * so the bar keeps one primary. Without a primary every action stays inline, as on a Session.
+     */
+    additionalActions?: ReadonlyArray<TranscriptSelectionToolbarAction>;
     onSendToSession?: (messages: ReadonlyArray<TranscriptSelectionToolbarMessage>) => void | Promise<void>;
 }>): React.ReactElement | null {
     const state = useTranscriptSelectionState();
+    const transcriptSource = useOptionalSessionTranscriptSource();
+    const writeClipboard = useClipboardWrite(transcriptSource?.serverId, { enabled: state.selectedIds.size > 0 });
     const actions = useTranscriptSelectionActions();
     const [busyAction, setBusyAction] = React.useState<'copy' | 'send' | 'additional' | null>(null);
     const [copySucceeded, setCopySucceeded] = React.useState(false);
@@ -66,7 +77,7 @@ export function TranscriptSelectionToolbar(props: Readonly<{
         if (formattedSelection === null || busyAction) return;
         setBusyAction('copy');
         try {
-            const ok = await setClipboardStringSafe(formattedSelection);
+            const ok = await writeClipboard(formattedSelection);
             if (!ok) {
                 Modal.alert(t('common.error'), t('transcript.selection.copyFailed'));
                 return;
@@ -84,17 +95,17 @@ export function TranscriptSelectionToolbar(props: Readonly<{
         } finally {
             setBusyAction(null);
         }
-    }, [busyAction, formattedSelection]);
+    }, [busyAction, formattedSelection, writeClipboard]);
 
-    const handleAdditionalAction = React.useCallback(async () => {
-        if (!props.additionalAction || selectedMessages.length === 0 || selectionUnavailable || busyAction) return;
+    const handleAdditionalAction = React.useCallback(async (action: TranscriptSelectionToolbarAction) => {
+        if (selectedMessages.length === 0 || selectionUnavailable || busyAction) return;
         setBusyAction('additional');
         try {
-            await props.additionalAction.onPress(selectedMessages);
+            await action.onPress(selectedMessages);
         } finally {
             setBusyAction(null);
         }
-    }, [busyAction, props.additionalAction, selectedMessages, selectionUnavailable]);
+    }, [busyAction, selectedMessages, selectionUnavailable]);
 
     const handleSend = React.useCallback(async () => {
         if (!props.onSendToSession || selectedMessages.length === 0 || selectionUnavailable || busyAction) return;
@@ -121,6 +132,8 @@ export function TranscriptSelectionToolbar(props: Readonly<{
     useKeyboardShortcutHandlers(shortcutHandlers);
 
     const outwardDisabled = selectedMessages.length === 0 || selectionUnavailable || busyAction != null;
+    const additionalActions = props.additionalActions ?? [];
+    const callerPrimary = additionalActions.some((action) => action.primary === true);
     const barActions: HappierSelectionActionBarAction[] = [
         {
             id: 'copy',
@@ -138,19 +151,20 @@ export function TranscriptSelectionToolbar(props: Readonly<{
             accessibilityLabel: t('transcript.selection.sendA11y', { count: state.count }),
             disabled: outwardDisabled,
             renderIcon: (color: string) => <Icon name="arrow-right" size={14} color={color} />,
+            ...(callerPrimary ? { placement: 'menu' as const } : {}),
             onPress: handleSend,
         }] : []),
-        ...(props.additionalAction ? [{
-            id: 'additional',
-            testID: props.additionalAction.testID,
-            label: props.additionalAction.label,
-            accessibilityLabel: props.additionalAction.accessibilityLabel,
-            // The caller's own action (Ask Agent) is the one this selection was made for.
-            emphasis: 'primary' as const,
+        ...additionalActions.map((action, index) => ({
+            id: `additional:${index}`,
+            testID: action.testID,
+            label: action.label,
+            accessibilityLabel: action.accessibilityLabel,
+            // The caller's primary (Ask Agent) is the one this selection was made for; the rest wait under ⋯.
+            ...(action.primary ? { emphasis: 'primary' as const } : callerPrimary ? { placement: 'menu' as const } : {}),
             disabled: outwardDisabled,
-            renderIcon: (color: string) => <Icon name="sparkle" size={14} color={color} />,
-            onPress: handleAdditionalAction,
-        }] : []),
+            ...(action.primary ? { renderIcon: (color: string) => <Icon name="sparkle" size={14} color={color} /> } : {}),
+            onPress: () => handleAdditionalAction(action),
+        })),
         {
             id: 'select-all',
             testID: 'transcript-selection-select-all',

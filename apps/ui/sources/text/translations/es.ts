@@ -2140,6 +2140,11 @@ export const es: TranslationStructure = {
   },
 
   approvals: {
+    requesterRunsAs: "Se ejecuta como",
+    requesterWritesWith: "Escribe con",
+    requesterAction: "Acción",
+    requesterRecord: "Happier guarda quién lo pidió, qué acción se ejecutó y el resultado",
+    requesterActionsSettings: "Ajustes → Acciones",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} está sin conexión. La solicitud espera; no se escribe nada hasta que confirmes.`,
     confidential: {
       review: "Revisar credencial",

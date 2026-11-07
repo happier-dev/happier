@@ -247,7 +247,7 @@ import { resolveSessionGoalActionCapabilityProfile, supportsEditableSessionGoals
 import type { SessionParticipantTarget } from "@/sync/domains/session/participants/participantTargets";
 import type { PendingMessage } from "@/sync/domains/state/storageTypes";
 import { resolvePendingActivationBanner } from "@/components/sessions/pending/resolvePendingActivationBanner";
-import { SessionExchangeCheckInBanner } from "@/components/sessions/pending/ExchangeCheckInBanner";
+import { findExchangeCheckInRoot, SessionExchangeCheckInBanner } from "@/components/sessions/pending/ExchangeCheckInBanner";
 import { useManagedPendingWakeObservation } from "@/components/sessions/pending/useManagedPendingWakeObservation";
 import { useMachineListStatusForServer } from "@/sync/domains/state/storage";
 import { deriveManagedWakeProjection } from "@/sync/domains/pending/managedWakeProjection";
@@ -5546,8 +5546,7 @@ export function useSessionComposerController({
             };
         }, [connectedServicesAuthRecoveryChip, hasWriteAccess, pendingActivationPresentation, sessionDeliveryFailure, sessionStatus.statusColor, theme.colors.state.attention.textForeground]);
         // An agent exchange paused for the person (lab T1): the held input carries its exact original root.
-        const exchangeCheckInRoot = React.useMemo(() => pendingMessages.find((message) =>
-            message.pendingDeliveryBlockedReason === 'autonomous_check_in')?.pendingAutonomousExchangeRoot ?? null, [pendingMessages]);
+        const exchangeCheckInRoot = React.useMemo(() => findExchangeCheckInRoot(pendingMessages), [pendingMessages]);
         // The main transcript's queue size, said once on the line instead of a header over the queue.
         // A first message still owned by the New Session launch is not queued input.
         const mainPendingCount = React.useMemo(

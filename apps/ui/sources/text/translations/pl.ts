@@ -1967,6 +1967,11 @@ export const pl: TranslationStructure = {
   },
 
   approvals: {
+    requesterRunsAs: "Wykonuje jako",
+    requesterWritesWith: "Zapisuje przy użyciu",
+    requesterAction: "Akcja",
+    requesterRecord: "Happier zapisuje, kto poprosił, jaka akcja została wykonana i z jakim wynikiem",
+    requesterActionsSettings: "Ustawienia → Akcje",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} jest offline. Prośba czeka; nic nie zostanie zapisane przed potwierdzeniem.`,
     confidential: {
       review: "Sprawdź dane dostępowe",

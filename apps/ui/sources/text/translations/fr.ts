@@ -1975,6 +1975,11 @@ export const fr: TranslationStructure = {
   },
 
   approvals: {
+    requesterRunsAs: "S’exécute en tant que",
+    requesterWritesWith: "Écrit avec",
+    requesterAction: "Action",
+    requesterRecord: "Happier conserve qui a fait la demande, quelle action a été exécutée et le résultat",
+    requesterActionsSettings: "Réglages → Actions",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} est hors ligne. La demande attend ; rien n’est écrit avant votre confirmation.`,
     confidential: {
       review: "Examiner le secret",

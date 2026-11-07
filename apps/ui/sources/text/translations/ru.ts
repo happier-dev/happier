@@ -1968,6 +1968,11 @@ export const ru: TranslationStructure = {
   },
 
   approvals: {
+    requesterRunsAs: "Выполняется от имени",
+    requesterWritesWith: "Запись с помощью",
+    requesterAction: "Действие",
+    requesterRecord: "Happier сохраняет, кто отправил запрос, какое действие выполнено и с каким результатом",
+    requesterActionsSettings: "Настройки → Действия",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} не в сети. Запрос ожидает; до вашего подтверждения ничего не будет записано.`,
     confidential: {
       review: "Проверить учётные данные",

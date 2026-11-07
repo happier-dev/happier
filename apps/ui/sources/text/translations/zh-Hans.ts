@@ -1952,6 +1952,11 @@ export const zhHans: TranslationStructure = {
   },
 
   approvals: {
+    requesterRunsAs: "运行身份",
+    requesterWritesWith: "写入凭据",
+    requesterAction: "操作",
+    requesterRecord: "Happier 会记录请求者、执行的操作和结果",
+    requesterActionsSettings: "设置 → 操作",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} 已离线。请求将等待；确认之前不会写入任何内容。`,
     confidential: {
       review: "审核凭据",

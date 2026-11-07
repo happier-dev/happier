@@ -1,8 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, renderScreen } from '@/dev/testkit';
 
 import { TranscriptMessageSelectionProvider, useTranscriptSelectionActions } from './TranscriptMessageSelectionContext';
 import { TranscriptSelectionToolbar } from './TranscriptSelectionToolbar';
@@ -12,6 +12,9 @@ import { SessionTranscriptSourceProvider } from '../source/SessionTranscriptSour
 
 const keyboardShortcutHandlersMock = vi.hoisted(() => vi.fn());
 const setClipboardStringSafeMock = vi.fn(async (_value: string) => true);
+beforeEach(() => installBrowserClipboardBoundary(async text => { await setClipboardStringSafeMock(text); }));
+
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 
 vi.mock('@/keyboard/KeyboardShortcutProvider', () => ({
     useKeyboardShortcutHandlers: (handlers: Record<string, () => void>) => {
@@ -20,8 +23,8 @@ vi.mock('@/keyboard/KeyboardShortcutProvider', () => ({
     },
 }));
 
-vi.mock('@/utils/ui/clipboard', () => ({
-    setClipboardStringSafe: (value: string) => setClipboardStringSafeMock(value),
+vi.mock('expo-clipboard', () => ({
+    setStringAsync: (value: string) => setClipboardStringSafeMock(value),
 }));
 
 vi.mock('@/modal', () => ({
@@ -34,7 +37,7 @@ function ToolbarHarness(props: {
     maxWidth?: number;
     formatSelection?: (messages: ReadonlyArray<{ id: string }>) => string | null;
     selectionUnavailableText?: string;
-    additionalAction?: React.ComponentProps<typeof TranscriptSelectionToolbar>['additionalAction'];
+    additionalActions?: React.ComponentProps<typeof TranscriptSelectionToolbar>['additionalActions'];
 }) {
     const actions = useTranscriptSelectionActions();
     return (
@@ -52,7 +55,7 @@ function ToolbarHarness(props: {
                 onSendToSession={props.onSend}
                 formatSelection={props.formatSelection}
                 selectionUnavailableText={props.selectionUnavailableText}
-                additionalAction={props.additionalAction}
+                additionalActions={props.additionalActions}
                 maxWidth={props.maxWidth}
             />
         </>
@@ -137,29 +140,33 @@ describe('TranscriptSelectionToolbar', () => {
         expect(findAllPressablesByTestId(screen, 'transcript-selection-cancel')).toHaveLength(1);
     });
 
-    it('draws the one shared selection bar: count, Copy · Send · Ask Agent (primary) · Select all, then ✕', async () => {
+    it('draws the one shared selection bar: count, Copy · Ask Agent (primary) · Select all, ⋯ holding Send, then ✕', async () => {
         const screen = await renderToolbar({
             maxWidth: 320,
             sendEnabled: true,
             onSend: vi.fn(),
-            additionalAction: {
+            additionalActions: [{
                 testID: 'discussion-selection-ask-agent',
                 label: 'Ask Agent',
+                primary: true,
                 onPress: vi.fn(),
-            },
+            }],
         });
 
         await pressByTestId(screen, 'enter-a');
 
         for (const testID of [
             'transcript-selection-copy',
-            'transcript-selection-send',
             'discussion-selection-ask-agent',
             'transcript-selection-select-all',
             'transcript-selection-cancel',
         ]) {
             expect(findAllPressablesByTestId(screen, testID)).toHaveLength(1);
         }
+        // With a caller's primary, the bar keeps one primary: Send to session waits under ⋯ (CR5).
+        expect(findAllPressablesByTestId(screen, 'transcript-selection-send')).toHaveLength(0);
+        expect(screen.findAll((node) => node.props?.hasPopup === 'menu' && typeof node.props.onPress === 'function').length)
+            .toBeGreaterThan(0);
         // The ✕ is named for assistive technology rather than printed.
         expect(findPressableByTestId(screen, 'transcript-selection-cancel').props.accessibilityLabel).toBe('Exit selection mode');
     });
@@ -235,11 +242,12 @@ describe('TranscriptSelectionToolbar', () => {
     it('mounts one canonical additional selection action with the selected rows', async () => {
         const onPress = vi.fn();
         const screen = await renderToolbar({
-            additionalAction: {
+            additionalActions: [{
                 testID: 'discussion-selection-ask-agent',
                 label: 'Ask Agent',
+                primary: true,
                 onPress,
-            },
+            }],
         });
 
         await pressByTestId(screen, 'enter-a');
@@ -255,7 +263,7 @@ describe('TranscriptSelectionToolbar', () => {
             selectionUnavailableText: 'Selected message identity unavailable',
             sendEnabled: true,
             onSend: vi.fn(),
-            additionalAction: { testID: 'discussion-selection-ask-agent', label: 'Ask Agent', onPress },
+            additionalActions: [{ testID: 'discussion-selection-ask-agent', label: 'Ask Agent', primary: true, onPress }],
         });
 
         await pressByTestId(screen, 'enter-a');
@@ -263,7 +271,6 @@ describe('TranscriptSelectionToolbar', () => {
         expect(screen.findByTestId('transcript-selection-unavailable')?.props.children)
             .toBe('Selected message identity unavailable');
         expect(isDisabled(findPressableByTestId(screen, 'transcript-selection-copy'))).toBe(true);
-        expect(isDisabled(findPressableByTestId(screen, 'transcript-selection-send'))).toBe(true);
         expect(isDisabled(findPressableByTestId(screen, 'discussion-selection-ask-agent'))).toBe(true);
     });
 });

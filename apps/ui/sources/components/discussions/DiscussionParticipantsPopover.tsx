@@ -1,6 +1,7 @@
+import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
 import type { TranscriptAccountActor } from '@happier-dev/session-core/messages';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import type {
   DiscussionAnswerPolicyV1,
@@ -16,7 +17,9 @@ import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { renderDropdownItemTriggerRightElement } from '@/components/ui/forms/dropdown/renderDropdownItemTriggerRightElement';
 import { resolveFieldBoxColors } from '@/components/ui/forms/fieldBox';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { SessionAgentCatalogIdentityIcon } from '@/components/sessions/presentation/SessionAgentCatalogIdentityIcon';
+import { AgentIcon } from '@/agents/registry/AgentIcon';
+import { resolveBundledAgentIdFromContributionIdentity } from '@/agents/catalog/catalog';
 import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { Item } from '@/components/ui/lists/Item';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
@@ -29,12 +32,19 @@ import { useSurfaceStateSize } from '@/components/ui/surfaces/surfaceStateSize';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { t } from '@/text';
+import { resolveAccountActorPresentation } from '@/sync/domains/account/accountActorPresentation';
 import { useNavigateToSession } from '@/hooks/session/useNavigateToSession';
 import { useSessionDisplayTitles } from '@/utils/sessions/sessionDisplayTitle';
 import type { useDiscussionParticipantManagement } from './useDiscussionParticipantManagement';
 import { ShareRowAction } from '@/components/sharing/ShareGrantRow';
 import type { SharePrincipalPresentation } from '@/components/sharing/shareSheetTypes';
-import type { SelectionListOption, SelectionListSectionDescriptor } from '@/components/ui/selectionList';
+import { SelectionList, type SelectionListOption, type SelectionListSectionDescriptor } from '@/components/ui/selectionList';
+import type { ExecutableParticipantSelectionV1 } from '@happier-dev/protocol/discussions/executableParticipants';
+import { useExecutableParticipantSections } from './useExecutableParticipantSections';
+import { isDiscussionParticipantMuted, setDiscussionParticipantMuted } from './discussionParticipantMute';
+import { useAccountSessionFollowEditorHost } from '@/components/sessions/follow/useAccountSessionFollowEditorHost';
+import { useActivityPersonalSessionMembership } from '@/activity/source/activityPersonalSessionMembership';
+import { publishPresentationNotice } from '@/components/sessions/presentation/presentationNotices';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { readComposerSessionSuggestionDisplay } from '@/sync/domains/input/suggestionSession';
 import { useMachineListForServer } from '@/sync/domains/state/storage';
@@ -45,11 +55,22 @@ import {
   DiscussionSheetHeader,
 } from './DiscussionInviteSheet';
 
-const minimumInteractiveTargetSize = resolveMinimumInteractiveTargetSize(
-  Platform.OS,
-);
 const AVATAR_PX = 28;
 const NO_MACHINES: readonly never[] = [];
+const NO_SECTIONS: readonly SelectionListSectionDescriptor[] = Object.freeze([]);
+
+export function resolveDiscussionOwnerTransferAvatar(
+  actor: TranscriptAccountActor | null | undefined,
+  accountId: string,
+  viewerAccountId: string,
+) {
+  return actor
+    ? resolveAccountActorPresentation(actor, {
+        serverId: actor.serverId,
+        accountId: viewerAccountId,
+      }).avatar
+    : { id: accountId, imageUrl: null };
+}
 
 const styles = StyleSheet.create((theme) => ({
   body: { paddingBottom: theme.space.s4, minWidth: 0 },
@@ -62,7 +83,7 @@ const styles = StyleSheet.create((theme) => ({
   },
   rowControls: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s6, flexShrink: 1, minWidth: 0 },
   // The pill gives way before the agent's name does; its menu says each policy in full.
-  policyTrigger: { justifyContent: 'center', flexShrink: 1, minWidth: 0, maxWidth: 200 },
+  policyTrigger: { justifyContent: 'center', flexShrink: 1, minWidth: 0, maxWidth: 240 },
   footer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -74,6 +95,8 @@ const styles = StyleSheet.create((theme) => ({
     borderTopColor: theme.colors.border.default,
   },
   footerEnd: { marginLeft: 'auto' },
+  panel: { flex: 1, minHeight: 0, minWidth: 0 },
+  panelBody: { flex: 1, minHeight: 0, minWidth: 0 },
   resolutionBody: {
     ...Typography.variant('body'),
     color: theme.colors.text.secondary,
@@ -99,14 +122,16 @@ export const DiscussionRosterFaces = React.memo(function DiscussionRosterFaces(
     accountActors: ReadonlyMap<string, TranscriptAccountActor>;
     viewerAccountId: string;
     accessibilityLabel: string;
+    /** The Discussion's Home, so a Session participant shows its own Agent's mark. */
+    serverId?: string;
   }> & (
     | Readonly<{ roster: DiscussionParticipantsListResponseV1; members?: undefined }>
     /** A New Discussion's chosen people and agents, before any roster exists. */
     | Readonly<{ roster?: undefined; members: Readonly<{ accountIds: readonly string[]; agents: readonly ('session' | 'model')[] }> }>
   ),
 ) {
-  const { theme } = useUnistyles();
   const { roster, members } = props;
+  const isSessionVisible = useSessionRecordingVisibility();
   const entries = React.useMemo(() => {
     const people = roster ? [roster.ownerAccountId] : [...members!.accountIds];
     for (const grant of roster?.grants ?? []) {
@@ -114,22 +139,49 @@ export const DiscussionRosterFaces = React.memo(function DiscussionRosterFaces(
     }
     // The viewer sits last, as in the roster: the others are who you came to see.
     const ordered = [...people.filter((id) => id !== props.viewerAccountId), ...people.filter((id) => id === props.viewerAccountId)];
-    const faces: AvatarStackEntry[] = ordered.map((accountId) => ({
-      key: `account:${accountId}`,
-      content: <Avatar id={accountId} imageUrl={props.accountActors.get(accountId)?.profile?.avatarUrl ?? null} size={ROSTER_FACE_PX} />,
-    }));
-    const agentKinds = roster ? roster.participants.map((participant) => participant.participant.kind) : members!.agents;
-    const agents: AvatarStackEntry[] = agentKinds.map((kind, index) => ({
+    const faces: AvatarStackEntry[] = ordered.map((accountId) => {
+      const actor = props.accountActors.get(accountId);
+      const avatar = actor ? resolveAccountActorPresentation(actor, { serverId: actor.serverId, accountId: props.viewerAccountId }).avatar : null;
+      return { key: `account:${accountId}`,
+        content: <Avatar id={avatar?.id ?? accountId} imageUrl={avatar?.imageUrl ?? null} size={ROSTER_FACE_PX} /> };
+    });
+    // Each agent wears its own Agent's mark, as its rows and answers do; one not yet born (or not on this
+    // device) keeps the neutral kind glyph.
+    const agentMarks = roster
+      ? roster.participants.map((participant) => {
+        const sessionId = participant.participant.kind === 'session' ? participant.participant.sessionId
+          : 'sessionId' in participant ? participant.sessionId : null;
+        const privateSession = Boolean(sessionId && !isSessionVisible({ serverId: props.serverId, sessionId }));
+        const display = sessionId && props.serverId && !privateSession ? readComposerSessionSuggestionDisplay({ serverId: props.serverId, sessionId }) : null;
+        const launch = !privateSession && 'launch' in participant ? participant.launch : null;
+        return {
+          agentId: display?.agentId ?? (launch ? resolveBundledAgentIdFromContributionIdentity(launch.agentTarget.identity) : null),
+          machineId: display?.machineId ?? launch?.executionTarget.machineId ?? null,
+          serverId: display?.serverId ?? props.serverId ?? null,
+        };
+      })
+      : members!.agents.map(() => ({ agentId: null, machineId: null, serverId: null }));
+    const agents: AvatarStackEntry[] = agentMarks.map((mark, index) => ({
       key: `agent:${index}`,
       avatar: false,
       content: <View style={rosterFaceStyles.agentMark}>
-        <Icon name={kind === 'model' ? 'sparkle' : 'robot'} size={ICON_SIZE.xs} color={theme.colors.text.secondary} />
+        <ParticipantAgentMark {...mark} size={ICON_SIZE.xs} />
       </View>,
     }));
     return [...faces, ...agents].slice(0, ROSTER_FACE_LIMIT);
-  }, [members, props.accountActors, props.viewerAccountId, roster, theme.colors.text.secondary]);
+  }, [isSessionVisible, members, props.accountActors, props.serverId, props.viewerAccountId, roster]);
   return <AvatarStack testID="session-discussion-roster-faces" size={ROSTER_FACE_PX} entries={entries} accessibilityLabel={props.accessibilityLabel} />;
 });
+
+/**
+ * A participant's Agent mark (lab T2-S): its Session's Agent, or the Agent a model slot's launch names, through
+ * the catalog owner; a participant whose Agent this device cannot see keeps the catalog's neutral mark.
+ */
+function ParticipantAgentMark(props: Readonly<{ agentId: string | null | undefined; machineId: string | null; serverId: string | null; size: number }>) {
+  return props.agentId
+    ? <SessionAgentCatalogIdentityIcon agentId={props.agentId} machineId={props.machineId} serverId={props.serverId} size={props.size} />
+    : <AgentIcon agentId={null} size={props.size} />;
+}
 
 const rosterFaceStyles = StyleSheet.create((theme) => ({
   agentMark: {
@@ -276,7 +328,6 @@ export const DiscussionParticipantsPopover = React.memo(
             tooltipHidden={open}
             expanded={open}
             hasPopup="dialog"
-            minimumInteractiveTargetSize={minimumInteractiveTargetSize}
             onPress={() => (open ? close() : setOpen(true))}
           />
         </View>
@@ -360,6 +411,8 @@ export const DiscussionParticipantsPopover = React.memo(
                   {resolving && management && props.roster ? (
                     <DiscussionOwnerLeaveResolution
                       management={management}
+                      accountActors={props.accountActors}
+                      viewerAccountId={props.viewerAccountId}
                       resolveAccountLabel={props.resolveAccountLabel}
                       onLeft={() => {
                         setOpen(false);
@@ -410,6 +463,8 @@ export const DiscussionParticipantsPopover = React.memo(
 function DiscussionOwnerLeaveResolution(
   props: Readonly<{
     management: DiscussionParticipantManagement;
+    accountActors: ReadonlyMap<string, TranscriptAccountActor>;
+    viewerAccountId: string;
     resolveAccountLabel: (accountId: string) => string | null;
     onLeft: () => void;
   }>,
@@ -435,30 +490,36 @@ function DiscussionOwnerLeaveResolution(
           title={t('session.collaboration.discussion.manage.noTransferCandidates')}
         />
       ) : (
-        resolution.transferCandidates.map((candidate) => (
-          <Item
-            key={candidate.accountId}
-            testID={`discussion-owner-transfer-${candidate.accountId}`}
-            density="compact"
-            showChevron={false}
-            showDivider={false}
-            disabled={busy}
-            leftElement={<Avatar id={candidate.accountId} size={AVATAR_PX} />}
-            title={
-              candidate.name ??
-              props.resolveAccountLabel(candidate.accountId) ??
-              t('session.collaboration.unnamed')
-            }
-            subtitle={t('session.collaboration.discussion.manage.transferSubtitle')}
-            onPress={() => {
-              void management
-                .transferAndLeave(candidate.accountId)
-                .then((outcome) => {
-                  if (outcome?.kind === 'succeeded') props.onLeft();
-                });
-            }}
-          />
-        ))
+        resolution.transferCandidates.map((candidate) => {
+          const avatar = resolveDiscussionOwnerTransferAvatar(
+            props.accountActors.get(candidate.accountId),
+            candidate.accountId,
+            props.viewerAccountId,
+          );
+          return (
+            <Item
+              key={candidate.accountId}
+              testID={`discussion-owner-transfer-${candidate.accountId}`}
+              density="compact"
+              showChevron={false}
+              showDivider={false}
+              disabled={busy}
+              leftElement={<Avatar id={avatar.id} imageUrl={avatar.imageUrl} size={AVATAR_PX} />}
+              title={
+                props.resolveAccountLabel(candidate.accountId) ??
+                t('session.collaboration.unnamed')
+              }
+              subtitle={t('session.collaboration.discussion.manage.transferSubtitle')}
+              onPress={() => {
+                void management
+                  .transferAndLeave(candidate.accountId)
+                  .then((outcome) => {
+                    if (outcome?.kind === 'succeeded') props.onLeft();
+                  });
+              }}
+            />
+          );
+        })
       )}
       {resolution.canArchive ? (
         <View style={styles.resolutionArchive}>
@@ -494,26 +555,25 @@ function DiscussionOwnerLeaveResolution(
  * people with their live presence, then the agents that answer here, each with its answer policy as
  * a pill, then the models started for this Discussion with where their session stands.
  */
-function DiscussionRoster(
+/**
+ * The roster's agents, as the participants sheet and the Discussion's Agents tab both list them: the
+ * Sessions taking part, then the models started here, each with its answer policy menu when the viewer
+ * manages the Discussion.
+ */
+function useDiscussionRosterAgentSections(
   props: Readonly<{
-    scope: ServerAccountScope;
-    accountLifetime?: ServerAccountScopeLifetime;
-    discussionId: string;
-    discussionTitle: string;
     serverId: string;
-    viewerAccountId: string;
     roster: DiscussionParticipantsListResponseV1;
-    presentAccountIds: ReadonlySet<string>;
     management: DiscussionParticipantManagement | null;
     canManage: boolean;
-    onChanged?: () => void;
-    onRequestClose: () => void;
+    accountLifetime?: ServerAccountScopeLifetime;
   }>,
-) {
+): readonly SelectionListSectionDescriptor[] {
   const { theme } = useUnistyles();
-  const phone = useSurfaceStateSize() === 'phone';
+  // A phone and the page's side pane have no room beside the heading for the note.
+  const surfaceSize = useSurfaceStateSize();
+  const phone = surfaceSize === 'phone' || surfaceSize === 'pane';
   const { roster, management } = props;
-  const facts = summarizeDiscussionRoster(roster);
   const manager = props.canManage ? management : null;
   const agentSessions = React.useMemo(
     () =>
@@ -527,23 +587,19 @@ function DiscussionRoster(
     [props.serverId, roster.participants],
   );
   const agentTitles = useSessionDisplayTitles(agentSessions);
+  const isSessionVisible = useSessionRecordingVisibility();
   const machines = useMachineListForServer(props.serverId) ?? NO_MACHINES;
   const modelViews = management?.modelParticipants;
-  const principalTags = React.useCallback(
-    (principal: SharePrincipalPresentation) =>
-      principal.ref.kind === 'account' &&
-      principal.ref.accountId !== props.viewerAccountId &&
-      props.presentAccountIds.has(principal.ref.accountId)
-        ? [t('session.collaboration.discussion.participants.hereNow')]
-        : [],
-    [props.presentAccountIds, props.viewerAccountId],
-  );
+  // This Account's own mutes, read once for the roster (CR3); unknown until its owner has read them.
+  const mutedScopes = useActivityPersonalSessionMembership().accountDeliveryMutesByServerId?.[props.serverId]?.scopes ?? null;
+  const accountLifetime = props.accountLifetime;
   const afterAccess = React.useMemo<readonly SelectionListSectionDescriptor[]>(() => {
     const agents: SelectionListOption[] = [];
     const started: SelectionListOption[] = [];
     roster.participants.forEach((participant, index) => {
       const testID = `discussion-agent-participant-${index}`;
       const sessionId = agentSessions[index]?.sessionId || null;
+      const privateSession = Boolean(sessionId && !isSessionVisible({ sessionId, serverId: props.serverId }));
       const policy = answerPolicyLabel(participant.answerPolicy);
       if (participant.participant.kind === 'model' && 'launch' in participant) {
         const slotId = participant.participant.participantSlotId;
@@ -577,12 +633,16 @@ function DiscussionRoster(
         started.push({
           id: `model:${slotId}`,
           testID,
-          label: name ?? agentTitles[index] ?? t('session.collaboration.discussion.participants.model'),
-          subtitle: [namedModel ? view?.display.agentLabel : t('session.collaboration.discussion.participants.model'), state, manager ? null : policy]
+          label: privateSession ? t('session.collaboration.discussion.participants.session')
+            : name ?? agentTitles[index] ?? t('session.collaboration.discussion.participants.model'),
+          subtitle: [privateSession ? t('session.collaboration.discussion.participants.session')
+            : namedModel ? view?.display.agentLabel : t('session.collaboration.discussion.participants.model'), privateSession ? null : state, manager ? null : policy]
             .filter(Boolean).join(' · '),
           loading: birth === 'starting',
-          icon: () => <Icon name="sparkle" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
-          ...(manager
+          icon: () => <ParticipantAgentMark
+            agentId={privateSession ? null : resolveBundledAgentIdFromContributionIdentity(participant.launch.agentTarget.identity)}
+            machineId={privateSession ? null : machineId} serverId={props.serverId ?? null} size={ICON_SIZE.md} />,
+          ...(manager || sessionId
             ? {
                 rightAccessoryOutsidePressable: true,
                 rightAccessory: () => (
@@ -598,10 +658,12 @@ function DiscussionRoster(
                     <DiscussionAgentMenu
                       testID={testID}
                       participant={participant}
-                      title={name ?? t('session.collaboration.discussion.participants.model')}
+                      title={privateSession ? t('session.collaboration.discussion.participants.session') : name ?? t('session.collaboration.discussion.participants.model')}
                       sessionId={sessionId}
                       serverId={props.serverId}
                       management={manager}
+                      muted={sessionId ? isDiscussionParticipantMuted(mutedScopes, sessionId) : null}
+                      {...(accountLifetime ? { accountLifetime } : {})}
                     />
                   </View>
                 ),
@@ -610,16 +672,18 @@ function DiscussionRoster(
         });
         return;
       }
-      const display = sessionId ? readComposerSessionSuggestionDisplay({ serverId: props.serverId, sessionId }) : null;
-      const title = agentTitles[index] ?? display?.title ?? t('session.collaboration.discussion.heldParticipant');
+      const display = sessionId && !privateSession ? readComposerSessionSuggestionDisplay({ serverId: props.serverId, sessionId }) : null;
+      const title = (privateSession ? null : agentTitles[index]) ?? display?.title ?? t('session.collaboration.discussion.heldParticipant');
       agents.push({
         id: `session:${sessionId ?? index}`,
         testID,
         label: title,
         subtitle: [t('session.collaboration.discussion.participants.session'), display?.agentLabel, display?.workspaceLabel, manager ? null : policy]
           .filter(Boolean).join(' · '),
-        icon: () => <Icon name="robot" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
-        ...(manager
+        // A session leads with its Agent's own mark, as its answers do in the thread.
+        icon: () => <ParticipantAgentMark agentId={display?.agentId} machineId={display?.machineId ?? null}
+          serverId={display?.serverId ?? null} size={ICON_SIZE.md} />,
+        ...(manager || sessionId
           ? {
               rightAccessoryOutsidePressable: true,
               rightAccessory: () => (
@@ -630,6 +694,8 @@ function DiscussionRoster(
                   sessionId={sessionId}
                   serverId={props.serverId}
                   management={manager}
+                  muted={sessionId ? isDiscussionParticipantMuted(mutedScopes, sessionId) : null}
+                  {...(accountLifetime ? { accountLifetime } : {})}
                 />
               ),
             }
@@ -642,8 +708,9 @@ function DiscussionRoster(
         kind: 'static',
         id: 'agents',
         title: t('session.collaboration.discussion.participants.agentsGroup'),
-        ...(agents.length ? { count: agents.length } : {}),
-        // A phone has no room beside the heading; the note is a desktop aside.
+        // A phone has no room beside the heading, so it keeps the count; a desktop shows the note there
+        // instead (lab T2-S), since the header already says how many agents.
+        ...(agents.length && phone ? { count: agents.length } : {}),
         ...(phone ? {} : { rightAccessory: () => <Text style={styles.groupNote} numberOfLines={1}>{t('session.collaboration.discussion.participants.agentsNote')}</Text> }),
         options: agents,
         ...(agents.length === 0 ? { resultHint: t('session.collaboration.discussion.participants.noAgents') } : {}),
@@ -656,7 +723,45 @@ function DiscussionRoster(
         options: started,
       });
     return sections;
-  }, [agentSessions, agentTitles, machines, manager, modelViews, phone, props.serverId, roster.participants, theme.colors.text.secondary]);
+  }, [accountLifetime, agentSessions, agentTitles, isSessionVisible, machines, manager, modelViews, mutedScopes, phone, props.serverId, roster.participants, theme]);
+  return afterAccess;
+}
+
+function DiscussionRoster(
+  props: Readonly<{
+    scope: ServerAccountScope;
+    accountLifetime?: ServerAccountScopeLifetime;
+    discussionId: string;
+    discussionTitle: string;
+    serverId: string;
+    viewerAccountId: string;
+    roster: DiscussionParticipantsListResponseV1;
+    presentAccountIds: ReadonlySet<string>;
+    management: DiscussionParticipantManagement | null;
+    canManage: boolean;
+    onChanged?: () => void;
+    onRequestClose: () => void;
+    /** False where the Agents tab lists the agents instead. */
+    agents?: boolean;
+    /** A pane's measured height for the roster's own scroll. */
+    maxHeight?: number;
+  }>,
+) {
+  const { roster } = props;
+  const facts = summarizeDiscussionRoster(roster);
+  const manager = props.canManage ? props.management : null;
+  const principalTags = React.useCallback(
+    (principal: SharePrincipalPresentation) =>
+      principal.ref.kind === 'account' &&
+      principal.ref.accountId !== props.viewerAccountId &&
+      props.presentAccountIds.has(principal.ref.accountId)
+        ? [t('session.collaboration.discussion.participants.hereNow')]
+        : [],
+    [props.presentAccountIds, props.viewerAccountId],
+  );
+  const agentSections = useDiscussionRosterAgentSections(props);
+  // The Discussion page's rail lists agents in their own tab; the header's sheet keeps them here.
+  const afterAccess = props.agents === false ? NO_SECTIONS : agentSections;
   return (
     <DiscussionParticipantsSheet
       scope={props.scope}
@@ -664,7 +769,8 @@ function DiscussionRoster(
       discussionId={props.discussionId}
       discussionTitle={props.discussionTitle}
       roster={roster}
-      management={manager}
+      // Without agents the sheet invites people only; the Agents tab invites agents.
+      management={props.agents === false ? null : manager}
       afterAccess={afterAccess}
       principalTags={principalTags}
       notes={[facts.inherited
@@ -672,6 +778,7 @@ function DiscussionRoster(
         : t('session.collaboration.discussion.participants.privateNote')]}
       {...(props.onChanged ? { onChanged: props.onChanged } : {})}
       onRequestClose={props.onRequestClose}
+      {...(props.maxHeight === undefined ? {} : { maxHeight: props.maxHeight })}
     />
   );
 }
@@ -679,11 +786,15 @@ function DiscussionRoster(
 const REMOVE_ID = 'remove';
 const OPEN_ID = 'open';
 const RESTART_ID = 'restart';
+const FOLLOW_ID = 'follow';
+const MUTE_ID = 'mute';
 
 /**
- * One agent's answer policy as a pill (lab T2-S). It opens one menu: the four answer policies (each
- * saying what it does), then Open its session, Start it again and Remove. Removing a model started
- * for this Discussion archives that session; removing an existing session only detaches it.
+ * One agent's row menu (lab T2-S, P2). For whoever manages the Discussion it opens from the answer
+ * policy pill and leads with the four policies; for everyone else it is the row's ⋯. Then, in order:
+ * Follow… (the shared Follow editor for that Session), Mute its messages (this Account's exact
+ * sender mute, with Undo), Open its session, Start it again and Remove. Removing a model started for
+ * this Discussion archives that session; removing an existing session only detaches it.
  */
 function DiscussionAgentMenu(
   props: Readonly<{
@@ -692,36 +803,83 @@ function DiscussionAgentMenu(
     title: string;
     sessionId: string | null;
     serverId: string;
-    management: DiscussionParticipantManagement;
+    management: DiscussionParticipantManagement | null;
+    /** Whether this Account mutes the Session's messages; null while its mutes are not known. */
+    muted: boolean | null;
+    accountLifetime?: ServerAccountScopeLifetime;
   }>,
 ) {
   const { theme } = useUnistyles();
+  // A phone row keeps only a short value and its chevron beside the name (lab T2-Sp); a bordered field
+  // there squeezed the agent's own subtitle to a few letters.
+  const phone = useSurfaceStateSize() === 'phone';
   const navigateToSession = useNavigateToSession();
   const [open, setOpen] = React.useState(false);
   const { participant, management } = props;
   const model = participant.participant.kind === 'model';
   const policy = answerPolicyLabel(participant.answerPolicy);
-  const busy = management.operation.kind === 'working';
+  const busy = management?.operation.kind === 'working';
+  const follow = useAccountSessionFollowEditorHost({
+    serverId: props.sessionId ? props.serverId : null,
+    sessionId: props.sessionId ?? '',
+  });
+  // What this menu last changed, until the Account's own mutes catch up.
+  const [mutedHere, setMutedHere] = React.useState<boolean | null>(null);
+  React.useEffect(() => setMutedHere(null), [props.muted]);
+  const muted = mutedHere ?? props.muted ?? false;
+  const changeMute = React.useCallback(function change(next: boolean) {
+    const sessionId = props.sessionId;
+    if (!sessionId) return;
+    const key = `discussion-participant-mute:${sessionId}`;
+    void setDiscussionParticipantMuted({ sessionId, muted: next, ...(props.accountLifetime ? { accountLifetime: props.accountLifetime } : {}) })
+      .then((changed) => {
+        if (!changed) {
+          publishPresentationNotice({ key, severity: 'error', message: t('session.collaboration.discussion.manage.muteFailed') });
+          return;
+        }
+        setMutedHere(next);
+        publishPresentationNotice({
+          key,
+          severity: 'info',
+          message: t(next ? 'session.collaboration.discussion.manage.mutedNotice' : 'session.collaboration.discussion.manage.unmutedNotice', { name: props.title }),
+          emphasis: props.title,
+          // Undo is the exact inverse: the same sender scope, removed.
+          ...(next ? { undo: { label: t('common.undo'), run: () => change(false) } } : {}),
+        });
+      });
+  }, [props.accountLifetime, props.sessionId, props.title]);
   const items = React.useMemo(() => {
-    const policies = ANSWER_POLICIES.map((value) => ({
+    const policies = management ? ANSWER_POLICIES.map((value) => ({
       id: value,
       testID: `${props.testID}:policy:${value}`,
       title: answerPolicyLabel(value),
       subtitle: answerPolicyDescription(value),
       checked: value === participant.answerPolicy,
       category: t('session.collaboration.discussion.manage.answersGroup'),
-    }));
+    })) : [];
     // A model whose session never started keeps its slot; starting again reuses that slot.
     const unstarted = model && !props.sessionId;
+    const category = t('session.collaboration.discussion.manage.operationsGroup');
+    const iconColor = theme.colors.text.secondary;
     const operations = [
-      ...(unstarted
+      ...(props.sessionId && follow.enabled
         ? [{
-            id: RESTART_ID,
-            testID: `${props.testID}:restart`,
-            title: t('session.collaboration.discussion.manage.startAgain'),
-            subtitle: t('session.collaboration.discussion.manage.startAgainBody'),
-            icon: <Icon name="arrow-clockwise" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
-            category: t('session.collaboration.discussion.manage.operationsGroup'),
+            id: FOLLOW_ID,
+            testID: `${props.testID}:follow`,
+            title: t('session.collaboration.discussion.manage.followParticipant'),
+            icon: <Icon name="bell" size={ICON_SIZE.sm} color={iconColor} />,
+            category,
+          }]
+        : []),
+      ...(props.sessionId
+        ? [{
+            id: MUTE_ID,
+            testID: `${props.testID}:mute`,
+            title: muted
+              ? t('session.collaboration.discussion.manage.unmuteParticipant')
+              : t('session.collaboration.discussion.manage.muteParticipant'),
+            icon: <Icon name="bell-slash" size={ICON_SIZE.sm} color={iconColor} />,
+            category,
           }]
         : []),
       ...(props.sessionId
@@ -729,35 +887,48 @@ function DiscussionAgentMenu(
             id: OPEN_ID,
             testID: `${props.testID}:open`,
             title: t('session.collaboration.discussion.manage.openSession'),
-            icon: <Icon name="arrow-square-out" size={ICON_SIZE.sm} color={theme.colors.text.secondary} />,
-            category: t('session.collaboration.discussion.manage.operationsGroup'),
+            icon: <Icon name="arrow-square-out" size={ICON_SIZE.sm} color={iconColor} />,
+            category,
           }]
         : []),
-      {
-        id: REMOVE_ID,
-        testID: `${props.testID}:remove`,
-        // Only a model whose session started has a session to archive.
-        title: model && !unstarted
-          ? t('session.collaboration.discussion.manage.removeModel')
-          : t('session.collaboration.discussion.manage.removeSession'),
-        ...(unstarted
-          ? {}
-          : { subtitle: model
-              ? t('session.collaboration.discussion.manage.removeModelBody')
-              : t('session.collaboration.discussion.manage.removeSessionBody') }),
-        destructive: true,
-        category: t('session.collaboration.discussion.manage.operationsGroup'),
-      },
+      ...(management && unstarted
+        ? [{
+            id: RESTART_ID,
+            testID: `${props.testID}:restart`,
+            title: t('session.collaboration.discussion.manage.startAgain'),
+            subtitle: t('session.collaboration.discussion.manage.startAgainBody'),
+            icon: <Icon name="arrow-clockwise" size={ICON_SIZE.sm} color={iconColor} />,
+            category,
+          }]
+        : []),
+      ...(management
+        ? [{
+            id: REMOVE_ID,
+            testID: `${props.testID}:remove`,
+            // Only a model whose session started has a session to archive.
+            title: model && !unstarted
+              ? t('session.collaboration.discussion.manage.removeModel')
+              : t('session.collaboration.discussion.manage.removeSession'),
+            ...(unstarted
+              ? {}
+              : { subtitle: model
+                  ? t('session.collaboration.discussion.manage.removeModelBody')
+                  : t('session.collaboration.discussion.manage.removeSessionBody') }),
+            destructive: true,
+            category,
+          }]
+        : []),
     ];
     return [...policies, ...operations];
-  }, [model, participant.answerPolicy, props.sessionId, props.testID, theme.colors.text.secondary]);
+  }, [follow.enabled, management, model, muted, participant.answerPolicy, props.sessionId, props.testID, theme.colors.text.secondary]);
   return (
+    <View ref={follow.anchorRef} collapsable={false}>
     <DropdownMenu
       testID={`${props.testID}:menu`}
       open={open}
       onOpenChange={setOpen}
       items={items}
-      selectedId={participant.answerPolicy}
+      {...(management ? { selectedId: participant.answerPolicy } : {})}
       separateCategories
       placement="bottom"
       popoverAnchorAlign="end"
@@ -766,7 +937,7 @@ function DiscussionAgentMenu(
       matchTriggerWidth={false}
       popoverPhonePresentation="sheet"
       popoverAccessibilityLabel={props.title}
-      popoverSheetSubtitle={policy}
+      {...(management ? { popoverSheetSubtitle: policy } : {})}
       onSelect={(id) => {
         setOpen(false);
         if (id === OPEN_ID) {
@@ -774,6 +945,15 @@ function DiscussionAgentMenu(
           if (props.sessionId) void navigateToSession(props.sessionId, { serverId: props.serverId });
           return;
         }
+        if (id === FOLLOW_ID) {
+          if (props.sessionId) follow.openEditor({ address: { serverId: props.serverId, sessionId: props.sessionId } });
+          return;
+        }
+        if (id === MUTE_ID) {
+          changeMute(!muted);
+          return;
+        }
+        if (!management) return;
         if (id === REMOVE_ID) {
           void management.remove(participant.participant);
           return;
@@ -789,7 +969,7 @@ function DiscussionAgentMenu(
         const next = ANSWER_POLICIES.find((value) => value === id);
         if (next && next !== participant.answerPolicy) void management.setPolicy(participant.participant, next);
       }}
-      trigger={({ toggle }) => (
+      trigger={({ toggle }) => management ? (
         <HappierPressable
           testID={props.testID}
           onPress={toggle}
@@ -806,12 +986,173 @@ function DiscussionAgentMenu(
             open,
             detailColor: theme.colors.text.secondary,
             chevronColor: theme.colors.text.secondary,
-            field: resolveFieldBoxColors(theme),
-            fieldSpan: 'intrinsic',
+            ...(phone ? {} : { field: resolveFieldBoxColors(theme), fieldSpan: 'intrinsic' as const }),
             detailDensity: 'compact',
           })}
         </HappierPressable>
+      ) : (
+        <IconButton
+          testID={`${props.testID}:more`}
+          size={28}
+          variant="plain"
+          icon={<Icon name="dots-three" size={ICON_SIZE.xs} color={theme.colors.text.secondary} />}
+          accessibilityLabel={`${t('common.moreActions')}, ${props.title}`}
+          accessibilityHint={t('common.moreActionsHint')}
+          onPress={toggle}
+        />
       )}
     />
+    {follow.editor}
+    </View>
+  );
+}
+
+/**
+ * The Discussion page's Participants tab: the same roster sheet as the header's popover, people only
+ * (agents have their own tab), with Leave at its foot. The owner's Leave resolves here too.
+ */
+export function DiscussionParticipantsPanel(
+  props: Readonly<{
+    scope: ServerAccountScope;
+    accountLifetime?: ServerAccountScopeLifetime;
+    discussionId: string;
+    discussionTitle: string;
+    serverId: string;
+    viewerAccountId: string;
+    roster: DiscussionParticipantsListResponseV1 | null;
+    onChanged?: () => void;
+    accountActors: ReadonlyMap<string, TranscriptAccountActor>;
+    presentAccountIds: ReadonlySet<string>;
+    resolveAccountLabel: (accountId: string) => string | null;
+    onLeave?: () => void;
+    management?: DiscussionParticipantManagement | null;
+    canManage?: boolean;
+    onLeft?: () => void;
+  }>,
+) {
+  const management = props.management ?? null;
+  const resolving = management?.ownerLeave.kind === 'transfer_or_archive';
+  const [bodyHeight, setBodyHeight] = React.useState<number | null>(null);
+  return (
+    <View testID="discussion-participants-tab" style={styles.panel}>
+      <View style={styles.panelBody} onLayout={(event) => {
+        // The roster's list owns the scroll; it needs the pane's height to stop at the foot (Leave, phone bar).
+        const height = Math.floor(event.nativeEvent.layout.height);
+        setBodyHeight(current => current === height ? current : height);
+      }}>
+        {resolving && management && props.roster ? (
+          <DiscussionOwnerLeaveResolution
+            management={management}
+            accountActors={props.accountActors}
+            viewerAccountId={props.viewerAccountId}
+            resolveAccountLabel={props.resolveAccountLabel}
+            onLeft={() => props.onLeft?.()}
+          />
+        ) : props.roster ? (
+          <DiscussionRoster
+            scope={props.scope}
+            {...(props.accountLifetime ? { accountLifetime: props.accountLifetime } : {})}
+            discussionId={props.discussionId}
+            discussionTitle={props.discussionTitle}
+            serverId={props.serverId}
+            viewerAccountId={props.viewerAccountId}
+            roster={props.roster}
+            presentAccountIds={props.presentAccountIds}
+            management={management}
+            canManage={props.canManage === true && management !== null}
+            {...(props.onChanged ? { onChanged: props.onChanged } : {})}
+            onRequestClose={() => undefined}
+            agents={false}
+            {...(bodyHeight === null ? {} : { maxHeight: bodyHeight })}
+          />
+        ) : (
+          <EmptyState layout="line" lineLoading title={t('session.collaboration.discussion.participants.loading')} />
+        )}
+      </View>
+      {props.onLeave && props.roster ? (
+        <View style={styles.footer}>
+          {resolving ? (
+            <View style={styles.footerEnd}>
+              <RoundButton testID="discussion-participants-cancel-leave" size="small" display="secondary" title={t('common.cancel')}
+                disabled={management?.ownerLeave.kind === 'transfer_or_archive' && !management.ownerLeave.canCancel}
+                onPress={() => management?.cancelLeave()} />
+            </View>
+          ) : (
+            <RoundButton testID="discussion-participants-leave" size="small" display="secondary"
+              title={t('session.collaboration.discussion.participants.leave')} onPress={() => props.onLeave?.()} />
+          )}
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
+/**
+ * The Discussion page's Agents tab: who answers here (Sessions, then models started here) with each one's
+ * answer policy, and, for whoever manages it, the viewer's Sessions and models to add.
+ */
+export function DiscussionAgentsPanel(
+  props: Readonly<{
+    accountLifetime: ServerAccountScopeLifetime;
+    serverId: string;
+    roster: DiscussionParticipantsListResponseV1 | null;
+    management: DiscussionParticipantManagement | null;
+    canManage: boolean;
+  }>,
+) {
+  if (!props.roster) {
+    return <View testID="discussion-agents-tab" style={styles.panel}>
+      <EmptyState layout="line" lineLoading title={t('session.collaboration.discussion.participants.loading')} />
+    </View>;
+  }
+  return <DiscussionAgentsList {...props} roster={props.roster} />;
+}
+
+function DiscussionAgentsList(
+  props: Readonly<{
+    accountLifetime: ServerAccountScopeLifetime;
+    serverId: string;
+    roster: DiscussionParticipantsListResponseV1;
+    management: DiscussionParticipantManagement | null;
+    canManage: boolean;
+  }>,
+) {
+  const manager = props.canManage ? props.management : null;
+  const current = useDiscussionRosterAgentSections(props);
+  const [readinessSessionId, setReadinessSessionId] = React.useState<string | null>(null);
+  const inviteExecutable = manager?.inviteExecutable;
+  const onChoose = React.useCallback((selection: ExecutableParticipantSelectionV1) => {
+    void inviteExecutable?.(selection);
+  }, [inviteExecutable]);
+  const { sections: candidates, recipeEditor } = useExecutableParticipantSections({
+    accountLifetime: props.accountLifetime,
+    roster: props.roster,
+    busy: manager?.operation.kind === 'working',
+    sessionsContext: t('session.collaboration.discussion.manage.sessionCandidate'),
+    onChoose,
+    enabled: manager !== null,
+    readinessSessionId,
+    onReadinessSessionChange: setReadinessSessionId,
+  });
+  const rootStep = React.useMemo(() => ({
+    id: 'root',
+    sections: manager ? [...current, ...candidates] : current,
+  }), [candidates, current, manager]);
+  return recipeEditor ?? (
+    <View testID="discussion-agents-tab" style={styles.panel}>
+      <SelectionList
+        testID="discussion-agents-list"
+        rootStep={rootStep}
+        listAccessibilityLabel={t('session.collaboration.discussion.participants.agentsGroup')}
+        onSelect={() => undefined}
+        onRequestClose={() => undefined}
+        optionsHostInlineControls
+        selectionMark="none"
+        surface="none"
+        fillAvailableSpace
+        disableTransitions
+      />
+      {props.management ? <DiscussionParticipantOperationLine management={props.management} serverId={props.serverId} /> : null}
+    </View>
   );
 }

@@ -1953,6 +1953,11 @@ export const it: TranslationStructure = {
   },
 
   approvals: {
+    requesterRunsAs: "Eseguita come",
+    requesterWritesWith: "Scrive con",
+    requesterAction: "Azione",
+    requesterRecord: "Happier conserva chi ha fatto la richiesta, quale azione è stata eseguita e il risultato",
+    requesterActionsSettings: "Impostazioni → Azioni",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} è offline. La richiesta resta in attesa; nulla viene scritto prima della conferma.`,
     confidential: {
       review: "Verifica credenziale",

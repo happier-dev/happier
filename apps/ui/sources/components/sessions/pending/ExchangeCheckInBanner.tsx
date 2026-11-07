@@ -1,6 +1,7 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import type { AutonomousExchangeRootV1 } from '@happier-dev/protocol/sessions/messages/autonomousExchangeV1';
+import type { PendingMessage } from '@/sync/domains/state/storageTypes';
 
 import { WarningActionBanner } from '@/components/sessions/shell/view/WarningActionBanner';
 import { useSessionExchangeControl } from '@/hooks/session/useSessionExchangeControl';
@@ -8,6 +9,17 @@ import { t } from '@/text';
 import { fireAndForget } from '@/utils/system/fireAndForget';
 
 type CheckInControl = 'continue' | 'continue_more_10' | 'stop';
+
+/**
+ * The exact exchange root a Session's held input is paused on for a check-in (lab T1), or null. The one
+ * selector for every host that mounts the banner: the Session composer and a Discussion's participants.
+ */
+export function findExchangeCheckInRoot(
+  pendingMessages: ReadonlyArray<Pick<PendingMessage, 'pendingDeliveryBlockedReason' | 'pendingAutonomousExchangeRoot'>> | undefined,
+): AutonomousExchangeRootV1 | null {
+  return pendingMessages?.find((message) => message.pendingDeliveryBlockedReason === 'autonomous_check_in')
+    ?.pendingAutonomousExchangeRoot ?? null;
+}
 
 /**
  * The check-in agents pause for (lab T1): how many times they asked each other, and Stop / Continue

@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -9,6 +10,7 @@ import type { DiscussionOpenedMessageV1 } from '@happier-dev/protocol/discussion
 import { createDiscussionMessageRefV1 } from '@happier-dev/protocol/discussions/messageRefs';
 import { captureDocPassageV1 } from '@happier-dev/protocol/artifacts/artifactPassageV1';
 import type { DocPassageRefV1 } from '@happier-dev/protocol/artifacts/artifactCollaborationV1';
+import { DocEditDecisionResultV1Schema } from '@happier-dev/protocol/artifacts/artifactCollaborationActionsV1';
 import { DiscussionMessageContentV1Schema } from '@happier-dev/protocol/discussions/content';
 import { DiscussionParticipantsListResponseV1Schema } from '@happier-dev/protocol/discussions/participants';
 import type { DiscussionRepositoryMutationOutcome } from '@/sync/ops/discussions/discussionRepository';
@@ -23,14 +25,29 @@ import {
 } from './discussionComposerDocument';
 import { SurfaceStateSizeProvider } from '@/components/ui/surfaces/surfaceStateSize';
 import type { SessionDiscussionDraftMutationAttempt } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import type { ServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
+import { normalizeActionsSettingsV1 } from '@happier-dev/protocol/actions/actionSettings';
+import { SessionDraftMutateRequestV2Schema, SessionDraftMutateResponseV2Schema, type SessionDraftRecordV2 } from '@happier-dev/protocol/drafts/sessionDraftsV2';
 
 import {
   createSessionFixture,
+  createRootLayoutFeaturesResponse,
+  installBrowserClipboardBoundary,
   renderScreen,
   standardCleanup,
 } from '@/dev/testkit';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { activateStorageAccountScope } from '@/dev/testkit/runtime/storageRuntime';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { createExistingSessionComposerDocumentOwner } from '@/components/sessions/composer/existingSessionComposerDocumentOwner';
+import { registerSessionComposerPresentationTarget } from '@/components/sessions/presentation/sessionComposerPresentationTargets';
+import { getSessionDraftSnapshot, readSessionDiscussionSelectionSourceFromDraft, writeExistingSessionDraft } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
+import { createPlainSessionByIdResponseFixture } from '@/dev/testkit/fixtures/sessionFixtures';
+import { projectComposerDocumentSnapshot } from '@/components/sessions/composer/composerSnapshotProjection';
+import {
+  createArtifactStoreBoundary,
+  createPlainArtifactHttpFixture,
+} from '@/dev/testkit/harness/artifactStoreBoundary';
 import { MarkdownView } from '@/components/markdown/MarkdownView';
 import { getStorage } from '@/sync/domains/state/storageStore';
 import { buildSessionListRenderableFromSession } from '@/sync/domains/session/listing/sessionListRenderable';
@@ -83,6 +100,8 @@ const repositoryRestore = vi.hoisted(() =>
 );
 const dropdownProps = vi.hoisted(() => ({
   current: null as null | Record<string, unknown>,
+  /** Every mounted menu by its testID (a message's ⋯) or, untitled, by its item ids (the selection bar's ⋯). */
+  byKey: new Map<string, Record<string, unknown>>(),
 }));
 const composerProps = vi.hoisted(() => ({
   current: null as null | Record<string, unknown>,
@@ -96,7 +115,7 @@ const transcriptProps = vi.hoisted(() => ({
 }));
 const observeVisibleMessageSeqs = vi.hoisted(() => vi.fn());
 const updateVisibleReadEligibility = vi.hoisted(() => vi.fn());
-const exactHomeBinding = vi.hoisted(() => ({
+const exactHomeBinding = vi.hoisted<{ current: ServerCredentialAccountScopeBinding }>(() => ({
   current: {
     serverId: 'server-a',
     accountId: 'viewer',
@@ -160,18 +179,6 @@ const activity = vi.hoisted(() => ({
   subagents: [] as unknown[],
   readExecutionRunEntry: vi.fn((_runId: string) => null as unknown),
 }));
-const metadataWrites = vi.hoisted(() =>
-  vi.fn(
-    async (
-      _sessionId: string,
-      update: (metadata: unknown) => unknown,
-      options: unknown,
-    ) => ({
-      metadata: update({}),
-      options,
-    }),
-  ),
-);
 function openedMessage(
   message: Omit<DiscussionOpenedMessageV1, 'messageRef'>,
   serverId = 'server-a',
@@ -330,9 +337,10 @@ vi.mock('@/hooks/server/useFeatureEnabled', () => ({
   useFeatureEnabled: () => true,
 }));
 vi.mock('@/hooks/session/useSessionCollaborationAvailability', () => ({
-  useSessionCollaborationAvailability: () => 'available',
+  useSessionCollaborationAvailabilityState: () => 'available',
 }));
-vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', () => ({
+vi.mock('@/sync/domains/scope/useServerCredentialAccountScopes', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/sync/domains/scope/useServerCredentialAccountScopes')>()),
   useServerCredentialAccountScopeBindings: () => exactHomeBindings.current,
 }));
 vi.mock('@/hooks/session/useSessionAgentActivity', () => ({
@@ -397,27 +405,10 @@ vi.mock('react-native', async () => {
     },
   });
 });
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: clipboard }));
-vi.mock(
-  '@/components/sessions/presentation/sessionComposerPresentationTargets',
-  () => ({ requestRegisteredSessionComposerFocus: focusComposer }),
+vi.mock('expo-clipboard', () => ({ setStringAsync: clipboard }));
+vi.mock('socket.io-client', async (importOriginal) =>
+  (await import('@/dev/testkit/harness/serverAccountConnectionHarness')).createSocketIoClientBoundary(importOriginal),
 );
-vi.mock('@/sync/sync', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('@/sync/sync')>();
-  return {
-    ...actual,
-    sync: new Proxy(
-      {},
-      {
-        // Retain this suite's existing metadata-write double; cold acquisition uses the real owner.
-        get: (_target, key) =>
-          key === 'patchSessionMetadataWithRetry'
-            ? metadataWrites
-            : Reflect.get(actual.sync, key),
-      },
-    ),
-  };
-});
 // The real provider module (the Run… start modal reads its context snapshot); only handler registration is stubbed.
 vi.mock('@/keyboard/KeyboardShortcutProvider', async (importOriginal) => ({
   ...(await importOriginal<
@@ -451,7 +442,11 @@ vi.mock('@/components/ui/forms/dropdown/DropdownMenu', () => ({
       trigger: (input: Record<string, unknown>) => React.ReactNode;
     },
   ) => {
-    dropdownProps.current = props;
+    const itemIds = ((props.items ?? []) as ReadonlyArray<{ id: string }>).map((item) => item.id);
+    const key = typeof props.testID === 'string' ? props.testID : itemIds.join('|');
+    dropdownProps.byKey.set(key, props);
+    // `current` stays the page's own menu (header ⋯), never a message's or the selection bar's.
+    if (!key.startsWith('session-discussion-message-menu-') && !itemIds.includes('send')) dropdownProps.current = props;
     return (
       <>
         {props.trigger({
@@ -489,10 +484,12 @@ vi.mock('@/components/discussions/useDiscussionDraft', () => ({
 vi.mock('@/components/sessions/shell/sessionViewStableSession', () => ({
   useSessionViewShellSession: () => shellSession.current,
 }));
-vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', () => ({
+vi.mock('@/hooks/session/useSessionExecutionRunLaunchability', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('@/hooks/session/useSessionExecutionRunLaunchability')>()),
   useSessionExecutionRunLaunchability: () => ({
     canLaunchExecutionRuns: launchability.current,
     canShowExecutionRunLauncher: launchability.current,
+    launchUnavailableReason: launchability.current ? null : 'notEnabled',
     executionRunsBackends: {},
     executionRunsSupported: launchability.current,
     sessionServerId: 'server-a',
@@ -504,16 +501,16 @@ await loadSyncSingletonForTests();
 let activeScope: Awaited<
   ReturnType<typeof activateStorageAccountScope>
 > | null = null;
+const draftHomeCleanup: Array<() => void | Promise<void>> = [];
 afterEach(async () => {
+  setScreenSharingPrivacyActive(false);
   await standardCleanup();
+  for (const dispose of draftHomeCleanup.splice(0).reverse()) await dispose();
+  (await import('@/sync/api/capabilities/serverFeaturesClient')).resetServerFeaturesClientForTests();
   activeScope?.dispose();
   activeScope = null;
 });
 
-import {
-  consumeInteractiveExecutionRunDraftNavigationIntent,
-  resetInteractiveExecutionRunDraftNavigationIntentsForTests,
-} from '@/components/sessions/runs/launcher/interactiveExecutionRunDraftNavigationIntent';
 
 async function press(
   screen: Awaited<ReturnType<typeof renderScreen>>,
@@ -528,13 +525,122 @@ async function press(
   });
 }
 
+/** Chooses one item of a mounted menu: a message's ⋯ by its id, or else the newest menu offering that item. */
+async function chooseMenuItem(itemId: string, menuTestID?: string) {
+  const menu = menuTestID
+    ? dropdownProps.byKey.get(menuTestID)
+    : [...dropdownProps.byKey.values()].reverse().find((candidate) =>
+      ((candidate.items ?? []) as ReadonlyArray<{ id: string }>).some((item) => item.id === itemId));
+  const item = ((menu?.items ?? []) as ReadonlyArray<{ id: string; disabled?: boolean }>).find((candidate) => candidate.id === itemId);
+  if (!menu || !item) throw new Error(`no menu item ${itemId}${menuTestID ? ` in ${menuTestID}` : ''}`);
+  await act(async () => {
+    await (menu.onSelect as (id: string) => unknown)(itemId);
+  });
+}
+
+/** Selects a message: its ⋯ Select starts selecting; once selecting, each row's own mark toggles it. */
+async function selectMessage(
+  screen: Awaited<ReturnType<typeof renderScreen>>,
+  messageId: string,
+) {
+  const marks = screen.findAll((item) => item.props?.testID === `session-discussion-select-${messageId}` && typeof item.props.onPress === 'function');
+  if (marks.length > 0) {
+    await press(screen, `session-discussion-select-${messageId}`);
+    return;
+  }
+  await chooseMenuItem('select', `session-discussion-message-menu-${messageId}`);
+}
+
+/** Real Action/Account/draft owners; only the Home HTTP and input focus are external doubles. */
+async function prepareSelectionDraftHome(serverUrl = 'https://discussion-draft.test', sessionId = 'session-a', draftAppendEnabled = true) {
+  activeScope?.dispose();
+  activeScope = null;
+  await (await import('@/sync/ops/sessionDrafts/sessionDraftPersistenceStorage')).prepareSessionDraftPersistenceStorage();
+  let remoteDraft: SessionDraftRecordV2 | null = null;
+  let session: ReturnType<typeof createSessionFixture> | undefined;
+  const served = await serveActionHomes({
+    homes: [{ key: 'discussion', serverUrl, accountId: 'viewer', currentAccount: true,
+      settings: { actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: {
+        'session.draft.append': { enabled: draftAppendEnabled },
+      } }) } }],
+    route: request => {
+      if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') {
+        return Response.json(createRootLayoutFeaturesResponse({ features: {
+          workflows: { enabled: false }, sessions: { drafts: { enabled: true } },
+        } }));
+      }
+      if (request.path === '/v2/account/session-drafts/read') {
+        return Response.json(remoteDraft ? { status: 'present', record: remoteDraft } : { status: 'absent' });
+      }
+      if (request.path === '/v2/account/session-drafts/list') return Response.json({ items: remoteDraft ? [remoteDraft] : [] });
+      if (/^\/v[12]\/account\/session-drafts\/mutate$/.test(request.path)) {
+        const input = SessionDraftMutateRequestV2Schema.parse(request.body);
+        remoteDraft = { address: input.address, content: input.content, revision: (remoteDraft?.revision ?? 0) + 1,
+          createdAt: 1, updatedAt: 2 };
+        return Response.json(SessionDraftMutateResponseV2Schema.parse({ status: 'updated', record: remoteDraft }));
+      }
+      if (session && request.path === `/v2/sessions/${encodeURIComponent(sessionId)}`) {
+        return Response.json(createPlainSessionByIdResponseFixture(session));
+      }
+      if (session && request.path === `/v1/sessions/${encodeURIComponent(sessionId)}/turns`) {
+        return Response.json({ v: 1, sessionId, updatedAt: session.updatedAt, turns: [] });
+      }
+      return undefined;
+    },
+  });
+  draftHomeCleanup.push(served.dispose);
+  const serverId = served.homes.discussion!.id;
+  const scope = { serverId, accountId: 'viewer' };
+  const storage = getStorage();
+  storage.getState().activateProfileScope(scope);
+  await storage.getState().activateSettingsScope(scope);
+  storage.getState().clearSessionLocalStateScope();
+  storage.getState().activateSessionLocalStateScope(scope);
+  const lifetime = (await import('@/sync/domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
+  if (!lifetime) throw new Error('Signed Discussion Home must have an Account lifetime');
+  exactHomeBinding.current = { ...lifetime, serverId, accountId: scope.accountId, revision: 1 };
+  exactHomeBindings.current = new Map([[serverId, exactHomeBinding.current]]);
+  session = createSessionFixture({ id: sessionId, serverId });
+  shellSession.current = session;
+  storage.setState({ sessions: { [sessionId]: session }, sessionListRowsByServerId: { [serverId]: { [sessionId]: session } } });
+  storage.getState().applySettingsLocal({ transcriptBulkCopyFormat: 'markdown_labeled', transcriptMessageSendToSessionTemplate: '{{MESSAGES}}' });
+  writeExistingSessionDraft({ scope, sessionId, patch: { text: 'Existing draft' } });
+  const owner = createExistingSessionComposerDocumentOwner({ scope, ref: { kind: 'session', sessionId } });
+  const originalMessages = snapshot.threads['discussion-a'].messages;
+  snapshot.threads['discussion-a'].messages = originalMessages.map(({ messageRef: _messageRef, ...message }) => openedMessage(message, serverId));
+  draftHomeCleanup.push(() => { snapshot.threads['discussion-a'].messages = originalMessages; });
+  const mountComposer = (targetServerId = serverId) => {
+    const unregister = registerSessionComposerPresentationTarget({ serverId: targetServerId, sessionId }, {
+      readRevision: () => owner.read().revision,
+      replace: (text, revision) => {
+        const result = owner.apply(revision, { text, references: [], attachments: [] });
+        return result.status === 'applied' ? result.revision : owner.read().revision;
+      },
+      readScope: () => scope,
+      readSnapshot: () => projectComposerDocumentSnapshot({ owner, attachmentCatalog: { entriesById: null },
+        presentation: { layout: 'wrap', focused: false, editable: true, submittable: true, submitting: false, running: false } }),
+      commitDocument: ({ expectedRevision, mutation }) => owner.apply(expectedRevision, mutation),
+      commitDocumentEmitsChange: true,
+      focusComposer,
+    });
+    draftHomeCleanup.push(unregister);
+  };
+  return { serverId, scope, served, owner, mountComposer };
+}
+
 describe('DiscussionDetailsView selection', () => {
   beforeEach(async () => {
+    installBrowserClipboardBoundary(async value => { await clipboard(value); });
     activeScope = await activateStorageAccountScope(
       { serverId: 'server-a', accountId: 'viewer' },
       getStorage(),
     );
     const state = getStorage().getState();
+    // Selection/attribution remains readable when Workflows is unavailable; this suite has no Run HTTP transport.
+    const { primeServerFeaturesSnapshot } = await import('@/sync/api/capabilities/serverFeaturesClient');
+    if (!state.profileScope) throw new Error('Missing fixture Account scope');
+    primeServerFeaturesSnapshot({ serverId: state.profileScope.serverId, snapshot: { status: 'ready',
+      features: createRootLayoutFeaturesResponse({ features: { workflows: { enabled: false } } }) } });
     getStorage().setState({
       sessions: {},
       sessionListRowsByServerId: {},
@@ -563,15 +669,13 @@ describe('DiscussionDetailsView selection', () => {
       }),
     });
     pane.openDetailsTab.mockClear();
-    pane.closeDetails.mockClear();
+    pane.closeDetails.mockReset();
     pane.closeDetailsTab.mockClear();
     clipboard.mockClear();
-    focusComposer.mockClear();
+    focusComposer.mockReset().mockReturnValue(true);
     routerPush.mockClear();
     routerReplace.mockClear();
     deviceType.current = 'tablet';
-    resetInteractiveExecutionRunDraftNavigationIntentsForTests();
-    metadataWrites.mockClear();
     repositoryRetry.mockClear();
     repositoryAdoptPendingIntent.mockClear();
     repositoryCreate.mockClear();
@@ -586,15 +690,16 @@ describe('DiscussionDetailsView selection', () => {
     repositoryArchive.mockClear();
     repositoryRestore.mockClear();
     dropdownProps.current = null;
+    dropdownProps.byKey.clear();
     composerProps.current = null;
     repositoryOptions.current = null;
+    const lifetime = (await import('@/sync/domains/scope/activeServerAccountScope')).captureActiveServerAccountScopeLifetime();
+    if (!lifetime) throw new Error('Discussion fixture Account lifetime is unavailable');
     exactHomeBinding.current = {
+      ...lifetime,
       serverId: 'server-a',
       accountId: 'viewer',
-      scope: { serverId: 'server-a', accountId: 'viewer' },
       revision: 1,
-      isCurrent: () => true,
-      onRetire: () => ({ dispose: () => undefined }),
     };
     exactHomeBindings.current = new Map([
       [exactHomeBinding.current.serverId, exactHomeBinding.current],
@@ -835,7 +940,8 @@ describe('DiscussionDetailsView selection', () => {
           });
         });
         // Retiring the captured Account cannot turn a retained header callback into a new Account's navigation.
-        exactHomeBinding.current.isCurrent = () => false;
+        activeScope?.dispose();
+        activeScope = null;
         await act(async () => {
           readOpen()!();
         });
@@ -1119,6 +1225,135 @@ describe('DiscussionDetailsView selection', () => {
     }
   });
 
+  it('cold-mounts an accepted receipt as moved on after the accepted Doc is edited again', async () => {
+    activeScope?.dispose();
+    activeScope = null;
+    const artifacts = createArtifactStoreBoundary({
+      ownerAccountId: () => 'viewer',
+      encryptionMode: 'plain',
+    });
+    artifacts.replaceStoredRow(createPlainArtifactHttpFixture({
+      id: 'runbook',
+      title: 'Runbook',
+      isDecrypted: true,
+      header: { kind: 'markdown', title: 'Runbook' },
+      rawHeader: { kind: 'markdown', title: 'Runbook' },
+      body: 'A later normal edit.',
+      headerVersion: 2,
+      bodyVersion: 3,
+      seq: 3,
+      createdAt: 1,
+      updatedAt: 3,
+      access: 'owner',
+      storageMode: 'plain',
+    }, 'viewer'));
+    const served = await serveActionHomes({
+      homes: [{
+        key: 'discussion',
+        serverUrl: 'https://discussion-cold-accepted-receipt.test',
+        accountId: 'viewer',
+        currentAccount: true,
+      }],
+      route: async (request) => {
+        if (request.path === '/v1/features' || request.path === '/v1/features/authenticated') {
+          return Response.json(createRootLayoutFeaturesResponse());
+        }
+        return await artifacts.handle(`${request.path}${request.url.search}`, {
+          method: request.method,
+          headers: request.headers,
+          ...(request.body === undefined ? {} : { body: JSON.stringify(request.body) }),
+          signal: request.signal,
+        }) ?? undefined;
+      },
+    });
+    const serverId = served.homes.discussion!.id;
+    const messages = snapshot.threads['discussion-a'].messages;
+    const originalMessages = [...messages];
+    const original = messages[1]!;
+    const acceptedRevision = { headerVersion: 1, bodyVersion: 2 };
+    const baseRevision = { headerVersion: 1, bodyVersion: 1 };
+    const acceptedDecision = DocEditDecisionResultV1Schema.parse({
+      proposalRef: {
+        kind: 'discussion',
+        discussion: { serverId, discussionId: 'discussion-a' },
+        messageId: original.id,
+      },
+      docEditProposalDispositionV1: {
+        state: 'accepted',
+        acceptedRevision,
+        decidedBy: { accountId: 'viewer', atMs: 2 },
+      },
+    });
+    const passage = captureDocPassageV1({
+      ref: { kind: 'doc', artifactId: 'runbook', serverId },
+      revision: baseRevision,
+      source: 'Before accepted edit.',
+      range: { start: 0, end: 21 },
+    });
+    const { messageRef: _messageRef, ...opened } = original;
+    void _messageRef;
+    const accepted = openedMessage({
+      ...opened,
+      content: DiscussionMessageContentV1Schema.parse({
+        kind: 'doc_edit_proposal',
+        proposal: {
+          target: passage,
+          baseRevision,
+          before: passage.quote,
+          after: 'After accepted edit.',
+          reason: 'Clarify.',
+        },
+      }),
+      docEditProposalDispositionV1: acceptedDecision.docEditProposalDispositionV1,
+    }, serverId);
+    snapshot.threads['discussion-a'].messages = [accepted];
+    exactHomeBinding.current = {
+      serverId,
+      accountId: 'viewer',
+      scope: { serverId, accountId: 'viewer' },
+      revision: 1,
+      isCurrent: () => true,
+      onRetire: () => ({ dispose: () => undefined }),
+    };
+    exactHomeBindings.current = new Map([[serverId, exactHomeBinding.current]]);
+    getStorage().getState().deleteArtifact('runbook');
+    expect(getStorage().getState().artifacts.runbook).toBeUndefined();
+    try {
+      const screen = await renderScreen(
+        <DiscussionDetailsView
+          target={{
+            kind: 'discussion',
+            address: { serverId },
+            discussionId: 'discussion-a',
+          }}
+          active
+        />,
+      );
+      const firstMountUndo = screen.findByTestId(`discussion-proposal-${accepted.id}.undo`);
+      const item = (transcriptProps.current?.data as readonly { kind: string; message?: { id: string } }[])
+        .find((candidate) => candidate.kind === 'human_message' && candidate.message?.id === accepted.id);
+      if (!item) throw new Error('Expected the accepted proposal row');
+      await act(async () => {
+        (transcriptProps.current?.onViewableItemsChanged as (input: unknown) => void)({
+          viewableItems: [{ isViewable: true, item }],
+        });
+      });
+      await vi.waitFor(() => expect(served.requests.some((request) =>
+        request.method === 'GET' && request.path === '/v1/artifacts/runbook')).toBe(true));
+      await vi.waitFor(() => expect(
+        screen.findByTestId(`discussion-proposal-${accepted.id}.undoConflict`),
+      ).not.toBeNull());
+      expect(served.requests.filter((request) =>
+        request.method === 'GET' && request.path === '/v1/artifacts/runbook')).toHaveLength(1);
+      expect(firstMountUndo).toBeNull();
+      expect(screen.findByTestId(`discussion-proposal-${accepted.id}.undo`)).toBeNull();
+      expect(screen.findByTestId(`discussion-proposal-${accepted.id}.undoConflict.open`)).not.toBeNull();
+    } finally {
+      snapshot.threads['discussion-a'].messages = originalMessages;
+      await served.dispose();
+    }
+  });
+
   it.each(['doc_passage_comment', 'doc_edit_proposal'] as const)(
     'keeps the original passage basis visible for opened %s content',
     async (kind) => {
@@ -1182,7 +1417,7 @@ describe('DiscussionDetailsView selection', () => {
     const screen = await renderScreen(
       <DiscussionDetailsView target={target} active />,
     );
-    await press(screen, 'session-discussion-select-message-a');
+    await selectMessage(screen, 'message-a');
     expect(screen.findByTestId('transcript-selection-toolbar')).not.toBeNull();
 
     snapshot.threads['discussion-a'].summary.anchor = null;
@@ -1190,7 +1425,7 @@ describe('DiscussionDetailsView selection', () => {
     expect(composerProps.current?.disabled).toBe(false);
     await press(screen, 'transcript-selection-copy');
     expect(clipboard).toHaveBeenCalledWith('**Alice:**\n\nCheck this@Bob');
-    expect(metadataWrites).not.toHaveBeenCalled();
+    expect(pane.closeDetails).not.toHaveBeenCalled();
   });
 
   it('exposes the conversation title as the details heading', async () => {
@@ -1581,7 +1816,7 @@ describe('DiscussionDetailsView selection', () => {
       ),
     ).toHaveLength(0);
 
-    await press(screen, 'session-discussion-select-message-agent');
+    await selectMessage(screen, 'message-agent');
     await press(screen, 'transcript-selection-copy');
     expect(clipboard).toHaveBeenCalledWith(
       '**Session participant · Via Agent:**\n\nAgent result',
@@ -1603,7 +1838,7 @@ describe('DiscussionDetailsView selection', () => {
           }),
         }),
       }),
-      { intent: 'preview' },
+      expect.objectContaining({ intent: 'preview' }),
     );
   });
 
@@ -1647,7 +1882,7 @@ describe('DiscussionDetailsView selection', () => {
     expect(slotRevealed('message-a')).toBe(false);
 
     // Once selecting, every eligible row carries its mark.
-    await press(screen, 'session-discussion-select-message-a');
+    await selectMessage(screen, 'message-a');
     expect(slotRevealed('message-agent')).toBe(true);
   });
 
@@ -1663,7 +1898,13 @@ describe('DiscussionDetailsView selection', () => {
       />,
     );
     expect(screen.findByTestId('save-memory-decision')).toBeNull();
-    await press(screen, 'session-discussion-save-decision-message-a');
+    // A message's actions are Reply plus one ⋯ (CR5): nothing else sits beside them on the row.
+    expect(screen.findByTestId('session-discussion-reply-message-a')).not.toBeNull();
+    expect(screen.findByTestId('session-discussion-save-decision-message-a')).toBeNull();
+    expect(screen.findByTestId('session-discussion-select-message-a')).toBeNull();
+    expect(((dropdownProps.byKey.get('session-discussion-message-menu-message-a')?.items ?? []) as ReadonlyArray<{ id: string }>)
+      .map((item) => item.id)).toEqual(['saveDecision', 'select']);
+    await chooseMenuItem('saveDecision', 'session-discussion-message-menu-message-a');
     expect(screen.findByTestId('save-memory-decision')).toBeTruthy();
     expect(
       screen.findByTestId('save-memory-decision.text')?.props.value,
@@ -1698,10 +1939,16 @@ describe('DiscussionDetailsView selection', () => {
         ?.props.children,
     ).toBe('Via Agent');
 
-    await press(screen, 'session-discussion-select-message-a');
+    await selectMessage(screen, 'message-a');
     await press(screen, 'transcript-selection-copy');
     expect(clipboard).toHaveBeenCalledWith('**Alice:**\n\nCheck this@Bob');
     expect(clipboard.mock.calls[0]?.[0]).not.toContain('account-private-123');
+
+    // One primary (Ask an agent) beside Copy; Send to session waits under the bar's ⋯ (CR5).
+    expect(screen.findByTestId('session-discussion-selection-ask-agent')).not.toBeNull();
+    expect(screen.findByTestId('transcript-selection-send')).toBeNull();
+    expect([...dropdownProps.byKey.values()].some((menu) => ((menu.items ?? []) as ReadonlyArray<{ id: string }>)
+      .some((item) => item.id === 'send'))).toBe(true);
 
     await press(screen, 'session-discussion-selection-ask-agent');
     expect(pane.openDetailsTab).toHaveBeenCalledWith(
@@ -1720,7 +1967,7 @@ describe('DiscussionDetailsView selection', () => {
           }),
         }),
       }),
-      { intent: 'preview' },
+      { intent: 'preview', start: true },
     );
   });
 
@@ -1757,6 +2004,15 @@ describe('DiscussionDetailsView selection', () => {
       screen.findByTestId('session-discussion-message-producer-message-agent')
         ?.props.children,
     ).toBe('Via Agent');
+
+    await act(async () => {
+      getStorage().getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'server-a': ['private'] } });
+      getStorage().getState().setSessionTagAssignmentsOptimistic('server-a', titled.id, ['private']);
+      setScreenSharingPrivacyActive(true);
+    });
+    expect(screen.findByTestId('session-discussion-message-actor-message-agent')?.props.children).toBe('Session participant');
+    await act(async () => setScreenSharingPrivacyActive(false));
+    expect(screen.findByTestId('session-discussion-message-actor-message-agent')?.props.children).toBe('Fresh reviewer 1');
 
     // Untitled no-folder Session: its Agent names it, never the generic "New chat".
     await act(async () => {
@@ -1996,7 +2252,7 @@ describe('DiscussionDetailsView selection', () => {
         });
       });
       expect(routerPush).not.toHaveBeenCalled();
-      await press(screen, 'session-discussion-select-message-session-mention');
+      await selectMessage(screen, 'message-session-mention');
       await press(screen, 'transcript-selection-copy');
       expect(clipboard).not.toHaveBeenCalled();
 
@@ -2016,6 +2272,15 @@ describe('DiscussionDetailsView selection', () => {
               'Ask [Review agent](happier-ref:session:private-participant-session)',
           ),
       ).toBe(true);
+      await act(async () => {
+        getStorage().getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { 'server-a': ['private'] } });
+        getStorage().getState().setSessionTagAssignmentsOptimistic('server-a', participant.id, ['private']);
+        setScreenSharingPrivacyActive(true);
+      });
+      expect(screen.findAllByType(MarkdownView).find(node => node.props.testID === 'session-discussion-message-content-message-session-mention')!
+        .props.inlineReferences.resolve('session:private-participant-session')).toMatchObject({ label: 'Session participant' });
+      expect(screen.findAllByType('EnrichedMarkdownText').some(node => typeof node.props.markdown === 'string' && node.props.markdown.includes('Review agent'))).toBe(false);
+      await act(async () => setScreenSharingPrivacyActive(false));
       await press(screen, 'transcript-selection-copy');
       expect(clipboard).toHaveBeenCalledWith('**Alice:**\n\nAsk @Review agent');
     } finally {
@@ -2024,27 +2289,26 @@ describe('DiscussionDetailsView selection', () => {
   });
 
   it('preserves selection and composer handoff state when Send to Session fails, then retries once', async () => {
-    metadataWrites
-      .mockRejectedValueOnce(new Error('temporary metadata write failure'))
-      .mockImplementationOnce(async (_sessionId, update, options) => ({
-        metadata: update({}),
-        options,
-      }));
+    const { serverId, owner, served, mountComposer } = await prepareSelectionDraftHome('https://discussion-draft.test', 'session-a', false);
+    mountComposer();
+    getStorage().getState().applySettingsLocal({ actionsSettingsV1: normalizeActionsSettingsV1({
+      v: 1, actions: { 'session.draft.append': { enabled: false } },
+    }) });
     const screen = await renderScreen(
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId },
           discussionId: 'discussion-a',
         }}
         active
       />,
     );
 
-    await press(screen, 'session-discussion-select-message-a');
-    await press(screen, 'transcript-selection-send');
+    await selectMessage(screen, 'message-a');
+    await chooseMenuItem('send');
 
-    expect(metadataWrites).toHaveBeenCalledTimes(1);
+    expect(owner.read().document.text).toBe('Existing draft');
     expect(pane.closeDetails).not.toHaveBeenCalled();
     expect(routerReplace).not.toHaveBeenCalled();
     expect(focusComposer).not.toHaveBeenCalled();
@@ -2067,14 +2331,11 @@ describe('DiscussionDetailsView selection', () => {
       'The selected messages could not be added to the Session composer.',
     );
 
+    served.replaceAccountSettings('discussion', { settings: {}, version: 2 });
+    getStorage().getState().applySettingsLocal({ actionsSettingsV1: normalizeActionsSettingsV1({ v: 1, actions: {} }) });
     await press(screen, 'session-discussion-selection-handoff-retry');
 
-    expect(metadataWrites).toHaveBeenCalledTimes(2);
-    expect(metadataWrites).toHaveBeenLastCalledWith(
-      'session-a',
-      expect.any(Function),
-      { serverId: 'server-a' },
-    );
+    expect(owner.read().document.text).toBe('Existing draft\n\n**Alice:**\n\nCheck this@Former member');
     expect(pane.closeDetails).toHaveBeenCalledTimes(1);
     expect(focusComposer).toHaveBeenCalledTimes(1);
     expect(routerReplace).not.toHaveBeenCalled();
@@ -2166,7 +2427,7 @@ describe('DiscussionDetailsView selection', () => {
     }
   });
 
-  it('fails closed instead of attaching a mismatched safe profile to another author id', async () => {
+  it('ignores a mismatched safe profile while retaining the same author’s valid evidence', async () => {
     type MutableActorMessage = Omit<
       (typeof snapshot.threads)['discussion-a']['messages'][number],
       'accountActor'
@@ -2196,10 +2457,12 @@ describe('DiscussionDetailsView selection', () => {
           active
         />,
       );
+      // The same author's other authenticated row still supplies Alice's safe
+      // profile; the mismatched actor cannot replace it with Mallory's profile.
       expect(
         screen.findByTestId('session-discussion-message-actor-message-a')?.props
           .children,
-      ).toBe('Collaborator');
+      ).toBe('Alice');
       expect(JSON.stringify(screen.tree.toJSON())).not.toContain('Mallory');
       expect(JSON.stringify(screen.tree.toJSON())).not.toContain(
         'different-private-account',
@@ -2209,111 +2472,78 @@ describe('DiscussionDetailsView selection', () => {
     }
   });
 
-  it('appends through the exact Home metadata owner, then reveals and focuses the primary composer', async () => {
+  it('appends through the exact Home draft owner, then reveals and focuses the primary composer', async () => {
+    const { serverId, scope, owner, served, mountComposer } = await prepareSelectionDraftHome();
+    mountComposer();
+    const expectCommittedDraft = () => {
+      expect(owner.read().document.text).toBe('Existing draft\n\n**Alice:**\n\nCheck this@Former member');
+      const draft = getSessionDraftSnapshot(scope, { kind: 'session', sessionId: 'session-a' });
+      expect(readSessionDiscussionSelectionSourceFromDraft(draft?.document)).toEqual({
+        kind: 'discussion', serverId, discussionId: 'discussion-a', messageIds: ['message-a'],
+      });
+    };
+    pane.closeDetails.mockImplementationOnce(expectCommittedDraft);
+    focusComposer.mockImplementationOnce(() => {
+      expectCommittedDraft();
+      return true;
+    });
     const screen = await renderScreen(
       <DiscussionDetailsView
         target={{
           kind: 'discussion',
-          address: { serverId: 'server-a' },
+          address: { serverId },
           discussionId: 'discussion-a',
         }}
         active
       />,
     );
 
-    await press(screen, 'session-discussion-select-message-a');
-    await press(screen, 'transcript-selection-send');
-
-    expect(metadataWrites).toHaveBeenCalledTimes(1);
-    expect(metadataWrites.mock.calls[0]?.[0]).toBe('session-a');
-    expect(metadataWrites.mock.calls[0]?.[2]).toEqual({ serverId: 'server-a' });
-    expect(metadataWrites.mock.results[0]?.value).toBeInstanceOf(Promise);
-    const written = await metadataWrites.mock.results[0]!.value;
-    expect(written.metadata).toEqual(
-      expect.objectContaining({
-        sessionInitialPromptV1: expect.objectContaining({
-          mode: 'append',
-          source: {
-            kind: 'discussion',
-            serverId: 'server-a',
-            discussionId: 'discussion-a',
-            messageIds: ['message-a'],
-          },
-        }),
-      }),
-    );
+    await selectMessage(screen, 'message-a');
+    await chooseMenuItem('send');
+    // The bar's ⋯ starts Send and returns; the append settles through the draft owner.
+    await act(async () => { await vi.waitFor(expectCommittedDraft); });
+    expect(served.httpRequests.filter(request => request.method === 'PATCH' && request.path.includes('/sessions/'))).toEqual([]);
+    expect(served.httpRequests.some(request => request.method === 'POST' && request.path.includes('/messages'))).toBe(false);
     expect(pane.closeDetails).toHaveBeenCalledTimes(1);
-    expect(focusComposer).toHaveBeenCalledWith({
-      serverId: 'server-a',
-      sessionId: 'session-a',
-    });
+    expect(focusComposer).toHaveBeenCalledTimes(1);
     expect(routerReplace).not.toHaveBeenCalled();
   });
 
   it('returns from the phone discussion route to the exact Session and focuses after its composer registers', async () => {
+    const { serverId, owner, mountComposer } = await prepareSelectionDraftHome('https://home.example.test:8443', 'session/a');
     deviceType.current = 'phone';
     snapshot.threads['discussion-a'].summary.anchor = {
       kind: 'session',
       sessionId: 'session/a',
     };
-    exactHomeBinding.current = {
-      ...exactHomeBinding.current,
-      serverId: 'https://home.example.test:8443',
-      scope: {
-        serverId: 'https://home.example.test:8443',
-        accountId: 'viewer',
-      },
-    };
-    exactHomeBindings.current = new Map([
-      [exactHomeBinding.current.serverId, exactHomeBinding.current],
-    ]);
-    const originalMessages = snapshot.threads['discussion-a'].messages;
-    activeScope?.dispose();
-    activeScope = await activateStorageAccountScope(
-      exactHomeBinding.current.scope,
-      getStorage(),
+    const screen = await renderScreen(
+      <DiscussionDetailsView
+        target={{
+          kind: 'discussion',
+          address: { serverId },
+          discussionId: 'discussion-a',
+        }}
+        active
+      />,
     );
-    shellSession.current = createSessionFixture({
-      id: 'session/a',
-      serverId: exactHomeBinding.current.serverId,
-    });
-    snapshot.threads['discussion-a'].messages = originalMessages.map(
-      ({ messageRef: _messageRef, ...message }) =>
-        openedMessage(message, exactHomeBinding.current.serverId),
+
+    await selectMessage(screen, 'message-a');
+    await chooseMenuItem('send');
+    await act(async () => { await vi.waitFor(() => expect(owner.read().document.text).toBe('Existing draft\n\n**Alice:**\n\nCheck this@Former member')); });
+
+    expect(owner.read().document.text).toBe('Existing draft\n\n**Alice:**\n\nCheck this@Former member');
+    expect(routerReplace).toHaveBeenCalledWith(
+      `/session/session%2Fa?serverId=${encodeURIComponent(serverId)}`,
     );
-    try {
-      const screen = await renderScreen(
-        <DiscussionDetailsView
-          target={{
-            kind: 'discussion',
-            address: { serverId: 'https://home.example.test:8443' },
-            discussionId: 'discussion-a',
-          }}
-          active
-        />,
-      );
-
-      await press(screen, 'session-discussion-select-message-a');
-      await press(screen, 'transcript-selection-send');
-
-      expect(metadataWrites.mock.calls[0]?.[0]).toBe('session/a');
-      expect(metadataWrites.mock.calls[0]?.[2]).toEqual({
-        serverId: 'https://home.example.test:8443',
-      });
-      expect(routerReplace).toHaveBeenCalledWith(
-        '/session/session%2Fa?serverId=https%3A%2F%2Fhome.example.test%3A8443',
-      );
-      expect(pane.closeDetails).not.toHaveBeenCalled();
-      expect(focusComposer).toHaveBeenCalledWith({
-        serverId: 'https://home.example.test:8443',
-        sessionId: 'session/a',
-      });
-    } finally {
-      snapshot.threads['discussion-a'].messages = originalMessages;
-    }
+    expect(pane.closeDetails).not.toHaveBeenCalled();
+    expect(focusComposer).not.toHaveBeenCalled();
+    mountComposer('https://other-home.example.test');
+    expect(focusComposer).not.toHaveBeenCalled();
+    mountComposer();
+    expect(focusComposer).toHaveBeenCalledTimes(1);
   });
 
-  it("authors the viewer's own unacknowledged message with their name, not as a generic collaborator", async () => {
+  it("authors the viewer's own unacknowledged message with the canonical self label", async () => {
     // The viewer's own signed-in profile, scoped to the exact Home the conversation lives on.
     const current = getStorage().getState().profile;
     getStorage().setState({
@@ -2353,7 +2583,7 @@ describe('DiscussionDetailsView selection', () => {
     expect(
       screen.findByTestId('session-discussion-message-actor-post-local-unknown')
         ?.props.children,
-    ).toBe('Maya Chen');
+    ).toBe('You');
   });
 
   it('presents a settled unknown outcome distinctly and retries the retained identity only on request', async () => {
@@ -2400,7 +2630,7 @@ describe('DiscussionDetailsView selection', () => {
       screen.findByTestId('session-discussion-mutation-retry')?.props,
     ).toEqual(
       expect.objectContaining({
-        accessibilityRole: 'button',
+        role: 'button',
         accessibilityLabel: 'Try again',
       }),
     );
@@ -2511,7 +2741,7 @@ describe('DiscussionDetailsView selection', () => {
       expect(routerPush).toHaveBeenCalledWith(
         '/session/review-session?serverId=server-a',
       );
-      await press(screen, 'session-discussion-select-message-a');
+      await selectMessage(screen, 'message-a');
       await press(screen, 'transcript-selection-copy');
       expect(clipboard).toHaveBeenCalledWith(
         '**Alice:**\n\nAsk @Bob about @Auth fix',
@@ -2888,7 +3118,7 @@ describe('DiscussionDetailsView selection', () => {
       />,
     );
 
-    await press(screen, 'session-discussion-select-message-a');
+    await selectMessage(screen, 'message-a');
     expect(
       screen.findByTestId('session-discussion-selection-ask-agent'),
     ).toBeNull();
@@ -3053,45 +3283,23 @@ describe('DiscussionDetailsView selection', () => {
     expect(repositoryDismiss).toHaveBeenCalledWith('create-local-failed');
   });
 
-  it('hands mobile Ask Agent to the qualified Run route without exposing selected text in history', async () => {
+  it('opens mobile Ask Agent in the same contextual Start with its source reference', async () => {
     deviceType.current = 'phone';
     const screen = await renderScreen(
       <DiscussionDetailsView
-        target={{
-          kind: 'discussion',
-          address: { serverId: 'server-a' },
-          discussionId: 'discussion-a',
-        }}
+        target={{ kind: 'discussion', address: { serverId: 'server-a' }, discussionId: 'discussion-a' }}
         active
       />,
     );
-
-    await press(screen, 'session-discussion-select-message-a');
+    await selectMessage(screen, 'message-a');
     await press(screen, 'session-discussion-selection-ask-agent');
-
-    expect(pane.openDetailsTab).not.toHaveBeenCalled();
-    const href = routerPush.mock.calls[0]?.[0] as string;
-    expect(href).toMatch(
-      /^\/session\/session-a\/runs\/new\?serverId=server-a&draftCorrelationId=/,
-    );
-    expect(href).not.toContain('Check');
-    const correlationId = new URL(
-      `https://example.test${href}`,
-    ).searchParams.get('draftCorrelationId');
-    expect(
-      consumeInteractiveExecutionRunDraftNavigationIntent({
-        address: { serverId: 'server-a', sessionId: 'session-a' },
-        correlationId: correlationId ?? '',
+    expect(routerPush).not.toHaveBeenCalled();
+    expect(pane.openDetailsTab).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'executionRunLauncher',
+      resource: expect.objectContaining({ kind: 'executionRunLauncher', mode: 'conversation',
+        source: { kind: 'discussion', serverId: 'server-a', discussionId: 'discussion-a',
+          messageIds: ['message-a'], draftCorrelationId: expect.any(String) },
       }),
-    ).toEqual({
-      initialText: '**Alice:**\n\nCheck this@Bob',
-      source: {
-        kind: 'discussion',
-        serverId: 'server-a',
-        discussionId: 'discussion-a',
-        messageIds: ['message-a'],
-        draftCorrelationId: correlationId,
-      },
-    });
+    }), { intent: 'preview', start: true });
   });
 });

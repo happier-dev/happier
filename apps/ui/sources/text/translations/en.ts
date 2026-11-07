@@ -1598,6 +1598,7 @@ const enInbox = {
   pluginDisabled: ({ name }: { name: string }) => `${name} is turned off. Its items stay; their pages open again when it’s back.`,
   pluginEnableFailed: 'Couldn’t turn it on. Try again.',
   pluginTurnOn: 'Turn on',
+  pluginFallback: 'This plugin',
   resolvedReceipt: 'Resolved · cleared from your Inbox',
   nextItem: 'Next item',
   work: inboxWorkTranslations.en,
@@ -1622,6 +1623,12 @@ const enInbox = {
 };
 
 const enApprovals = {
+    requesterRunsAs: "Runs as",
+    requesterWritesWith: "Writes with",
+    requesterAction: "Action",
+    requesterRecord: "Happier keeps who asked, which Action ran and the result",
+    requesterActionsSettings: "Settings → Actions",
+    requestMachineOffline: ({ machine }: { machine: string }) => `${machine} is offline. The request waits; nothing is written before you confirm.`,
     confidential: {
       review: "Review credential",
       title: "Credential",
@@ -10031,6 +10038,12 @@ const enSession = {
       matching: 'Matching sessions',
       matchingChoose: 'Matching…',
       matchingHint: 'Sessions that fit a filter',
+      modelChoose: 'A model, in a new session…',
+      modelHint: 'Choose its agent and model before sending',
+      modelUse: 'Use this model',
+      modelStarts: ({ machine }: { machine: string }) => `Starts a new session of yours on ${machine}`,
+      chipModelAsk: ({ model }: { model: string }) => `Ask ${model} · new session`,
+      modelAskFailed: 'Couldn’t send',
       useThese: 'Use these',
       noMatches: 'No sessions match',
       refreshing: 'refreshing',
@@ -23757,6 +23770,7 @@ export const en: TranslationStructure = {
       answersWorkerQuestionsDescription: "Questions from the sessions it manages reach it first. Approvals still come to you.",
       defaultLevelsTitle: "Default levels",
       followDefaultsSaved: 'Saved. Follows you already have keep their level.',
+      followDefaultsFailed: 'Couldn’t save Follow defaults. Try again.',
       followDefaultSaveFailed: ({ field, value }: { field: string; value: string }) => `Couldn’t save. ${field} is still ${value}.`,
       defaultLevelsDescription: "Used when a follow is created for you. Follows you already have keep their level.",
       levelUnderLead: "Putting a session under a lead",
@@ -24763,6 +24777,9 @@ type EnglishNamespaces27 = TranslationOverlay<
       readonly suggestHomeRuleDescription: string;
       readonly answersWorkerQuestionsDescription: string;
       readonly defaultLevelsTitle: string;
+      readonly followDefaultsSaved: string;
+      readonly followDefaultsFailed: string;
+      readonly followDefaultSaveFailed: (params: { field: string; value: string }) => string;
       readonly defaultLevelsDescription: string;
       readonly levelUnderLead: string;
       readonly levelUnderLeadDescription: string;

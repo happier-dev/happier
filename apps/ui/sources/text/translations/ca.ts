@@ -1974,6 +1974,11 @@ export const ca: TranslationStructure = {
     },
 
   approvals: {
+    requesterRunsAs: "S’executa com",
+    requesterWritesWith: "Escriu amb",
+    requesterAction: "Acció",
+    requesterRecord: "Happier conserva qui ho ha demanat, quina acció s’ha executat i el resultat",
+    requesterActionsSettings: "Configuració → Accions",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} és fora de línia. La sol·licitud espera; no s’escriu res fins que confirmis.`,
     confidential: {
       review: "Revisar credencial",

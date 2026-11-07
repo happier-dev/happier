@@ -2121,6 +2121,11 @@ export const ja: TranslationStructure = {
   },
 
   approvals: {
+    requesterRunsAs: "実行アカウント",
+    requesterWritesWith: "書き込みに使用",
+    requesterAction: "アクション",
+    requesterRecord: "Happier は依頼者、実行されたアクション、結果を記録します",
+    requesterActionsSettings: "設定 → アクション",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} はオフラインです。リクエストは待機し、確認するまで書き込みは行われません。`,
     confidential: {
       review: "認証情報を確認",

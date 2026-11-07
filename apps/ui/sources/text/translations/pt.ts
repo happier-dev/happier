@@ -2175,6 +2175,11 @@ export const pt: TranslationStructure = {
   },
 
   approvals: {
+    requesterRunsAs: "Executa como",
+    requesterWritesWith: "Escreve com",
+    requesterAction: "Ação",
+    requesterRecord: "O Happier guarda quem fez o pedido, que ação foi executada e o resultado",
+    requesterActionsSettings: "Definições → Ações",
     requestMachineOffline: ({ machine }: { machine: string }) => `${machine} está offline. O pedido aguarda; nada é escrito antes de você confirmar.`,
     confidential: {
       review: "Revisar credencial",
