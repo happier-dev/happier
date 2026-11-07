@@ -30,7 +30,7 @@ import {
     type WorkflowRunListPage,
 } from '@/sync/domains/workflows/workflowRunListActions';
 import { subscribeVisibleWorkflowRunListInvalidation, type WorkflowRunListInvalidation } from '@/sync/domains/workflows/workflowRunListInvalidation';
-import { refreshWorkflowRunWindowChanges } from './workflowRunWindowChanges';
+import { assertWorkflowRunWindowScope, refreshWorkflowRunWindowChanges } from './workflowRunWindowChanges';
 import { subscribeHomeAccountChange, type HomeAccountChangeEvent } from '@/sync/runtime/orchestration/homeAccountChange';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -679,7 +679,7 @@ function runWindowReader(windowId: WorkflowRunListWindowId, lifetime: ActiveServ
  * read. Exact Run-set windows are per-detail demand and stop observing with their last reader.
  */
 function observesWhileClosed(windowId: WorkflowRunListWindowId): boolean {
-    return !windowId.startsWith('exact:');
+    return !windowId.startsWith('exact:') && !windowId.startsWith('session-origin:') && !windowId.startsWith('session-destination:');
 }
 
 /** Two pending changes share one read; a coarse change (no named Runs or sources) supersedes them. */
@@ -741,6 +741,7 @@ export async function readRunWindowPage(windowId: WorkflowRunListWindowId, curso
     const limit = projection === undefined && readMode !== 'complete'
         ? Math.max(1, Math.ceil(Dimensions.get('window').height / HAPPIER_COLLECTION_ROW_METRICS.height.compact)) : undefined;
     const page = await listWorkflowRuns({ filter: buildWorkflowRunListFilter(windowId), cursor, projection, limit, signal, accountLifetime });
+    assertWorkflowRunWindowScope(windowId, page.runs);
     return { ...page, automationRuns: [], nextCursor: page.nextCursor ?? null };
 }
 
@@ -781,9 +782,10 @@ export function refreshRunWindow(windowId: WorkflowRunListWindowId, invalidate =
         let continuing = false;
         try {
             if (windowId !== 'automationAttention' && previousWindow && !promoting && (change?.runIds || change?.sourceArtifactIds)) {
-                const membershipChanged = await refreshWorkflowRunWindowChanges(windowId, change, lifetime, controller.signal, projection);
+                const membership = await refreshWorkflowRunWindowChanges(windowId, change, lifetime, controller.signal, projection);
                 if (!lifetime.isCurrent() || controller.signal.aborted) return;
-                if (!membershipChanged) {
+                if (membership === 'current') return;
+                if (membership === 'unchanged') {
                     setRunWindowStatus(storeId, { ...readRunWindowStatus(storeId), status: 'loaded', failure: null, knownAt: Date.now() });
                     return;
                 }
@@ -936,7 +938,13 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
     const active = useActiveServerAccountScopeLifetime();
     const addressed = useWorkflowAccountLifetime(options.accountLifetime);
     const lifetime = addressed === undefined ? active : addressed;
-    const scope = lifetime?.scope ?? null;
+    const subscribeLifetime = React.useCallback((listener: () => void) => {
+        const retirement = lifetime?.onRetire(listener);
+        return () => retirement?.dispose();
+    }, [lifetime]);
+    const readLifetimeCurrent = React.useCallback(() => lifetime?.isCurrent() === true, [lifetime]);
+    const current = React.useSyncExternalStore(subscribeLifetime, readLifetimeCurrent, readLifetimeCurrent);
+    const scope = current ? lifetime?.scope ?? null : null;
     const scopeKey = scope === null ? null : serverAccountScopeKeySuffix(scope);
     const storeId = scope === null ? windowId : workflowRunListWindowStoreKey(windowId, scope);
     const readStatus = React.useCallback(() => enabled ? readRunWindowStatus(storeId) : INITIAL_RUN_STATUS, [enabled, storeId]);
@@ -955,7 +963,7 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
     const knownAt = owned && !needsPromotion ? status.knownAt : null;
 
     React.useEffect(() => {
-        if (!demanded || lifetime === null) return;
+        if (!demanded || !current || lifetime === null) return;
         const reader = runWindowReader(windowId, lifetime);
         if (membershipOnly) reader.membershipReaders += 1;
         else reader.fullReaders += 1;
@@ -975,6 +983,7 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
             lifetime,
             ...(windowId !== 'automationAttention' && windowId.startsWith('exact:') ? { runIds: buildWorkflowRunListFilter(windowId).runIds } : {}),
             source: windowId === 'automationAttention' ? 'automation' : 'workflow',
+            discoverSourceArtifacts: windowId !== 'automationAttention',
             sourceArtifactIds: () => Object.values(getStorage().getState().workflowRunListWindows[storeId]?.sourceArtifactIdsByRunId ?? {}),
             isVisibleWindowLoaded: () => getStorage().getState().workflowRunListWindows[storeId]?.loaded === true
                 || readRunWindowStatus(storeId).status === 'failed'
@@ -999,14 +1008,16 @@ export function useWorkflowRunWindow(windowId: WorkflowRunListWindowId, options:
                 if (!reader.read && runWindowReaders.get(storeId) === reader) runWindowReaders.delete(storeId);
             }
         };
-    }, [complete, demanded, lifetime, membershipOnly, storeId, windowId]);
+    }, [complete, current, demanded, lifetime, membershipOnly, storeId, windowId]);
 
     const retry = React.useCallback(() => {
-        if (lifetime === null) return;
+        if (!current || lifetime === null) return;
         runWindowReaders.get(storeId)?.read?.controller.abort();
         void refreshRunWindow(windowId, false, lifetime);
-    }, [lifetime, storeId, windowId]);
-    const loadMore = React.useCallback(() => { void loadMoreRunWindow(windowId, lifetime); }, [lifetime, windowId]);
+    }, [current, lifetime, storeId, windowId]);
+    const loadMore = React.useCallback(() => {
+        if (current) void loadMoreRunWindow(windowId, lifetime);
+    }, [current, lifetime, windowId]);
     return React.useMemo(() => ({
         accountLifetime: lifetime,
         serverId: enabled && owned && status.knownAt !== null ? scope?.serverId ?? null : null,

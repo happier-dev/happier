@@ -19,6 +19,7 @@ import { WorkflowRunRecipientCensusResponseV1Schema } from '@happier-dev/protoco
 import { PluginProjectionV2Schema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { WorkflowTriggerSetV1Schema } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { encodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
+import { deriveArtifactStoredKindV1 } from '@happier-dev/protocol/artifacts/artifactKindV1';
 import { decodeBase64 } from '@/encryption/base64';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
 import { WORKFLOW_DEFINITION_PLUGIN_CURSOR_PREFIX_V1, WorkflowRunListRequestV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
@@ -51,7 +52,7 @@ const { WorkflowTriggerSection } = await import('../triggers/WorkflowTriggerSect
 const { WorkflowTriggerRunHistory } = await import('../triggers/WorkflowTriggerRunHistory');
 const { WorkflowRunItemBody } = await import('@/components/sessions/shell/row/WorkflowRunItemBody');
 const { EMPTY_WORKFLOW_TRIGGER_DRAFT } = await import('../triggers/workflowTriggerDraft');
-const { useSessionManagedWorkflowRuns } = await import('../run/useContextManagedWorkflowRuns');
+const { useContextManagedWorkflowRuns, useSessionManagedWorkflowRuns } = await import('../run/useContextManagedWorkflowRuns');
 const { clearDaemonMergedProjectionCacheForTests } = await import('@/agents/backendCatalog/loadDaemonMergedProjectionInputs');
 const { publishMachineContributionRegistryProjectionInvalidation } = await import('@/sync/ops/machineContributionRegistryProjectionRevision');
 const route = '/v3/automations/runs/workflow-storage';
@@ -276,6 +277,86 @@ function pluginMachine(id: string, owningAccountId = accountId) {
 }
 
 describe('unified Workflow Library', () => {
+    it('FIN B2 withdraws retained rows when an explicitly addressed Account lifetime retires', async () => {
+        storage.setState({ settings: { ...storage.getState().settings, experiments: true, featureToggles: { automations: true } } });
+        const { captureActiveServerAccountScopeLifetime } = await import('@/sync/domains/scope/activeServerAccountScope');
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        if (!lifetime) throw new Error('Missing Account lifetime');
+        const summary = run('addressed-run');
+        home.answer(serverId, route, { body: await runPage([summary]) });
+        const hook = await renderHook(() => useContextManagedWorkflowRuns({ resource: { kind: 'discussion', id: 'addressed' },
+            serverId, accountLifetime: lifetime, runIds: [summary.id] }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runs).toHaveLength(1));
+        await act(async () => retireActiveServerAccountScopeLifetime());
+        expect(hook.getCurrent().runs).toEqual([]);
+        expect(hook.getCurrent().lastSuccessfulReadAt).toBeNull();
+        expect(hook.getCurrent().phase).toBe('failed');
+    });
+
+    it('FIN B2 shares the complete Session read when transcript mounts after Work at 1,000 Runs', async () => {
+        storage.setState({ settings: { ...storage.getState().settings, experiments: true, featureToggles: { automations: true } } });
+        const summaries = Array.from({ length: 1000 }, (_, index) => createWorkflowRunSummaryFixture({
+            ...run(`context-${index}`), origin: { kind: 'direct', originSessionId: 'context-session' },
+        }));
+        const pending = createDeferred<void>();
+        home.answer(serverId, route, { body: await runPage(summaries), respondAfter: pending.promise });
+        const work = await renderHook(() => useSessionManagedWorkflowRuns({ sessionId: 'context-session', serverId }));
+        await act(async () => pending.resolve());
+        await waitForHomeGovernance(() => expect(work.getCurrent().phase).toBe('loaded'));
+        const transcript = await renderHook(() => useSessionManagedWorkflowRuns({ sessionId: 'context-session', serverId }));
+        await waitForHomeGovernance(() => expect(transcript.getCurrent().runs).toHaveLength(summaries.length));
+        expect(home.requestsFor(route)).toHaveLength(1);
+    });
+
+    it('FIN B2 reads only changed Session Run identities and consumes materialized unrelated pushes without reads', async () => {
+        storage.setState({ settings: { ...storage.getState().settings, experiments: true, featureToggles: { automations: true } } });
+        const summaries = Array.from({ length: 1000 }, (_, index) => createWorkflowRunSummaryFixture({
+            ...run(`context-${index}`), origin: { kind: 'direct', originSessionId: 'context-session' },
+        }));
+        let page = await runPage(summaries);
+        let servedRows = 0;
+        home.answer(serverId, route, { select: input => {
+            const request = WorkflowRunListRequestV1Schema.parse(input && typeof input === 'object' ? Reflect.get(input, 'request') : null);
+            const runs = request.runIds ? page.runs.filter(row => request.runIds?.includes(row.id)) : page.runs;
+            servedRows += runs.length;
+            return { body: { ...page, runs } };
+        } });
+        const hook = await renderHook(() => useSessionManagedWorkflowRuns({ sessionId: 'context-session', serverId }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runs).toHaveLength(summaries.length));
+        const initial = home.requestsFor(route).length;
+        const initiallyServed = servedRows;
+        const changed = { ...summaries[0]!, revision: 2, attentionRequired: true, invocationAttentionRequired: true };
+        page = await runPage([changed, ...summaries.slice(1)]);
+        await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${changed.id}`]));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runs[0]?.revision).toBe(2));
+        expect(home.requestsFor(route).length - initial).toBe(1);
+        expect(servedRows - initiallyServed).toBe(1);
+        expect(home.requestsFor(route).at(-1)?.input).toMatchObject({ request: { originSessionId: 'context-session', runIds: [changed.id] } });
+        expect(hook.getCurrent().runs).toHaveLength(summaries.length);
+        expect(hook.getCurrent().attentionRunIds.has(changed.id)).toBe(true);
+        const materialized = { ...changed, revision: 3, attentionRequired: false, invocationAttentionRequired: false };
+        const beforeMaterialized = home.requestsFor(route).length;
+        await act(async () => {
+            storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(materialized)]);
+            publishHomeAccountChange(serverId, [`workflow-run:${changed.id}`], { workflowRunsMaterialized: true });
+        });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runs[0]?.revision).toBe(3));
+        expect(hook.getCurrent().attentionRunIds.has(changed.id)).toBe(false);
+        expect(home.requestsFor(route)).toHaveLength(beforeMaterialized);
+        const beforeUnrelated = home.requestsFor(route).length;
+        const beforeUnrelatedState = hook.getCurrent();
+        for (let index = 0; index < 10; index++) {
+            const unrelated = createWorkflowRunSummaryFixture({ ...run(`elsewhere-${index}`),
+                origin: { kind: 'direct', originSessionId: 'another-session' } });
+            await act(async () => {
+                storage.getState().upsertWorkflowRuns([workflowRunRowFromSummary(unrelated)]);
+                publishHomeAccountChange(serverId, [`workflow-run:${unrelated.id}`], { workflowRunsMaterialized: true });
+            });
+        }
+        expect(home.requestsFor(route)).toHaveLength(beforeUnrelated);
+        expect(hook.getCurrent()).toBe(beforeUnrelatedState);
+    });
+
     it.each(['origin', 'destination'] as const)('reads a complete %s Session relation once and derives changing attention from its admitted summaries', async relation => {
         const sessionId = 'context-session';
         const summary = createWorkflowRunSummaryFixture({ id: 'context-run', ownerAccountId: accountId,
@@ -300,14 +381,14 @@ describe('unified Workflow Library', () => {
         expect(home.requestsFor(route)[0]?.input).toMatchObject({ request: relation === 'origin'
             ? { originSessionId: sessionId } : { targetSessionId: sessionId } });
 
-        const changed = { ...summary, revision: summary.revision + 1, attentionRequired: true };
+        const changed = { ...summary, revision: summary.revision + 1, attentionRequired: true, invocationAttentionRequired: true };
         await serveRelation(changed);
         await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${summary.id}`]));
         await waitForHomeGovernance(() => expect(hook.getCurrent().attentionRunIds.has(summary.id)).toBe(true));
         expect(hook.getCurrent().runs[0]?.revision).toBe(changed.revision);
         expect(home.requestsFor(route)).toHaveLength(2);
 
-        await serveRelation({ ...changed, revision: changed.revision + 1, attentionRequired: false });
+        await serveRelation({ ...changed, revision: changed.revision + 1, attentionRequired: false, invocationAttentionRequired: false });
         await act(async () => publishHomeAccountChange(serverId, [`workflow-run:${summary.id}`]));
         await waitForHomeGovernance(() => expect(hook.getCurrent().attentionRunIds.size).toBe(0));
         expect(home.requestsFor(route)).toHaveLength(3);
@@ -1282,7 +1363,9 @@ describe('Workflow Run windows through real Account storage', () => {
             expect(hook.getCurrent().runIds).toEqual([]);
             const before = home.requestsFor(route).length;
             for (let index = 0; index < 10; index++) {
-                await act(async () => publishHomeAccountChange(serverId, [`unrelated-${index}`], { changeKinds: ['artifact'] }));
+                await act(async () => publishHomeAccountChange(serverId, [`unrelated-${index}`], {
+                    changeKinds: ['artifact'], artifactKinds: [deriveArtifactStoredKindV1({ kind: 'document' })],
+                }));
             }
             expect(home.requestsFor(route)).toHaveLength(before);
             const occurrence = createWorkflowRunSummaryFixture({ id: 'first-scheduled-occurrence', ownerAccountId: accountId,
@@ -1324,12 +1407,15 @@ describe('Workflow Run windows through real Account storage', () => {
         },
     );
 
-    it.each(['all', 'exact:["selected-run"]'] as const)('ignores 300 unrelated Artifact pushes and targets only changed Runs and referenced sources (%s)', async windowId => {
+    it.each(['all', 'exact:["selected-run"]'] as const)('ignores 300 unrelated Artifact kinds and discovers changed Run sources (%s)', async windowId => {
         await saved();
         const boundary = home.artifacts(serverId);
         const template = boundary.read(definitionId)!;
-        const artifactIds = Array.from({ length: 300 }, (_, index) => `unrelated-artifact-${index}`);
-        for (const id of artifactIds) boundary.replaceStoredRow({ ...template, id });
+        const artifactIds = Array.from({ length: 300 }, (_, index) => `00000000-0000-4000-8000-${String(1000 + index).padStart(12, '0')}`);
+        for (const id of artifactIds) boundary.replaceStoredRow({ ...template, id,
+            kind: deriveArtifactStoredKindV1({ kind: 'document' }),
+            header: encodePlainArtifactStoredContent({ kind: 'document' }),
+        });
         const selected = { ...run('selected-run'), sourceArtifactId: definitionId };
         const untouched = { ...run('untouched-run'), sourceArtifactId: definitionId };
         home.answer(serverId, route, { body: await runPage(windowId === 'all' ? [selected, untouched] : [selected], 'retained-tail') });
@@ -1340,7 +1426,9 @@ describe('Workflow Run windows through real Account storage', () => {
             const request = WorkflowRunListRequestV1Schema.parse((read.input as { request: unknown }).request);
             return request.runIds === undefined && request.sourceArtifactId === undefined;
         });
-        for (const id of artifactIds) await act(async () => publishHomeAccountChange(serverId, [id], { changeKinds: ['artifact'] }));
+        for (const id of artifactIds) await act(async () => publishHomeAccountChange(serverId, [id], {
+            changeKinds: ['artifact'], artifactKinds: [deriveArtifactStoredKindV1({ kind: 'document' })],
+        }));
         expect(home.requestsFor(route)).toHaveLength(before);
         expect(fullReloads()).toHaveLength(0);
         const changed = { ...selected, state: 'succeeded' as const, revision: selected.revision + 1 };
@@ -1368,21 +1456,46 @@ describe('Workflow Run windows through real Account storage', () => {
         await act(async () => storage.getState().removeWorkflowRun(selected.id));
         await act(async () => storage.getState().removeWorkflowRun(untouched.id));
         await act(async () => publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'] }));
-        expect(home.requestsFor(route)).toHaveLength(before + 2);
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toContain(selected.id));
+        expect(home.requestsFor(route)[before + 2]?.input).toMatchObject({ request: { sourceArtifactId: definitionId } });
     });
 
-    it.each([undefined, 'membership'] as const)('observes demanded source grant removal without refreshing unrelated sources (%s)', async projection => {
+    it.each([
+        { windowId: 'all', projection: undefined },
+        { windowId: 'attention', projection: undefined },
+        { windowId: 'attention', projection: 'membership' },
+    ] as const)('discovers Runs again after source grant removal and regrant with a scoped read ($windowId, $projection)', async ({ windowId, projection }) => {
         const selected = { ...run('shared-run'), sourceArtifactId: definitionId, attentionRequired: true };
         home.answer(serverId, route, { body: projection ? membershipPage([selected]) : await runPage([selected]) });
-        const hook = await renderHook(() => useWorkflowRunWindow('attention', { projection }));
+        const hook = await renderHook(() => useWorkflowRunWindow(windowId, { projection }));
         await waitLoaded(hook);
         const before = home.requestsFor(route).length;
-        await act(async () => publishHomeAccountChange(serverId, ['unrelated-source'], { changeKinds: ['artifact'] }));
+        await act(async () => publishHomeAccountChange(serverId, [secondId], {
+            changeKinds: ['artifact'], artifactKinds: [deriveArtifactStoredKindV1({ kind: 'document' })],
+        }));
         expect(home.requestsFor(route)).toHaveLength(before);
         home.answer(serverId, route, { body: projection ? membershipPage([]) : await runPage([]) });
         await act(async () => publishHomeAccountChange(serverId, [definitionId], { changeKinds: ['artifact'] }));
         await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toEqual([]));
-        expect(home.requestsFor(route)[before]?.input).toMatchObject({ request: { sourceArtifactId: definitionId, attention: 'required' } });
+        expect(home.requestsFor(route)[before]?.input).toMatchObject({ request: { sourceArtifactId: definitionId,
+            ...(windowId === 'attention' ? { attention: 'required' } : {}) } });
+        expect(storage.getState().workflowRunListWindows[runWindowKey(windowId)]?.sourceArtifactIdsByRunId).toEqual({});
+        const beforeRegrant = home.requestsFor(route).length;
+        const beforeInventory = artifactInventoryReads().length;
+        const fullPage = await runPage([selected]);
+        home.answer(serverId, route, { select: input => {
+            const request = WorkflowRunListRequestV1Schema.parse((input as { request: unknown }).request);
+            const rows = request.runIds && !request.runIds.includes(selected.id) ? [] : [selected];
+            return { body: projection ? membershipPage(rows) : { ...fullPage, runs: rows } };
+        } });
+        await act(async () => publishHomeAccountChange(serverId, [definitionId], {
+            changeKinds: ['artifact'], artifactKinds: [deriveArtifactStoredKindV1({ kind: 'workflow-definition.v1' })],
+        }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().runIds).toEqual([selected.id]));
+        expect(home.requestsFor(route)[beforeRegrant]?.input).toMatchObject({ request: { sourceArtifactId: definitionId,
+            ...(windowId === 'attention' ? { attention: 'required' } : {}) } });
+        expect((home.requestsFor(route)[beforeRegrant]?.input as { request: { runIds?: string[] } }).request.runIds).toBeUndefined();
+        expect(artifactInventoryReads()).toHaveLength(beforeInventory);
     });
 
     it('settles 1,000 complete Runs in one byte-bounded request and keeps a genuine arrival current', async () => {
