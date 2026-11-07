@@ -490,6 +490,7 @@ export async function createCodexSharedAppServer(params: Readonly<{
       }
       return await dependencies.createClient({
         exec: params.exec,
+        logger: params.logger,
         cwd: request.cwd,
         processEnv: request.processEnv,
         toolRestrictionRequired: request.toolRestrictionRequired,

@@ -349,6 +349,42 @@ describe('createCodexSharedAppServer', () => {
     } finally { await client?.dispose(); await server.dispose(); }
   });
 
+  it.skipIf(process.platform === 'win32')('keeps native initialization diagnostics on both the initial and subsequent shared clients', async () => {
+    const logger = { debug: vi.fn() };
+    const result: PluginProcessResult = { termination: { observed: { kind: 'exit', exitCode: 0 }, requestedBy: { kind: 'none' } },
+      stdout: new TextEncoder().encode('codex-cli 0.162.1'), stderr: new Uint8Array(), stdoutTruncated: false, stderrTruncated: false };
+    let peer: Awaited<ReturnType<typeof createCodexControlSocketFixture>> | undefined;
+    let finish!: (value: PluginProcessResult) => void;
+    const exited = new Promise<PluginProcessResult>(resolve => { finish = resolve; });
+    // Substitute only the executable boundary; shared startup and both native
+    // client initializations use real sockets and the production logger path.
+    const spawn = vi.fn(async (request: Parameters<ExecService['spawn']>[0]) => {
+      peer = await createCodexControlSocketFixture(request.args[request.args.indexOf('--listen') + 1]!.slice('unix://'.length), message =>
+        message.method === 'initialize' ? {} : message.id === undefined ? undefined : { pong: true });
+      return { async waitForExit() { return (await this.wait()).termination; }, wait: () => exited,
+        dispose: async () => { await peer?.close(); finish(result); } };
+    });
+    const exec = { withSpawnAdmission: admitTestExecSpawn, prepareNativeSocketDirectory: prepareTestNativeSocketDirectory,
+      systemTools: { resolve: async () => ({ executable: { kind: 'systemTool', id: 'codex-cli' } }) },
+      clients: { connectJsonRpc: connectFixtureClient }, run: async () => result, spawn,
+    } as unknown as ExecService;
+    const server = await createCodexSharedAppServer({ exec, logger, processEnv: {}, platform: 'linux' });
+    if (!server) throw new Error('Expected shared native server');
+    const clients: Awaited<ReturnType<typeof server.createClient>>[] = [];
+    try {
+      for (let index = 0; index < 2; index++) {
+        const client = await server.createClient({ cwd: osBoundary.home, processEnv: {}, configOverrides: [], disableUserMcpServers: false });
+        clients.push(client);
+        await expect(client.request('test/ping')).resolves.toEqual({ pong: true });
+        expect(logger.debug.mock.calls.filter(([message, fields]) => message === 'Codex startup phase' && fields?.phase === 'initialize')).toHaveLength(index + 1);
+      }
+      expect(spawn).toHaveBeenCalledTimes(1);
+    } finally {
+      await Promise.all(clients.map(client => client.dispose()));
+      await server.dispose();
+    }
+  });
+
   it.skipIf(process.platform === 'win32')('publishes distinct bindable Unix paths even with a long native home and TMPDIR', async () => {
     const home = osBoundary.home;
     const longHome = join(home, 'long-home-'.repeat(18));
