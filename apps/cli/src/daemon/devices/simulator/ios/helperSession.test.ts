@@ -26,7 +26,7 @@ const SOURCE_ID = 'ios-simulator:A1B2-C3D4:screen';
 const STREAM_ID = 'stream-1';
 
 type StdoutListener = (chunk: Buffer) => void;
-type ExitListener = (exit: Readonly<{ exitCode: number | null; signal: string | null }>) => void;
+type CloseListener = (exit: Readonly<{ exitCode: number | null; signal: string | null }>) => void;
 
 function createDeferred<T>(): {
     promise: Promise<T>;
@@ -44,17 +44,17 @@ function createDeferred<T>(): {
 
 /**
  * In-memory fake of the piped helper child process. Mocks only the genuine process boundary
- * (stdin writes + stdout/exit events); the demux, ack correlation, and lifecycle under test are
+ * (stdin writes + stdout/close events); the demux, ack correlation, and lifecycle under test are
  * real internal logic.
  */
 function createFakeHelperProcess(): IosSimulatorHelperSessionProcess & {
     emitStdout: (value: unknown | string) => void;
-    emitExit: (exit: Readonly<{ exitCode: number | null; signal: string | null }>) => void;
+    emitClose: (exit: Readonly<{ exitCode: number | null; signal: string | null }>) => void;
     writes: string[];
     stopCalls: number;
 } {
     const stdoutListeners: StdoutListener[] = [];
-    const exitListeners: ExitListener[] = [];
+    const closeListeners: CloseListener[] = [];
     const writes: string[] = [];
     let stopCalls = 0;
     return {
@@ -62,8 +62,8 @@ function createFakeHelperProcess(): IosSimulatorHelperSessionProcess & {
         onStdoutLine: (listener) => {
             stdoutListeners.push((chunk) => listener(chunk.toString('utf8')));
         },
-        onExit: (listener) => {
-            exitListeners.push(listener);
+        onClose: (listener) => {
+            closeListeners.push(listener);
         },
         writeStdin: async (line: string) => {
             writes.push(line);
@@ -75,8 +75,8 @@ function createFakeHelperProcess(): IosSimulatorHelperSessionProcess & {
             const line = typeof value === 'string' ? value : `${JSON.stringify(value)}\n`;
             for (const listener of stdoutListeners) listener(Buffer.from(line, 'utf8'));
         },
-        emitExit: (exit) => {
-            for (const listener of exitListeners) listener(exit);
+        emitClose: (exit) => {
+            for (const listener of closeListeners) listener(exit);
         },
         get writes() {
             return writes;
@@ -105,6 +105,39 @@ function frameLine(overrides: Record<string, unknown> = {}): Record<string, unkn
 }
 
 describe('iOS simulator helper session owner', () => {
+    it('delivers the final frame and control acknowledgement after root exit before pipe closure', async () => {
+        const mod = await import(modulePath);
+        const child = Object.assign(new EventEmitter(), {
+            pid: 4242, killed: false, stdin: new PassThrough(), stdout: new PassThrough(), kill: vi.fn(() => true),
+        });
+        // Genuine OS process boundary; use the default starter and real NDJSON demux.
+        vi.mocked(spawn).mockReturnValue(child as unknown as ChildProcess);
+        const session = mod.createIosSimulatorHelperSession({ helperPath: '/verified/ios-helper', maxPayloadBytes: 8 });
+        const messages: unknown[] = [];
+        await session.openStream({
+            sourceId: SOURCE_ID, streamId: STREAM_ID, codecId: 'image.mjpeg',
+            emitMessage: (message: unknown) => messages.push(message),
+        });
+        const pending = session.sendCommand({
+            v: 1, kind: 'control', commandId: 'final-command',
+            target: { sourceId: SOURCE_ID, simulatorId: 'A1B2-C3D4' },
+            control: { v: 1, kind: 'keyboard_text', streamId: STREAM_ID, sourceId: SOURCE_ID, eventId: 'final-event', text: 'hello' },
+        });
+        const settled = vi.fn();
+        void pending.then(settled);
+        await flushMicrotasks();
+        child.emit('exit', 0, null);
+        await flushMicrotasks();
+        expect(settled).not.toHaveBeenCalled();
+        child.stdout.write(`${JSON.stringify(frameLine())}\n`);
+        // Match the native helper's newline-delimited wire output.
+        child.stdout.write(`${JSON.stringify({ v: 1, kind: 'control_ack', commandId: 'final-command', status: 'accepted' })}\n`);
+        child.emit('close', 0, null);
+        await expect(pending).resolves.toMatchObject({ ok: true });
+        expect(messages).toEqual([expect.objectContaining({ kind: 'frame', sequence: 1 })]);
+        await session.stop();
+    });
+
     it('stamps the device helper owner at the actual default OS spawn boundary', async () => {
         const mod = await import(modulePath);
         const child = Object.assign(new EventEmitter(), {
@@ -234,7 +267,7 @@ describe('iOS simulator helper session owner', () => {
         });
     });
 
-    it('fails pending commands closed when the helper process exits', async () => {
+    it('fails unacknowledged pending commands when the helper output closes', async () => {
         const mod = await import(modulePath);
         const fake = createFakeHelperProcess();
         const session = mod.createIosSimulatorHelperSession({
@@ -258,7 +291,7 @@ describe('iOS simulator helper session owner', () => {
             },
         });
         await flushMicrotasks();
-        fake.emitExit({ exitCode: 9, signal: null });
+        fake.emitClose({ exitCode: 9, signal: null });
 
         await expect(pending).resolves.toMatchObject({
             ok: false,
@@ -301,7 +334,7 @@ describe('iOS simulator helper session owner', () => {
         expect(fake.stopCalls).toBe(1);
     });
 
-    it('respawns the helper after a recoverable process exit (exit is NOT terminal)', async () => {
+    it('respawns the helper after recoverable process closure (only stop is terminal)', async () => {
         const mod = await import(modulePath);
         const first = createFakeHelperProcess();
         const second = createFakeHelperProcess();
@@ -322,8 +355,8 @@ describe('iOS simulator helper session owner', () => {
         expect(startHelper).toHaveBeenCalledTimes(1);
         const departedRoot = session.readProcessRoots()[0];
 
-        // Bare process exit (a crash) is recoverable: the next openStream relaunches a fresh helper.
-        first.emitExit({ exitCode: 9, signal: null });
+        // Completed process output after a crash permits the next openStream to relaunch the helper.
+        first.emitClose({ exitCode: 9, signal: null });
         await session.openStream({
             sourceId: SOURCE_ID,
             streamId: STREAM_ID,
@@ -362,7 +395,7 @@ describe('iOS simulator helper session owner', () => {
         first.emitStdout(frameLine({ sequence: 1 }));
         expect(staleGenerationMessages).toHaveLength(1);
 
-        first.emitExit({ exitCode: 9, signal: null });
+        first.emitClose({ exitCode: 9, signal: null });
         await session.openStream({
             sourceId: SOURCE_ID,
             streamId: STREAM_ID,

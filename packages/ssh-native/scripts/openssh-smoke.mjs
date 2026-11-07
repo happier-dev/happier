@@ -25,7 +25,7 @@ function run(command, args, options = {}) {
     child.stdout?.on('data', (chunk) => { stdout += chunk; });
     child.stderr?.on('data', (chunk) => { stderr += chunk; });
     child.on('error', reject);
-    child.on('exit', (code) => {
+    child.on('close', (code) => {
       if (code === 0) {
         resolvePromise({ stdout, stderr });
       } else {

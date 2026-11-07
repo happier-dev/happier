@@ -1,4 +1,5 @@
 import type { SessionNotification } from '@agentclientprotocol/sdk';
+import { isDeepStrictEqual } from 'node:util';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 
 import type { AgentMessage } from '@/agent/core/AgentMessage';
@@ -84,63 +85,27 @@ export async function handleAcpSessionNotification(params: Readonly<{
   disableSessionModeUpdates?: boolean;
   setSessionModeState: (state: SessionModeState) => void;
   sessionModelState: SessionModelState | null;
-  setSessionModelState: (state: SessionModelState) => void;
+  setSessionModelState: (state: SessionModelState | null) => void;
   projectModelId?: (input: Readonly<{
     modelId: string;
     modelState: Readonly<SessionModelState> | null;
   }>) => string;
   deriveSessionModelState?: (
     configOptions: ReadonlyArray<SessionConfigOption>,
-  ) => SessionModelState | null;
+  ) => SessionModelState | null | undefined;
   sessionConfigOptionsState: ReadonlyArray<SessionConfigOption> | null;
   setSessionConfigOptionsState: (state: ReadonlyArray<SessionConfigOption>) => void;
 }>): Promise<void> {
   const raw = asRecord(params.notification) ?? {};
-  const updateCandidates: unknown[] = [];
+  const updateField = raw.update;
+  const updateCandidates: unknown[] = Array.isArray(updateField)
+    ? updateField
+    : updateField !== undefined
+      ? [updateField]
+      : Array.isArray(raw.updates) ? raw.updates : [];
   let sessionModeState = params.sessionModeState;
   let sessionModelState = params.sessionModelState;
   let sessionConfigOptionsState = params.sessionConfigOptionsState;
-
-  const maxUpdatesPerNotification = (() => {
-    const rawMax =
-      process.env.HAPPIER_ACP_MAX_UPDATES_PER_NOTIFICATION ??
-      process.env.HAPPY_ACP_MAX_UPDATES_PER_NOTIFICATION ??
-      '';
-    const parsed = Number.parseInt(String(rawMax).trim(), 10);
-    if (Number.isFinite(parsed) && parsed > 0) return Math.min(parsed, 10_000);
-    return 1000;
-  })();
-
-  const pushUpdateCandidate = (value: unknown): boolean => {
-    if (updateCandidates.length >= maxUpdatesPerNotification) return false;
-    updateCandidates.push(value);
-    return true;
-  };
-
-  if (raw.update !== undefined) {
-    const updateField = raw.update;
-    if (Array.isArray(updateField)) {
-      for (const item of updateField) {
-        if (!pushUpdateCandidate(item)) {
-          logger.warn(
-            `[AcpBackend] Received ${updateField.length} updates in a single notification; truncating to ${maxUpdatesPerNotification}`,
-          );
-          break;
-        }
-      }
-    } else {
-      pushUpdateCandidate(updateField);
-    }
-  } else if (Array.isArray(raw.updates)) {
-    for (const item of raw.updates) {
-      if (!pushUpdateCandidate(item)) {
-        logger.warn(
-          `[AcpBackend] Received ${raw.updates.length} updates in a single notification; truncating to ${maxUpdatesPerNotification}`,
-        );
-        break;
-      }
-    }
-  }
 
   if (updateCandidates.length === 0) {
     logger.debug('[AcpBackend] Received session update without update field:', params.notification);
@@ -209,6 +174,11 @@ export async function handleAcpSessionNotification(params: Readonly<{
       });
     }
 
+    if (sessionUpdateType === 'session_info_update') {
+      params.emit({ type: 'event', name: 'session_info_update', payload: update });
+      return;
+    }
+
     const ctx = params.createHandlerContext();
 
     if (sessionUpdateType === 'agent_message_chunk') {
@@ -250,6 +220,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
     if (sessionUpdateType === 'current_mode_update') {
       if (params.disableSessionModeUpdates) return;
       const modeId = typeof update.currentModeId === 'string' ? update.currentModeId : null;
+      if (modeId && modeId === sessionModeState?.currentModeId) return;
       if (modeId && sessionModeState) {
         sessionModeState = {
           ...sessionModeState,
@@ -271,6 +242,7 @@ export async function handleAcpSessionNotification(params: Readonly<{
       const projectedModelId = modelId
         ? params.projectModelId?.({ modelId, modelState: sessionModelState }) ?? modelId
         : null;
+      if (projectedModelId && projectedModelId === sessionModelState?.currentModelId) return;
       if (projectedModelId && sessionModelState) {
         sessionModelState = {
           ...sessionModelState,
@@ -290,20 +262,19 @@ export async function handleAcpSessionNotification(params: Readonly<{
       const configOptionsCandidate = (update as { configOptions?: unknown }).configOptions;
       const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
       if (configOptionsRaw) {
-        sessionConfigOptionsState = normalizeSessionConfigOptions(configOptionsRaw, params.disableSessionModeUpdates);
-        params.setSessionConfigOptionsState(sessionConfigOptionsState);
-        const projectedModelState = params.deriveSessionModelState?.(sessionConfigOptionsState) ?? null;
-        if (projectedModelState) {
+        const next = normalizeSessionConfigOptions(configOptionsRaw, params.disableSessionModeUpdates);
+        const projectedModelState = params.deriveSessionModelState?.(next);
+        if (projectedModelState !== undefined && !isDeepStrictEqual(sessionModelState, projectedModelState)) {
           sessionModelState = projectedModelState;
           params.setSessionModelState(projectedModelState);
           params.emit({ type: 'event', name: 'session_models_state', payload: projectedModelState });
         }
+        if (!isDeepStrictEqual(sessionConfigOptionsState, next)) {
+          sessionConfigOptionsState = next;
+          params.setSessionConfigOptionsState(next);
+          params.emit({ type: 'event', name: 'config_options_update', payload: { configOptions: next } });
+        }
       }
-      params.emit({
-        type: 'event',
-        name: 'config_options_update',
-        payload: { configOptions: sessionConfigOptionsState ?? [] },
-      });
       return;
     }
 

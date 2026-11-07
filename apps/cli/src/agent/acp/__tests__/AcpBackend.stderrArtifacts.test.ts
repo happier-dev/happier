@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { join } from 'node:path';
+import { writeFileSync } from 'node:fs';
 
 import { AcpBackend } from '../AcpBackend';
 import {
@@ -12,9 +13,28 @@ import {
 } from '../testkit/subprocessHarness';
 import { withTempDir } from '@/testkit/fs/tempDir';
 
-function writeFakeAcpAgentScript(params: { dir: string; stderrAfterPromptText: string }): string {
+function writeFakeAcpAgentScript(params: {
+  dir: string;
+  stderrAfterPromptText: string;
+  stderrAfterRootExitReleasePath?: string;
+}): string {
   const stderrAfterPromptText = JSON.stringify(params.stderrAfterPromptText);
+  const trailingStderrScript = params.stderrAfterRootExitReleasePath
+    ? writeAcpTestAgentScript({
+      dir: params.dir,
+      fileName: 'fake-acp-agent-trailing-stderr.mjs',
+      source: `
+        import { watch } from 'node:fs';
+        const watcher = watch(${JSON.stringify(params.stderrAfterRootExitReleasePath)}, () => {
+          watcher.close();
+          process.stderr.write(String(${stderrAfterPromptText}) + '\\n', () => process.exit(0));
+        });
+        process.send('ready');
+      `,
+    })
+    : null;
   const src = `
+    import { spawn } from 'node:child_process';
     const decoder = new TextDecoder();
     let buf = '';
 
@@ -53,6 +73,13 @@ function writeFakeAcpAgentScript(params: { dir: string; stderrAfterPromptText: s
 
         if (method === 'session/prompt') {
           ok(id, {});
+          ${trailingStderrScript ? `
+          const diagnostic = spawn(process.execPath, [${JSON.stringify(trailingStderrScript)}], {
+            stdio: ['ignore', 'ignore', 2, 'ipc'],
+          });
+          diagnostic.once('message', () => process.exit(17));
+          continue;
+          ` : ''}
           process.stderr.write(String(${stderrAfterPromptText}) + '\\n');
           send({
             jsonrpc: '2.0',
@@ -93,6 +120,67 @@ function writeFakeNeverInitializeAgentScript(params: { dir: string; stderrText: 
 }
 
 describe('AcpBackend subprocess stderr artifacts', () => {
+  it.each([
+    { lifecycle: 'root exit', retireOnExit: false },
+    { lifecycle: 'retirement after root exit', retireOnExit: true },
+  ])('retains stderr delivered during $lifecycle and before stdio closes', async ({ retireOnExit }) => {
+    await withTempDir('happier-acp-stderr-after-exit-', async (dir) => {
+      await withTempDir('happier-debug-artifacts-', async (artifactsRoot) => {
+        const envScope = createAcpSubprocessEnvScope();
+        envScope.patch({ HAPPIER_DEBUG_ARTIFACTS_DIR: artifactsRoot });
+        const releasePath = join(dir, 'release-stderr');
+        writeFileSync(releasePath, 'waiting');
+        const diagnostic = 'final native error after root exit';
+        const scriptPath = writeFakeAcpAgentScript({
+          dir,
+          stderrAfterPromptText: diagnostic,
+          stderrAfterRootExitReleasePath: releasePath,
+        });
+        let observeExit!: (exit: { code: number | null; signal: NodeJS.Signals | null }) => void;
+        const exited = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
+          observeExit = resolve;
+        });
+        const errors: string[] = [];
+        let retirement = Promise.resolve();
+        const backend = new AcpBackend({
+          agentName: 'test',
+          cwd: dir,
+          command: process.execPath,
+          args: [scriptPath],
+          transportHandler: createAcpTestTransportHandler({ idleTimeoutMs: 1 }),
+          onProcessExit: (exit) => {
+            // Host retirement must finish without waiting for inherited stdio.
+            // Only then can the descendant write and close the stderr pipe.
+            retirement = (retireOnExit ? backend.dispose() : Promise.resolve()).then(() => {
+              writeFileSync(releasePath, 'released');
+            });
+            observeExit(exit);
+          },
+        });
+        backend.onMessage((message) => {
+          if (message.type === 'status' && message.status === 'error' && message.detail) {
+            errors.push(message.detail);
+          }
+        });
+
+        try {
+          const started = await backend.startSession();
+          await backend.sendPrompt(started.sessionId, 'hi');
+          expect(await exited).toEqual({ code: 17, signal: null });
+          expect(errors).toContain('Exit code: 17');
+          await retirement;
+          const filePath = await waitForAcpArtifactsFile(join(artifactsRoot, 'subprocess', 'test'), { timeoutMs: 2_000 });
+          await waitForFileToContain(filePath, diagnostic, { timeoutMs: 2_000 });
+        } finally {
+          // Also release the descendant if an assertion fails before root exit.
+          writeFileSync(releasePath, 'released');
+          await backend.dispose().catch(() => {});
+          envScope.restore();
+        }
+      });
+    });
+  }, 20_000);
+
   it('writes stderr to a bounded artifacts file', async () => {
     await withTempDir('happier-acp-stderr-artifacts-', async (dir) => {
       await withTempDir('happier-debug-artifacts-', async (artifactsRoot) => {
@@ -178,8 +266,8 @@ describe('AcpBackend subprocess stderr artifacts', () => {
           // The owner retries initialize with its normal backoff; exhaust that
           // real lifecycle on the clock boundary, not just its first deadline.
           await vi.runAllTimersAsync();
-          // Artifact-stream close precedes OS process cleanup; timers created
-          // after that real I/O must run on the real process-supervision clock.
+          // Process cleanup crosses real I/O; run its supervision timers on
+          // the real clock.
           vi.useRealTimers();
           await rejected;
         } finally {

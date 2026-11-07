@@ -20,6 +20,12 @@ export function joinPathForPathShape(root: string, ...parts: string[]): string {
   return isWin32ShapedAbsolutePath(root) ? win32Path.join(root, ...parts) : join(root, ...parts);
 }
 
+/** Comparable absolute spelling, preserving POSIX case and folding Windows path case. */
+export function normalizePathForComparison(pathLike: string): string {
+  const normalized = resolvePathForPathShape(pathLike).replaceAll('\\', '/').replace(/\/+$/u, '');
+  return isWin32ShapedAbsolutePath(pathLike) ? normalized.toLowerCase() : normalized;
+}
+
 export function resolvePathForPathShape(pathLike: string): string {
   const value = String(pathLike ?? '').trim();
   if (!value) return '';

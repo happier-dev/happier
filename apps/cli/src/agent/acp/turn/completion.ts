@@ -1,23 +1,19 @@
-import type { PromptResponse, StopReason } from '@agentclientprotocol/sdk';
+import type { StopReason } from '@agentclientprotocol/sdk';
 
 import type { AcpTurnOutcome } from './outcome';
 
-const ACP_STOP_REASONS: ReadonlySet<StopReason> = new Set([
-  'end_turn',
-  'max_tokens',
-  'max_turn_requests',
-  'refusal',
-  'cancelled',
-]);
+export type AcpPromptStopReasonProjector = (stopReason: string) => StopReason | null;
 
-export function readPromptStopReason(promptResponse: PromptResponse | unknown): StopReason | null {
+export function readPromptStopReason(promptResponse: unknown): string | null {
   if (!promptResponse || typeof promptResponse !== 'object') return null;
   const stopReason = (promptResponse as { stopReason?: unknown }).stopReason;
-  if (typeof stopReason !== 'string') return null;
-  return ACP_STOP_REASONS.has(stopReason as StopReason) ? (stopReason as StopReason) : null;
+  return typeof stopReason === 'string' ? stopReason : null;
 }
 
-export function mapStopReasonToAcpTurnOutcome(stopReason: StopReason): AcpTurnOutcome {
+export function mapStopReasonToAcpTurnOutcome(
+  stopReason: string,
+  projectStopReason?: AcpPromptStopReasonProjector,
+): AcpTurnOutcome {
   switch (stopReason) {
     case 'cancelled':
       return { kind: 'aborted', stopReason };
@@ -27,5 +23,17 @@ export function mapStopReasonToAcpTurnOutcome(stopReason: StopReason): AcpTurnOu
     case 'max_tokens':
     case 'max_turn_requests':
       return { kind: 'completed', stopReason };
+    default: {
+      try {
+        const projected = projectStopReason?.(stopReason);
+        if (projected != null) {
+          const outcome = mapStopReasonToAcpTurnOutcome(projected);
+          if (outcome.kind !== 'unknown') return outcome;
+        }
+      } catch {
+        // A failed plugin projection supplies no evidence about the native outcome.
+      }
+      return { kind: 'unknown', stopReason };
+    }
   }
 }

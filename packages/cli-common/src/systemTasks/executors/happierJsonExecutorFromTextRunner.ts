@@ -79,15 +79,16 @@ function isJsonFailureEnvelope(value: unknown): value is Readonly<{ ok: false }>
   );
 }
 
+export function readLocalServiceAction(args: readonly string[]): string | null {
+  const commandOffset = args[0] === '--server' ? 2 : args[0]?.startsWith('--server=') ? 1 : 0;
+  const serviceOffset = commandOffset + (args[commandOffset] === 'daemon' ? 1 : 0);
+  return args[serviceOffset] === 'service' ? args[serviceOffset + 1] ?? null : null;
+}
+
+/** Local service mutations own their OS-command, startup and recovery budgets in the CLI. */
 export function resolveLocalHappierCommandTimeoutMs(args: readonly string[]): number | null | undefined {
   return ['install', 'start', 'stop', 'restart'].includes(readLocalServiceAction(args) ?? '')
     && !args.includes('--dry-run')
     ? null
     : undefined;
-}
-
-export function readLocalServiceAction(args: readonly string[]): string | null {
-  const commandOffset = args[0] === '--server' ? 2 : args[0]?.startsWith('--server=') ? 1 : 0;
-  const serviceOffset = commandOffset + (args[commandOffset] === 'daemon' ? 1 : 0);
-  return args[serviceOffset] === 'service' ? args[serviceOffset + 1] ?? null : null;
 }

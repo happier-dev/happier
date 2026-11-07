@@ -303,7 +303,7 @@ export async function runRealClaudeCliStreamJsonProbe(params: {
   let killAfterStop: NodeJS.Timeout | null = null;
 
   const requestStop = () => {
-    if (stopRequested) return;
+    if (stopRequested || child.exitCode !== null || child.signalCode !== null) return;
     stopRequested = true;
     if (killOnTimeout) clearTimeout(killOnTimeout);
     killOnTimeout = null;
@@ -354,13 +354,12 @@ export async function runRealClaudeCliStreamJsonProbe(params: {
   });
 
   const exit = await new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve) => {
-    child.on('exit', (code, signal) => resolve({ code, signal }));
+    child.once('exit', () => {
+      if (killOnTimeout) clearTimeout(killOnTimeout);
+      if (killAfterStop) clearTimeout(killAfterStop);
+    });
+    child.once('close', (code, signal) => resolve({ code, signal }));
   });
-
-  if (killOnTimeout) clearTimeout(killOnTimeout);
-  if (killAfterStop) clearTimeout(killAfterStop);
-  rlOut.close();
-  rlErr.close();
 
   try {
     rmSync(cwd, { recursive: true, force: true });

@@ -17,7 +17,7 @@ const repeats = Number(process.env.CLISTART_REPEATS ?? 5);
 const plain = process.env.CLISTART_PLAIN === '1';
 const interactive = process.env.CLISTART_CREDENTIAL === 'interactive';
 const token = interactive ? 'interactive' : `hap_v1_11111111-1111-4111-8111-111111111111_${'a'.repeat(43)}`;
-const fixture = { v: 1, encryptionMode: 'plain', terminalPresentUserPolicy: 'disallowed', nativeEmail: null,
+const fixture = { v: 1, encryptionMode: 'plain', nativeEmail: null,
   password: { status: 'not_enrolled', revision: null } };
 let activeRequests = [];
 const server = createServer((req, res) => {
@@ -57,7 +57,7 @@ async function run(runtime, command, args, index, profile = false) {
     seed.stderr.on('data', chunk => { failure += chunk; });
     const status = await new Promise((resolve, reject) => {
       seed.once('error', reject);
-      seed.once('exit', resolve);
+      seed.once('close', resolve);
     });
     if (status !== 0) throw new Error(`Interactive fixture admission failed (${status}): ${failure.slice(-1500)}`);
   }
@@ -82,11 +82,12 @@ async function run(runtime, command, args, index, profile = false) {
   let stdout = '', stderr = '';
   child.stdout.on('data', chunk => { stdout += chunk; });
   child.stderr.on('data', chunk => { stderr += chunk; });
+  let elapsedMs;
   const exit = await new Promise((resolve, reject) => {
     child.once('error', reject);
-    child.once('exit', (code, signal) => resolve({ code, signal }));
+    child.once('exit', () => { elapsedMs = performance.now() - start; });
+    child.once('close', (code, signal) => resolve({ code, signal }));
   });
-  const elapsedMs = performance.now() - start;
   const stdoutPath = join(root, `${runtime}-${command}-${index}${profile ? '-profile' : ''}.stdout`);
   await writeFile(stdoutPath, stdout);
   const data = plain ? { events: [], modules: [] } : JSON.parse(await readFile(trace, 'utf8'));

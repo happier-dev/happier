@@ -1,3 +1,6 @@
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -23,6 +26,41 @@ function fixture(env: NodeJS.ProcessEnv = {}) {
 afterEach(() => { vi.useRealTimers(); spawnMock.mockReset(); });
 
 describe('local Happier command lifecycle budget', () => {
+  it('parses the complete JSON response after root exit and pipe closure', async () => {
+    vi.useFakeTimers();
+    const { child, executor } = fixture();
+    const completed = vi.fn();
+    const result = executor.runHappierJson(['daemon', 'status', '--json']);
+    void result.then(completed, completed);
+    await vi.advanceTimersByTimeAsync(0);
+    child.stdout.emit('data', Buffer.from('{"ok":'));
+    child.emit('exit', 0);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(completed).not.toHaveBeenCalled();
+    child.stdout.emit('data', Buffer.from('true}'));
+    child.emit('close', 0);
+    await expect(result).resolves.toEqual({ ok: true });
+  });
+
+  it('sends explicit Desktop ownership context only to install/status with complete native context', async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), 'happier-executor-desktop-'));
+    const { child, executor } = fixture({ HAPPIER_HOME_DIR: join(stateDir, 'home'), HAPPIER_FIRST_PARTY_INSTALL_HOME: join(stateDir, 'install'),
+      HAPPIER_DESKTOP_BUNDLE_ID: 'dev.happier.preview', HAPPIER_DESKTOP_STATE_DIR: stateDir });
+    spawnMock.mockImplementation(() => {
+      queueMicrotask(() => { child.stdout.emit('data', Buffer.from('{"ok":true}')); child.emit('exit', 0); child.emit('close', 0); });
+      return child;
+    });
+    try {
+      for (const args of [['service', 'install', '--json'], ['daemon', 'status', '--json'], ['service', 'uninstall', '--json']]) {
+        await executor.runHappierJson(args);
+        const invokedArgs: string[] = spawnMock.mock.lastCall?.[1] ?? [];
+        const shouldRecord = args[1] !== 'uninstall';
+        expect(invokedArgs.includes('--desktop-bundle-id')).toBe(shouldRecord);
+        if (shouldRecord) expect(invokedArgs.slice(-2)).toEqual(['--desktop-bundle-id', 'dev.happier.preview']);
+      }
+    } finally { await rm(stateDir, { recursive: true, force: true }); }
+  });
+
   it('attributes desktop installs to their bundle and clears inherited attribution on other commands', async () => {
     vi.useFakeTimers();
     const { child, executor } = fixture({

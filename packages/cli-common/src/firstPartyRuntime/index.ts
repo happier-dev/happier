@@ -374,3 +374,9 @@ export { FirstPartyAcquisitionError, readAcquisitionFailureCause, redactAcquisit
 export type { FirstPartyAcquisitionOptions } from './acquisitionProgress.js';
 export * from './resolveSelfContainedCliRuntimeRoot.js';
 export * from './runtimePaths.js';
+export { doesCliLauncherUseInstallation } from './managedCliShimInstall.js';
+
+export { validateDesktopBundleId, resolveDesktopResourceOwnershipPath, readDesktopResourceOwnership, recordDesktopResourceUse, withDesktopResourceOwnership, releaseDesktopResourceUse } from './desktopResourceOwnership.js';
+export type { DesktopResourceOwnership } from './desktopResourceOwnership.js';
+export { uninstallDesktopOwnedCli } from './uninstallManagedFirstPartyComponent.js';
+export * from './desktopInstallations.js';

@@ -1,4 +1,7 @@
 import { basename, dirname } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { resolveInstalledFirstPartyComponentPaths } from './resolveInstalledComponentPaths.js';
+import { isAbsolutePathForPathShape, normalizePathForComparison } from '../path/pathShape.js';
 
 import { PUBLIC_RELEASE_RING_IDS, type PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRings';
 
@@ -59,4 +62,33 @@ export function resolveManagedCliShimInstall(
       })
     : CHANNEL_SHIM_NAMES.get(shimName);
   return channel ? { channel, installHomeDir } : null;
+}
+
+/** Match the installation a service actually launches, including managed default/channel aliases. */
+export function doesCliLauncherUseInstallation(params: Readonly<{
+  launcher: readonly string[];
+  installationRoots: readonly string[];
+}>): boolean {
+  const realPath = (path: string): string | null => {
+    try { return realpathSync(path); } catch { return null; }
+  };
+  const roots = params.installationRoots.filter(isAbsolutePathForPathShape)
+    .flatMap((root) => [root, realPath(root)].filter((value): value is string => value !== null))
+    .map(normalizePathForComparison);
+  const matches = (path: string): boolean => {
+    const normalized = normalizePathForComparison(path);
+    return roots.some((root) => normalized === root || normalized.startsWith(`${root}/`));
+  };
+  return params.launcher.filter(isAbsolutePathForPathShape).some((executable) => {
+    if (matches(executable)) return true;
+    const resolved = realPath(executable);
+    if (resolved && matches(resolved)) return true;
+    const shim = resolveManagedCliShimInstall(executable);
+    if (!shim) return false;
+    const paths = resolveInstalledFirstPartyComponentPaths({
+      componentId: 'happier-cli', channel: shim.channel,
+      processEnv: { ...process.env, [FIRST_PARTY_INSTALL_HOME_ENV_KEY]: shim.installHomeDir },
+    });
+    return matches(paths.binaryPath) || Boolean(paths.resolvedBinaryPath && matches(paths.resolvedBinaryPath));
+  });
 }

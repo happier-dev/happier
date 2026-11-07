@@ -46,7 +46,8 @@ export type IosSimulatorHelperSessionProcessExit = Readonly<{
 export type IosSimulatorHelperSessionProcess = Readonly<{
     pid?: number;
     onStdoutLine: (listener: (chunk: Buffer | string) => void) => void;
-    onExit: (listener: (exit: IosSimulatorHelperSessionProcessExit) => void) => void;
+    /** Fires after the helper has exited and its final stdout bytes have drained. */
+    onClose: (listener: (exit: IosSimulatorHelperSessionProcessExit) => void) => void;
     writeStdin: (line: string) => MaybePromise<void>;
     stop: () => MaybePromise<void>;
 }>;
@@ -70,7 +71,7 @@ export type IosSimulatorHelperSessionChild = Readonly<{
     killed: boolean;
     stdin: Readonly<{ write: (chunk: string) => unknown }> | null;
     stdout: Readonly<{ on: (event: 'data', listener: (chunk: Buffer) => void) => unknown }> | null;
-    once: (event: 'exit', listener: (exitCode: number | null, signal: NodeJS.Signals | null) => void) => unknown;
+    once: (event: 'close', listener: (exitCode: number | null, signal: NodeJS.Signals | null) => void) => unknown;
     kill: (signal: NodeJS.Signals) => boolean;
 }>;
 
@@ -159,8 +160,8 @@ export function createIosSimulatorHelperSessionProcessStarter(
             onStdoutLine: (listener) => {
                 child.stdout?.on('data', (chunk: Buffer) => listener(chunk));
             },
-            onExit: (listener) => {
-                child.once('exit', (exitCode: number | null, signal: NodeJS.Signals | null) => {
+            onClose: (listener) => {
+                child.once('close', (exitCode: number | null, signal: NodeJS.Signals | null) => {
                     listener({ exitCode, signal: signal ?? null });
                 });
             },
@@ -295,17 +296,17 @@ export function createIosSimulatorHelperSession(
         handle.onStdoutLine((chunk) => {
             stdoutEvents.emit('data', chunk);
         });
-        handle.onExit(() => {
+        handle.onClose(() => {
             stdoutEvents.emit('end');
         });
     };
 
-    const onExit = (handle: IosSimulatorHelperSessionProcess): void => {
+    const onClose = (handle: IosSimulatorHelperSessionProcess): void => {
         if (processHandle !== handle) {
             return;
         }
-        // RECOVERABLE: the process exited but the session is not terminal. Clear the live handle so the
-        // next `ensureProcess` may relaunch; fail any in-flight commands so callers are not left hanging.
+        // RECOVERABLE: the process and output have closed, but the session is not terminal.
+        // Final acknowledgements have been parsed; fail only commands still awaiting an answer.
         processHandle = null;
         streamConsumers.clear();
         failAllPending({
@@ -329,7 +330,7 @@ export function createIosSimulatorHelperSession(
                 throw createStoppedError();
             }
             attachStdoutReader(handle);
-            handle.onExit(() => onExit(handle));
+            handle.onClose(() => onClose(handle));
             processHandle = handle;
             invalidateProcessLaunchDiscovery();
             return handle;

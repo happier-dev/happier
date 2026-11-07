@@ -1,5 +1,5 @@
-import { createHappierJsonExecutorFromTextRunner, type HappierJsonExecutor, type HappierTextResult, type RunHappierOptions } from './happierJsonExecutorFromTextRunner.js';
-export { createHappierJsonExecutorFromTextRunner, type HappierJsonExecutor, type HappierTextResult, type RunHappierOptions } from './happierJsonExecutorFromTextRunner.js';
+import { readLocalServiceAction, resolveLocalHappierCommandTimeoutMs, createHappierJsonExecutorFromTextRunner, type HappierJsonExecutor, type HappierTextResult, type RunHappierOptions } from './happierJsonExecutorFromTextRunner.js';
+export { resolveLocalHappierCommandTimeoutMs, createHappierJsonExecutorFromTextRunner, type HappierJsonExecutor, type HappierTextResult, type RunHappierOptions } from './happierJsonExecutorFromTextRunner.js';
 import { existsSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -9,6 +9,7 @@ import type { PublicReleaseRingId } from '@happier-dev/release-runtime/releaseRi
 import {
   FirstPartyAcquisitionError,
   installVersionedPayload,
+  recordDesktopInstallation, readDesktopInstallationContext, recordDesktopResourceUse,
   readAcquisitionFailureCause,
   redactAcquisitionDiagnostic,
   prepareFirstPartyComponentPayloadFromGitHubRelease,
@@ -41,20 +42,6 @@ type CommandExecutionResult = Readonly<{
 }>;
 
 const MAX_HAPPIER_PROCESS_INPUT_BYTES = 64 * 1024;
-
-function readLocalServiceAction(args: readonly string[]): string | null {
-  const commandOffset = args[0] === '--server' ? 2 : args[0]?.startsWith('--server=') ? 1 : 0;
-  const serviceOffset = commandOffset + (args[commandOffset] === 'daemon' ? 1 : 0);
-  return args[serviceOffset] === 'service' ? args[serviceOffset + 1] ?? null : null;
-}
-
-/** Local service mutations own their OS-command, startup and recovery budgets in the CLI. */
-export function resolveLocalHappierCommandTimeoutMs(args: readonly string[]): number | null | undefined {
-  return ['install', 'start', 'stop', 'restart'].includes(readLocalServiceAction(args) ?? '')
-    && !args.includes('--dry-run')
-    ? null
-    : undefined;
-}
 
 async function runCommandCapture(params: Readonly<{
   command: string;
@@ -137,7 +124,7 @@ async function runCommandCapture(params: Readonly<{
     });
     child.stderr?.on('data', (chunk: Buffer) => stderrChunks.push(chunk));
     child.stdin?.on('error', () => {
-      // The child exit/error event is the command authority. An early exit can
+      // The child close/error event is the command authority. An early exit can
       // close stdin while bounded input is still being written; do not turn
       // that expected EPIPE into an unhandled process error.
     });
@@ -158,7 +145,7 @@ async function runCommandCapture(params: Readonly<{
       rejectPromise(error);
     });
 
-    child.once('exit', (code) => {
+    child.once('close', (code) => {
       if (settled) return;
       settled = true;
       if (timeout) {
@@ -319,7 +306,7 @@ export function resolveExplicitOrInstalledLocalFirstPartyCommand(params: Readonl
  * record was never acquired or verified here, so it resolves as `override`: still runnable, never
  * automatically approved for pairing.
  */
-function resolveInstalledLocalFirstPartyCommand(params: Readonly<{
+export function resolveInstalledLocalFirstPartyCommand(params: Readonly<{
   componentId: FirstPartyComponentId;
   processEnv: NodeJS.ProcessEnv;
   releaseRing?: PublicReleaseRingId;
@@ -351,6 +338,16 @@ type EnsureLocalFirstPartyCommandDeps = Readonly<{
   installPayload: typeof installVersionedPayload;
 }>;
 
+async function recordResolvedDesktopCommand(params: Readonly<{
+  componentId: FirstPartyComponentId; processEnv: NodeJS.ProcessEnv; releaseRing?: PublicReleaseRingId;
+}>, resolved: ResolvedLocalFirstPartyCommand): Promise<void> {
+  if (params.componentId !== 'happier-cli') return;
+  const desktop = await recordDesktopInstallation(params.processEnv, resolved.command);
+  if (desktop && resolved.provenance === 'managed') {
+    await recordDesktopResourceUse({ resourcePath: resolveFirstPartyInstallLayout(params).installRoot, bundleId: desktop.bundleId, created: false });
+  }
+}
+
 export async function ensureLocalFirstPartyComponentCommand(params: FirstPartyAcquisitionOptions & Readonly<{
   componentId: FirstPartyComponentId;
   processEnv: NodeJS.ProcessEnv;
@@ -360,10 +357,13 @@ export async function ensureLocalFirstPartyComponentCommand(params: FirstPartyAc
   params.signal?.throwIfAborted();
   const resolved = resolveExplicitOrInstalledLocalFirstPartyCommand(params);
   if (resolved) {
+    await recordResolvedDesktopCommand(params, resolved);
     return resolved.command;
   }
   await acquireFirstPartyComponentRelease(params, overrides);
-  return resolveAcquiredCommand(params);
+  const command = resolveAcquiredCommand(params);
+  if (params.componentId === 'happier-cli') await recordDesktopInstallation(params.processEnv, command);
+  return command;
 }
 
 /**
@@ -486,6 +486,7 @@ async function acquireFirstPartyComponentRelease(
     if (!params.signal?.aborted) params.onProgress?.(progress);
   };
   try {
+    const desktop = params.componentId === 'happier-cli' ? await recordDesktopInstallation(params.processEnv) : null;
     prepared = await deps.preparePayload({
       componentId: params.componentId,
       channel: releaseRing,
@@ -494,6 +495,7 @@ async function acquireFirstPartyComponentRelease(
     });
 
     await deps.installPayload({
+      ...(desktop ? { desktopBundleId: desktop.bundleId } : {}),
       componentId: params.componentId,
       processEnv: params.processEnv,
       releaseRing,
@@ -565,6 +567,7 @@ export function createLocalHappierJsonExecutor(params: FirstPartyAcquisitionOpti
       releaseRing,
     });
     if (resolved) {
+      await recordResolvedDesktopCommand({ componentId: 'happier-cli', processEnv, releaseRing }, resolved);
       return resolved.command;
     }
 
@@ -612,9 +615,16 @@ export function createLocalHappierJsonExecutor(params: FirstPartyAcquisitionOpti
       if (readLocalServiceAction(args) === 'install' && processEnv.HAPPIER_DESKTOP_BUNDLE_ID) {
         scopedEnv.HAPPIER_DAEMON_SERVICE_BUNDLE_ID = processEnv.HAPPIER_DESKTOP_BUNDLE_ID;
       }
+      const desktop = readDesktopInstallationContext(processEnv);
+      const serviceAction = readLocalServiceAction(args);
+      const daemonIndex = args.indexOf('daemon');
+      const recordsUse = serviceAction === 'install' || serviceAction === 'status'
+        || (daemonIndex >= 0 && args[daemonIndex + 1] === 'status');
+      const commandArgs = desktop && recordsUse && !args.includes('--desktop-bundle-id')
+        ? [...args, '--desktop-bundle-id', desktop.bundleId] : args;
       const result = await runCommandCapture({
         command,
-        args,
+        args: commandArgs,
         env: scopedEnv,
         cwd: opts?.cwd,
         signal,

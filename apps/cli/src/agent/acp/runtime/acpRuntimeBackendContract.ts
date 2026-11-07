@@ -4,15 +4,11 @@ import type {
 } from '@/agent/core/AgentMessage';
 import type { StartSessionResult } from '@/agent/core/AgentTypes';
 import type { ListSessionsResponse } from '@agentclientprotocol/sdk';
+import type { AcpTurnCompletedStopReason, AcpTurnOutcome } from '../turn/outcome';
 
-export type AcpRuntimeTurnCompletedStopReason = 'end_turn' | 'max_tokens' | 'max_turn_requests';
+export type AcpRuntimeTurnCompletedStopReason = AcpTurnCompletedStopReason;
 
-export type AcpRuntimeTurnOutcome =
-    | { kind: 'completed'; stopReason: AcpRuntimeTurnCompletedStopReason }
-    | { kind: 'aborted'; stopReason: 'cancelled' }
-    | { kind: 'refused'; stopReason: 'refusal' }
-    | { kind: 'failed'; error: Error }
-    | { kind: 'timed_out'; capMs: number };
+export type AcpRuntimeTurnOutcome = AcpTurnOutcome;
 
 export type AcpPromptSubmissionSettledResult =
     | { kind: 'accepted_by_prompt_response' }
@@ -68,5 +64,7 @@ export type AcpProbeBackend = Readonly<
         getSessionModelState: () => { availableModels?: unknown } | null;
         getSessionModeState: () => { availableModes?: unknown } | null;
         getSessionConfigOptionsState: () => unknown;
+        getSessionModelConfigOptionId: () => string | null;
+        setSessionConfigOption: (sessionId: SessionId, configId: string, value: string) => Promise<unknown>;
     }>
 >;

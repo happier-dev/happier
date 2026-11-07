@@ -19,8 +19,8 @@ import { readHappierCliChoiceSync } from './happierCliChoice.js';
  * and removes only that, so an installer-owned line is never claimed or deleted.
  *
  * PATH exposure never gates readiness: every failure is returned as a message, never thrown.
- * There is deliberately no uninstall hook — dragging the app to the Trash cannot run app code,
- * so removal is an explicit user action.
+ * Desktop component cleanup scopes this owner to its installation’s bin directory. Dragging an
+ * app to the Trash itself cannot run app code; use the explicit cleanup action first.
  */
 
 /**
@@ -247,6 +247,8 @@ function isSameFile(left: string, right: string): boolean {
 
 export async function removeHappierCliPathExposure(params: Readonly<{
   processEnv: NodeJS.ProcessEnv;
+  /** Remove only this installation's exposure; omitted for the existing remove-all action. */
+  binDir?: string;
 }>): Promise<HappierCliPathRemovalResult> {
   if (process.platform === 'win32') {
     return await removeWindowsUserPathExposure(params);
@@ -310,14 +312,16 @@ async function ensurePosixProfileExposure(params: Readonly<{
   };
 }
 
-function stripDesktopCreatedLines(content: string): Readonly<{ content: string; removed: boolean }> {
+function stripDesktopCreatedLines(content: string, binDir?: string): Readonly<{ content: string; removed: boolean }> {
   const lines = content.split('\n');
   const kept: string[] = [];
   let removed = false;
   for (let index = 0; index < lines.length; index += 1) {
     const line = lines[index] ?? '';
     const next = lines[index + 1];
-    if (line.trim() === HAPPIER_DESKTOP_PATH_MARKER_LINE && next !== undefined && DESKTOP_EXPORT_LINE_PATTERN.test(next.trim())) {
+    if (line.trim() === HAPPIER_DESKTOP_PATH_MARKER_LINE && next !== undefined
+      && DESKTOP_EXPORT_LINE_PATTERN.test(next.trim())
+      && (binDir === undefined || next.trim() === renderHappierCliPathExportLine(binDir))) {
       if (kept.length > 0 && kept[kept.length - 1] === '') {
         // Drop the separator blank line the append wrote in front of the marker.
         kept.pop();
@@ -333,6 +337,7 @@ function stripDesktopCreatedLines(content: string): Readonly<{ content: string; 
 
 async function removePosixProfileExposure(params: Readonly<{
   processEnv: NodeJS.ProcessEnv;
+  binDir?: string;
 }>): Promise<HappierCliPathRemovalResult> {
   let removed = false;
   const failures: string[] = [];
@@ -342,7 +347,7 @@ async function removePosixProfileExposure(params: Readonly<{
       if (!existsSync(rcFile)) {
         continue;
       }
-      const stripped = stripDesktopCreatedLines(await readFile(rcFile, 'utf8'));
+      const stripped = stripDesktopCreatedLines(await readFile(rcFile, 'utf8'), params.binDir);
       if (!stripped.removed) {
         continue;
       }
@@ -428,19 +433,24 @@ export function planWindowsUserPathExposure(params: Readonly<{
  * an entry it moved is put back behind the entries it was moved ahead of — only while that move
  * still holds (the entry is still ahead of every one of them that is still there). Anything the
  * person changed since — an entry they added, or putting ours back themselves — is left as it is.
- * Both records are cleared: what no longer applies is not Desktop's to undo later.
+ * Selected records are cleared: what no longer applies is not Desktop's to undo later.
  */
 export function planWindowsUserPathRemoval(params: Readonly<{
   userPath: string | null;
   provenance: string | null;
   moves: string | null;
+  binDir?: string;
 }>): Readonly<{ removed: boolean; userPath: string; provenance: string | null; moves: string | null }> {
   const currentPath = params.userPath ?? '';
-  const desktopCreated = splitWindowsPathEntries(params.provenance);
+  const selected = (entry: string) => params.binDir === undefined || sameWindowsPathEntry(entry, params.binDir);
+  const desktopCreated = splitWindowsPathEntries(params.provenance).filter(selected);
+  // Filter the raw records so unrelated provenance, including its formatting, stays untouched.
+  const provenance = params.provenance?.split(';').filter((entry) => !selected(entry.trim())).join(';') || null;
+  const moves = params.moves?.split(';').filter((record) => !selected(record.split('|')[0]?.trim() ?? '')).join(';') || null;
   let entries = splitWindowsPathEntries(currentPath)
     .filter((entry) => !desktopCreated.some((created) => sameWindowsPathEntry(created, entry)));
   let removed = desktopCreated.length > 0;
-  for (const move of parseWindowsPathMoves(params.moves)) {
+  for (const move of parseWindowsPathMoves(params.moves).filter((move) => selected(move.entry))) {
     const index = entries.findIndex((entry) => sameWindowsPathEntry(entry, move.entry));
     const aheadIndexes = move.movedAhead
       .map((ahead) => entries.findIndex((entry) => sameWindowsPathEntry(entry, ahead)))
@@ -454,9 +464,9 @@ export function planWindowsUserPathRemoval(params: Readonly<{
     removed = true;
   }
   if (!removed) {
-    return { removed: false, userPath: currentPath, provenance: null, moves: null };
+    return { removed: false, userPath: currentPath, provenance, moves };
   }
-  return { removed: true, userPath: entries.join(';'), provenance: null, moves: null };
+  return { removed: true, userPath: entries.join(';'), provenance, moves };
 }
 
 type WindowsUserEnvironmentSnapshot = Readonly<{
@@ -628,12 +638,13 @@ async function ensureWindowsUserPathExposure(params: Readonly<{
 
 async function removeWindowsUserPathExposure(params: Readonly<{
   processEnv: NodeJS.ProcessEnv;
+  binDir?: string;
 }>): Promise<HappierCliPathRemovalResult> {
   try {
     const snapshot = await readWindowsUserEnvironment(params.processEnv);
-    const planned = planWindowsUserPathRemoval({ userPath: snapshot.userPath, provenance: snapshot.provenance, moves: snapshot.moves });
+    const planned = planWindowsUserPathRemoval({ userPath: snapshot.userPath, provenance: snapshot.provenance, moves: snapshot.moves, binDir: params.binDir });
     // A record that no longer applies is still cleared, so a later removal cannot act on it.
-    if (!planned.removed && snapshot.provenance === null && snapshot.moves === null) {
+    if (!planned.removed && snapshot.provenance === planned.provenance && snapshot.moves === planned.moves) {
       return { removed: false, failure: null };
     }
     await writeWindowsUserEnvironment(params.processEnv, {

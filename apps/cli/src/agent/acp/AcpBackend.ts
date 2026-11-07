@@ -18,6 +18,7 @@ import type { AgentAcpProviderTurnSourceFactory } from '@happier-dev/plugin-sdk/
 import { AgentRuntimeJsonValueV1Schema } from '@happier-dev/protocol/runtime/agentSessionV1';
 import type { ChildProcess } from 'node:child_process';
 import { once } from 'node:events';
+import { isDeepStrictEqual } from 'node:util';
 import spawn from 'cross-spawn';
 import { observeProcessLaunch } from '@/processes/launchNotification';
 import { SpawnFailureError } from '@/processes/spawnFailure/classifySpawnFailure';
@@ -27,6 +28,7 @@ import {
   type RequestPermissionResponse,
   type InitializeResponse,
   type NewSessionRequest,
+  type McpServerStdio,
   type ForkSessionRequest,
   type LoadSessionRequest,
   type ListSessionsRequest,
@@ -48,6 +50,7 @@ import type {
   StartSessionResult,
 } from '../core';
 import type { AgentAcpCompletionEvidenceOutcome, AgentSessionMcpLaunchConfig } from '@happier-dev/plugin-sdk/agents/runtime';
+import type { JsonValue } from '@happier-dev/plugin-sdk';
 import type {
   AcpPromptSubmissionResult,
   AcpPromptSubmissionSettledResult,
@@ -75,6 +78,7 @@ import {
 import { LegacyAcpToolRuntime } from './toolCalls/legacy/runtime';
 import type { MergedAcpToolResult } from './toolCalls/types';
 import { createAcpRequestFailureLogRecord, withRetry } from './withRetry';
+import { recoverMcpSessionStart } from './connection/recoverMcpSessionStart';
 import { nodeToWebStreams } from './nodeToWebStreams';
 import { buildAcpSpawnSpec } from './acpSpawn';
 import { terminateProcessTree } from '@/processes/terminate/terminateProcessTree';
@@ -116,6 +120,7 @@ import {
   readSessionModeStateFromSessionResponse,
   readSessionModelStateFromSessionResponse,
   readSessionModelStateFromConfigOptions,
+  resolveSessionModelConfigOption,
 } from './sessionSettings/sessionSettingsState';
 import { createAcpClientHandlers } from './createAcpClientHandlers';
 import {
@@ -132,7 +137,7 @@ import type {
 } from './connection/types';
 import { handleAcpSessionNotification, isPromptTurnSessionUpdate } from './updates/handleSessionNotification';
 import type { AcpTurnOutcome } from './turn/outcome';
-import { mapStopReasonToAcpTurnOutcome, readPromptStopReason } from './turn/completion';
+import { mapStopReasonToAcpTurnOutcome, readPromptStopReason, type AcpPromptStopReasonProjector } from './turn/completion';
 import { abortPendingAcpPermissionRequests } from './permissions/permissionFinalization';
 import { readNonBlankOpaqueIdentifier } from '@happier-dev/protocol/strings/opaqueIdentifier';
 import {
@@ -183,7 +188,7 @@ export type AcpSessionModelAdapter = Readonly<{
  * Retry configuration for ACP operations
  */
 const RETRY_CONFIG = {
-  /** Maximum number of retry attempts for init/newSession */
+  /** Maximum number of attempts for transient initialize/authenticate failures */
   maxAttempts: 3,
   /** Base delay between retries in ms */
   baseDelayMs: 1000,
@@ -323,6 +328,8 @@ export interface AcpBackendOptions {
   initialSessionModeId?: string;
   disableSessionModeUpdates?: boolean;
 
+  /** Native ingress receipt, before transcript projection; the Session host owns liveness. */
+
   /** Optional per-backend ACP fs capability override */
   fsEnabled?: boolean;
 
@@ -364,6 +371,9 @@ export interface AcpBackendOptions {
     usage: unknown;
     promptResponse: unknown;
   }>) => unknown;
+
+  /** Plugin-owned interpretation of nonstandard prompt stop reasons. */
+  projectPromptStopReason?: AcpPromptStopReasonProjector;
 
   /** Private child-host seam that awaits a complete projected model snapshot. */
   prepareSessionModels?: (
@@ -411,8 +421,9 @@ export interface AcpBackendOptions {
  */
 export class AcpBackend implements CatalogAcpBackend {
   private listeners: AgentMessageHandler[] = [];
+  private dispatchedPromptTurnGeneration: number | null = null;
   private process: ChildProcess | null = null;
-  private stderrAppender: BoundedTextFileAppender | null = null;
+  private stderrArtifactPath: string | null = null;
   private recentStderrDiagnostics: string[] = [];
   private lastProcessExitDetail: string | null = null;
   private readonly summarizeStderrForLogs = createAcpStderrLogSummarizer();
@@ -445,7 +456,9 @@ export class AcpBackend implements CatalogAcpBackend {
   private recentPromptHadChangeTitle = false;
 
   private sessionModeState: SessionModeState | null = null;
+  private agentCapabilities: JsonValue = null;
   private sessionModelState: SessionModelState | null = null;
+  private sessionModelsDerivedFromConfigOptions = false;
   private sessionConfigOptionsState: ReadonlyArray<SessionConfigOption> | null = null;
 
   getSessionModeState(): SessionModeState | null {
@@ -460,12 +473,22 @@ export class AcpBackend implements CatalogAcpBackend {
     return this.sessionConfigOptionsState;
   }
 
+  getSessionModelConfigOptionId(): string | null {
+    return this.sessionConfigOptionsState
+      ? resolveSessionModelConfigOption(this.sessionConfigOptionsState, this.options.modelConfigOptionId)?.id ?? null
+      : null;
+  }
+
   getLastTurnOutcome(): AcpTurnOutcome | null {
     return this.lastTurnOutcome;
   }
 
   supportsImagePrompts(): boolean {
     return this.acceptsImageInput;
+  }
+
+  getAgentCapabilities(): JsonValue {
+    return this.agentCapabilities;
   }
 
   getNegotiatedSessionCapabilities(): AcpNegotiatedSessionCapabilities {
@@ -674,8 +697,8 @@ export class AcpBackend implements CatalogAcpBackend {
     if (this.recentStderrDiagnostics.length > 0) {
       parts.push(`recent stderr: ${this.recentStderrDiagnostics.join(' | ')}`);
     }
-    if (this.stderrAppender?.path) {
-      parts.push(`stderr artifact: ${this.stderrAppender.path}`);
+    if (this.stderrArtifactPath) {
+      parts.push(`stderr artifact: ${this.stderrArtifactPath}`);
     }
     if (parts.length === 0) return '';
     return ` (${parts.map(truncateStartupDiagnostic).join('; ')})`;
@@ -687,17 +710,15 @@ export class AcpBackend implements CatalogAcpBackend {
     );
   }
 
-  private buildAcpMcpServersForSessionRequest(): NewSessionRequest['mcpServers'] {
-    if (!this.options.mcpServers) return [] as unknown as NewSessionRequest['mcpServers'];
-    const mcpServers = Object.entries(this.options.mcpServers).map(([name, config]) => ({
+  private buildAcpMcpServersForSessionRequest(): McpServerStdio[] {
+    return Object.entries(this.options.mcpServers ?? {}).map(([name, config]) => ({
       name,
       command: config.command,
-      args: config.args || [],
+      args: [...(config.args ?? [])],
       env: config.env
         ? Object.entries(config.env).map(([envName, envValue]) => ({ name: envName, value: envValue }))
         : [],
-    }));
-    return mcpServers as unknown as NewSessionRequest['mcpServers'];
+    } satisfies McpServerStdio));
   }
 
   /** Capture composed launch settings for observers before runner-private credential substitution. */
@@ -761,13 +782,6 @@ export class AcpBackend implements CatalogAcpBackend {
     connection?.close(undefined, { timeoutMs: params.graceMs });
     closeNetworkTransport?.();
 
-    try {
-      await this.stderrAppender?.close();
-    } catch {
-      // best-effort cleanup
-    } finally {
-      this.stderrAppender = null;
-    }
     if (proc) {
       try {
         await terminateProcessTree(proc, { graceMs: params.graceMs });
@@ -821,6 +835,7 @@ export class AcpBackend implements CatalogAcpBackend {
 
       this.recentStderrDiagnostics = [];
       this.lastProcessExitDetail = null;
+      this.stderrArtifactPath = null;
 
       try {
         this.process = spawn(spec.command, spec.args, spec.options);
@@ -847,8 +862,6 @@ export class AcpBackend implements CatalogAcpBackend {
             this.emit({ type: 'status', status: 'error', detail });
           }
           if (!this.disposed) this.options.onProcessExit?.({ code, signal });
-          void this.stderrAppender?.close().catch(() => {});
-          this.stderrAppender = null;
         });
         // A PID proves OS spawn admission. Otherwise await the native spawn/error
         // fact so an absent executable never proceeds into protocol initialization.
@@ -856,31 +869,39 @@ export class AcpBackend implements CatalogAcpBackend {
       } catch (error) {
         throw new SpawnFailureError(error, { syscall: 'spawn' });
       }
-	    observeProcessLaunch(this.process);
+	    const spawnedProcess = this.process;
+	    observeProcessLaunch(spawnedProcess);
 
-	    if (!this.process.stdin || !this.process.stdout || !this.process.stderr) {
+	    if (!spawnedProcess.stdin || !spawnedProcess.stdout || !spawnedProcess.stderr) {
 	      throw new Error('Failed to create stdio pipes');
 	    }
 
 	    // Best-effort stderr artifact capture for diagnostics.
+	    let stderrAppender: BoundedTextFileAppender | null = null;
 	    try {
-	      this.stderrAppender?.close().catch(() => {});
-	      this.stderrAppender = await createSubprocessStderrAppender({
+	      stderrAppender = await createSubprocessStderrAppender({
 	        agentName: this.options.agentName,
-	        pid: typeof this.process.pid === 'number' ? this.process.pid : null,
+	        pid: typeof spawnedProcess.pid === 'number' ? spawnedProcess.pid : null,
 	        label: 'acp',
 	      });
 	    } catch (error) {
 	      logger.debug('[AcpBackend] Failed to create stderr artifact appender (non-fatal)', error);
-	      this.stderrAppender = null;
 	    }
+	    this.stderrArtifactPath = stderrAppender?.path ?? null;
+
+    // Retirement can precede the final bytes from inherited stderr. Only this
+    // child's pipe owns artifact completion, independently of backend disposal.
+    const closeStderrArtifact = () => { void stderrAppender?.close().catch(() => {}); };
+    if (spawnedProcess.stderr.closed) closeStderrArtifact();
+    else spawnedProcess.stderr.once('close', closeStderrArtifact);
 
 	    // Handle stderr output via transport handler
-	    this.process.stderr.on('data', (data: Buffer) => {
+	    spawnedProcess.stderr.on('data', (data: Buffer) => {
 	      const text = data.toString();
 	      if (!text.trim()) return;
 
-	      this.stderrAppender?.append(text);
+	      stderrAppender?.append(text);
+      if (this.process !== spawnedProcess || this.disposed) return;
 
 	      // Build context for transport handler
 	      const activeToolCallIds = this.activeToolCallIds();
@@ -922,8 +943,8 @@ export class AcpBackend implements CatalogAcpBackend {
 
     // Create Web Streams from Node streams
     const streams = nodeToWebStreams(
-      this.process.stdin,
-      this.process.stdout
+      spawnedProcess.stdin,
+      spawnedProcess.stdout
     );
     const writable = streams.writable;
     const readable = streams.readable;
@@ -1151,9 +1172,9 @@ export class AcpBackend implements CatalogAcpBackend {
       transport: stream,
       handlers: clientHandlers,
       ...(this.options.extensions ? { extensions: this.options.extensions } : {}),
-      ...(this.options.createExtensionContext
-        ? { createExtensionContext: this.options.createExtensionContext }
-        : {}),
+      createExtensionContext: (method, signal, requestId) => {
+        return this.options.createExtensionContext?.(method, signal, requestId) ?? { method, signal };
+      },
     });
     if (networkTransport) {
       const connection = this.connection;
@@ -1227,6 +1248,8 @@ export class AcpBackend implements CatalogAcpBackend {
     logger.debug(`[AcpBackend] Initialize completed`);
 
     const agentCapabilities = asRecord((initResponse as InitializeResponse).agentCapabilities);
+    // The SDK response came from JSON-RPC; keep opaque extension leaves for plugin codecs.
+    this.agentCapabilities = agentCapabilities as JsonValue;
     const promptCapabilities = asRecord(agentCapabilities?.promptCapabilities);
     const sessionCapabilities = asRecord(agentCapabilities?.sessionCapabilities);
     this.acceptsImageInput = promptCapabilities?.image === true;
@@ -1339,21 +1362,26 @@ export class AcpBackend implements CatalogAcpBackend {
       logger.debug(`[AcpBackend] Creating new session...`);
 
       let timeoutHandle: NodeJS.Timeout | null = null;
-      const sessionResponse = await Promise.race([
-        this.connection!.peer.newSession(newSessionRequest).then((res) => {
-          if (timeoutHandle) {
-            clearTimeout(timeoutHandle);
-            timeoutHandle = null;
-          }
-          return res;
+      const sessionResponse = await recoverMcpSessionStart({
+        operation: 'NewSession',
+        mcpServers: newSessionRequest.mcpServers,
+        continued: notice => this.emit({ type: 'event', name: 'mcp_start_recovered', payload: notice }),
+        start: mcpServers => Promise.race([
+          this.connection!.peer.newSession({ ...newSessionRequest, mcpServers }).then((res) => {
+            if (timeoutHandle) {
+              clearTimeout(timeoutHandle);
+              timeoutHandle = null;
+            }
+            return res;
+          }),
+          new Promise<never>((_, reject) => {
+            timeoutHandle = setTimeout(() => {
+              reject(this.createStartupTimeoutError('New session', initTimeout));
+            }, initTimeout);
+          }),
+        ]).finally(() => {
+          if (timeoutHandle) clearTimeout(timeoutHandle);
         }),
-        new Promise<never>((_, reject) => {
-          timeoutHandle = setTimeout(() => {
-            reject(this.createStartupTimeoutError('New session', initTimeout));
-          }, initTimeout);
-        }),
-      ]).finally(() => {
-        if (timeoutHandle) clearTimeout(timeoutHandle);
       });
       const sessionId = readNonBlankOpaqueIdentifier(sessionResponse.sessionId);
       if (!sessionId) {
@@ -1485,7 +1513,7 @@ export class AcpBackend implements CatalogAcpBackend {
       const request: ForkSessionRequest = {
         sessionId: normalized,
         cwd: typeof params.cwd === 'string' && params.cwd.trim().length > 0 ? params.cwd.trim() : this.options.cwd,
-        mcpServers: this.buildAcpMcpServersForSessionRequest() as unknown as ForkSessionRequest['mcpServers'],
+        mcpServers: this.buildAcpMcpServersForSessionRequest(),
       };
 
       const response = await connection.peer.forkSession(request).catch((error) => {
@@ -1679,21 +1707,24 @@ export class AcpBackend implements CatalogAcpBackend {
     const request: LoadSessionRequest = {
       sessionId,
       cwd: this.options.cwd,
-      mcpServers: this.buildAcpMcpServersForSessionRequest() as unknown as LoadSessionRequest['mcpServers'],
+      mcpServers: this.buildAcpMcpServersForSessionRequest(),
     };
 
     logger.debug(`[AcpBackend] Loading session: ${sessionId}`);
 
     // `session/load` may have mutated provider session state as soon as the
-    // request is emitted, exactly like `session/new`. A rejection, timeout,
-    // disconnect, or transport failure is therefore ambiguous and must not
-    // replay the load on this connection. The callers' catch paths tear the
-    // ambiguous connection/process down, and a refused resume never degrades
+    // request is emitted, exactly like `session/new`. A timeout, disconnect,
+    // or transport failure is ambiguous and must not replay the load. Only a
+    // definite named MCP startup rejection permits one changed request. Callers
+    // tear the ambiguous connection/process down, and a refused resume never degrades
     // into `session/new`.
     let timeoutHandle: NodeJS.Timeout | null = null;
-    try {
-      return await Promise.race([
-        connection.peer.loadSession(request).then((response) => {
+    return await recoverMcpSessionStart({
+      operation: 'LoadSession',
+      mcpServers: request.mcpServers,
+      continued: notice => this.emit({ type: 'event', name: 'mcp_start_recovered', payload: notice }),
+      start: mcpServers => Promise.race([
+        connection.peer.loadSession({ ...request, mcpServers }).then((response) => {
           if (timeoutHandle) {
             clearTimeout(timeoutHandle);
             timeoutHandle = null;
@@ -1705,12 +1736,10 @@ export class AcpBackend implements CatalogAcpBackend {
             reject(this.createStartupTimeoutError('Load session', timeoutMs));
           }, timeoutMs);
         }),
-      ]);
-    } finally {
-      if (timeoutHandle) {
-        clearTimeout(timeoutHandle);
-      }
-    }
+      ]).finally(() => {
+        if (timeoutHandle) clearTimeout(timeoutHandle);
+      }),
+    });
   }
 
   /**
@@ -1891,20 +1920,20 @@ export class AcpBackend implements CatalogAcpBackend {
       ...(this.options.sessionModelAdapter?.projectModelId
         ? { projectModelId: this.options.sessionModelAdapter.projectModelId }
         : {}),
-      ...(this.options.modelConfigOptionId
-        ? {
-            deriveSessionModelState: (configOptions) => {
-              const rawState = readSessionModelStateFromConfigOptions(
-                { configOptions },
-                this.options.modelConfigOptionId!,
-              );
-              return rawState
-                ? this.options.sessionModelAdapter?.projectModelState?.({ normalizedModelState: rawState })
-                  ?? rawState
-                : null;
-            },
-          }
-        : {}),
+      deriveSessionModelState: (configOptions) => {
+        const rawState = readSessionModelStateFromConfigOptions(
+          { configOptions },
+          this.options.modelConfigOptionId,
+        );
+        if (rawState) {
+          const state = this.options.sessionModelAdapter?.projectModelState?.({ normalizedModelState: rawState }) ?? rawState;
+          this.sessionModelsDerivedFromConfigOptions = true;
+          return state;
+        }
+        if (!this.sessionModelsDerivedFromConfigOptions) return undefined;
+        this.sessionModelsDerivedFromConfigOptions = false;
+        return null;
+      },
       sessionConfigOptionsState: this.sessionConfigOptionsState,
       setSessionConfigOptionsState: (state) => {
         this.sessionConfigOptionsState = state;
@@ -1941,13 +1970,12 @@ export class AcpBackend implements CatalogAcpBackend {
     const standardState = this.options.prepareSessionModels
       ? await this.options.prepareSessionModels(sessionResponse)
       : readSessionModelStateFromSessionResponse(sessionResponse, this.options.projectModel);
-    const rawState = standardState ?? (this.options.modelConfigOptionId
-      ? readSessionModelStateFromConfigOptions(sessionResponse, this.options.modelConfigOptionId)
-      : null);
+    const rawState = standardState ?? readSessionModelStateFromConfigOptions(sessionResponse, this.options.modelConfigOptionId);
     if (!rawState) return;
     const state = this.options.sessionModelAdapter?.projectModelState?.({
       normalizedModelState: rawState,
     }) ?? rawState;
+    this.sessionModelsDerivedFromConfigOptions = standardState === null;
     this.sessionModelState = state;
     this.emit({ type: 'event', name: 'session_models_state', payload: this.sessionModelState });
   }
@@ -1994,10 +2022,10 @@ export class AcpBackend implements CatalogAcpBackend {
       throw new Error('Config option is unavailable or disabled by provider policy');
     }
 
-    const normalizedValueId = readNonBlankOpaqueIdentifier(valueId) ?? '';
-    if (!normalizedValueId) {
-      throw new Error('Config value is required');
+    if (typeof valueId !== 'string') {
+      throw new Error('Config value must be a string');
     }
+    const normalizedValueId = valueId;
 
     const response = await this.connection.peer.setSessionConfigOption({
       sessionId: normalizedSessionId,
@@ -2009,54 +2037,52 @@ export class AcpBackend implements CatalogAcpBackend {
     const configOptionsRaw = Array.isArray(configOptionsCandidate) ? configOptionsCandidate : null;
     if (configOptionsRaw) {
       const next = normalizeSessionConfigOptions(configOptionsRaw, this.options.disableSessionModeUpdates);
-      const isModelSelector = this.options.modelConfigOptionId === normalizedConfigId;
-      const currentModel = this.sessionModelState?.availableModels.find((model) => model.id === this.sessionModelState?.currentModelId);
-      const isModelOption = (this.options.projectSetModelResponse || this.options.projectSetModelResponseAwaitable)
-        && currentModel?.modelOptions?.some((option) => option.id === normalizedConfigId);
-      if (this.options.modelConfigOptionId && (isModelSelector || isModelOption)) {
-        const rawModelState = readSessionModelStateFromConfigOptions(
-          { configOptions: next },
-          this.options.modelConfigOptionId,
-        );
-        if (rawModelState) {
-          const requestedModelId = isModelSelector ? normalizedValueId : currentModel?.id;
-          if (!requestedModelId || rawModelState.currentModelId !== requestedModelId) {
-            throw new Error('ACP config-option response selected a different model');
+      const isModelSelector = resolveSessionModelConfigOption(next, this.options.modelConfigOptionId)?.id === normalizedConfigId;
+      const rawModelState = readSessionModelStateFromConfigOptions(
+        { configOptions: next },
+        this.options.modelConfigOptionId,
+      );
+      if (rawModelState) {
+        const requestedModelId = isModelSelector ? normalizedValueId : rawModelState.currentModelId;
+        if (rawModelState.currentModelId !== requestedModelId) {
+          throw new Error('ACP config-option response selected a different model');
+        }
+        // Config-option replies replace the selector catalog. Agent-specific
+        // projectors may retain controls previously observed on other models.
+        if (this.options.projectSetModelResponse || this.options.projectSetModelResponseAwaitable) {
+          const availableModels = rawModelState.availableModels.map((model) => ({
+            ...this.sessionModelState?.availableModels.find((previous) => previous.id === model.id),
+            ...model,
+          }));
+          const target = availableModels.find((model) => model.id === rawModelState.currentModelId);
+          const projected = target ? await this.projectSetModelResponse(response, requestedModelId, null, target) : null;
+          const validated = readSessionModelStateFromSessionResponse({ models: {
+            currentModelId: rawModelState.currentModelId,
+            availableModels: availableModels.map((model) => model.id === target?.id && projected ? projected : model),
+          } });
+          if (!validated || (projected && projected.id !== target?.id)) {
+            throw new Error('ACP model projector returned an invalid model');
           }
-          // Config-option replies replace the selector catalog, not previously
-          // observed controls on unselected models. The Agent interprets only
-          // the selected model's native reply through the existing SDK seam.
-          if (this.options.projectSetModelResponse || this.options.projectSetModelResponseAwaitable) {
-            const availableModels = rawModelState.availableModels.map((model) => ({
-              ...this.sessionModelState?.availableModels.find((previous) => previous.id === model.id),
-              ...model,
-            }));
-            const target = availableModels.find((model) => model.id === rawModelState.currentModelId);
-            const projected = target ? await this.projectSetModelResponse(response, requestedModelId, null, target) : null;
-            const validated = readSessionModelStateFromSessionResponse({ models: {
-              currentModelId: rawModelState.currentModelId,
-              availableModels: availableModels.map((model) => model.id === target?.id && projected ? projected : model),
-            } });
-            if (!validated || (projected && projected.id !== target?.id)) {
-              throw new Error('ACP model projector returned an invalid model');
-            }
-            rawModelState.availableModels = validated.availableModels;
-          }
-          const modelState = this.options.sessionModelAdapter?.projectModelState?.({
-            normalizedModelState: rawModelState,
-          }) ?? rawModelState;
+          rawModelState.availableModels = validated.availableModels;
+        }
+        const modelState = this.options.sessionModelAdapter?.projectModelState?.({
+          normalizedModelState: rawModelState,
+        }) ?? rawModelState;
+        this.sessionModelsDerivedFromConfigOptions = true;
+        if (!isDeepStrictEqual(this.sessionModelState, modelState)) {
           this.sessionModelState = modelState;
           this.emit({ type: 'event', name: 'session_models_state', payload: modelState });
         }
+      } else if (this.sessionModelsDerivedFromConfigOptions) {
+        this.sessionModelsDerivedFromConfigOptions = false;
+        this.sessionModelState = null;
+        this.emit({ type: 'event', name: 'session_models_state', payload: null });
       }
-      this.sessionConfigOptionsState = next;
+      if (!isDeepStrictEqual(this.sessionConfigOptionsState, next)) {
+        this.sessionConfigOptionsState = next;
+        this.emit({ type: 'event', name: 'config_options_update', payload: { configOptions: next } });
+      }
     }
-
-    this.emit({
-      type: 'event',
-      name: 'config_options_update',
-      payload: { configOptions: this.sessionConfigOptionsState ?? [] },
-    });
   }
 
   // Promise resolver for waitForIdle - set when waiting for response to complete
@@ -2186,6 +2212,8 @@ export class AcpBackend implements CatalogAcpBackend {
         return 'ACP turn failed';
       case 'refused':
         return 'ACP turn refused';
+      case 'unknown':
+        return 'ACP turn ended with unknown stop reason';
       case 'timed_out':
         return 'ACP turn timed out';
     }
@@ -2231,7 +2259,7 @@ export class AcpBackend implements CatalogAcpBackend {
       reason,
       outcome.kind === 'completed' || outcome.kind === 'refused'
         ? 'completed'
-        : outcome.kind === 'aborted'
+        : outcome.kind === 'aborted' || outcome.kind === 'unknown'
           ? 'cancelled'
           : 'failed',
     );
@@ -2268,7 +2296,7 @@ export class AcpBackend implements CatalogAcpBackend {
     }
     emitPromptUsage(promptResponse);
     const stopReason = readPromptStopReason(promptResponse);
-    if (!stopReason) {
+    if (stopReason === null) {
       const shouldReplayDeferredIdle =
         this.idleStatusDeferredUntilPromptResponse &&
         this.waitingForResponse &&
@@ -2280,7 +2308,7 @@ export class AcpBackend implements CatalogAcpBackend {
       return false;
     }
 
-    this.finalizeTurnOutcome(mapStopReasonToAcpTurnOutcome(stopReason));
+    this.finalizeTurnOutcome(mapStopReasonToAcpTurnOutcome(stopReason, this.options.projectPromptStopReason));
     return true;
   }
 
@@ -2547,6 +2575,7 @@ export class AcpBackend implements CatalogAcpBackend {
       const promptLivenessTimeoutMs = resolvePromptLivenessTimeoutMs(this.transport);
       let promptLivenessTimeout: ReturnType<typeof setTimeout> | null = null;
       const promptTransportWriteReceipt = this.createAcpPromptTransportWriteReceipt(promptRequest.sessionId);
+      this.dispatchedPromptTurnGeneration = turnGeneration;
       const promptPromise = this.connection.peer.prompt(promptRequest);
       this.rawPromptRequest = promptPromise;
       this.rawPromptRequestTurnGeneration = turnGeneration;
@@ -2848,10 +2877,12 @@ export class AcpBackend implements CatalogAcpBackend {
     const providerModelId = resolvedUpdate?.modelId ?? normalizedModelId;
     const providerRequestMeta = resolvedUpdate?.requestMeta ?? requestMeta;
 
-    if (this.options.modelConfigOptionId) {
+    const modelConfigOptionId = this.options.modelConfigOptionId
+      ?? resolveSessionModelConfigOption(this.sessionConfigOptionsState ?? [])?.id;
+    if (modelConfigOptionId) {
       await this.setSessionConfigOption(
         normalizedSessionId,
-        this.options.modelConfigOptionId,
+        modelConfigOptionId,
         providerModelId,
       );
       return;
@@ -2919,10 +2950,13 @@ export class AcpBackend implements CatalogAcpBackend {
     if (returnedState.currentModelId !== projectedModelId) {
       throw new Error('ACP session/set_model returned a different current model');
     }
+    const catalogChanged = returnedState.availableModels !== this.sessionModelState?.availableModels;
     this.sessionModelState = returnedState;
     this.emit(observedCatalog
       ? { type: 'event', name: 'session_models_state', payload: returnedState }
-      : { type: 'event', name: 'current_model_update', payload: { currentModelId: returnedState.currentModelId } });
+      : { type: 'event', name: 'current_model_update', payload: {
+          currentModelId: returnedState.currentModelId, catalogChanged,
+        } });
   }
 
   /**
@@ -3293,13 +3327,6 @@ export class AcpBackend implements CatalogAcpBackend {
       this.clearResponseCompletionTimeout();
     }
 
-    try {
-      await this.stderrAppender?.close();
-    } catch {
-      // ignore
-    } finally {
-      this.stderrAppender = null;
-    }
     // Try graceful shutdown first
     if (options?.preserveProviderSession !== true && this.connection && this.acpSessionId) {
       try {
