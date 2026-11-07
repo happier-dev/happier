@@ -19,6 +19,7 @@ export type AgentInputScrollableChipRowProps = Readonly<{
     children: React.ReactNode;
     fadeColor: string;
     indicatorColor: string;
+    scrollOffsetRef?: React.MutableRefObject<number>;
     containerStyle?: any;
     contentStyle?: any;
     fadeLeftStyle?: any;
@@ -32,6 +33,16 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
         edgeThreshold: 2,
     });
     const scrollRef = React.useRef<any>(null);
+    const initialScrollOffsetRef = React.useRef(props.scrollOffsetRef?.current ?? 0);
+
+    const setScrollRef = React.useCallback((value: any) => {
+        scrollRef.current = value;
+        if (Platform.OS !== 'web' || !value) return;
+        const node = value.getScrollableNode?.() ?? value;
+        if (typeof node.scrollLeft === 'number') {
+            node.scrollLeft = initialScrollOffsetRef.current;
+        }
+    }, []);
 
     const getScrollNode = React.useCallback(() => {
         const raw = scrollRef.current;
@@ -68,6 +79,9 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
         const scrollWidth = typeof node.scrollWidth === 'number' ? node.scrollWidth : null;
         const scrollLeft = typeof node.scrollLeft === 'number' ? node.scrollLeft : 0;
         if (clientWidth === null || scrollWidth === null) return;
+        if (props.scrollOffsetRef) {
+            props.scrollOffsetRef.current = Math.max(0, scrollLeft);
+        }
 
         const scrollEvent = {
             nativeEvent: {
@@ -82,7 +96,7 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
             },
         } as unknown as NativeSyntheticEvent<NativeScrollEvent>;
         fades.onScroll(scrollEvent);
-    }, [fades, getScrollNode]);
+    }, [fades, getScrollNode, props.scrollOffsetRef]);
 
     React.useEffect(() => {
         if (Platform.OS !== 'web') return;
@@ -160,13 +174,14 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
     return (
         <View style={props.containerStyle}>
             <ScrollViewWithWheel
-                ref={scrollRef}
+                ref={setScrollRef}
                 horizontal
                 showsHorizontalScrollIndicator={false}
                 scrollEnabled
                 alwaysBounceHorizontal={false}
                 directionalLockEnabled
                 keyboardShouldPersistTaps="handled"
+                contentOffset={{ x: initialScrollOffsetRef.current, y: 0 }}
                 onWheel={(event: any) => {
                     if (Platform.OS !== 'web') return;
                     const node = getScrollNode() as any;
@@ -188,6 +203,10 @@ export function AgentInputScrollableChipRow(props: AgentInputScrollableChipRowPr
                     );
                 }}
                 onScroll={(event: any) => {
+                    const scrollOffset = event?.nativeEvent?.contentOffset?.x;
+                    if (props.scrollOffsetRef && typeof scrollOffset === 'number') {
+                        props.scrollOffsetRef.current = Math.max(0, scrollOffset);
+                    }
                     if (Platform.OS === 'web') {
                         reportWebScroll();
                         return;

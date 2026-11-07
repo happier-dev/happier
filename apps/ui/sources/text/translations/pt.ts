@@ -7089,6 +7089,8 @@ export const pt: TranslationStructure = {
   },
 
   agentInput: {
+      showControls: "Mostrar controles de composição",
+      hideControls: "Ocultar controles de composição",
       sendOptions: {
           title: "Opções de envio",
           queue: "Enfileirar",

@@ -6617,6 +6617,8 @@ export const en = {
     },
 
     agentInput: {
+        showControls: "Show composer controls",
+        hideControls: "Hide composer controls",
         sendOptions: {
             title: "Send options",
             queue: "Queue",

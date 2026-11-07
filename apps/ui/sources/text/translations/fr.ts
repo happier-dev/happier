@@ -6572,6 +6572,8 @@ export const fr: TranslationStructure = {
     },
 
     agentInput: {
+        showControls: "Afficher les contrôles de saisie",
+        hideControls: "Masquer les contrôles de saisie",
         sendOptions: {
             title: "Options d’envoi",
             queue: "Mettre en attente",

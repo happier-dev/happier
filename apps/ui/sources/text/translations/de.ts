@@ -6585,6 +6585,8 @@ export const de: TranslationStructure = {
     },
 
     agentInput: {
+        showControls: "Eingabesteuerung anzeigen",
+        hideControls: "Eingabesteuerung ausblenden",
         sendOptions: {
             title: "Sendeoptionen",
             queue: "Einreihen",

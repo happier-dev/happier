@@ -39,3 +39,25 @@ appId: ${HAPPIER_E2E_MOBILE_APP_ID}
     id: agent-input-session-mode-chip
 - assertVisible:
     id: 'agent-input-session-mode-chip-label:plan'
+
+# Disclosure preserves the selected Plan and YOLO settings while keeping the composer usable.
+- assertVisible: "YOLO"
+- assertVisible:
+    id: agent-input-controls-toggle
+- tapOn:
+    id: agent-input-controls-toggle
+- assertNotVisible:
+    id: agent-input-agent-chip
+- assertNotVisible:
+    id: agent-input-permission-chip
+- assertNotVisible:
+    id: agent-input-session-mode-chip
+- assertVisible:
+    id: new-session-composer-input
+- assertVisible:
+    id: new-session-composer-send
+- tapOn:
+    id: agent-input-controls-toggle
+- assertVisible:
+    id: 'agent-input-session-mode-chip-label:plan'
+- assertVisible: "YOLO"

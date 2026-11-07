@@ -6754,6 +6754,8 @@ export const zhHans: TranslationStructure = {
   },
 
   agentInput: {
+      showControls: "显示输入控件",
+      hideControls: "隐藏输入控件",
       sendOptions: {
           title: "发送选项",
           queue: "加入队列",
