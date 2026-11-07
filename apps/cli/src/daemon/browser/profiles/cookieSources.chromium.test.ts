@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
+import { BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1 } from '@happier-dev/protocol/browser/profile/v1';
 import {
   listBrowserCookieSources,
   readBrowserCookieSource,
@@ -464,6 +465,7 @@ describe('Chromium-family cookie source', () => {
             name: 'v20',
             status: 'skipped',
             code: 'app_bound_encryption',
+            reason: BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1,
           },
         ],
       });

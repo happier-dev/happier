@@ -3,7 +3,7 @@ import { getActionSpec } from '../../actions/actionSpecs.js';
 import { createActionExecutor, type ActionExecutorDeps } from '../../actions/actionExecutor.js';
 import { ActionsSettingsV1Schema, setActionApprovalOverride } from '../../actions/actionSettings.js';
 import { importBrowserProfileCookiesV1 } from './importCookiesV1.js';
-import { BrowserProfileLoginsImportV1Schema } from './loginsV1.js';
+import { BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1, BrowserProfileLoginsImportV1Schema } from './loginsV1.js';
 
 const request = { kind: 'cookies' as const, machineId: 'vps', browserSessionId: 'session', viewId: 'view', profileId: 'destination',
   sourceMachineId: 'laptop', source: { browser: 'firefox' as const, profileId: 'source' }, sites: ['https://example.test'] };
@@ -12,7 +12,10 @@ describe('browser profile login import', () => {
     profileId: 'destination', refs: ['happier:shared-secret:v1:key'] }])('admits $kind only after Action approval and rejects material-bearing operands', async request => {
     let imports = 0;
     const records = request.kind === 'passkeys' ? [{ domain: 'example.test', name: 'credential', status: 'failed' as const,
-      code: 'source_format_unsupported' as const, reason: 'this passkey tracks a usage counter' as const }] : [];
+      code: 'source_format_unsupported' as const, reason: 'this passkey tracks a usage counter' as const }] : [
+      { domain: 'example.test', name: 'cookie', status: 'skipped' as const,
+        code: 'app_bound_encryption' as const, reason: BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1 },
+    ];
     // Only the private host/transport boundaries reached by this Action are installed.
     const executor = createActionExecutor({ clientActionExecute: async () => { throw new Error('must not redirect native import'); },
       browserProfileLoginsImport: async () => {

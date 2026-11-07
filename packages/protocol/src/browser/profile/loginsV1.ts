@@ -31,10 +31,12 @@ export const BrowserLoginImportFailureCodeV1Schema = lazyZodSchema(() => z.enum(
   'app_bound_encryption',
 ]));
 export type BrowserLoginImportFailureCodeV1 = z.infer<typeof BrowserLoginImportFailureCodeV1Schema>;
+/** Value-free recovery copy shared by the typed refusal and its English UI presenter. */
+export const BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1 = "Chrome on Windows locks these cookies to Chrome, so they can't be copied. Import from Firefox, or sign in once inside Happier's browser, which remembers your sign-in.";
 export const BrowserLoginImportRecordV1Schema = lazyZodSchema(() => z.strictObject({
   domain: z.string(), name: z.string(), status: z.enum(['imported', 'skipped', 'failed']),
   code: z.optional(BrowserLoginImportFailureCodeV1Schema),
-  reason: z.optional(z.literal('this passkey tracks a usage counter')),
+  reason: z.optional(z.enum(['this passkey tracks a usage counter', BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1])),
 }));
 export type BrowserLoginImportRecordV1 = z.infer<typeof BrowserLoginImportRecordV1Schema>;
 export const BrowserProfileLoginsImportResultV1Schema = lazyZodSchema(() => z.discriminatedUnion('status', [

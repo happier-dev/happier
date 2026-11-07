@@ -2318,7 +2318,7 @@ export type BrowserControlActionResultById = {
             name: string;
             status: 'failed' | 'imported' | 'skipped';
             code?: 'app_bound_encryption' | 'canceled' | 'destination_unavailable' | 'engine_unsupported' | 'expired' | 'import_failed' | 'import_unknown' | 'partition_unsupported' | 'passkey_import_unavailable' | 'permission_denied' | 'profile_mismatch' | 'source_format_unsupported' | 'source_locked' | 'source_unavailable' | undefined;
-            reason?: 'this passkey tracks a usage counter' | undefined;
+            reason?: 'Chrome on Windows locks these cookies to Chrome, so they can\'t be copied. Import from Firefox, or sign in once inside Happier\'s browser, which remembers your sign-in.' | 'this passkey tracks a usage counter' | undefined;
         }[];
     } | {
         status: 'needs_source';

@@ -154,10 +154,13 @@ development integration, not a claim of released availability.
 ## Confidential credential requests (development)
 
 Confidential credential requests are handled in the existing Session/Inbox request
-detail, not in Session settings or chat. The 0.3 development flow offers masked
-one-time entry and explicit, off-by-default Remember, with separate entry, submit,
-and save outcomes. See [confidential browser entry](/agents/profiles#confidential-browser-entry-development)
-for its target review and current limits.
+detail. In unreleased 0.3 development source, an Action with a missing required
+secret input can ask you for it there, including plugin Actions. Type it for this
+request, choose **Use a Saved Secret**, or turn on **Save for next time** for a
+typed value. Review the request before choosing **Approve**, **Dismiss**, or
+**Deny**. See [credentials requested by Actions](/agents/profiles#credentials-requested-by-actions-development)
+for the choices and recovery, and [confidential browser entry](/agents/profiles#confidential-browser-entry-development)
+for exact-field entry and its current limits.
 
 ## Session handoff settings
 
@@ -294,12 +297,104 @@ The same screen can also show related permission/session-default controls such a
 
 Full guide: [Permissions](/sessions/permissions)
 
+## Browser activity and recording in development builds
+
+These are **unreleased 0.3 development-source behaviors**. Browser context,
+automation and recording depend on the Home's corresponding Browser feature
+decisions and the selected view's available adapters.
+
+### Use a managed browser
+
+In a Project, open the right rail's **More** menu and choose **Browser**. In the
+managed browser, use **Take control** before interacting with the page. Wheel
+scrolling and <kbd>Ctrl</kbd>/<kbd>Cmd</kbd>+<kbd>C</kbd>, <kbd>X</kbd>, and
+<kbd>V</kbd> work with the page's selection and your device's text clipboard.
+Clipboard access can be refused by your device or browser; password selections
+are excluded from copy and cut.
+
+When a page asks for a file, choose it from your device's picker or cancel the
+request. Downloads appear over the page with progress; choose **Save** on a
+finished download to save it to the device you are viewing from. An unavailable
+upload or download reports its limitation in the viewer.
+
+Page alerts, confirmations, prompts and leave-page dialogs wait for the person
+controlling the viewer to answer. Popups open as Browser tabs in the workspace.
+The page follows the controlling viewer's size; other viewers see the same page
+fitted inside their viewer, with space around it when the shapes differ. On a
+phone, tap a field to type; **Show keyboard** brings the keyboard back when it
+has been dismissed.
+
+### Import sign-ins
+
+In the managed browser's menu, choose **Import sign-ins…**. Check **Into** so
+you know which profile and Machine will receive them.
+
+- For **Cookies**, choose a source Machine and a Firefox, Chrome, Chromium,
+  Edge or Brave profile under **From**, list the sites to copy, then choose
+  **Import**. The source can be a different Machine from the one running the
+  managed browser. On macOS, reading a Chrome-family profile asks for Keychain
+  access; on Linux it may use your keyring. On Windows, Chrome protects newer
+  cookies with app-bound encryption, so they are skipped: use Firefox as the
+  source or sign in once inside Happier's browser, which remembers your sign-in.
+  Edge on Windows also supports app-bound encryption from version 127, according
+  to [Microsoft's policy documentation](https://learn.microsoft.com/en-us/deployedge/microsoft-edge-policies/ApplicationBoundEncryptionEnabled),
+  so it is not a workaround for these cookies. Safari sources are
+  unsupported. Expired and container or partitioned cookies are skipped.
+- For **Passkeys**, select imported passkeys already held as personal Saved
+  Secrets, then choose **Import**. This does not export hardware or system
+  passkeys. Only zero-counter software passkeys can be activated. A passkey that
+  tracks a usage counter is refused with a reason; sign in to that site as usual.
+
+The Agent, and anyone driving this browser, can use the imported sign-ins until
+the profile is cleared. Signing out of the source browser does not revoke a
+copied cookie. Active software passkey keys can also be read by someone running
+as your operating-system user on the executing Machine. On a Home-managed
+account, the Home can read imported material while it moves; E2EE accounts use
+encrypted transport. Shared Machines require **Manage** access for source reads
+and destination import.
+
+Review the per-item result. If completion is unknown, check the site before
+importing again. See [Saved secrets and bindings](/agents/profiles#saved-secrets-and-bindings)
+for reusable credentials.
+
+### Page context and recording
+
+Browser automation history is recent activity, not a permanent audit log.
+The daemon keeps its recent activity window; the client does not impose another
+fixed cutoff. Closing a view retires its activity and controller.
+
+Managed Chromium page context preserves the complete valid visible text,
+interactive controls, names and selectors, and eligible accessibility field
+values. Password and one-time-code values are masked wherever they appear in
+snapshot text, including labels and page metadata. A snapshot of a page with
+sensitive fields omits screenshot media. If field eligibility
+cannot be established, values are omitted and the result reports incompleteness.
+Separate diagnostic summaries may still be shortened and marked incomplete.
+
+Recording has no duration or recording-size cap and uses a default cadence of
+12 frames per second. Video capture continues until **Stop** or the source's
+lifetime ends. Managed Chromium, including its streamed view in the app, uses
+CDP capture; a stream-backed browser or simulator can record its actual live
+source. A supported desktop WebView offers a still PNG capture through its
+native handler, not a continuous video. Ordinary preview iframes do not acquire
+recording support just by displaying a page. Missing capture or Session media
+storage support leaves recording unavailable; Session media storage budgets
+still apply. Finished media is saved by reference in the Session rather than
+embedded in an Action response. Managed Chromium recordings include a cursor
+and keystroke overlay; password and other recognized secret fields suppress
+keystroke labels. This is not automatic redaction of every secret visible on a
+page. The recorded page keeps rendering while another tab or popup is in front.
+Native-platform validation remains separate
+from these source contracts.
+
 ## Watching a computer in development builds
 
-Computer watching is a **0.3 development-build feature**. It uses the session's
-machine, including an enrolled graphical guest, and the same viewer on desktop
-and phone. A machine must be online, have a desktop, and have its native screen
-driver ready. Opening the viewer does not start or wake a managed machine.
+Computer watching is a **0.3 development-build feature**. Open **Computer** on a
+Machine's page to choose a desktop or window without starting an agent Session.
+From a Session, it uses that Session's machine, including an enrolled graphical
+guest. Both entries use the same viewer on desktop and phone. A machine must be
+online, have a desktop, and have its native screen driver ready. Opening the
+viewer does not start or wake a managed machine.
 
 **Watch** opens the viewer. On a desktop it floats above the conversation
 and everything else on the page, including the composer, the Voice orb or
@@ -327,11 +422,41 @@ consequence when choosing what to share. Viewing and mouse/keyboard use are
 separate choices, subject to current machine access and your Actions approval
 preferences.
 
+For Computer Actions on a shared Linux machine, a person with **Use** access gets
+their own bot desktop. Available targets and the live Computer viewer belong to
+that desktop. Each person
+gets a separate desktop even when the machine runs their agents under the same
+OS user. Closing the Session leaves that desktop running until the daemon stops;
+a daemon restart loses its windows. The machine needs the virtual-display tools
+and native screen driver installed. Missing prerequisites produce an unavailable
+reason. Guest computer use is unavailable on macOS and Windows. Machine owners
+and people with **Manage** access retain the existing desktop choices.
+
+Computer Actions use the same approval policy as other Actions. Agent target
+listing, selection and control changes ask by default; an applicable per-Action
+waiver is honored without a second daemon approval prompt. Approval keeps the
+caller an Agent: selected-source consent, See/Use access and native OS permissions
+still apply. Choosing or handing back a target does not itself grant observation
+consent. See [Permissions](/sessions/permissions) for the shared approval controls.
+
 Linux X11 window and primary-display capture are supported by the development
 native driver. The macOS implementation uses the same source and control path;
-physical macOS permission and input certification remains pending. The current
-driver exposes the primary display, not an independently selectable list of
-physical monitors. Windows and Wayland computer capture remain unsupported.
+physical macOS permission and input certification remains pending. Windows uses
+the native primary desktop, with capture and input coordinates in physical pixels
+even at high DPI. Window input stays in background mode; native capture, input
+and Windows privilege restrictions can still refuse it, without automatically
+switching to foreground input.
+
+Wayland support depends on the target desktop. The driver uses the daemon's
+inherited Wayland connection, lists only windows it can enumerate, and offers a
+desktop only when it can confirm its geometry. In the current pinned driver,
+that desktop metadata is Hyprland-specific; a working screenshot alone does not
+establish safe desktop input. Other compositor paths may be available, but no
+compositor or portal helper is installed automatically and native permissions
+still apply. If no target can be enumerated, Happier reports that the Wayland
+target is unavailable. Windows and compositor-specific capture/input
+certification remain release checks requiring interactive native machines.
+The primary desktop is not an independently selectable list of physical monitors.
 
 On a Mac, **Screen Recording** permits watching, while **Accessibility** permits
 mouse and keyboard use. Grant them on the target Mac, even when watching from a

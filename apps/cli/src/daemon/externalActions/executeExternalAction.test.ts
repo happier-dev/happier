@@ -1359,6 +1359,39 @@ describe('executeExternalAction', () => {
     expect(effects).toBe(1);
   });
 
+  // Owner decision 2026-11-07 N1: a terminal bearer cannot claim the UI approval floor.
+  it.each([
+    ['terminal', 'cli'],
+    ['account', 'ui'],
+  ] as const)('resolves a UI claim from %s authentication to %s at Account ingress', async (kind, expectedSurface) => {
+    const accountPrincipal = { accountId: 'requester', authority: 'account_automation' as const,
+      authentication: { kind, tokenEpoch: 7 } };
+    const target = { kind: 'machine' as const, machineId: 'controller' };
+    const envelope = { v: 1 as const, requestId: 'surface-claim', target, input: { homeId: 'srv_home' } };
+    let servedContext: ActionExecutorContext | undefined;
+    // Managed HTTP output and Home proof verification are network boundaries.
+    const managedMachineAction = async ({ context }: { context: ActionExecutorContext }) => {
+      servedContext = context;
+      return { machines: [] };
+    };
+    const result = await executeExternalAction({
+      actionId: 'machines.managed.list', envelope, principal: accountPrincipal, surface: 'ui',
+      currentMachineId: target.machineId, currentServerId: 'profile', currentInstallationId: 'installation',
+      executionAuthorization: { v: 1, token: 'home-signed-root', binding: {
+        accountId: accountPrincipal.accountId, authentication: accountPrincipal.authentication,
+        serverIdentityId: 'srv_home', machineId: target.machineId, custodianAccountId: 'requester', installationId: 'installation',
+        actionId: 'machines.managed.list', requestId: envelope.requestId, target,
+        requestEnvelopeDigest: computeExternalActionRequestEnvelopeDigestV1(envelope), accountEncryptionMode: 'plain',
+      } },
+      externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8)).secretKey,
+      verifyExecutionAuthorization: async () => true,
+      resolveTarget: createDaemonExternalActionTargetResolver({ credentials: { token: 'requester', encryption: null } }),
+      executor: createActionExecutor({ ...createUnavailableHostActionDeps(), managedMachineAction }),
+    });
+    expect(result).toMatchObject({ kind: 'response', response: { execution: { ok: true } } });
+    expect(servedContext).toMatchObject({ surface: expectedSurface, authority: 'account_automation' });
+  });
+
   it('materializes only the exact signed Session caller and cause instead of promoting it to a present user', async () => {
     const sessionActionOrigin = SessionActionRpcOriginV1Schema.parse({ v: 1,
       caller: { kind: 'session', sessionId: 'source', starterDepth: 1, turnDepth: 2 }, sourceTurnId: 'turn',
@@ -1383,7 +1416,7 @@ describe('executeExternalAction', () => {
       return { machines: [] };
     });
     const run = (requestPrincipal: typeof accountPrincipal) => executeExternalAction({
-      actionId: 'machines.managed.list', envelope, principal: requestPrincipal,
+      actionId: 'machines.managed.list', envelope, principal: requestPrincipal, surface: 'ui',
       currentMachineId: target.machineId, currentServerId: 'profile', currentInstallationId: 'installation',
       executionAuthorization: authorization,
       externalActionMachineRequestPrivateKey: tweetnacl.sign.keyPair.fromSeed(new Uint8Array(32).fill(8)).secretKey,

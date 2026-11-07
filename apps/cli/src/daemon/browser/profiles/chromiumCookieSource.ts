@@ -8,6 +8,7 @@ import {
 } from '@happier-dev/cli-common/process';
 import { openSqliteDatabaseSync } from '@happier-dev/plugin-sdk/fs';
 import {
+  BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1,
   BrowserCookieV1Schema,
   type BrowserCookieSourceResultV1,
   type BrowserCookieV1,
@@ -501,6 +502,7 @@ export async function readChromiumCookieSource(
                 ...metadata,
                 status: 'skipped',
                 code: 'app_bound_encryption',
+                reason: BROWSER_LOGIN_APP_BOUND_ENCRYPTION_MESSAGE_V1,
               });
               continue;
             }
