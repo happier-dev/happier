@@ -25,11 +25,34 @@ const revision = () => z.number().check(z.int(), z.nonnegative());
 const target = () => ({ serverId: z.optional(z.string().check(z.minLength(1))), machineId: z.string().check(z.minLength(1)) });
 const detailFacts = () => z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]));
 
-const dockerPruneImage = () => z.readonly(z.strictObject({
+const dockerImageIdentity = () => ({
   nativeId: z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/u)),
   configDigest: z.string().check(z.regex(/^sha256:[a-f0-9]{64}$/u)),
   platform: z.string().check(z.minLength(1)),
-}));
+});
+const dockerPruneImage = () => z.readonly(z.strictObject(dockerImageIdentity()));
+
+/** Demand-read presentation. Selectors remain expectations rechecked by prune. */
+export const MachineStorageDockerSummaryV1Schema = lazyZodSchema(() => {
+  const unavailableCustody = () => z.object({ kind: z.literal('unavailable'), reason: z.literal('image_custody_unavailable'),
+    deploymentIds: z.optional(z.array(z.string())) });
+  return z.union([
+    z.object({ kind: z.literal('unavailable'), reason: z.enum(['native_runtime_unavailable', 'native_inventory_unavailable']),
+      cause: z.optional(z.object({ code: z.string(), statusCode: z.optional(z.number().check(z.int())) })) }),
+    z.object({ kind: z.literal('ready'), engineId: z.string().check(z.minLength(1)),
+      images: z.object({ count: bytes(), sizeBytes: z.optional(bytes()), reclaimableBytes: z.optional(bytes()),
+        custody: z.union([unavailableCustody(), z.object({ kind: z.literal('complete'), candidates: z.array(z.object({
+          ...dockerImageIdentity(), sizeBytes: z.optional(bytes()), reclaimableBytes: z.optional(bytes()),
+        })) })]) }),
+      volumes: z.object({ count: bytes(), sizeBytes: z.optional(bytes()), alwaysKept: z.literal(true) }),
+      buildCache: z.object({ count: bytes(), sizeBytes: z.optional(bytes()), reclaimableBytes: z.literal(0),
+        reason: z.literal('build_cache_custody_unavailable') }),
+      releases: z.union([unavailableCustody(), z.object({ kind: z.literal('ready'),
+        environments: z.array(z.object({ environmentId: z.string(), keptReleaseCount: bytes() })) })]),
+    }),
+  ]);
+});
+export type MachineStorageDockerSummaryV1 = z.infer<typeof MachineStorageDockerSummaryV1Schema>;
 /** Closed native selectors are expectations, never custody or protection facts. */
 export const MachineStorageDockerPruneInputV1Schema = lazyZodSchema(() => z.readonly(z.union([
   z.strictObject({ ...target(), expectedEngineId: z.string().check(z.minLength(1)),
@@ -206,6 +229,7 @@ export const STORAGE_SUMMARY_SUGGESTION_LIMIT = 8;
 
 export const HappierStorageSummaryV1Schema = lazyZodSchema(() => z.object({
   revision: revision(), sizedAt: time(),
+  docker: z.optional(MachineStorageDockerSummaryV1Schema),
   incomplete: z.optional(z.array(StorageReadIssueV1Schema)),
   // The watch cursor includes scan progress; detail readers use their producer's content revision.
   pileRevision: z.optional(revision()), itemsRevision: z.optional(revision()),

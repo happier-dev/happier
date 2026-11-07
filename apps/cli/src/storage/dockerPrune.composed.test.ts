@@ -13,7 +13,7 @@ import { SOCKET_RPC_EVENTS } from '@happier-dev/protocol/socketRpc';
 import { socketRpcCodec, type SocketRpcContent } from '@happier-dev/sync-client';
 import { bindHomeDomainHttpRequestV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { getActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
-import { MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
+import { HappierStorageSummaryV1Schema, MachineStorageDockerPruneResultV1Schema } from '@happier-dev/protocol/storage/storageV1';
 import { ArtifactHttpReadV1Schema } from '@happier-dev/protocol/artifacts/artifactAccessV1';
 import { MachineDeploymentReferencesPageV1Schema } from '@happier-dev/protocol/machines/machineReferenceCensusV1';
 import { DEPLOYMENT_ENVIRONMENT_ARTIFACT_KIND_V1, DEPLOYMENT_TARGET_LINK_ARTIFACT_KIND_V1,
@@ -26,7 +26,8 @@ import { resolveOwnServerDeploymentEnvironmentInstanceIdForHost } from '@/deploy
 import { machineNativeEffectAdmission } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { createDaemonStorageRoutes } from '@/rpc/handlers/storage';
 import { createStoragePolicyFixture } from '@/storage/storagePolicy.testkit';
-import { createStorageDockerPruneForHost } from '@/storage/dockerPrune';
+import { createStorageService } from '@/storage/storageService';
+import { createStorageDockerForHost } from '@/storage/dockerStorage';
 import { createCliActionExecutor } from '@/session/actions/createCliActionExecutor';
 import { ApiMachineClient } from '@/api/apiMachine';
 import type { Machine } from '@/api/types';
@@ -49,6 +50,7 @@ afterEach(() => { vi.unstubAllEnvs(); vi.restoreAllMocks(); });
 
 async function fixture(run: (value: Readonly<{
     invoke(selection?: 'explicit' | 'safe' | 'unowned', signal?: AbortSignal): Promise<ReturnType<typeof MachineStorageDockerPruneResultV1Schema.parse>>;
+    summary(role?: 'manage' | 'use'): Promise<ReturnType<typeof HappierStorageSummaryV1Schema.parse>>;
     docker: Awaited<ReturnType<typeof createOwnServerDockerBoundary>>;
     ids: Readonly<Record<'active' | 'retained' | 'dangling' | 'foreign' | 'unowned' | 'running' | 'owned', string>>;
     engineId: string;
@@ -63,6 +65,7 @@ async function fixture(run: (value: Readonly<{
     let client: ApiMachineClient | undefined;
     let routes: ReturnType<typeof createDaemonStorageRoutes> | undefined;
     let active = true;
+    let machineRole: 'manage' | 'use' = 'manage';
     const previousHttpAdapter = axios.defaults.adapter;
     const httpTrace: Array<{ method: string; path: string; code?: string }> = [];
     try {
@@ -253,15 +256,17 @@ async function fixture(run: (value: Readonly<{
                     : { encryptionMode: 'e2ee', encryptionKey: machineContentKey, encryptionVariant: 'dataKey' }) };
         client = new ApiMachineClient(token, machine);
         Reflect.set(client, 'socket', createApiSessionSocketStub({ connected: true }));
-        const native = createStorageDockerPruneForHost({ credentials, ...daemonTarget, serverHttpBaseUrl: profile.serverUrl,
+        const native = createStorageDockerForHost({ credentials, ...daemonTarget, serverHttpBaseUrl: profile.serverUrl,
             installationId: 'installation-a', happyHomeDir: root, async assertInstalledCurrent() {
                 if (!active) throw Object.assign(new Error('retired'), { code: 'unauthorized' });
             } });
         const policy = await createStoragePolicyFixture();
         const identity = { ...daemonTarget, installationId: 'installation-a', custodianAccountId: 'owner' };
         routes = createDaemonStorageRoutes({ target: () => active ? identity : null, readOwnSessionIds: () => new Set(),
-            deps: () => ({ ...identity, resourcesPolicy: policy, dockerPrune: native,
-                catalog: { happyHomeDir: root, activeServerDir: join(root, 'server') }, readVolumes: () => [] }) });
+            deps: () => ({ ...identity, resourcesPolicy: policy, ...native,
+                catalog: { happyHomeDir: join(root, 'uncreated-storage-home'), activeServerDir: join(root, 'uncreated-server'),
+                    tempRoot: join(root, 'uncreated-temp'), readProjects: () => ({ status: 'ready', projects: [] }),
+                    readInUsePaths: () => ({ reliable: true, paths: [] }) }, readVolumes: () => [] }) });
         client.registerStorageRoutes(routes);
         const installed = client;
         const content: SocketRpcContent = mode === 'plain' ? { mode: 'plain' } : { mode: 'e2ee', cipher: {
@@ -282,7 +287,7 @@ async function fixture(run: (value: Readonly<{
             const opened = await socketRpcCodec.decodeRequestParams(content, Reflect.get(packet, 'params'), method);
             const result = await installed.invokeLocalMachineAction(method.slice(target.machineId.length + 1), opened.params,
                 { rpcContext: { callerAuthority: 'present_user',
-                    machineAdmission: { ...identity, actorAccountId: 'owner', role: 'manage', encryptionMode: mode },
+                    machineAdmission: { ...identity, actorAccountId: 'owner', role: machineRole, encryptionMode: mode },
                     verifyMachineAdmissionCurrent: async () => active } });
             return { ok: true, result: await socketRpcCodec.encodeResponse(content, result, opened.callId) };
         } });
@@ -307,7 +312,15 @@ async function fixture(run: (value: Readonly<{
             return MachineStorageDockerPruneResultV1Schema.parse(outcome.result);
         };
         expect(await docker.readInvocations()).toEqual([]);
-        await run({ invoke, docker, ids, engineId, bindMarker, setPending(value) { pending = value; }, retire() { active = false; },
+        const summary = async (role: 'manage' | 'use' = 'manage') => {
+            machineRole = role;
+            const outcome = await executor.execute('machines.storage.summary.get', target, { ...context,
+                presentUserConfirmation: undefined });
+            expect(outcome.ok, JSON.stringify({ outcome, httpTrace })).toBe(true);
+            if (!outcome.ok) throw new Error(JSON.stringify(outcome));
+            return HappierStorageSummaryV1Schema.parse(outcome.result);
+        };
+        await run({ invoke, summary, docker, ids, engineId, bindMarker, setPending(value) { pending = value; }, retire() { active = false; },
             changeOnHeaderRecheck(kind) { changeOnRecheck = kind; } });
     } finally {
         socketBoundary.create = undefined;
@@ -318,6 +331,82 @@ async function fixture(run: (value: Readonly<{
         await rm(root, { recursive: true, force: true });
     }
 }
+
+it('reads deployment-aware Docker runtime unavailability at the Storage owner', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'happier-storage-docker-summary-'));
+    const service = createStorageService({ resourcesPolicy: await createStoragePolicyFixture(),
+        catalog: { happyHomeDir: join(root, 'absent-home'), activeServerDir: join(root, 'absent-server'),
+            tempRoot: join(root, 'absent-temp'), readProjects: () => ({ status: 'ready', projects: [] }),
+            readInUsePaths: () => ({ reliable: true, paths: [] }) }, readVolumes: () => [] });
+    const options = { actor: { accountId: 'owner', custodianAccountId: 'owner', kind: 'person' as const,
+        assertCurrent: async () => {}, assertCurrentAuthority: async () => {} },
+        context: { surface: 'ui' as const, authority: 'present_user' as const } };
+    try {
+        expect(await service.summary(options)).toMatchObject({ docker: { kind: 'unavailable', reason: 'native_runtime_unavailable' } });
+    } finally { service.dispose(); await rm(root, { recursive: true, force: true }); }
+});
+
+it.each(['plain', 'e2ee'] as const)('reads deployment-aware Docker storage facts through the installed summary Action (%s)', async mode => {
+    await fixture(async ({ summary, docker, ids, engineId, invoke }) => {
+        expect(await docker.readInvocations()).toEqual([]);
+        const result = await summary();
+        expect(result).toMatchObject({ docker: { kind: 'ready', engineId,
+            images: { sizeBytes: 700, count: 7, reclaimableBytes: 160,
+                custody: { kind: 'complete', candidates: expect.arrayContaining([
+                    expect.objectContaining({ nativeId: ids.dangling, sizeBytes: 100, reclaimableBytes: 80 }),
+                    expect.objectContaining({ nativeId: ids.owned, sizeBytes: 100, reclaimableBytes: 80 }),
+                ]) } },
+            volumes: { count: 1, sizeBytes: 200, alwaysKept: true },
+            buildCache: { count: 1, sizeBytes: 300, reclaimableBytes: 0, reason: 'build_cache_custody_unavailable' },
+            releases: { kind: 'ready', environments: [expect.objectContaining({ keptReleaseCount: 1 })] },
+        } });
+        const reads = await docker.readInvocations();
+        if (result.docker?.kind !== 'ready' || result.docker.images.custody.kind !== 'complete') throw new Error('Expected complete custody');
+        expect(result.docker.images.custody.candidates.map(image => image.nativeId).sort()).toEqual([ids.dangling, ids.owned].sort());
+        expect(reads.filter(row => row.args[0] === 'system' && row.args[1] === 'dial-stdio')).toHaveLength(1);
+        expect(reads.some(row => row.args[0] === 'image' && ['save', 'rm', 'prune'].includes(row.args[1]!))).toBe(false);
+        expect(await summary('use')).not.toHaveProperty('docker');
+        expect(await docker.readInvocations()).toEqual(reads);
+        await summary();
+        expect(await invoke('explicit')).toMatchObject({ kind: 'completed' });
+        expect(await summary()).toMatchObject({ docker: { kind: 'ready', images: { count: 6,
+            custody: { candidates: [expect.objectContaining({ nativeId: ids.owned })] } } } });
+    }, mode);
+});
+
+it('keeps native sizes visible when deployment image custody is unavailable', async () => {
+    await fixture(async ({ summary, setPending }) => {
+        setPending(true);
+        expect(await summary()).toMatchObject({ docker: { kind: 'ready',
+            images: { sizeBytes: 700, custody: { kind: 'unavailable', reason: 'image_custody_unavailable' } },
+            volumes: { alwaysKept: true }, buildCache: { reclaimableBytes: 0 },
+        } });
+    });
+});
+
+it('does not promise reclaim bytes for unmeasured layers or candidates for unproven native identities', async () => {
+    await fixture(async ({ summary, docker, ids }) => {
+        await docker.setStorageImageUsage(ids.dangling, { SharedSize: -1 });
+        await docker.setStorageImageUsage(ids.owned, { Descriptor: null });
+        const result = await summary();
+        if (result.docker?.kind !== 'ready' || result.docker.images.custody.kind !== 'complete') throw new Error('Expected complete custody');
+        expect(result.docker.images.custody.candidates).toEqual([
+            expect.objectContaining({ nativeId: ids.dangling, sizeBytes: 100 }),
+        ]);
+        expect(result.docker.images.custody.candidates[0]?.reclaimableBytes).toBeUndefined();
+        expect(result.docker.images.reclaimableBytes).toBeUndefined();
+    });
+});
+
+it('settles a failed Docker read as a typed section while retaining the Storage summary', async () => {
+    await fixture(async ({ summary, docker }) => {
+        await docker.setStorageDiskUsageUnavailable(true);
+        expect(await summary()).toMatchObject({ categories: expect.any(Array),
+            docker: { kind: 'unavailable', reason: 'native_inventory_unavailable' } });
+        await docker.setStorageDiskUsageUnavailable(false);
+        expect(await summary()).toMatchObject({ docker: { kind: 'ready' } });
+    });
+});
 
 it.each([
     { mode: 'plain', selection: 'safe' }, { mode: 'plain', selection: 'explicit' },

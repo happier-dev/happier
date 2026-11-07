@@ -32,7 +32,7 @@ export async function createOwnServerDockerBoundary(directory: string, options?:
         await writeFile(`${statePath}.next`, JSON.stringify(value));
         await rename(`${statePath}.next`, statePath);
     };
-    await writeFile(statePath, JSON.stringify({ images: {}, tags: {}, containers: [], networks: [], health: {}, imageHealth: {},
+    await writeFile(statePath, JSON.stringify({ images: {}, tags: {}, containers: [], networks: [], volumes: [], health: {}, imageHealth: {},
         engineId: options?.engineId ?? 's0-docker-engine', operatingSystem: options?.operatingSystem ?? 'Ubuntu 24.04.3 LTS',
         runtimeInventoryFailure: options?.runtimeInventoryFailure ?? false,
         sourceNormalizationFailure: options?.sourceNormalizationFailure ?? false,
@@ -155,7 +155,30 @@ if (args[0] === 'system' && args[1] === 'dial-stdio') {
         previous = current;
     };
     const watcher = fs.watch(__dirname, (_, file) => { if (String(file) === 'docker-state.json') changed(); });
-    process.stdin.once('data', () => {
+    process.stdin.once('data', request => {
+        const url = new URL(request.toString().split(' ')[1], 'http://docker');
+        if (url.pathname === '/system/df') {
+            if (JSON.stringify(url.searchParams.getAll('type').sort()) !== JSON.stringify(['build-cache', 'image', 'volume'])) {
+                throw new Error('fixture_requires_storage_only_disk_usage');
+            }
+            if (state.storageDiskUsageUnavailable) {
+                write('HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n');
+            } else {
+                const images = [...new Map(Object.values(state.images).map(image => [image.nativeId, image])).values()];
+                const body = JSON.stringify({ LayersSize: images.length * 100,
+                    Images: images.map(image => ({ Id: image.nativeId, Size: 100, SharedSize: 20,
+                        Descriptor: { digest: image.image.manifestDigest, mediaType: 'application/vnd.oci.image.manifest.v1+json' },
+                        Containers: state.containers.filter(row => row.Image === image.nativeId).length,
+                        RepoTags: state.pruneImages?.[image.nativeId]?.repoTags ?? [],
+                        RepoDigests: state.pruneImages?.[image.nativeId]?.repoDigests ?? [],
+                        ...state.storageImageUsage?.[image.nativeId] })),
+                    Volumes: [{ Name: 'database', UsageData: { Size: 200, RefCount: 1 } }],
+                    BuildCache: [{ ID: 'unproven-cache', Size: 300, Shared: false, InUse: false }] });
+                write('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: '+Buffer.byteLength(body)+'\r\n\r\n'+body);
+            }
+            watcher.close();
+            return;
+        }
         write('HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nTransfer-Encoding: chunked\r\n\r\n');
         ready = true; changed();
     });
@@ -550,6 +573,13 @@ else if (args[0] === 'image' && args[1] === 'inspect') {
         return separator < 0 ? Object.hasOwn(row.Config.Labels, label)
             : row.Config.Labels[label.slice(0, separator)] === label.slice(separator + 1);
     })).map(row => row.Id).join('\n'));
+} else if (args[0] === 'volume' && args[1] === 'ls') {
+    const project = args.find(arg => arg.startsWith('label=com.docker.compose.project='))?.slice('label=com.docker.compose.project='.length);
+    write(state.volumes.filter(row => !project || row.project === project).map(row => row.name).join('\n'));
+} else if (args[0] === 'volume' && args[1] === 'rm') {
+    const names = args.slice(2);
+    state.volumes = state.volumes.filter(row => !names.includes(row.name));
+    save();
 } else if (args[0] === 'network' && args[1] === 'ls') {
     const filters = args.flatMap((arg, index) => arg === '--filter' ? [args[index + 1]] : []);
     write(state.networks.filter(row => filters.every(filter => {
@@ -779,6 +809,16 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             await writeState(state);
             return image.nativeId;
         },
+        async setStorageDiskUsageUnavailable(unavailable: boolean) {
+            const state = JSON.parse(await readFile(statePath, 'utf8'));
+            state.storageDiskUsageUnavailable = unavailable;
+            await writeState(state);
+        },
+        async setStorageImageUsage(nativeId: string, usage: Readonly<{ SharedSize?: number; Containers?: number; Descriptor?: null }>) {
+            const state = JSON.parse(await readFile(statePath, 'utf8'));
+            state.storageImageUsage = { ...state.storageImageUsage, [nativeId]: usage };
+            await writeState(state);
+        },
         /** Deterministic Docker build output; host source/build/receipt logic stays real. */
         async registerBuildResult(service: string, revision: string) {
             const image = await registerImage(service, revision);
@@ -793,6 +833,15 @@ else throw new Error('fixture_unexpected_docker_command:' + JSON.stringify(args)
             }> };
             for (const row of state.containers) if (row.Config.Labels['com.docker.compose.service'] === service) row.RestartCount = restartCount;
             await writeState(state);
+        },
+        async seedVolume(name: string, project: string) {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { volumes: Array<{ name: string; project: string }> };
+            state.volumes.push({ name, project });
+            await writeState(state);
+        },
+        async readVolumeNames() {
+            const state = JSON.parse(await readFile(statePath, 'utf8')) as { volumes: Array<{ name: string }> };
+            return state.volumes.map(volume => volume.name).sort();
         },
         async setStageOutputEnvironmentKey(name: string) {
             const state = JSON.parse(await readFile(statePath, 'utf8')) as Record<string, unknown>;

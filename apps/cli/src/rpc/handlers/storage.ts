@@ -104,7 +104,7 @@ export function createDaemonStorageRoutes(input: Readonly<{
 /** Recipients receive machine capacity and Happier totals, never another Account's paths or work. */
 function projectSummary(summary: HappierStorageSummaryV1, canManage: boolean): HappierStorageSummaryV1 {
     if (canManage) return summary;
-    const { scanShortcuts, ...shared } = summary;
+    const { scanShortcuts, docker, ...shared } = summary;
     return { ...shared, categories: [], suggestionsTop: [],
         volumes: summary.volumes.map(volume => ({ ...volume, trashBytes: 0 })),
         pile: summary.pile, trash: { count: 0, allocatedBytes: 0 },
@@ -207,7 +207,9 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             const actor = await timeWebLatencyPhase('storage.rpc.actor', () => readActor(access, context));
             const service = await timeWebLatencyPhase('storage.rpc.service', () => options.getService(access.target!));
             await timeWebLatencyPhase('storage.rpc.current', access.assertCurrent);
-            return timeWebLatencyPhase('storage.service.summary', () => service.summary({ actor, signal: context?.signal }));
+            return timeWebLatencyPhase('storage.service.summary', () => service.summary({ actor, signal: context?.signal,
+                ...(access.canManage ? { context: buildActionExecutorContextForRpc({ ...context,
+                    actionId: 'machines.storage.summary.get', serverId: access.target!.serverId }) } : {}) }));
         }, access.assertCurrent);
         return projectSummary(summary, access.canManage);
     });
@@ -232,7 +234,9 @@ export function registerDaemonStorageRpcHandlers(rpc: RpcHandlerRegistrar, optio
             const actor = await readActor(access, context);
             const service = await options.getService(access.target!);
             await access.assertCurrent();
-            return service.refresh({ actor, categoryId: request.categoryId, signal: context?.signal });
+            return service.refresh({ actor, categoryId: request.categoryId, signal: context?.signal,
+                context: buildActionExecutorContextForRpc({ ...context, actionId: 'machines.storage.size.refresh',
+                    serverId: access.target!.serverId }) });
         }, access.assertCurrent);
         return summary;
     });

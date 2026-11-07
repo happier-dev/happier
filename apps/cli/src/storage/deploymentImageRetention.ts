@@ -88,6 +88,7 @@ export function createStorageDeploymentImageRetention(input: Readonly<{
         const protectedImages: OwnServerDeploymentImageReference[] = [];
         const expiredImages: OwnServerDeploymentImageReference[] = [];
         const unavailable = new Set<string>();
+        const environments: Array<{ environmentId: string; keptReleaseCount: number }> = [];
         for (const row of basis) {
             const environment = await readDeploymentEnvironmentForHost({ environmentId: row.environmentId, context }, {
                 readMetadata: async () => row.detail, open, assertCurrent,
@@ -111,6 +112,7 @@ export function createStorageDeploymentImageRetention(input: Readonly<{
             const detail: DeploymentEnvironmentDetailV1 = { ...environment, targetLinks: links };
             const receipts = await Promise.all(row.receipts.filter(header => relevantLinkIds.has(header.targetLinkId))
                 .map(header => openDeploymentReceiptForHost(header, context, { open, assertCurrent })));
+            const retainedPreviousIds = new Set<string>();
             for (const link of localTargets) {
                 const lineage = getDeploymentTargetLinkLineageV1(link, links.map(value => value.targetLink));
                 const projected = projectOwnServerDeploymentRetention({ serverId: homeId, environment: detail, link,
@@ -119,7 +121,9 @@ export function createStorageDeploymentImageRetention(input: Readonly<{
                     for (const id of projected.imageProtection.deploymentIds) unavailable.add(id);
                 } else protectedImages.push(...projected.imageProtection.images);
                 expiredImages.push(...projected.expiredImages);
+                for (const id of projected.retainedPreviousDeploymentIds) retainedPreviousIds.add(id);
             }
+            if (localTargets.length) environments.push({ environmentId: row.environmentId, keptReleaseCount: retainedPreviousIds.size });
         }
         await assertCurrent();
         const recheck = async () => {
@@ -129,6 +133,6 @@ export function createStorageDeploymentImageRetention(input: Readonly<{
             if (!isDeepStrictEqual(await readHeaders(), basis)) return refuse('changed_since_review');
         };
         return { status: unavailable.size ? 'unavailable' as const : 'complete' as const,
-            unavailableDeploymentIds: [...unavailable], protectedImages, expiredImages, assertCurrent: recheck };
+            unavailableDeploymentIds: [...unavailable], protectedImages, expiredImages, environments, assertCurrent: recheck };
     };
 }

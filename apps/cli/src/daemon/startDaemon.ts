@@ -1,3 +1,4 @@
+import { combineRecordingStorageOwners, type RecordingStorageOwner } from './recording/service';
 import { randomUUID } from 'node:crypto';
 import { writeSync } from 'node:fs';
 import { createDaemonMcpRequestAuthForTest } from './connectedServices/requestAuth/createDaemonMcpRequestAuthForTest';
@@ -429,6 +430,7 @@ export async function startDaemon(
   let machineProcessesView: MachineProcessesView | null = null;
   let daemonKeepAwake: ReturnType<typeof createDaemonKeepAwake> | null = null;
   let daemonGuard: Awaited<ReturnType<typeof createDaemonGuard>> | null = null;
+  let stopProviderAccountSettings: (() => Promise<void>) | null = null;
   let sessionCeiling: ReturnType<typeof createSessionMemoryCeiling> | undefined;
   let guardSessionRestoration: ReturnType<typeof createGuardSessionRestoration> | null = null;
   let storageRoutes: DaemonStorageRoutes | null = null;
@@ -1007,6 +1009,14 @@ export async function startDaemon(
     let releaseAcpCatalogHydrationObserver: (() => void) | undefined;
     let storageModelPacks: DaemonPublicVoiceModelPackRuntime | null = null;
     let storageRecordings: BrowserRecordingDaemonRuntime | null = null;
+    let storageComputerRecordings: RecordingStorageOwner | null = null;
+    const recordingStorage = combineRecordingStorageOwners(() => {
+      const browser = storageRecordings;
+      return [browser ? { ...browser.service,
+        cleanupExpiredRecordings: ({ beforeEffect, ...request }: Parameters<RecordingStorageOwner['cleanupExpiredRecordings']>[0]) =>
+          browser.routes.cleanupExpiredRecordings(request, { beforeEffect }),
+      } : null, storageComputerRecordings].filter((owner): owner is RecordingStorageOwner => !!owner);
+    });
     const storageOwnerListeners = new Set<() => void>();
     let unsubscribeStorageRecordings: (() => void) | undefined;
     let unsubscribeStorageModels: (() => void) | undefined;
@@ -1020,7 +1030,7 @@ export async function startDaemon(
       unsubscribeStorageRecordings?.();
       unsubscribeStorageRecordings = undefined;
       storageRecordings = runtime;
-      if (storageOwnerListeners.size) unsubscribeStorageRecordings = runtime?.service.subscribeStorageChanges(notifyStorageOwnerChanged);
+      if (storageOwnerListeners.size) unsubscribeStorageRecordings = recordingStorage.subscribeStorageChanges(notifyStorageOwnerChanged);
       notifyStorageOwnerChanged();
     };
     const bindStorageModels = (runtime: DaemonPublicVoiceModelPackRuntime | null) => {
@@ -1128,6 +1138,9 @@ export async function startDaemon(
       }),
       drainBackgroundServerWork: async () => {
         homeTransportCancellation.abort();
+        await stopProviderAccountSettings?.().catch(stopError =>
+          logger.warn('[DAEMON RUN] Agent Account settings shutdown failed', stopError));
+        stopProviderAccountSettings = null;
         releaseAcpCatalogHydrationObserver?.();
         storageRoutes?.dispose();
         storageRoutes = null;
@@ -2464,7 +2477,13 @@ export async function startDaemon(
         localServiceInventoryRoutes = routes.localServicesInventory ?? null;
         machineRpcRouteAttachments.attachLocalServicesRoutes(routes);
       },
-      onComputerRoutesReady: machineRpcRouteAttachments.attachComputerRoutes,
+      onComputerRoutesReady: provider => {
+        machineRpcRouteAttachments.attachComputerRoutes(provider);
+        unsubscribeStorageRecordings?.();
+        storageComputerRecordings = provider()?.recordingStorage ?? null;
+        unsubscribeStorageRecordings = storageOwnerListeners.size ? recordingStorage.subscribeStorageChanges(notifyStorageOwnerChanged) : undefined;
+        notifyStorageOwnerChanged();
+      },
       onLocalServicesSummaryReady: (source) => {
         localServiceSummary = source;
         isProjectServiceExecutionLive = source.isProjectServiceExecutionLive;
@@ -2990,7 +3009,7 @@ export async function startDaemon(
         const subscribeStorageRecordings = (listener: () => void) => {
           storageOwnerListeners.add(listener);
           if (storageOwnerListeners.size === 1) {
-            unsubscribeStorageRecordings = storageRecordings?.service.subscribeStorageChanges(notifyStorageOwnerChanged);
+            unsubscribeStorageRecordings = recordingStorage.subscribeStorageChanges(notifyStorageOwnerChanged);
             unsubscribeStorageModels = subscribeStorageModels();
           }
           return () => {
@@ -3003,7 +3022,7 @@ export async function startDaemon(
         };
         return {
           serverId: target.serverId, machineId: target.machineId, custodianAccountId: target.custodianAccountId,
-          dockerPrune: (await import('@/storage/dockerPrune')).createStorageDockerPruneForHost({
+          ...(await import('@/storage/dockerStorage')).createStorageDockerForHost({
             credentials: capturedCredentials, serverId: target.serverId, serverHttpBaseUrl: configuration.serverUrl,
             machineId: target.machineId, installationId: target.installationId, happyHomeDir: home,
             async assertInstalledCurrent() {
@@ -3033,10 +3052,9 @@ export async function startDaemon(
               currentLogPaths: async () => [logger.logFilePath, ...await readManagedServiceCurrentLogPaths()],
               onError: error => logger.warn('[DAEMON RUN] Storage log retention failed', error) }),
             recordings: {
-              nextExpiryAtMs: () => storageRecordings?.service.nextExpiryAtMs() ?? null,
-              listStorageRecordings: () => storageRecordings?.service.listStorageRecordings() ?? [],
-              cleanupExpiredRecordings: async ({ beforeEffect, ...request }) => storageRecordings?.routes.cleanupExpiredRecordings(request, { beforeEffect })
-                ?? { discardedRecordingIds: [], failedRecordingIds: [] },
+              nextExpiryAtMs: () => recordingStorage.nextExpiryAtMs(),
+              listStorageRecordings: () => recordingStorage.listStorageRecordings(),
+              cleanupExpiredRecordings: request => recordingStorage.cleanupExpiredRecordings(request),
               subscribeStorageChanges: subscribeStorageRecordings,
             },
             activityLog: currentGuard.activityLog, actorAccountId: target.custodianAccountId,
@@ -3068,9 +3086,9 @@ export async function startDaemon(
                   ...readTrackedSessions().map(session => session.cwd)] });
             },
             readModelPacks: async () => storageModelPacks?.list() ?? [],
-            readRecordings: async () => storageRecordings?.service.listStorageRecordings() ?? [],
+            readRecordings: async () => recordingStorage.listStorageRecordings(),
             readModelPackRuntime: () => storageModelPacks,
-            readRecordingRuntime: () => storageRecordings?.service ?? null,
+            readRecordingRuntime: () => recordingStorage,
             readSessionDraftPresence: async sessionId => {
               const tracked = [...pidToTrackedSession.values()].find(session => session.happySessionId === sessionId);
               if (!tracked) return { status: 'unknown' as const };
@@ -3407,6 +3425,12 @@ export async function startDaemon(
         api,
         controlPort,
         credentials,
+        providerAccountSettings: {
+          scopeKey: resolveAccountSettingsScopeKey(credentials),
+          processEnv: process.env,
+          materializationBaseDir: connectedServicesMaterializationBaseDir,
+          activeServerDir: configuration.activeServerDir,
+        },
         requesterServerId: requesterRuntimeServerId,
         resolveCurrentMachineExecutionOriginContext,
         resolveCurrentServerIdentityId: resolveBoundHomeServerIdentityId,
@@ -4316,6 +4340,7 @@ export async function startDaemon(
           voiceInferenceWorker = machineSyncRuntime.voiceInferenceWorker;
           daemonConnectivityCoordinator = machineSyncRuntime.daemonConnectivityCoordinator;
           machineConnectionStateCleanup = machineSyncRuntime.machineConnectionStateCleanup;
+          stopProviderAccountSettings = machineSyncRuntime.stopProviderAccountSettings ?? null;
           stopPeerMediationLoopbackServer = machineSyncRuntime.stopPeerMediationLoopbackServer;
           stopMachineIrohAcceptor = machineSyncRuntime.stopMachineIrohAcceptor;
           resumeQuiescedMachineConnectionPublications =
@@ -4458,6 +4483,9 @@ export async function startDaemon(
     releaseMachineAdmissionTransport();
   } catch (error) {
     homeTransportCancellation.abort();
+    await stopProviderAccountSettings?.().catch(stopError =>
+      logger.warn('[DAEMON RUN] Agent Account settings shutdown failed', stopError));
+    stopProviderAccountSettings = null;
     await publicProfileRefreshHandle?.stop().catch(stopError =>
       logger.debug('[DAEMON RUN] Public-profile refresh drain failed during startup cleanup', stopError));
     storageRoutes?.dispose();

@@ -8,7 +8,7 @@ import { ArtifactEncryptionMaterialUnavailableError } from '@/api/artifacts/acco
 import { readInstallationIdentityIfExistsSync } from '@/daemon/identity/store';
 import { machineNativeEffectAdmission, MachineNativeEffectAdmissionError } from '@/daemon/local/services/launch/machineNativeEffectAdmission';
 import { readNativeComposeEngine, NativeComposePrerequisiteError } from '@/daemon/local/services/launch/nativeComposeEngine';
-import { createNativeComposeImageIdentity, normalizeNativeComposePlatform } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
+import { createNativeComposeImageIdentity } from '@/daemon/local/services/launch/nativeComposeImageIdentity';
 import { createOwnServerNativeRuntime } from '@/deployments/targets/ownServer/nativeRuntime';
 import { resolveOwnServerDeploymentRootForHost } from '@/deployments/targets/ownServer/paths';
 import { authorizePluginExecLaunchForHost, spawnAuthorizedHostExecLaunchForHost,
@@ -16,10 +16,9 @@ import { authorizePluginExecLaunchForHost, spawnAuthorizedHostExecLaunchForHost,
 import type { StorageOperationActor } from './storageService';
 import { createStorageDeploymentImageRetention } from './deploymentImageRetention';
 import { isServerProfileHomeIdentity } from '@/server/serverProfiles';
+import { createStorageDockerImageCustody, storageDockerImageKey as imageKey } from './dockerImageCustody';
 
 const refuse = (code: string): never => { throw Object.assign(new Error(code), { code }); };
-const imageKey = (image: Readonly<{ configDigest: string; platform: string }>) =>
-    JSON.stringify([image.configDigest, normalizeNativeComposePlatform(image.platform)]);
 
 /** A natural retry observes only the captured native engine/owned alias. This
  * scope has fresh IO and the new caller's signal; no old invocation, scratch,
@@ -35,7 +34,7 @@ async function observeRemovedAlias(input: Readonly<{
         isCurrent: () => open && readInstallationIdentityIfExistsSync()?.installationId === input.installationId });
     try {
         const tool = await native.exec.systemTools.resolve({ toolId: 'docker', purpose: 'storage-docker-prune-settlement', cwd: input.cwd });
-        const launch = await authorizePluginExecLaunchForHost(native.exec, { executable: tool.executable, args: [], cwd: input.cwd });
+        const launch = await authorizePluginExecLaunchForHost(native.exec, { executable: tool.executable, args: [], cwd: input.cwd }, { agentIsolation: null });
         try {
             await launch.recheckInputs?.();
             const engine = await readNativeComposeEngine({ io: native.nativeIo, command: launch.command,
@@ -135,7 +134,7 @@ export function createStorageDockerPruneForHost(host: Readonly<{
         try {
             const tool = await native.exec.systemTools.resolve({ toolId: 'docker', purpose: 'storage-docker-prune', cwd });
             const readEngine = async () => {
-                const launch = await authorizePluginExecLaunchForHost(native.exec, { executable: tool.executable, args: [], cwd });
+                const launch = await authorizePluginExecLaunchForHost(native.exec, { executable: tool.executable, args: [], cwd }, { agentIsolation: null });
                 try {
                     await launch.recheckInputs?.();
                     return await readNativeComposeEngine({ io: native.nativeIo, command: launch.command, prefix: launch.args, cwd, env: launch.env, signal });
@@ -149,11 +148,8 @@ export function createStorageDockerPruneForHost(host: Readonly<{
                 const projection = await retention(context);
                 if (projection.status !== 'complete') return { kind: 'unavailable', reason: 'image_custody_unavailable',
                     deploymentIds: projection.unavailableDeploymentIds, removed: [], kept: [] };
-                const protectedKeys = new Set(projection.protectedImages.map(row => imageKey(row.image)));
-                const eligibleKeys = new Set(projection.expiredImages.map(row => imageKey(row.image)));
-                const eligibleRefs = new Set(projection.expiredImages.flatMap(row => [row.ownedTag, row.activationRef]));
-                const proofByReference = new Map(projection.expiredImages.flatMap(row =>
-                    [[row.ownedTag, row], [row.activationRef, row]] as const));
+                const custody = createStorageDockerImageCustody(projection);
+                const { protectedKeys, eligibleRefs, proofByReference } = custody;
                 const selected = input.selection.kind === 'explicit' ? input.selection.images : null;
                 if (input.selection.kind === 'explicit' && input.selection.buildCacheIds.length) return {
                     kind: 'unsupported', reason: 'build_cache_custody_unavailable', removed, kept };
@@ -176,8 +172,7 @@ export function createStorageDockerPruneForHost(host: Readonly<{
                     if (!firstProof) return { kind: 'changed', removed, kept };
                     const keys = image.variants.map(imageKey);
                     if (reviewed && (!keys.includes(imageKey(reviewed)) || keys.length !== 1)) return { kind: 'changed', removed, kept };
-                    if (!keys.length || keys.some(key => protectedKeys.has(key) || !eligibleKeys.has(key))
-                        || [...image.repoTags, ...image.repoDigests].some(reference => !eligibleRefs.has(reference))) { kept.push(id); continue; }
+                    if (!custody.permits(image)) { kept.push(id); continue; }
                     const containers = await run(['container', 'ls', '--all', '--quiet', '--filter', `ancestor=${id}`]);
                     if (containers.exitCode !== 0 || containers.stdout.trim()) { kept.push(id); continue; }
                     const references = [...image.repoTags, ...image.repoDigests];
@@ -186,7 +181,7 @@ export function createStorageDockerPruneForHost(host: Readonly<{
                         if (!proof) return { kind: 'changed', removed, kept };
                         await assertCurrent();
                         const removal = await authorizePluginExecLaunchForHost(native.exec, { executable: tool.executable,
-                            args: ['image', 'rm', '--no-prune', reference], cwd });
+                            args: ['image', 'rm', '--no-prune', reference], cwd }, { agentIsolation: null });
                         let release = removal.release;
                         let uncertain = false;
                         let child: ReturnType<typeof spawnAuthorizedHostExecLaunchForHost> | undefined;
@@ -216,8 +211,7 @@ export function createStorageDockerPruneForHost(host: Readonly<{
                             // after the full HTTP header recheck, not before it.
                             if ((await readEngine()).id !== engine.id) return { kind: 'changed', removed, kept };
                             const fresh = await readImage(id);
-                            if (!fresh || fresh.nativeId !== id || fresh.variants.some(value => !eligibleKeys.has(imageKey(value)) || protectedKeys.has(imageKey(value)))
-                                || [...fresh.repoTags, ...fresh.repoDigests].some(alias => !eligibleRefs.has(alias))) return { kind: 'changed', removed, kept };
+                            if (!fresh || fresh.nativeId !== id || !custody.permits(fresh)) return { kind: 'changed', removed, kept };
                             const selectedReference = await readAliasImage(reference);
                             if (!selectedReference || selectedReference.nativeId !== id
                                 || selectedReference.variants.length !== 1

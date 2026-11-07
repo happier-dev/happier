@@ -75,6 +75,25 @@ function record(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+/** Only a single-manifest descriptor identifies the exact receipt manifest.
+ * An index digest cannot prove the config/platform of its local variants. */
+export function readNativeComposeImageManifestDigest(native: unknown): string | undefined {
+    const descriptor = record(native) && record(native.Descriptor) ? native.Descriptor : undefined;
+    return descriptor && (descriptor.mediaType === 'application/vnd.oci.image.manifest.v1+json'
+        || descriptor.mediaType === 'application/vnd.docker.distribution.manifest.v2+json')
+        && typeof descriptor.digest === 'string' && /^sha256:[a-f0-9]{64}$/u.test(descriptor.digest)
+        ? descriptor.digest : undefined;
+}
+
+/** A read-only inventory can bind an exact receipt without exporting image
+ * archives: classic stores expose its config id; containerd exposes its exact
+ * single-manifest descriptor. Other identities remain unproven in a preview. */
+export function projectNativeComposeStoredImageIdentity(native: unknown, image: DeploymentImageV1) {
+    if (!record(native) || typeof native.Id !== 'string' || !/^sha256:[a-f0-9]{64}$/u.test(native.Id)) return undefined;
+    if (native.Id !== image.configDigest && readNativeComposeImageManifestDigest(native) !== image.manifestDigest) return undefined;
+    return { nativeId: native.Id, configDigest: image.configDigest, platform: normalizeNativeComposePlatform(image.platform) };
+}
+
 /** Docker/Buildx uses containerd platform normalization. This folds native
  * aliases/default variants, never infers an absent OS or host architecture.
  * https://github.com/containerd/platforms/blob/v0.2.1/database.go */
@@ -298,11 +317,7 @@ export function createNativeComposeImageIdentity(input: Readonly<{
             const nativeId = native.Id;
             const repoTags = rawTags.filter((value): value is string => typeof value === 'string');
             const repoDigests = rawDigests.filter((value): value is string => typeof value === 'string');
-            const descriptor = record(native.Descriptor) ? native.Descriptor : undefined;
-            const manifestDigest = descriptor && (descriptor.mediaType === 'application/vnd.oci.image.manifest.v1+json'
-                || descriptor.mediaType === 'application/vnd.docker.distribution.manifest.v2+json')
-                && typeof descriptor.digest === 'string' && /^sha256:[a-f0-9]{64}$/u.test(descriptor.digest)
-                ? descriptor.digest : undefined;
+            const manifestDigest = readNativeComposeImageManifestDigest(native);
             const scratch = await mkdtemp(join(await input.directory(), 'local-'));
             const file = join(scratch, 'image.tar');
             try {

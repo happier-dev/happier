@@ -16,18 +16,65 @@ function record(value: unknown): value is Record<string, unknown> {
     return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
+function openDockerEngineConnection(launch: HostAuthorizedPluginExecLaunch, prefix: readonly string[], signal: AbortSignal) {
+    signal.throwIfAborted();
+    const process = spawnAuthorizedHostExecLaunchForHost({ command: launch.command,
+        args: [...prefix, 'system', 'dial-stdio'], cwd: launch.cwd, env: launch.env,
+        // HTTP payloads are consumed by the caller, never command diagnostics.
+        maxStdoutBytes: 0, maxStderrBytes: 0, release() {} }, { signal });
+    return { process, socket: Duplex.from({ readable: process.child.stdout, writable: process.child.stdin }) };
+}
+
+/** Finite, explicitly requested Engine inventory using the same cross-platform
+ * transport as events. Docker API v1.51 GET /system/df: repeated type parameters
+ * avoid container filesystem measurement. No stream, retry or idle work remains. */
+export async function readDockerEngineDiskUsage(launch: HostAuthorizedPluginExecLaunch, prefix: readonly string[], signal: AbortSignal): Promise<unknown> {
+    const { process, socket } = openDockerEngineConnection(launch, prefix, signal);
+    const request = httpRequest({ method: 'GET', host: 'docker',
+        path: '/system/df?type=image&type=volume&type=build-cache', createConnection: () => socket });
+    const onAbort = () => request.destroy(signal.reason instanceof Error ? signal.reason : new Error('aborted'));
+    signal.addEventListener('abort', onAbort, { once: true });
+    try {
+        const value = await new Promise<unknown>((resolve, reject) => {
+            request.once('error', reject);
+            void process.handle.waitForExit().then(() => reject(Object.assign(new Error('Docker inventory disconnected'),
+                { code: 'docker_engine_disconnected' })), reject);
+            request.once('response', response => {
+                if (response.statusCode !== 200) {
+                    response.resume();
+                    reject(Object.assign(new Error('Docker inventory unavailable'),
+                        { code: 'docker_engine_http_status', statusCode: response.statusCode }));
+                    return;
+                }
+                const chunks: Buffer[] = [];
+                response.on('data', (chunk: Buffer) => chunks.push(chunk));
+                response.once('error', reject);
+                response.once('aborted', () => reject(Object.assign(new Error('Docker inventory incomplete'), { code: 'docker_engine_disconnected' })));
+                response.once('end', () => {
+                    try { resolve(JSON.parse(Buffer.concat(chunks).toString('utf8'))); }
+                    catch (error) { reject(error); }
+                });
+            });
+            request.end();
+        });
+        signal.throwIfAborted();
+        return value;
+    } finally {
+        signal.removeEventListener('abort', onAbort);
+        request.destroy();
+        socket.destroy();
+        await process.dispose();
+        await process.waitForSettlement();
+    }
+}
+
 /** Docker's own transport resolves Unix sockets, named pipes, TLS and contexts.
  * Unlike `docker events`, the HTTP response proves subscription before reconcile.
  * Contract: docker/cli cli/command/system/dial_stdio.go (Docker 29), Engine GET /events.
  */
 export function openDockerEngineEvents(launch: HostAuthorizedPluginExecLaunch, prefix: readonly string[]): DockerEngineEventSource {
     return async ({ event, disconnected, signal }) => {
-        signal.throwIfAborted();
-        const process = spawnAuthorizedHostExecLaunchForHost({ command: launch.command,
-            args: [...prefix, 'system', 'dial-stdio'], cwd: launch.cwd, env: launch.env,
-            // Event payloads are consumed below, never retained as command diagnostics.
-            maxStdoutBytes: 0, maxStderrBytes: 0, release() {} }, { signal });
-        const socket = Duplex.from({ readable: process.child.stdout, writable: process.child.stdin });
+        const { process, socket } = openDockerEngineConnection(launch, prefix, signal);
         let closed = false;
         let disposing: Promise<void> | undefined;
         let lines: ReturnType<typeof createInterface> | undefined;

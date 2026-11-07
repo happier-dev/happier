@@ -30,6 +30,7 @@ import { storagePolicyUnavailableError } from './storagePolicy';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { MachineStorageDockerPruneInputV1 } from '@happier-dev/protocol/storage/storageV1';
 import type { createStorageDockerPruneForHost } from './dockerPrune';
+import type { createStorageDockerForHost } from './dockerStorage';
 import { storagePermissionReadIssue } from './categories/filesystem';
 
 export type StorageEnvironmentProtectionFacts = Pick<StorageProtectionFacts,
@@ -49,6 +50,7 @@ export type StorageOperationActor = Readonly<{
 
 export type StorageServiceDeps = Readonly<{
     dockerPrune?: ReturnType<typeof createStorageDockerPruneForHost>;
+    readDockerStorage?: ReturnType<typeof createStorageDockerForHost>['readDockerStorage'];
     /** The Storage owner supplies the catalog's policy reader; callers cannot inject a second one. */
     catalog: Omit<StorageCategoryCatalogDeps, 'readPolicy'>;
     readVolumes: () => readonly Readonly<{ id: string; label: string; mount: string; totalBytes: number; availableBytes: number;
@@ -77,6 +79,7 @@ export type StorageServiceDeps = Readonly<{
 }>;
 
 export function createStorageService(deps: StorageServiceDeps) {
+    let docker: HappierStorageSummaryV1['docker'];
     let currentTrashRoots: readonly string[] = [];
     // One policy availability owner for every Storage reader. Maintenance skips
     // effects on unknown; protection, projections and effects refuse instead of
@@ -396,14 +399,20 @@ export function createStorageService(deps: StorageServiceDeps) {
             if (signal?.aborted) onAbort();
         });
     }
-    async function summary(options: Readonly<{ signal?: AbortSignal; actor?: StorageOperationActor }> = {}): Promise<HappierStorageSummaryV1> {
+    async function summary(options: Readonly<{ signal?: AbortSignal; actor?: StorageOperationActor; context?: ActionExecutorContext }> = {}): Promise<HappierStorageSummaryV1> {
         assertActive(options.signal);
         requirePolicy();
         const measured = cached && !dirty && !pending ? cached : await timeWebLatencyPhase('storage.summary.measurement', () => join(begin(), options.signal));
+        // Only explicit Manage Actions pass context. Watches and filesystem
+        // invalidation retain the last projection without native reads.
+        if (options.context && options.actor) {
+            docker = deps.readDockerStorage ? await deps.readDockerStorage({ actor: options.actor, context: options.context })
+                : { kind: 'unavailable', reason: 'native_runtime_unavailable' };
+        }
         // One-shot Action reads join the current capacity from Vitals without
         // publishing a Storage revision or measuring any Storage tree.
         const capacity = new Map(deps.readVolumes().map(volume => [volume.id, volume]));
-        const current = { ...measured, revision, wholeDisk: {
+        const current = { ...measured, ...(docker ? { docker } : {}), revision, wholeDisk: {
             enabled: readWholeDiskEnabled() === true,
             scans: scanOwner ? [...(await timeWebLatencyPhase('storage.summary.scans', scans)).index.states()] : [],
         }, volumes: measured.volumes.map(volume => {
@@ -572,15 +581,15 @@ export function createStorageService(deps: StorageServiceDeps) {
                 items: visible.map(publicStorageItem),
                 ...(groups.size ? { groups: [...groups.values()].sort((left, right) => order.indexOf(left.id) - order.indexOf(right.id)) } : {}) };
         },
-        async refresh(options: Readonly<{ categoryId?: HappierStorageCategoryIdV1; signal?: AbortSignal; actor?: StorageOperationActor }> = {}) {
+        async refresh(options: Readonly<{ categoryId?: HappierStorageCategoryIdV1; signal?: AbortSignal; actor?: StorageOperationActor; context?: ActionExecutorContext }> = {}) {
             assertActive(options.signal);
             requirePolicy();
             await options.actor?.assertCurrentAuthority();
             assertActive(options.signal);
             // Rebuild the native union: a changed category can share inodes with any other category.
-            const current = await join(begin(), options.signal);
+            await join(begin(), options.signal);
             requirePolicy();
-            return options.actor ? operations.summaryForActor(current, options.actor, items, suggestions) : current;
+            return summary(options);
         },
         revision: () => revision,
         async dockerPrune(request: MachineStorageDockerPruneInputV1, options: Readonly<{

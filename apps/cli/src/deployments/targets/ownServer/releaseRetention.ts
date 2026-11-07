@@ -34,6 +34,19 @@ export type OwnServerDeploymentImageProtection = Readonly<{
 }> | Readonly<{ status: 'unavailable'; deploymentIds: readonly string[] }>;
 export type OwnServerDeploymentImageReference = Extract<OwnServerDeploymentImageProtection, { status: 'complete' }>['images'][number];
 
+/** Unsettled native work retains its own generation and every named recovery reference. */
+export function projectOwnServerUnsettledDeploymentIds(receipts: readonly DeploymentReceiptDetailV1[]): ReadonlySet<string> {
+    const ids = new Set<string>();
+    for (const receipt of receipts) {
+        if (isDeploymentSettledV1(receipt.deployment.state)) continue;
+        for (const id of [receipt.deployment.id, receipt.deployment.predecessorDeploymentId, receipt.deployment.rollbackOfDeploymentId,
+            ...receipt.content.machineResults.flatMap(row => [row.currentDeploymentId, row.previousDeploymentId])]) {
+            if (id) ids.add(id);
+        }
+    }
+    return ids;
+}
+
 /** Existing receipt references, including the uniform baseline and unsettled
  * predecessors, are the sole source-retention authority. */
 export function projectOwnServerDeploymentRetention(input: Readonly<{
@@ -43,17 +56,11 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
 }>) {
     const environmentInstanceId = resolveOwnServerDeploymentEnvironmentInstanceIdForHost(input.serverId, input.environment.environment.id);
     const protectedIds = new Set<string>();
-    const unsettledIds = new Set<string>();
+    const unsettledIds = projectOwnServerUnsettledDeploymentIds(input.receipts);
     if (input.link.activeDeploymentId) protectedIds.add(input.link.activeDeploymentId);
     const versions = deriveDeploymentMemberVersionsV1(input.link, input.receipts, input.environment.targetLinks.map(value => value.targetLink));
     for (const version of Object.values(versions)) if (version.deploymentId) protectedIds.add(version.deploymentId);
-    for (const receipt of input.receipts) {
-        if (isDeploymentSettledV1(receipt.deployment.state)) continue;
-        for (const id of [receipt.deployment.id, receipt.deployment.predecessorDeploymentId, receipt.deployment.rollbackOfDeploymentId,
-            ...receipt.content.machineResults.flatMap(row => [row.currentDeploymentId, row.previousDeploymentId])]) {
-            if (id) { protectedIds.add(id); unsettledIds.add(id); }
-        }
-    }
+    for (const id of unsettledIds) protectedIds.add(id);
     const previous = selectDeploymentRetainedPreviousV1(input.receipts.map(receipt => receipt.deployment),
         input.link.activeDeploymentId, input.environment.content.retainPreviousDeployments);
     for (const receipt of previous) protectedIds.add(receipt.id);
@@ -77,7 +84,8 @@ export function projectOwnServerDeploymentRetention(input: Readonly<{
             ...resolveNativeComposeDeploymentImageReferences({ environmentInstanceId,
                 deploymentId: receipt.deployment.id, image }),
         })));
-    return { imageProtection, expiredImages, expiredSources: input.receipts.flatMap(receipt => receipt.content.ownServer?.sources ?? [])
+    return { imageProtection, expiredImages, retainedPreviousDeploymentIds: previous.map(receipt => receipt.id),
+        expiredSources: input.receipts.flatMap(receipt => receipt.content.ownServer?.sources ?? [])
         .filter(source => source.role === 'build' ? !unsettledIds.has(source.deploymentId) : !protectedIds.has(source.deploymentId)),
         expiredLogs: input.receipts.filter(receipt => !protectedIds.has(receipt.deployment.id))
             .flatMap(receipt => (receipt.content.ownServer?.stageLogs ?? []).map(log => ({ deploymentId: receipt.deployment.id, log }))) };
@@ -188,7 +196,7 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
         const history: DeploymentReceiptDetailV1[] = [];
         const lineage = getDeploymentTargetLinkLineageV1(snapshot.link, snapshot.environment.targetLinks.map(value => value.targetLink));
         for await (const receipt of host.readBuildHistory({ environmentId: input.request.input.environmentId,
-            targetLinkId: snapshot.link.id, context: input.request.context })) {
+            targetLinkId: snapshot.link.id, environment: snapshot.environment, context: input.request.context })) {
             if (receipt.deployment.environmentId === input.request.input.environmentId && lineage.has(receipt.deployment.targetLinkId)) history.push(receipt);
         }
         // An unsettled/unknown aggregate cannot authorize source retirement.
@@ -203,7 +211,7 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                 const run = async (args: readonly string[]) => {
                     await runtime.assertCurrent();
                     const tool = await runtime.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-source-retention', cwd: runtime.deploymentRoot });
-                    const launch = await authorizePluginExecLaunchForHost(runtime.exec, { executable: tool.executable, args, cwd: runtime.deploymentRoot });
+                    const launch = await authorizePluginExecLaunchForHost(runtime.exec, { executable: tool.executable, args, cwd: runtime.deploymentRoot }, { agentIsolation: null });
                     try {
                         await launch.recheckInputs?.();
                         return await runtime.nativeIo.run({ command: launch.command, args: launch.args, cwd: runtime.deploymentRoot, env: launch.env,
@@ -211,7 +219,7 @@ export function createOwnServerSourceRetention(host: OwnServerDeploymentTargetHo
                     } finally { await launch.release(); }
                 };
                 const tool = await runtime.exec.systemTools.resolve({ toolId: 'docker', purpose: 'deployment-source-retention', cwd: runtime.deploymentRoot });
-                const launch = await authorizePluginExecLaunchForHost(runtime.exec, { executable: tool.executable, args: [], cwd: runtime.deploymentRoot });
+                const launch = await authorizePluginExecLaunchForHost(runtime.exec, { executable: tool.executable, args: [], cwd: runtime.deploymentRoot }, { agentIsolation: null });
                 let engine;
                 try {
                     await launch.recheckInputs?.();
