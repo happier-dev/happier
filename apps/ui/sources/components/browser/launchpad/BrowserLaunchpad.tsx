@@ -5,6 +5,7 @@ import { StyleSheet } from 'react-native-unistyles';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { ItemList } from '@/components/ui/lists/ItemList';
+import { CollectionListGroupLabel } from '@/components/ui/lists/collection/CollectionList';
 import { ConstrainedScreenContent } from '@/components/ui/layout/ConstrainedScreenContent';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -21,11 +22,15 @@ import type {
 } from '@happier-dev/protocol';
 import {
     evaluateBrowserTargetPolicy,
-    resolveHostedPluginBrowserPolicyUnavailableReason,
+    resolveBrowserTargetProfileUnavailableReason,
 } from '@/sync/domains/browser/policy/evaluate';
 import { t } from '@/text';
+import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
 import { ServiceRowView } from '@/components/sessions/localServices/ServiceRowView';
+import { useLocalServiceEntryActions } from '@/components/sessions/localServices/useLocalServiceEntryActions';
+import { useMachinePresenceSummary } from '@/components/sessions/model/useMachinePresenceSummary';
+import { useLocalServicePreviewState } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Typography } from '@/constants/Typography';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
@@ -35,7 +40,7 @@ import { BrowserUrlField } from '../BrowserUrlField';
 import { useBrowserSessionAgentIdentity, type BrowserShellAgentPresence } from '../copresence/BrowserShellPresence';
 import type { BrowserStreamedSurfaceRuntime } from '../adapters/BrowserStreamedTarget';
 import type { BrowserSandboxInstallOutcome } from '@/sync/domains/browser/firstUse/browserFirstUse';
-import { bindServicesOpenInBrowser } from '../surfaces/openBrowserTargetInWorkspace';
+import { bindServicesOpenInBrowser, type OpenBrowserViewTarget } from '../surfaces/openBrowserTargetInWorkspace';
 import { describeBrowserSandboxAllowance, useBrowserSandboxAllowance } from '../streamed/useBrowserSandboxAllowance';
 
 export type BrowserLaunchpadOpenTargetOptions = Readonly<{
@@ -79,6 +84,8 @@ export function resolveAgentBrowserPrerequisite(
 
 const SECTION_ORDER: readonly BrowserLaunchpadSection[] = [
     'running',
+    'failed',
+    'ready',
     'plugin',
     'recent',
     'unavailable',
@@ -113,6 +120,11 @@ function titleForSection(section: BrowserLaunchpadSection): string {
     switch (section) {
         case 'running':
             return t('browserLaunchpad.sections.running');
+        // The workspace's declared Services that are not running: Local services' own section names.
+        case 'failed':
+            return t('localServices.pane.sectionFailed');
+        case 'ready':
+            return t('localServices.pane.sectionReady');
         case 'plugin':
             return t('browserLaunchpad.sections.plugin');
         case 'recent':
@@ -193,10 +205,10 @@ function resolveLaunchpadRow(
                 disabledReason: adapter.reasonCode,
             };
     }
-    const policyUnavailableReason = resolveHostedPluginBrowserPolicyUnavailableReason({
+    const policyUnavailableReason = row.target.kind === 'hostedPluginWeb' ? resolveBrowserTargetProfileUnavailableReason({
         target: row.target,
         profile: browserProfile,
-    });
+    }) : null;
     if (policyUnavailableReason) {
         return {
             ...row,
@@ -231,13 +243,15 @@ export function BrowserLaunchpad(props: Readonly<{
      * in-app browser below still works, so this explains the agent's side and never blocks the page.
      */
     agentBrowser?: BrowserLaunchpadAgentBrowser;
-    onOpenTarget?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
+    onOpenTarget?: OpenBrowserViewTarget;
+    previewAccountLifetime?: ServerAccountScopeLifetime | null;
+    previewCredentialKey?: string;
     /**
      * OWNER-NAV (DV-NAV): the current-tab in-place navigation seam used by the URL entry box. A
      * launchpad/new-tab URL submit turns THIS tab into the page in place instead of spawning a
      * sibling tab. `onOpenTarget` (new tab) stays reserved for external-surface opens.
      */
-    onNavigateInPlace?: (target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void;
+    onNavigateInPlace?: OpenBrowserViewTarget;
     /**
      * Whether the launchpad draws its own address entry. A host whose chrome already shows an address
      * bar turns it off, so a page never offers two address fields (DA3 D13); the launchpad keeps it
@@ -266,6 +280,7 @@ export function BrowserLaunchpad(props: Readonly<{
         ],
     );
     const grouped = React.useMemo(() => rowsBySection(resolvedRows), [resolvedRows]);
+    const firstSection = SECTION_ORDER.find((section) => (grouped.get(section)?.length ?? 0) > 0);
     const handleOpenTarget = React.useCallback(async (row: ResolvedBrowserLaunchpadRow) => {
         if (!row.target || row.disabledReason) {
             return;
@@ -279,6 +294,7 @@ export function BrowserLaunchpad(props: Readonly<{
                 onOpenTarget: open,
                 platform: props.platform,
                 serverId: props.localServicePreviewServerId,
+                accountLifetime: props.previewAccountLifetime, credentialKey: props.previewCredentialKey,
             })({
                 id: row.target.targetId,
                 source: 'registered_preview',
@@ -299,17 +315,39 @@ export function BrowserLaunchpad(props: Readonly<{
             ...(row.targetPolicyDecision ? { targetPolicyDecision: row.targetPolicyDecision } : {}),
             ...(row.desktopWebViewAvailability ? { desktopWebViewAvailability: row.desktopWebViewAvailability } : {}),
         });
-    }, [props.onNavigateInPlace, props.onOpenTarget, props.platform, props.localServicePreviewServerId]);
+    }, [props.onNavigateInPlace, props.onOpenTarget, props.platform, props.localServicePreviewServerId,
+        props.previewAccountLifetime, props.previewCredentialKey]);
 
     // Running previews are the Local services rows: they open through the same one-tap Open, which
     // reaches this launchpad's own open seam (a new tab beside this one) with a typed outcome.
     const onOpenTarget = props.onOpenTarget;
     const platform = props.platform;
     const openService = React.useMemo(() => (onOpenTarget
-        ? bindServicesOpenInBrowser({ onOpenTarget, platform, serverId: props.localServicePreviewServerId })
-        : undefined), [onOpenTarget, platform, props.localServicePreviewServerId]);
+        ? bindServicesOpenInBrowser({ onOpenTarget, platform, serverId: props.localServicePreviewServerId,
+            accountLifetime: props.previewAccountLifetime, credentialKey: props.previewCredentialKey })
+        : undefined), [onOpenTarget, platform, props.localServicePreviewServerId, props.previewAccountLifetime, props.previewCredentialKey]);
     // One expanded row at a time, as in Local services.
     const [expandedServiceId, setExpandedServiceId] = React.useState<string | null>(null);
+    // The Services rows act through the same admission as Local services (Start, Stop, Restart and
+    // their reviews), so a declared Service starts from here exactly as it does there.
+    const serviceTarget = resolvedRows.find((row) => row.serviceRow)?.serviceRow?.target ?? null;
+    const onRefresh = props.onRefresh;
+    const refreshServices = React.useMemo(() => onRefresh ? async () => { onRefresh(); } : undefined, [onRefresh]);
+    const serviceActions = useLocalServiceEntryActions({
+        machineId: serviceTarget?.machineId ?? null,
+        serverId: props.localServicePreviewServerId ?? null,
+        sessionId: serviceTarget?.sessionId ?? undefined,
+        scope: 'workspace',
+        onRefresh: refreshServices,
+        testID: `${testID}-services`,
+    });
+    // The same rows as Local services read the same preview-access answer: a service this device
+    // can't open privately offers Share a link, not an Open that fails (services lab R).
+    const serviceMachineId = serviceTarget?.machineId ?? null;
+    const opensPreview = resolvedRows.some((row) => row.serviceRow?.primaryAction?.kind === 'open'
+        && row.serviceRow.primaryAction.openTarget.browserTarget?.kind === 'localServicePreview');
+    const servicePreviews = useLocalServicePreviewState({ machineId: serviceMachineId, serverId: props.localServicePreviewServerId, enabled: opensPreview });
+    const serviceMachineName = useMachinePresenceSummary(props.localServicePreviewServerId ?? null, serviceMachineId).name;
     const { theme } = useUnistyles();
     const recentMark = React.useMemo(
         () => <Icon name="clock-counter-clockwise" size={18} color={theme.colors.text.secondary} />,
@@ -356,7 +394,7 @@ export function BrowserLaunchpad(props: Readonly<{
                         disabled={!props.onNavigateInPlace}
                         // No eyebrow above the field (lab W, F-17): the field itself says what it is for.
                         leading={<Icon name="globe" size={17} color={theme.colors.text.tertiary} />}
-                        placeholder={t('browserLaunchpad.urlEntry.label')}
+                        // One placeholder for every address field: the toolbar's (BrowserUrlField's default).
                         accessibilityLabel={t('browserLaunchpad.urlEntry.label')}
                         onSubmitUrl={handleSubmitUrl}
                     />
@@ -418,9 +456,18 @@ export function BrowserLaunchpad(props: Readonly<{
                                 return null;
                             }
                             return (
-                                <ItemGroup
-                                    key={section}
+                                <React.Fragment key={section}>
+                                {/* The same group label as Local services (lab Lp): what the rows share, and how many. */}
+                                <CollectionListGroupLabel
+                                    testID={`${testID}-section-${section}-label`}
                                     title={titleForSection(section)}
+                                    count={rows.length}
+                                    countPlacement="title"
+                                    first={section === firstSection && props.refreshStatus === 'idle'}
+                                />
+                                <ItemGroup
+                                    header="none"
+                                    accessibilityLabel={titleForSection(section)}
                                     selectableItemCountOverride={rows.length}
                                 >
                                     {rows.map((row) => {
@@ -430,7 +477,10 @@ export function BrowserLaunchpad(props: Readonly<{
                                                 <ServiceRowView
                                                     key={row.id}
                                                     row={row.serviceRow}
+                                                    {...serviceActions.handlers}
                                                     onOpenServiceInBrowser={openService}
+                                                    previews={row.serviceRow.target.machineId === serviceMachineId ? servicePreviews : null}
+                                                    machineName={row.serviceRow.target.machineId === serviceMachineId ? serviceMachineName : null}
                                                     expanded={expandedServiceId === serviceRowId}
                                                     onExpandedChange={(next) => setExpandedServiceId(next ? serviceRowId : null)}
                                                     testID={`${testID}-service:${serviceRowId}`}
@@ -461,11 +511,13 @@ export function BrowserLaunchpad(props: Readonly<{
                                         );
                                     })}
                                 </ItemGroup>
+                                </React.Fragment>
                             );
                         })}
                     </>
                 )}
             </ConstrainedScreenContent>
+            {serviceActions.review}
         </ItemList>
     );
 }

@@ -1949,6 +1949,10 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
 
         enterA11y: '進入選取模式',
 
+        /** A message menu's entry into selecting it (the transcript's selection mode). */
+
+        select: '選取',
+
         exitA11y: '退出選取模式',
 
         rowA11y: ({ role, preview }: { role: string; preview: string }) => `${role}: ${preview}`,
@@ -7694,7 +7698,6 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         moveToWorkspaceRoot: '放回專案',
         sectionsMenuTitle: "分區",
         sectionsManageDescription: "為歸類工作階段的分區命名、排序或移除。移除分區不會刪除其中的工作階段。",
-        sectionsManageDescription: "為歸類工作階段的分區命名、排序或移除。移除分區不會刪除其中的工作階段。",
         newSectionEllipsis: "新增分區…",
         moveToProjectNamed: ({ project }: { project: string }) => `放回 ${project}`,
         sectionDropHintTouch: "將工作階段移到這裡",
@@ -8778,6 +8781,8 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
           toolArtifactVideoA11y: ({ name }: { name: string }) => `開啟工具產物影片 ${name}`,
           previewImageA11y: ({ name, current, total }: { name: string; current: number; total: number }) => `第 ${current} 張，共 ${total} 張：${name}`,
           previewUnavailableA11y: "媒體預覽不可用",
+          noPreview: "此處無法預覽",
+          browserRecording: "瀏覽器錄影",
           unavailableImageA11y: ({ name }: { name: string }) => `${name} unavailable`,
         },
         cannotDisplayBinary: '無法顯示二進位檔案內容',
@@ -14886,6 +14891,9 @@ settingsSession: {
         documentSearchUnavailable: '此處無法搜尋記憶文件。',
         documentSearchUnavailableOn: ({ machine }: { machine: string }) => `無法在 ${machine} 上搜尋記住的事實。`,
         accessPrivate: '僅你可見',
+        sharingUnknown: "共享狀態未知",
+        sharingUnknownDescription: "無法確認誰能查看此記憶。它不會被視為私人內容，確認前無法儲存。",
+        reviewChange: "檢視變更",
         accessShared: '已分享',
         writesWithoutAsking: '無需詢問即儲存',
         remembersWithoutAsking: ({ name }: { name: string }) => `${name} 無需詢問即可記住`,

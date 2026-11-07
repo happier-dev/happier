@@ -1802,6 +1802,10 @@ export const ru: TranslationStructure = {
 
       enterA11y: 'Войти в режим выбора',
 
+      /** A message menu's entry into selecting it (the transcript's selection mode). */
+
+      select: 'Выбрать',
+
       exitA11y: 'Выйти из режима выбора',
 
       rowA11y: ({ role, preview }: { role: string; preview: string }) => `${role}: ${preview}`,
@@ -7932,7 +7936,6 @@ export const ru: TranslationStructure = {
     moveToWorkspaceRoot: "Вернуть в проект",
     sectionsMenuTitle: "Разделы",
     sectionsManageDescription: "Называйте, упорядочивайте и удаляйте разделы, по которым вы раскладываете сессии. При удалении раздела сессии сохраняются.",
-    sectionsManageDescription: "Называйте, упорядочивайте и удаляйте разделы, по которым вы раскладываете сессии. При удалении раздела сессии сохраняются.",
     newSectionEllipsis: "Новый раздел…",
     moveToProjectNamed: ({ project }: { project: string }) => `Вернуть в ${project}`,
     sectionDropHintTouch: "Переместите сессии сюда",
@@ -10775,6 +10778,8 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
           previewImageA11y: ({ name, current, total }: { name: string; current: number; total: number }) => `Изображение ${current} из ${total}: ${name}`,
 
           previewUnavailableA11y: "Предварительный просмотр мультимедиа недоступен.",
+          noPreview: "Здесь нет предпросмотра",
+          browserRecording: "Запись браузера",
           unavailableImageA11y: ({ name }: { name: string }) => `${name} unavailable`,},
         cannotDisplayBinary: "Невозможно отобразить содержимое бинарного файла",
         diff: "Различия",
@@ -18608,6 +18613,21 @@ settingsSession: {
       restoreRecoveryRequired: "Восстановление остановилось на полпути, данные нужно восстановить",
       restoreCodeUnchanged: "Работающий код не меняется.",
       restoreCheckAgain: "Эта проверка устарела. Проверьте копию ещё раз.",
+      addTitle: "Добавить сервис или базу данных",
+      addRepositoryDefined: "Этот Environment описан в репозитории. Добавьте сервис в его файл Compose там.",
+      addNeedsMachine: "Сначала подключите Machine к этому Environment.",
+      addPreflight: "Место на Machine",
+      addChecking: "Проверка…",
+      addRoomOk: "Места достаточно",
+      addShortMemory: "Мало памяти. Всё равно можно добавить, но работать может медленно.",
+      addShortDisk: "Мало места на диске. Всё равно можно добавить, но диск может заполниться.",
+      addConfirm: "Добавить",
+      addBack: "Выбрать другое",
+      addAdded: ({ name }: { name: string }) => `${name} добавлен и развёртывается`,
+      addFirstRunTitle: "Создайте администратора сейчас",
+      addFirstRunBody: "Первый, кто его откроет, станет администратором.",
+      addRefused: "Не удалось добавить",
+      addNeedsReview: "Это приложение нужно проверить в Store, прежде чем добавлять.",
       databaseConnectTitle: "Подключить к приложению",
       databaseConnectLead: "Environment приложения получит адрес этой базы как переменную при следующем развёртывании.",
       databaseConnectDestination: "Приложение",
@@ -19852,6 +19872,9 @@ settingsSession: {
         documentSearchUnavailable: 'Поиск по документам памяти здесь недоступен.',
         documentSearchUnavailableOn: ({ machine }: { machine: string }) => `На ${machine} нельзя искать по запомненным фактам.`,
         accessPrivate: 'Видите только вы',
+        sharingUnknown: "Доступ неизвестен",
+        sharingUnknownDescription: "Не удалось проверить, кто видит эту память. Она не считается личной. Сохранение отключено до проверки.",
+        reviewChange: "Посмотреть изменение",
         accessShared: 'Общая',
         writesWithoutAsking: 'сохраняется без запроса',
         remembersWithoutAsking: ({ name }: { name: string }) => `${name} запоминает без запроса`,

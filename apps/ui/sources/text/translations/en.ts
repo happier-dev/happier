@@ -1523,6 +1523,8 @@ const enTranscript = {
 
   selection: {
     enterA11y: 'Enter selection mode',
+    /** A message menu's entry into selecting it (the transcript's selection mode). */
+    select: 'Select',
 
     exitA11y: 'Exit selection mode',
 
@@ -1593,6 +1595,11 @@ const enTranscript = {
 };
 
 const enInbox = {
+  pluginDisabled: ({ name }: { name: string }) => `${name} is turned off. Its items stay; their pages open again when it’s back.`,
+  pluginEnableFailed: 'Couldn’t turn it on. Try again.',
+  pluginTurnOn: 'Turn on',
+  resolvedReceipt: 'Resolved · cleared from your Inbox',
+  nextItem: 'Next item',
   work: inboxWorkTranslations.en,
   ...actionOperationInboxTranslations,
   openSession: ({ session }: { session: string }) => `Open session: ${session}`,
@@ -1897,6 +1904,9 @@ const enMemoryContext = {
     documentSearchUnavailable: 'Memory document search is unavailable here.',
     documentSearchUnavailableOn: ({ machine }: { machine: string }) => `Remembered facts can’t be searched on ${machine}.`,
     accessPrivate: 'Only you can see it',
+    sharingUnknown: "Sharing unknown",
+    sharingUnknownDescription: "Who can see this memory couldn’t be checked. It isn’t treated as private. Saving is off until it is.",
+    reviewChange: "Review the change",
     accessShared: 'Shared',
     writesWithoutAsking: 'saved without asking',
     remembersWithoutAsking: ({ name }: { name: string }) => `${name} remembers without asking`,
@@ -11115,7 +11125,6 @@ const enSessionsList = {
   moveToWorkspaceRoot: "Back to project",
   sectionsMenuTitle: "Sections",
   sectionsManageDescription: "Name, order and remove the sections you file sessions into. Removing one keeps its sessions.",
-  sectionsManageDescription: "Name, order and remove the sections you file sessions into. Removing one keeps its sessions.",
   newSectionEllipsis: "New section…",
   moveToProjectNamed: ({ project }: { project: string }) => `Back to ${project}`,
   sectionDropHintTouch: "Move sessions here",
@@ -12664,6 +12673,8 @@ const enFiles = {
     }) => `Image ${current} of ${total}: ${name}`,
 
     previewUnavailableA11y: 'Media preview unavailable',
+    noPreview: 'No preview here',
+    browserRecording: 'Browser recording',
     unavailableImageA11y: ({ name }: { name: string }) => `${name} unavailable`,
   },
   cannotDisplayBinary: 'Cannot display binary file content',
@@ -22092,6 +22103,21 @@ const enProjects = {
       restoreRecoveryRequired: "The restore stopped partway and the data needs recovery",
       restoreCodeUnchanged: "The running code is unchanged.",
       restoreCheckAgain: "That check is no longer current. Check the backup again.",
+      addTitle: "Add a service or database",
+      addRepositoryDefined: "This Environment is defined in its repository. Add the service to its Compose file there.",
+      addNeedsMachine: "Link a Machine to this Environment before adding services.",
+      addPreflight: "Room on the Machine",
+      addChecking: "Checking…",
+      addRoomOk: "Enough room",
+      addShortMemory: "Short on memory. You can still add it; it may run slowly.",
+      addShortDisk: "Short on disk space. You can still add it; it may fill up.",
+      addConfirm: "Add",
+      addBack: "Choose another",
+      addAdded: ({ name }: { name: string }) => `${name} is added and deploying`,
+      addFirstRunTitle: "Create your admin now",
+      addFirstRunBody: "The first person to open it becomes its admin.",
+      addRefused: "Couldn’t add it",
+      addNeedsReview: "This app needs a review in Store before it can be added.",
       databaseConnectTitle: "Connect to an app",
       databaseConnectLead: "The app’s Environment gets this database’s address as a variable on its next deploy.",
       databaseConnectDestination: "App",
@@ -23730,6 +23756,8 @@ export const en: TranslationStructure = {
       suggestHomeRuleDescription: "Every session you start in the Home",
       answersWorkerQuestionsDescription: "Questions from the sessions it manages reach it first. Approvals still come to you.",
       defaultLevelsTitle: "Default levels",
+      followDefaultsSaved: 'Saved. Follows you already have keep their level.',
+      followDefaultSaveFailed: ({ field, value }: { field: string; value: string }) => `Couldn’t save. ${field} is still ${value}.`,
       defaultLevelsDescription: "Used when a follow is created for you. Follows you already have keep their level.",
       levelUnderLead: "Putting a session under a lead",
       levelUnderLeadDescription: "How much the lead hears about it",

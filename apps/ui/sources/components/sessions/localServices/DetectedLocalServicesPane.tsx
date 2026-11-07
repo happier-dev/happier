@@ -42,7 +42,9 @@ import {
     type ServiceRowSection,
 } from '@/sync/domains/local/services/serviceRow';
 import type { LocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
+import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { useLocalServicePublicPreviewStateController, type LocalServicePublicPreviewStatusClient } from '@/sync/domains/local/services/publicPreview/useLocalServicePublicPreviewState';
+import { useLocalServicePreviewState } from '@/sync/domains/local/services/preview/useLocalServicePreviewState';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { formatAccountDisplayName } from '@/sync/domains/account/formatAccountDisplayName';
 import { formatPathRelativeToHome } from '@/utils/sessions/formatPathRelativeToHome';
@@ -72,8 +74,10 @@ function TargetServiceRow(props: React.ComponentProps<typeof ServiceRowView> & R
     sourceMachine?: MachinePresenceSummary | null;
     publicPreviewEnabled?: boolean;
     publicPreviewStatusClient?: LocalServicePublicPreviewStatusClient;
+    /** A host that already holds the preview-access snapshot supplies it; rows otherwise read the shared store. */
+    previewState?: LocalServicePreviewState;
 }>): React.ReactElement {
-    const { sourceMachineId, serverId, sourceMachine, publicPreviewEnabled, publicPreviewStatusClient, ...rowProps } = props;
+    const { sourceMachineId, serverId, sourceMachine, publicPreviewEnabled, publicPreviewStatusClient, previewState, ...rowProps } = props;
     const target = props.row.target;
     const sourceRow = !sourceMachineId || target.machineId === sourceMachineId;
     const observedMachine = useMachinePresenceSummary(serverId, sourceRow ? null : target.machineId);
@@ -88,7 +92,15 @@ function TargetServiceRow(props: React.ComponentProps<typeof ServiceRowView> & R
         enabled: publicPreviewEnabled === true && !hasSuppliedState,
         statusClient: publicPreviewStatusClient,
     });
-    return <ServiceRowView {...rowProps} machineName={machine?.name ?? null}
+    // The same keyed preview-access store the opener reads (one fetch per Machine, shared by every
+    // reader): whether this device can open the row's private preview is that owner's answer.
+    // Only a row that offers a private-preview Open needs that answer.
+    const primary = props.row.primaryAction;
+    const opensPreview = primary?.kind === 'open' && primary.openTarget.browserTarget?.kind === 'localServicePreview';
+    const livePreviews = useLocalServicePreviewState({ machineId: target.machineId, serverId,
+        enabled: opensPreview && previewState === undefined });
+    const previews = previewState ?? livePreviews;
+    return <ServiceRowView {...rowProps} previews={previews} machineName={machine?.name ?? null}
         unavailableMachineName={unavailableMachine.name}
         offline={machine?.reachability === 'unreachable'}
         publicPreviewState={hasSuppliedState ? suppliedState : publicPreviewEnabled ? preview.state : null} />;
@@ -316,6 +328,8 @@ type DetectedLocalServicesPaneProps = Readonly<{
     inventoryState: LocalServiceInventoryState;
     launcherState?: LocalServiceLauncherState | null;
     publicPreviewState?: LocalServicePublicPreviewState | null;
+    /** The preview-access snapshot, when the host already holds it (a specimen); rows read the shared store otherwise. */
+    previewState?: LocalServicePreviewState;
     sourceMachineId?: string | null;
     serverId?: string | null;
     publicPreviewEnabled?: boolean;
@@ -533,6 +547,7 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             startedByName={row.target.startedByAccountId ? starterNames[row.target.startedByAccountId] ?? null : null}
             placement={props.renderServicePlacement?.(row)}
             publicPreviewState={props.publicPreviewState}
+            previewState={props.previewState}
             publicPreviewActions={props.publicPreviewActions}
             publicPreviewCapabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
             expanded={!phone && expandedId === row.id}
@@ -566,12 +581,35 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
         props.publicPreviewActions,
         props.publicPreviewCapabilityDisabledReasons,
         props.publicPreviewState,
+        props.previewState,
         testID,
     ]);
 
     // The inventory still publishes its scan cursor. Its material row projection is stable,
     // so that observation must not re-enter every Service row (including expanded controls).
     const renderedRowsBySection = React.useMemo(() => sections.map(entry => entry.rows.map(renderRow)), [sections, renderRow, preferredLanguage]);
+    // The pushed detail owns its scroll (its primary can pin below it); the back bar and a pending
+    // review lead its page.
+    const detailEffectReview = props.effectReview;
+    const detailOpen = detailRow !== null;
+    const detailLead = React.useMemo(() => detailOpen ? (
+        <>
+            {backHostedByBar || backOnHeader ? null : (
+                <View style={styles.detailBar}>
+                    <IconButton
+                        testID={`${testID}-detail-back`}
+                        iconName="arrow-left"
+                        variant="plain"
+                        accessibilityLabel={t('localServices.pane.backToServices')}
+                        tooltip={t('localServices.pane.backToServices')}
+                        animationEnabled={animationEnabled}
+                        onPress={closeDetail}
+                    />
+                </View>
+            )}
+            {detailEffectReview ? <View style={styles.effectReview}>{detailEffectReview}</View> : null}
+        </>
+    ) : null, [animationEnabled, backHostedByBar, backOnHeader, closeDetail, detailEffectReview, detailOpen, testID]);
     const renderedDetailRow = React.useMemo(() => detailRow ? (
         <TargetServiceRow
             row={detailRow}
@@ -592,17 +630,19 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
             startedByName={detailRow.target.startedByAccountId ? starterNames[detailRow.target.startedByAccountId] ?? null : null}
             placement={props.renderServicePlacement?.(detailRow)}
             publicPreviewState={props.publicPreviewState}
+            previewState={props.previewState}
             publicPreviewActions={props.publicPreviewActions}
             publicPreviewCapabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
             animationEnabled={animationEnabled}
+            detailLead={detailLead}
             testID={`${testID}-detail-row`}
         />
-    ) : null, [detailRow, animationEnabled, findRunningOpenTarget, starterNames, testID, preferredLanguage,
+    ) : null, [detailRow, detailLead, animationEnabled, findRunningOpenTarget, starterNames, testID, preferredLanguage,
         props.onOpenServiceInBrowser, props.onStartLauncherTarget, props.onTerminateDetectedService,
         props.onForgetDetectedService, props.onStopManagedService, props.onRestartManagedService,
         props.onCopyServiceUrl, props.sourceMachineId, props.serverId, props.machine,
         props.publicPreviewEnabled, props.publicPreviewStatusClient, props.renderServicePlacement,
-        props.publicPreviewState, props.publicPreviewActions, props.publicPreviewCapabilityDisabledReasons]);
+        props.publicPreviewState, props.previewState, props.publicPreviewActions, props.publicPreviewCapabilityDisabledReasons]);
 
     const page = props.presentation === 'page';
     const columnMaxWidth = useLayoutMaxWidth();
@@ -790,23 +830,9 @@ function DetectedLocalServicesPaneBody(props: DetectedLocalServicesPaneProps): R
                 </ScrollView>
             </View>
             {detailRow ? (
-                <ScrollView testID={`${testID}-detail`} style={styles.root} contentContainerStyle={styles.scrollContent}>
-                    {backHostedByBar || backOnHeader ? null : (
-                        <View style={styles.detailBar}>
-                            <IconButton
-                                testID={`${testID}-detail-back`}
-                                iconName="arrow-left"
-                                variant="plain"
-                                accessibilityLabel={t('localServices.pane.backToServices')}
-                                tooltip={t('localServices.pane.backToServices')}
-                                animationEnabled={animationEnabled}
-                                onPress={closeDetail}
-                            />
-                        </View>
-                    )}
-                    {effectReview}
+                <View testID={`${testID}-detail`} style={styles.root}>
                     {renderedDetailRow}
-                </ScrollView>
+                </View>
             ) : null}
         </View>
     );

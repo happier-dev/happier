@@ -1,18 +1,18 @@
 import * as React from 'react';
-import { Platform, View } from 'react-native';
+import { View } from 'react-native';
 import Animated, { useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { StyleSheet } from 'react-native-unistyles';
 
 import type {
-    LocalServiceLaunchTargetV1,
+    LocalServiceLaunchTargetV1} from '@happier-dev/protocol/local/services/launcher/v1';
+import type {
     LocalServicePublicExposureModeV1,
     LocalServicePublicExposureV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/local/services/public/v1';
 
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
 import { CopiedPill } from '@/components/ui/copy/CopiedPill';
 import { useHappierCopyFeedback } from '@happier-dev/plugin-ui/presentation';
 import { INSTRUMENT_SPRINGS, useMotionPreferences } from '@/components/instrument';
@@ -306,6 +306,8 @@ async function requestPublicLink(input: Readonly<{
 }>): Promise<void> {
     let confirmationRequired: boolean;
     try {
+        // Deliberately probe only the UI surface: adding the host stamp would
+        // treat this as direct human execution and silently skip the exposure review.
         confirmationRequired = await isActionApprovalRequiredForHome('localServices.publicPreview.create', { surface: 'ui' }, input.actions.serverId);
     } catch (error) {
         await input.run({ id: `create:${input.target.previewId}`, failureTitle: t('localServices.actions.failureTitle.expose'),
@@ -498,8 +500,6 @@ function ExposureRow(props: Readonly<{
     const [revealed, setRevealed] = React.useState(false);
     // Q2/F0-C3: the small plain controls grow a real box-model press frame (react-native-web ignores
     // `hitSlop`, and the desktop app IS the web bundle) bounded by the declared neighbour gap.
-    const minimumTargetSize = resolveMinimumInteractiveTargetSize(Platform.OS);
-
     const onCopy = React.useCallback(() => {
         void (async () => {
             const copied = await props.runAction({
@@ -586,7 +586,6 @@ function ExposureRow(props: Readonly<{
                                 : t('localServices.publicPreview.revealUrlA11y')}
                             variant="plain"
                             size={24}
-                            minimumInteractiveTargetSize={minimumTargetSize}
                             interactiveTargetGapPx={4}
                             onPress={() => setRevealed((current) => !current)}
                         />
@@ -598,7 +597,6 @@ function ExposureRow(props: Readonly<{
                             size={24}
                             // Copying a link that has already expired hands someone a dead URL.
                             disabled={countdown.expired}
-                            minimumInteractiveTargetSize={minimumTargetSize}
                             interactiveTargetGapPx={4}
                             onPress={onCopy}
                         />
@@ -639,15 +637,22 @@ function ExposureRow(props: Readonly<{
 export function LocalServiceShareLinkButton(props: Readonly<{
     offer: Extract<LocalServicePublicLinkOffer, { kind: 'create' }>;
     actions: LocalServicePublicPreviewActions;
+    /**
+     * `line`: a secondary beside Copy address. `lead`: the action line's one primary, when sharing is
+     * the way this device can open the service (services lab R). `pinned`: that primary in a phone
+     * page's pinned bar.
+     */
+    presentation?: 'line' | 'lead' | 'pinned';
     testID: string;
 }>): React.ReactElement {
     const runner = useLocalServiceActionRunner();
     const { offer, actions } = props;
+    const presentation = props.presentation ?? 'line';
     return (
         <RoundButton
             testID={props.testID}
-            size="small"
-            display="secondary"
+            size={presentation === 'pinned' ? 'normal' : 'small'}
+            display={presentation === 'line' ? 'secondary' : 'default'}
             title={t('localServices.publicPreview.shareCta')}
             accessibilityLabel={t('localServices.publicPreview.createActionA11y')}
             loading={runner.pendingId !== null}
@@ -656,14 +661,29 @@ export function LocalServiceShareLinkButton(props: Readonly<{
     );
 }
 
-/** The same create control as a list row, for the phone detail's grouped list (lab RUNSONp). */
+/**
+ * The same create control as a list row, for the phone detail's grouped list (lab RUNSONp). A link
+ * that cannot be made keeps its row, dimmed, and says why under it, inside the sheet.
+ */
 export function LocalServiceShareLinkRow(props: Readonly<{
-    offer: Extract<LocalServicePublicLinkOffer, { kind: 'create' }>;
+    offer: LocalServicePublicLinkOffer;
     actions: LocalServicePublicPreviewActions;
     testID: string;
 }>): React.ReactElement {
     const runner = useLocalServiceActionRunner();
     const { offer, actions } = props;
+    if (offer.kind === 'disabled') {
+        return (
+            <Item
+                testID={props.testID}
+                title={t('localServices.publicPreview.shareCta')}
+                subtitle={offer.subtitle}
+                subtitleLines={2}
+                disabled
+                showChevron={false}
+            />
+        );
+    }
     return (
         <Item
             testID={props.testID}
@@ -693,6 +713,8 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
      * address), so this block shows only issued links and the reasons a link cannot be created.
      */
     shareInActionLine?: boolean;
+    /** The host lists the reasons a link cannot be created as a row of its own (the phone detail's sheet). */
+    reasonsInList?: boolean;
     testID?: string;
 }>): React.ReactElement | null {
     const runner = useLocalServiceActionRunner();
@@ -733,7 +755,7 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
         .filter((row) => !row.createDisabledSubtitle)
         .map((row) => row.target)
         .filter(hasPreviewId);
-    const disabledTargets: readonly PublicPreviewDisabledTarget[] = targetRows
+    const allDisabledTargets: readonly PublicPreviewDisabledTarget[] = targetRows
         .filter((row) => row.exposures.length === 0)
         .map((row): PublicPreviewDisabledTarget | null => {
             const subtitle = hasPreviewId(row.target)
@@ -744,6 +766,7 @@ export function LocalServicePublicPreviewControls(props: Readonly<{
             return subtitle ? { ...row.target, subtitle } : null;
         })
         .filter((target): target is PublicPreviewDisabledTarget => Boolean(target));
+    const disabledTargets = props.reasonsInList ? [] : allDisabledTargets;
     const hostedCreatableTargets = props.shareInActionLine ? [] : creatableTargets;
     if (exposureRows.length === 0 && hostedCreatableTargets.length === 0 && disabledTargets.length === 0) {
         return null;

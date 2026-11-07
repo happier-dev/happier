@@ -1955,6 +1955,10 @@ export const ja: TranslationStructure = {
 
       enterA11y: '選択モードに入る',
 
+      /** A message menu's entry into selecting it (the transcript's selection mode). */
+
+      select: '選択',
+
       exitA11y: '選択モードを終了',
 
       rowA11y: ({ role, preview }: { role: string; preview: string }) => `${role}: ${preview}`,
@@ -9790,7 +9794,6 @@ localTailscale: {
     moveToWorkspaceRoot: "プロジェクトに戻す",
     sectionsMenuTitle: "セクション",
     sectionsManageDescription: "セッションを整理するセクションの名前、順序、削除を管理します。セクションを削除してもセッションは残ります。",
-    sectionsManageDescription: "セッションを整理するセクションの名前、順序、削除を管理します。セクションを削除してもセッションは残ります。",
     newSectionEllipsis: "新しいセクション…",
     moveToProjectNamed: ({ project }: { project: string }) => `${project} に戻す`,
     sectionDropHintTouch: "ここにセッションを移動",
@@ -11219,6 +11222,8 @@ localTailscale: {
           previewImageA11y: ({ name, current, total }: { name: string; current: number; total: number }) => `${total} 枚中 ${current} 枚目: ${name}`,
 
           previewUnavailableA11y: "メディアのプレビューは利用できません",
+          noPreview: "ここではプレビューできません",
+          browserRecording: "ブラウザの録画",
           unavailableImageA11y: ({ name }: { name: string }) => `${name} unavailable`,},
         cannotDisplayBinary: "バイナリファイルの内容を表示できません",
         diff: "差分",
@@ -18569,6 +18574,21 @@ settingsSession: {
       restoreRecoveryRequired: "復元が途中で止まり、データの回復が必要です",
       restoreCodeUnchanged: "実行中のコードは変わりません。",
       restoreCheckAgain: "この確認は最新ではありません。バックアップをもう一度確認してください。",
+      addTitle: "サービスまたはデータベースを追加",
+      addRepositoryDefined: "この Environment はリポジトリで定義されています。サービスはそこの Compose ファイルに追加してください。",
+      addNeedsMachine: "先にこの Environment に Machine をリンクしてください。",
+      addPreflight: "Machine の空き",
+      addChecking: "確認中…",
+      addRoomOk: "十分な空き",
+      addShortMemory: "メモリが不足しています。追加はできますが、遅くなる可能性があります。",
+      addShortDisk: "ディスク容量が不足しています。追加はできますが、いっぱいになる可能性があります。",
+      addConfirm: "追加",
+      addBack: "別のものを選ぶ",
+      addAdded: ({ name }: { name: string }) => `${name} を追加し、デプロイしています`,
+      addFirstRunTitle: "今すぐ管理者を作成してください",
+      addFirstRunBody: "最初に開いた人が管理者になります。",
+      addRefused: "追加できませんでした",
+      addNeedsReview: "このアプリは追加する前に Store で確認が必要です。",
       databaseConnectTitle: "アプリに接続",
       databaseConnectLead: "アプリの Environment は次のデプロイでこのデータベースのアドレスを変数として受け取ります。",
       databaseConnectDestination: "アプリ",
@@ -19814,6 +19834,9 @@ settingsSession: {
         documentSearchUnavailable: 'ここではメモリ文書の検索を利用できません。',
         documentSearchUnavailableOn: ({ machine }: { machine: string }) => `${machine} では記憶した事実を検索できません。`,
         accessPrivate: 'あなただけが見られます',
+        sharingUnknown: "共有状態が不明",
+        sharingUnknownDescription: "このメモリを閲覧できる人を確認できませんでした。非公開とは扱われません。確認できるまで保存は無効です。",
+        reviewChange: "変更を確認",
         accessShared: '共有中',
         writesWithoutAsking: '確認なしで保存',
         remembersWithoutAsking: ({ name }: { name: string }) => `${name}は確認なしで記憶します`,

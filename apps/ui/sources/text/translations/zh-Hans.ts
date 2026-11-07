@@ -1786,6 +1786,10 @@ export const zhHans: TranslationStructure = {
 
       enterA11y: '进入选择模式',
 
+      /** A message menu's entry into selecting it (the transcript's selection mode). */
+
+      select: '选择',
+
       exitA11y: '退出选择模式',
 
       rowA11y: ({ role, preview }: { role: string; preview: string }) => `${role}: ${preview}`,
@@ -9159,7 +9163,6 @@ export const zhHans: TranslationStructure = {
     moveToWorkspaceRoot: "放回项目",
     sectionsMenuTitle: "分区",
     sectionsManageDescription: "为归类会话的分区命名、排序或移除。移除分区不会删除其中的会话。",
-    sectionsManageDescription: "为归类会话的分区命名、排序或移除。移除分区不会删除其中的会话。",
     newSectionEllipsis: "新建分区…",
     moveToProjectNamed: ({ project }: { project: string }) => `放回 ${project}`,
     sectionDropHintTouch: "将会话移到这里",
@@ -10562,6 +10565,8 @@ export const zhHans: TranslationStructure = {
           previewImageA11y: ({ name, current, total }: { name: string; current: number; total: number }) => `第 ${current} 张，共 ${total} 张：${name}`,
 
           previewUnavailableA11y: "媒体预览不可用",
+          noPreview: "此处无法预览",
+          browserRecording: "浏览器录制",
           unavailableImageA11y: ({ name }: { name: string }) => `${name} unavailable`,},
         cannotDisplayBinary: "无法显示二进制文件内容",
         diff: "差异",
@@ -18274,6 +18279,21 @@ settingsSession: {
       restoreRecoveryRequired: "恢复中途停止，数据需要修复",
       restoreCodeUnchanged: "正在运行的代码保持不变。",
       restoreCheckAgain: "该检查已过期。请重新检查备份。",
+      addTitle: "添加服务或数据库",
+      addRepositoryDefined: "此 Environment 在其仓库中定义。请在那里的 Compose 文件中添加服务。",
+      addNeedsMachine: "请先为此 Environment 关联一台 Machine。",
+      addPreflight: "Machine 上的空间",
+      addChecking: "正在检查…",
+      addRoomOk: "空间充足",
+      addShortMemory: "内存不足。仍可添加，但可能运行缓慢。",
+      addShortDisk: "磁盘空间不足。仍可添加，但可能会占满。",
+      addConfirm: "添加",
+      addBack: "选择其他",
+      addAdded: ({ name }: { name: string }) => `已添加 ${name}，正在部署`,
+      addFirstRunTitle: "现在创建你的管理员",
+      addFirstRunBody: "第一个打开它的人会成为管理员。",
+      addRefused: "无法添加",
+      addNeedsReview: "此应用需要先在 Store 中审核才能添加。",
       databaseConnectTitle: "连接到应用",
       databaseConnectLead: "应用的 Environment 会在下次部署时以变量形式获得此数据库的地址。",
       databaseConnectDestination: "应用",
@@ -19519,6 +19539,9 @@ settingsSession: {
         documentSearchUnavailable: '此处无法搜索记忆文档。',
         documentSearchUnavailableOn: ({ machine }: { machine: string }) => `无法在 ${machine} 上搜索记住的事实。`,
         accessPrivate: '仅你可见',
+        sharingUnknown: "共享状态未知",
+        sharingUnknownDescription: "无法确认谁能查看此记忆。它不会被视为私密内容，确认前无法保存。",
+        reviewChange: "查看更改",
         accessShared: '已共享',
         writesWithoutAsking: '无需询问即保存',
         remembersWithoutAsking: ({ name }: { name: string }) => `${name} 无需询问即可记住`,

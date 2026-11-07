@@ -1,6 +1,8 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import type { BrowserViewTargetV1, DaemonLocalServicePreviewOpenOrCreateResponseV1, FeatureDecision, LocalServicePreviewResourceV1 } from '@happier-dev/protocol';
+import type { BrowserViewTargetV1} from '@happier-dev/protocol/browser/target/v1';
+import type { DaemonLocalServicePreviewOpenOrCreateResponseV1, LocalServicePreviewResourceV1 } from '@happier-dev/protocol/local/services/preview/v1';
+import type { FeatureDecision} from '@happier-dev/protocol/features/decision';
 import { describe, expect, it, vi } from 'vitest';
 
 import { renderScreen } from '@/dev/testkit';
@@ -10,8 +12,10 @@ import {
     resolveBrowserViewTargetOpen,
 } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
 import { createBrowserWorkspaceOpeningFixture } from '@/dev/testkit/fixtures/browserWorkspaceOpening';
+import { createPlainArtifactHomeFixture } from '@/dev/testkit/harness/artifactStoreBoundary';
+import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import type { DetailsTab } from '@/components/appShell/panes/details/workspace/detailsWorkspaceTypes';
-import type { BrowserLaunchpadOpenTargetOptions } from './BrowserLaunchpad';
+import { BrowserLaunchpad, type BrowserLaunchpadOpenTargetOptions } from './BrowserLaunchpad';
 import type { BrowserSandboxInstallOutcome } from '@/sync/domains/browser/firstUse/browserFirstUse';
 import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/launch';
 import type { ServiceRow } from '@/sync/domains/local/services/serviceRow';
@@ -190,7 +194,6 @@ const rows: readonly BrowserLaunchpadRow[] = [...serviceLaunchpadRows, {
 describe('BrowserLaunchpad', () => {
     it.each([false, true])('explains a failed catalog refresh and offers retry while retained rows=%s', async (retainRows) => {
         const onRefresh = vi.fn();
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const screen = await renderScreen(<BrowserLaunchpad
             rows={retainRows ? rows.filter((row) => row.section === 'recent') : []}
             platform="web"
@@ -204,7 +207,6 @@ describe('BrowserLaunchpad', () => {
         if (retainRows) expect(screen.findByTestId('browser-launchpad-card:recent:external_docs')).toBeTruthy();
     });
     it('keeps rows visible while refreshing', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
 
         const screen = await renderScreen(
             <BrowserLaunchpad
@@ -228,7 +230,6 @@ describe('BrowserLaunchpad', () => {
     it('opens a running service from the Services row in one tap', async () => {
         const response = previewRegistrationResponse();
         machineRpcMock.mockResolvedValueOnce(response);
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const onOpenTarget = vi.fn<(target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void>();
 
         const screen = await renderScreen(
@@ -249,27 +250,32 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('renews a private-preview admission when opening a recent target', async () => {
-        machineRpcMock.mockClear();
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
-        const response = previewRegistrationResponse('https://preview-vite.preview.test/?previewToken=renewed');
-        machineRpcMock.mockResolvedValueOnce(response);
-        const onOpenTarget = vi.fn();
-        const screen = await renderScreen(
-            <BrowserLaunchpad platform="web" rows={[{
-                id: 'recent:preview_vite', section: 'recent', sourceKind: 'recent', title: 'Vite app',
-                detail: 'localServicePreview', target: localPreviewTarget, disabledReason: null,
-                currentUrl: 'https://preview-vite.preview.test/?previewToken=expired', currentUrlExpiresAt: 61_000, lastSeenAt: 1_000,
-            }]} refreshStatus="idle" onOpenTarget={onOpenTarget} localServicePreviewServerId="server_1" />,
-        );
-        await screen.pressByTestIdAsync('browser-launchpad-card:recent:preview_vite');
-        expect(machineRpcMock).toHaveBeenCalledWith(expect.objectContaining({
-            serverId: 'server_1', payload: { machineId: 'machine_1', sessionId: 'session_1', launchTargetId: 'preview_vite' },
-        }));
-        expect(onOpenTarget).toHaveBeenCalledWith(localPreviewTarget, { platform: 'web', currentUrl: response.preview.accessUrl });
+        const home = await createPlainArtifactHomeFixture('https://browser-launchpad-home.test', {
+            serverFeatures: createRootLayoutFeaturesResponse({ features: { browser: { enabled: true } } }),
+            handleRequest: async path => path === '/v2/account/settings'
+                ? Response.json({ version: 1, content: { t: 'plain', v: {} } }) : null,
+        });
+        try {
+            machineRpcMock.mockClear();
+            const response = previewRegistrationResponse('https://preview-vite.preview.test/?previewToken=renewed');
+            machineRpcMock.mockResolvedValueOnce(response);
+            const onOpenTarget = vi.fn();
+            const screen = await renderScreen(
+                <BrowserLaunchpad platform="web" rows={[{
+                    id: 'recent:preview_vite', section: 'recent', sourceKind: 'recent', title: 'Vite app',
+                    detail: 'localServicePreview', target: localPreviewTarget, disabledReason: null,
+                    currentUrl: 'https://preview-vite.preview.test/?previewToken=expired', currentUrlExpiresAt: 61_000, lastSeenAt: 1_000,
+                }]} refreshStatus="idle" onOpenTarget={onOpenTarget} localServicePreviewServerId={home.home.id} />,
+            );
+            await screen.pressByTestIdAsync('browser-launchpad-card:recent:preview_vite');
+            expect(machineRpcMock).toHaveBeenCalledWith(expect.objectContaining({
+                serverId: home.home.id, payload: { machineId: 'machine_1', sessionId: 'session_1', launchTargetId: 'preview_vite' },
+            }));
+            expect(onOpenTarget).toHaveBeenCalledWith(localPreviewTarget, { platform: 'web', currentUrl: response.preview.accessUrl });
+        } finally { await home.dispose(); }
     });
 
     it('disables target rows when the platform adapter is unavailable', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const onOpenTarget = vi.fn<(target: BrowserViewTargetV1) => void>();
 
         const screen = await renderScreen(
@@ -300,7 +306,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('fails closed for hosted-plugin targets when no browser profile policy is supplied', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const onOpenTarget = vi.fn<(target: BrowserViewTargetV1) => void>();
 
         const screen = await renderScreen(
@@ -332,7 +337,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('opens hosted-plugin targets when the browser profile policy matches the plugin target', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const onOpenTarget = vi.fn<(target: BrowserViewTargetV1) => void>();
 
         const screen = await renderScreen(
@@ -368,7 +372,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('opens desktop external URL rows only with policy and native WebView context', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const onOpenTarget = vi.fn<(target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void>();
 
         const screen = await renderScreen(
@@ -409,7 +412,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('honors plugin target launch and profile modes at the browser host boundary', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const onOpenTarget = vi.fn<(target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void>();
         const onNavigateInPlace = vi.fn<(target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void>();
         const pluginRow = {
@@ -464,7 +466,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('renders the workspace launcher (URL entry + guidance) instead of a dead banner when there are no rows', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
 
         const screen = await renderScreen(
             <BrowserLaunchpad
@@ -485,7 +486,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('explains a missing managed Chromium in place of the guidance, with the code behind Details and the address field as its one action', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const onRetry = vi.fn();
 
         const screen = await renderScreen(
@@ -510,7 +510,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('leaves the address to the host when the host already draws one', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const screen = await renderScreen(
             <BrowserLaunchpad
                 platform="desktop"
@@ -526,7 +525,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('says a failed Chromium install in words, keeps the code behind Details and offers no replay (a new open is the retry)', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
 
         const screen = await renderScreen(
             <BrowserLaunchpad
@@ -546,7 +544,6 @@ describe('BrowserLaunchpad', () => {
 
     describe('sandbox unavailable', () => {
         async function renderSandboxCard(onAllowSandbox: () => Promise<BrowserSandboxInstallOutcome | null>) {
-            const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
             return await renderScreen(
                 <BrowserLaunchpad
                     platform="desktop"
@@ -590,7 +587,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('keeps the running services and recents beside the managed Chromium explanation', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
 
         const screen = await renderScreen(
             <BrowserLaunchpad
@@ -609,7 +605,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('DV-NAV: a typed URL on the new-tab page navigates the CURRENT tab in place (onNavigateInPlace), NOT onOpenTarget', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         const onOpenTarget = vi.fn<(target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void>();
         const onNavigateInPlace = vi.fn<(target: BrowserViewTargetV1, options?: BrowserLaunchpadOpenTargetOptions) => void>();
 
@@ -642,7 +637,6 @@ describe('BrowserLaunchpad', () => {
     });
 
     it('opens a running row through the canonical opener, creating BOTH a details tab AND a live content record', async () => {
-        const { BrowserLaunchpad } = await import('./BrowserLaunchpad');
         machineRpcMock.mockResolvedValueOnce(previewRegistrationResponse());
 
         const openedTabs: DetailsTab[] = [];

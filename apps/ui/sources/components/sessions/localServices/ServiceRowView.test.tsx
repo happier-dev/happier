@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { installBrowserClipboardBoundary } from '@/dev/testkit';
 import { LocalServiceLaunchTargetV1Schema } from '@happier-dev/protocol/local/services/launcher/v1';
 
+import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
 import { Text } from '@/components/ui/text/Text';
@@ -15,6 +16,11 @@ import {
     applyLocalServicePublicPreviewSnapshot,
     createLocalServicePublicPreviewState,
 } from '@/sync/domains/local/services/publicPreview/store';
+import {
+    createLocalServicePreviewState,
+    type LocalServicePreviewRow,
+    type LocalServicePreviewState,
+} from '@/sync/domains/local/services/preview/store';
 
 const modalSpies = vi.hoisted(() => ({
     confirm: vi.fn<IModal['confirm']>(async () => true),
@@ -739,6 +745,30 @@ describe('ServiceRowView', () => {
         expect(expanded.findByTestId('row-copy-address')).toBeTruthy();
     });
 
+    it('offers Share a link in the collapsed row\'s menu, and only in the action line once expanded (RU2 J3)', async () => {
+        const row = projectRow(projectTarget({ state: 'available', serviceState: 'running', actions: ['manage'],
+            endpointUrl: 'http://localhost:5173/',
+            browserTarget: { kind: 'localServicePreview', targetId: 'preview_1', sessionId: 'session-a', machineId: 'machine-a' } }));
+        const publicPreviewState = applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
+            v: 1, machineId: 'machine-a', sessionId: 'session-a', generatedAt: 4_000, refreshState: 'idle',
+            policy: { enabled: true, allowedModes: ['secret_link'], maxTtlMs: 3_600_000, maxConcurrentExposures: 2,
+                dnsTlsRequired: true, auditRequired: true, rateLimitProfileIds: ['default'] },
+            exposures: [], diagnostics: [],
+        });
+        const props = { row, machineName: 'devbox', onOpenServiceInBrowser: vi.fn(), onStopManagedService: vi.fn(),
+            publicPreviewState, publicPreviewActions: { create: vi.fn(), copyUrl: vi.fn(async () => true), revoke: vi.fn() },
+            onExpandedChange: vi.fn(), testID: 'row' };
+        const collapsed = await renderScreen(<ServiceRowView {...props} expanded={false} />);
+        const share = rowOverflowActions(collapsed).find((action) => action.id === 'share');
+        expect(share?.title).toBe('Share a link');
+        expect(typeof share?.onPress).toBe('function');
+        await collapsed.unmount();
+
+        const expanded = await renderScreen(<ServiceRowView {...props} expanded />);
+        expect(rowOverflowActions(expanded).map((action) => action.id)).not.toContain('share');
+        expect(expanded.findAllByType(RoundButton).filter((button) => button.props.testID === 'row-share')).toHaveLength(1);
+    });
+
     it('keeps one Open when the row is expanded: the expansion does not repeat it', async () => {
         const screen = await renderScreen(
             <ServiceRowView
@@ -1008,5 +1038,85 @@ describe('ServiceRowView', () => {
         expect(text).toContain('Last known');
         expect(text).not.toContain('Running');
         expect(text).toContain('localhost:3005');
+    });
+
+    /**
+     * Services lab R: a Service seen from another device. Whether this device can open the private
+     * preview is the preview access owner's answer (`accessUnavailableReasonCode`); the row consumes
+     * it, so a control that cannot succeed is never shown and the way that works leads instead.
+     */
+    describe('seen from a device that cannot open it', () => {
+        function unreachablePreviews(): LocalServicePreviewState {
+            const resource = { previewId: 'preview_1' } as LocalServicePreviewRow['resource'];
+            return {
+                ...createLocalServicePreviewState(),
+                generatedAt: 4_000,
+                previewIds: ['preview_1'],
+                previewsById: new Map([['preview_1', {
+                    previewId: 'preview_1', resource, accessUrl: null, expiresAt: null,
+                    accessUnavailableReasonCode: 'preview_private_route_unavailable', diagnostics: [],
+                }]]),
+            };
+        }
+        function shareablePublicPreviewState() {
+            return applyLocalServicePublicPreviewSnapshot(createLocalServicePublicPreviewState(), {
+                v: 1, machineId: 'machine-a', sessionId: 'session-a', generatedAt: 4_000, refreshState: 'idle',
+                policy: { enabled: true, allowedModes: ['secret_link'], maxTtlMs: 3_600_000, maxConcurrentExposures: 2,
+                    dnsTlsRequired: true, auditRequired: true, rateLimitProfileIds: ['default'] },
+                exposures: [], diagnostics: [],
+            });
+        }
+        const publicActions = () => ({ create: vi.fn(), copyUrl: vi.fn(async () => true), revoke: vi.fn() });
+
+        it('offers no Open or Copy address, says where it runs, and leads with Share a link', async () => {
+            const screen = await renderScreen(
+                <ServiceRowView row={openableRow()} machineName="MacBook Pro" previews={unreachablePreviews()}
+                    onOpenServiceInBrowser={vi.fn()} publicPreviewState={shareablePublicPreviewState()}
+                    publicPreviewActions={publicActions()} expanded onExpandedChange={vi.fn()} testID="row" />,
+            );
+            expect(screen.findAllByTestId('row-open')).toHaveLength(0);
+            expect(screen.findAllByTestId('row-copy-address')).toHaveLength(0);
+            expect(collectMetaText(screen.findByTestId('row-elsewhere')!)).toContain('MacBook Pro');
+            // The way that works from here is the expansion's one primary, not a secondary beside Copy address.
+            const share = screen.findAllByType(RoundButton).find((button) => button.props.testID === 'row-share');
+            expect(share?.props.display).toBe('default');
+        });
+
+        it('still expands when the only thing to show is where it runs and that links are off', async () => {
+            const onExpandedChange = vi.fn();
+            const screen = await renderScreen(
+                <ServiceRowView row={{ ...openableRow(), host: null, portLabel: null }} machineName="MacBook Pro"
+                    previews={unreachablePreviews()} onOpenServiceInBrowser={vi.fn()} expanded
+                    onExpandedChange={onExpandedChange} testID="row" />,
+            );
+            expect(screen.findAllByTestId('row-open')).toHaveLength(0);
+            expect(screen.findAllByTestId('row-share')).toHaveLength(0);
+            expect(screen.findByTestId('row-elsewhere')).toBeTruthy();
+        });
+
+        it('keeps Open while the preview answer is not in yet', async () => {
+            const screen = await renderScreen(
+                <ServiceRowView row={openableRow()} previews={createLocalServicePreviewState()}
+                    onOpenServiceInBrowser={vi.fn()} expanded={false} onExpandedChange={vi.fn()} testID="row" />,
+            );
+            expect(screen.findByTestId('row-open')).not.toBeNull();
+        });
+
+        it('on the phone detail, Address copies and Share a link is the pinned primary, drawn once', async () => {
+            const onOpen = vi.fn();
+            const screen = await renderScreen(
+                <ServiceRowView row={{ ...openableRow(), scheme: 'http' as const }} presentation="detail" machineName="MacBook Pro"
+                    previews={unreachablePreviews()} onOpenServiceInBrowser={onOpen}
+                    publicPreviewState={shareablePublicPreviewState()} publicPreviewActions={publicActions()} testID="row" />,
+            );
+            const address = screen.findAllByType(Item).find((item) => item.props.testID === 'row-address');
+            expect(address?.props.showChevron).toBe(false);
+            expect(String(address?.props.subtitle)).toContain('MacBook Pro');
+            await pressTestInstanceAsync(screen.findByTestId('row-address'), 'row-address');
+            expect(onOpen).not.toHaveBeenCalled();
+            expect(clipboardSpies.setClipboardStringSafe).toHaveBeenCalledWith('http://127.0.0.1:5173');
+            expect(screen.findByTestId('row-pinned')?.findAll((node) => node.props?.testID === 'row-share').length).toBeGreaterThan(0);
+            expect(screen.findAllByType(Item).filter((item) => item.props.testID === 'row-share')).toHaveLength(0);
+        });
     });
 });

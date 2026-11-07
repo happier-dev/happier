@@ -1,8 +1,9 @@
 import * as React from 'react';
-import { View } from 'react-native';
+import { ScrollView, View } from 'react-native';
 import { isLocalServiceStateRunningV1 } from '@happier-dev/protocol/local/services/launcher/v1';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
+import { useEventCallback } from '@/hooks/ui/useEventCallback';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { SURFACE_CARD_PADDING_PX, SURFACE_CARD_RADIUS_PX } from '@/components/ui/cards/SurfaceCard';
@@ -13,6 +14,7 @@ import { Item, type ItemProps } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { PAGE_LIST_METRICS } from '@/components/ui/lists/pageListMetrics';
 import { ItemRowActions } from '@/components/ui/lists/ItemRowActions';
+import { PagePinnedBar } from '@/components/ui/layout/PagePinnedBar';
 import type { ItemAction } from '@/components/ui/lists/itemActions';
 import { StatusPill } from '@/components/ui/status/StatusPill';
 import { Text } from '@/components/ui/text/Text';
@@ -22,6 +24,7 @@ import type { LocalServiceLaunchTarget } from '@/sync/domains/local/services/lau
 import type { ServicesOpenInBrowserResult } from '@/components/browser/surfaces/openBrowserTargetInWorkspace';
 import type { ServiceRow, ServiceRowStatus } from '@/sync/domains/local/services/serviceRow';
 import type { LocalServicePublicPreviewState } from '@/sync/domains/local/services/publicPreview/store';
+import type { LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { resolveReasonCopy } from '@/sync/domains/surfaces/copy';
 import { resolveLocalServiceOutput } from '@/sync/domains/local/services/serviceFailure';
 import { t } from '@/text';
@@ -157,6 +160,26 @@ const stylesheet = StyleSheet.create((theme) => ({
     },
     expansion: {
         paddingBottom: theme.space.s4,
+    },
+    /** Where a service this device can't open runs, at the title's edge above the action line (lab R). */
+    elsewhere: {
+        ...Typography.variant('meta'),
+        color: theme.colors.text.secondary,
+        paddingRight: SURFACE_CARD_PADDING_PX.sm.horizontal,
+        paddingLeft: PAGE_LIST_METRICS.rowPaddingHorizontalPx + PAGE_LIST_METRICS.rowLeadingColumnPx + PAGE_LIST_METRICS.rowLeadingGapPx,
+        paddingTop: theme.space.s8,
+    },
+    /** With no action line under it (a live link follows), the line closes the header block itself. */
+    elsewhereClosing: {
+        paddingBottom: SURFACE_CARD_PADDING_PX.sm.vertical,
+    },
+    /** The phone detail owns its scroll so its primary can sit in a pinned bar below it. */
+    detailPage: {
+        flex: 1,
+        minHeight: 0,
+    },
+    detailScroll: {
+        paddingBottom: theme.space.s24,
     },
     actions: {
         flexDirection: 'row',
@@ -451,6 +474,12 @@ export function ServiceRowView(props: Readonly<{
      * placement owner inside the expansion under the row's controls. The row only hosts it.
      */
     placement?: React.ReactNode;
+    /**
+     * The private-preview access owner's state for this row's Machine. When it says this device has no
+     * private route, the row offers no Open and leads with sharing a link (services lab R); until it
+     * answers, the row keeps Open.
+     */
+    previews?: LocalServicePreviewState | null;
     /** The row's live public link, shown only while it is expanded. */
     publicPreviewState?: LocalServicePublicPreviewState | null;
     publicPreviewActions?: LocalServicePublicPreviewActions;
@@ -465,6 +494,8 @@ export function ServiceRowView(props: Readonly<{
     onOpenDetail?: () => void;
     pressableRef?: ItemProps['pressableRef'];
     presentation?: 'row' | 'detail';
+    /** The phone detail's page lead (its back bar, a pending review), drawn at the top of its scroll. */
+    detailLead?: React.ReactNode;
     showDivider?: boolean;
     animationEnabled?: boolean;
     testID: string;
@@ -489,16 +520,20 @@ export function ServiceRowView(props: Readonly<{
             && isLocalServiceStateRunningV1(row.target.serviceState) && !hasUnsettledLocalServiceCustody(row) });
     const primary = row.primaryAction;
     // The one decision of what this entry offers, shared with the Processes port menu (plan 30 RU-3).
-    const offered = resolveLocalServiceEntryActions(row, props);
-    const canOpen = !operationActive && offered.open !== null;
+    const offered = resolveLocalServiceEntryActions(row, props, props.previews);
+    // This device has no private route to it: Open is not offered (a control that can't succeed is not shown).
+    const elsewhere = !operationActive && offered.open !== null && offered.openUnavailableReason !== null;
+    const canOpen = !operationActive && offered.open !== null && !elsewhere;
     const canStart = !operationActive && !runner.failure?.awaitingNativeStart && offered.start !== null;
     const startLabel = t('localServices.actions.startA11y');
     const canTerminate = !operationActive && offered.terminateDetected;
     const canForget = offered.forget;
     const canStop = !operationActive && offered.stopManaged;
     const canRestart = !operationActive && offered.restartManaged;
-    const addressValue = operationActive ? null : offered.address;
     const detail = props.presentation === 'detail';
+    // A loopback address on another machine can't be used here: the row stops offering to copy it,
+    // except as the phone detail's Address row, which names it.
+    const addressValue = operationActive || (elsewhere && !detail) ? null : offered.address;
     const addressCopy = useCopyServiceAddress(row.target, addressValue, props.onCopyServiceUrl);
     const startPendingId = `${row.id}:start`;
     // Local pending belongs to the pressed button; the daemon feed owns row lifecycle.
@@ -609,8 +644,29 @@ export function ServiceRowView(props: Readonly<{
      * consequence in a menu is safer and calmer than two red glyphs side by side, and
      * `ItemRowActions` already carries the destructive tone, the press frame and the popover.
      */
+    const shareOffer = !operationActive && props.publicPreviewActions
+        ? resolveLocalServicePublicLinkOffer({
+            state: props.publicPreviewState,
+            launchTarget: row.target,
+            capabilityDisabledReasons: props.publicPreviewCapabilityDisabledReasons,
+        })
+        : null;
+    // A collapsed desktop row offers the same link in its menu (RU2 J3), so sharing never hides behind
+    // an unmarked expansion; once expanded, the action line's Share a link is the one control for it.
+    const shareInMenu = !detail && props.expanded !== true && shareOffer?.kind === 'create' && Boolean(props.publicPreviewActions);
+    const handleMenuShare = useEventCallback(() => {
+        if (shareOffer?.kind === 'create' && props.publicPreviewActions) void shareOffer.request(props.publicPreviewActions, runner.run);
+    });
     const overflowActions = React.useMemo((): ItemAction[] => {
         const actions: ItemAction[] = [];
+        if (shareInMenu) {
+            actions.push({
+                id: 'share',
+                title: t('localServices.publicPreview.shareCta'),
+                icon: 'link',
+                onPress: handleMenuShare,
+            });
+        }
         // The phone detail's Address row opens the service, so copying it is a menu action there.
         if (detail && canOpen && addressValue) {
             actions.push({
@@ -660,7 +716,7 @@ export function ServiceRowView(props: Readonly<{
             });
         }
         return actions;
-    }, [addressCopy.copy, addressValue, canForget, canOpen, canRestart, canStop, canTerminate, detail, handleForget, handleRestart, handleStop, handleTerminate, row.terminateIdentityConfidence]);
+    }, [addressCopy.copy, addressValue, canForget, canOpen, canRestart, canStop, canTerminate, detail, handleForget, handleRestart, handleStop, handleMenuShare, handleTerminate, row.terminateIdentityConfidence, shareInMenu]);
 
     const pending = runner.pendingId === menuPendingId;
     // A row still hydrating its binding shows the row spinner instead of a word; a pending menu action does too.
@@ -673,7 +729,7 @@ export function ServiceRowView(props: Readonly<{
     // on is reachable on every service, stopped or address-less). A live service with no address — a
     // queue worker — keeps its overflow on the row itself (lab s-services `jobs`).
     const hasPlacement = props.placement !== undefined && props.placement !== null && props.placement !== false;
-    const expandable = canOpen || Boolean(addressValue) || hasPublicLink || hasPlacement;
+    const expandable = canOpen || elsewhere || Boolean(addressValue) || hasPublicLink || hasPlacement;
     const expanded = expandable && props.expanded === true;
     const onExpandedChange = props.onExpandedChange;
 
@@ -724,19 +780,28 @@ export function ServiceRowView(props: Readonly<{
     const primaryControl = openControl ?? startControl;
     // "Share a link" sits in the action line beside Copy address (services lab O); an issued link and
     // the reasons a link cannot be made are the public-preview block's below it.
-    const shareOffer = !operationActive && props.publicPreviewActions
-        ? resolveLocalServicePublicLinkOffer({
-            state: props.publicPreviewState,
-            launchTarget: row.target,
-            capabilityDisabledReasons: props.publicPreviewCapabilityDisabledReasons,
-        })
-        : null;
     const shareControl = shareOffer?.kind === 'create' && props.publicPreviewActions ? (
         <LocalServiceShareLinkButton
             testID={`${props.testID}-share`}
             offer={shareOffer}
             actions={props.publicPreviewActions}
+            presentation={elsewhere ? 'lead' : 'line'}
         />
+    ) : null;
+    // Where it runs and the way that works from here: one line, worded by what sharing can do now.
+    const elsewhereText = !elsewhere ? null
+        : shareControl ? t('browserShell.unavailable.previewElsewhereHere', { machine: machineName })
+            : props.publicPreviewState && props.publicPreviewActions ? t('browserShell.unavailable.previewElsewhereNoRoute')
+                : t('browserShell.unavailable.previewElsewhereSharingOff');
+    const pinnedShare = detail && elsewhere && shareOffer?.kind === 'create' && props.publicPreviewActions ? (
+        <PagePinnedBar testID={`${props.testID}-pinned`}>
+            <LocalServiceShareLinkButton
+                testID={`${props.testID}-share`}
+                offer={shareOffer}
+                actions={props.publicPreviewActions}
+                presentation="pinned"
+            />
+        </PagePinnedBar>
     ) : null;
     // A live service keeps its overflow (Restart, Stop) on the row beside its own control, collapsed or open, so
     // Stop is reachable without expanding it: the overflow sits before the row's control, which keeps its column.
@@ -771,6 +836,7 @@ export function ServiceRowView(props: Readonly<{
     // One body for the desktop expansion and the phone's pushed detail; only the container differs.
     const body = (
         <View testID={`${props.testID}-expansion`} style={styles.expansion}>
+            {elsewhereText ? <Text testID={`${props.testID}-elsewhere`} style={[styles.elsewhere, actionBar ? null : styles.elsewhereClosing]}>{elsewhereText}</Text> : null}
             {actionBar}
             {/* The action line ends where the placement begins (lab RUNSON). */}
             {actionBar && hasPlacement ? <ServiceActionDivider /> : null}
@@ -790,81 +856,85 @@ export function ServiceRowView(props: Readonly<{
         // The pushed page is a page (lab RUNSONp): one grouped list on the shared sheet (Address, Runs on,
         // If it can't run there, Share a link), then the Service's Stop as its own destructive row. Each sheet
         // keeps the group's own untitled top gap, so the identity row, the list and Stop/Start read as blocks.
-        const hasListRows = Boolean(addressValue) || hasPlacement || shareOffer !== null;
+        const hasListRows = Boolean(addressValue) || hasPlacement || (shareOffer !== null && !pinnedShare);
         return (
-            <View testID={props.testID}>
-                <Item
-                    testID={`${props.testID}-item`}
-                    title={title}
-                    icon={identity}
-                    subtitle={subtitle}
-                    subtitleLines={2}
-                    mode="info"
-                    showChevron={false}
-                    showDivider={false}
-                    loading={rowLoading}
-                    rightElement={rowControl}
-                    bottomElement={output}
-                    bottomElementInset="text"
-                />
-                {failureNotice}
-                {hasListRows ? (
-                    <ItemGroup>
-                        {addressValue ? (
+            <View testID={props.testID} style={styles.detailPage}>
+                <ScrollView style={styles.detailPage} contentContainerStyle={styles.detailScroll}>
+                    {props.detailLead}
+                    <Item
+                        testID={`${props.testID}-item`}
+                        title={title}
+                        icon={identity}
+                        subtitle={subtitle}
+                        subtitleLines={2}
+                        mode="info"
+                        showChevron={false}
+                        showDivider={false}
+                        loading={rowLoading}
+                        rightElement={rowControl}
+                        bottomElement={output}
+                        bottomElementInset="text"
+                    />
+                    {failureNotice}
+                    {hasListRows ? (
+                        <ItemGroup>
+                            {addressValue ? (
+                                <Item
+                                    testID={`${props.testID}-address`}
+                                    title={t('localServices.row.address')}
+                                    subtitle={elsewhereText ?? (canOpen ? t('localServices.row.addressOpensHere') : undefined)}
+                                    subtitleLines={2}
+                                    detail={row.portLabel ?? row.addressLabel ?? addressValue}
+                                    showChevron={canOpen}
+                                    onPress={canOpen ? handleOpen : addressCopy.copy}
+                                    rightElement={addressCopy.copied ? <CopiedPill visible testID={`${props.testID}-copy-address-feedback`} /> : undefined}
+                                />
+                            ) : null}
+                            {props.placement}
+                            {shareOffer && props.publicPreviewActions && !pinnedShare ? (
+                                <LocalServiceShareLinkRow
+                                    testID={`${props.testID}-share`}
+                                    offer={shareOffer}
+                                    actions={props.publicPreviewActions}
+                                />
+                            ) : null}
+                        </ItemGroup>
+                    ) : null}
+                    <LocalServicePublicPreviewControls
+                        launchTargets={operationActive ? [] : [row.target]}
+                        state={operationActive ? null : props.publicPreviewState}
+                        actions={operationActive ? undefined : props.publicPreviewActions}
+                        capabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
+                        shareInActionLine
+                        reasonsInList
+                        testID={`${props.testID}-public-preview`}
+                    />
+                    {canStart ? (
+                        <ItemGroup>
                             <Item
-                                testID={`${props.testID}-address`}
-                                title={t('localServices.row.address')}
-                                subtitle={canOpen ? t('localServices.row.addressOpensHere') : undefined}
-                                subtitleLines={2}
-                                detail={row.portLabel ?? row.addressLabel ?? addressValue}
-                                showChevron={canOpen}
-                                onPress={canOpen ? handleOpen : addressCopy.copy}
-                                rightElement={addressCopy.copied ? <CopiedPill visible testID={`${props.testID}-copy-address-feedback`} /> : undefined}
+                                testID={`${props.testID}-start-row`}
+                                title={t('common.start')}
+                                accessibilityLabel={startLabel}
+                                showChevron={false}
+                                loading={pending || startInFlight || row.status === 'starting'}
+                                onPress={handleStart}
                             />
-                        ) : null}
-                        {props.placement}
-                        {shareOffer && props.publicPreviewActions ? (
-                            <LocalServiceShareLinkRow
-                                testID={`${props.testID}-share`}
-                                offer={shareOffer}
-                                actions={props.publicPreviewActions}
+                        </ItemGroup>
+                    ) : null}
+                    {canStop ? (
+                        <ItemGroup>
+                            <Item
+                                testID={`${props.testID}-stop`}
+                                title={t('localServices.actions.stopConfirmCta')}
+                                destructive
+                                showChevron={false}
+                                loading={rowLoading}
+                                onPress={handleStop}
                             />
-                        ) : null}
-                    </ItemGroup>
-                ) : null}
-                <LocalServicePublicPreviewControls
-                    launchTargets={operationActive ? [] : [row.target]}
-                    state={operationActive ? null : props.publicPreviewState}
-                    actions={operationActive ? undefined : props.publicPreviewActions}
-                    capabilityDisabledReasons={props.publicPreviewCapabilityDisabledReasons}
-                    shareInActionLine
-                    reasonsInList
-                    testID={`${props.testID}-public-preview`}
-                />
-                {canStart ? (
-                    <ItemGroup>
-                        <Item
-                            testID={`${props.testID}-start-row`}
-                            title={t('common.start')}
-                            accessibilityLabel={startLabel}
-                            showChevron={false}
-                            loading={pending || startInFlight || row.status === 'starting'}
-                            onPress={handleStart}
-                        />
-                    </ItemGroup>
-                ) : null}
-                {canStop ? (
-                    <ItemGroup>
-                        <Item
-                            testID={`${props.testID}-stop`}
-                            title={t('localServices.actions.stopConfirmCta')}
-                            destructive
-                            showChevron={false}
-                            loading={rowLoading}
-                            onPress={handleStop}
-                        />
-                    </ItemGroup>
-                ) : null}
+                        </ItemGroup>
+                    ) : null}
+                </ScrollView>
+                {pinnedShare}
             </View>
         );
     }

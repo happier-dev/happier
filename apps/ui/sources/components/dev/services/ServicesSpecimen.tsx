@@ -26,6 +26,7 @@ import {
     createLocalServicePublicPreviewState,
 } from '@/sync/domains/local/services/publicPreview/store';
 import type { LocalServicePublicPreviewActions } from '@/components/sessions/localServices/publicPreviewActions';
+import { createLocalServicePreviewState, type LocalServicePreviewRow, type LocalServicePreviewState } from '@/sync/domains/local/services/preview/store';
 import { t } from '@/text';
 
 /**
@@ -91,6 +92,19 @@ const INVENTORY = applyLocalServiceInventorySnapshot(createLocalServiceInventory
     diagnostics: [],
 });
 
+/** `?scan=denied`: the daemon could not watch the Project's root (permission), so the rows stay under one warning line. */
+const INVENTORY_SCAN_DENIED = applyLocalServiceInventorySnapshot(createLocalServiceInventoryState(), {
+    v: 1,
+    machineId: MACHINE,
+    generatedAt: 1_000,
+    refreshState: 'error',
+    entries: [inventoryRow('web', 5173, 'vite'), inventoryRow('storybook', 6006, 'storybook dev')],
+    diagnostics: [{
+        code: 'local_services_declaration_observation_unavailable', severity: 'warning',
+        message: JSON.stringify({ root: '/Users/leeroy/projects/storefront', role: 'project_root', syscall: 'watch', code: 'EACCES' }),
+    }],
+});
+
 const LAUNCHER = applyLocalServiceLauncherSnapshot(createLocalServiceLauncherState(), {
     v: 1,
     machineId: MACHINE,
@@ -139,7 +153,25 @@ const PUBLIC_PREVIEW_ACTIONS: LocalServicePublicPreviewActions = {
     revoke: async () => undefined,
 };
 
-const MACHINE_ONLINE = { name: 'MacBook Pro', homeDir: null, reachability: 'reachable' as const };
+/**
+ * Services lab R: this device has no private route to the Machine's previews (the server's preview
+ * access owner said so), so the rows offer Share a link instead of Open.
+ */
+function unreachablePreviews(): LocalServicePreviewState {
+    const rows = ['web', 'storybook'].map((id): LocalServicePreviewRow => ({
+        previewId: `preview-${id}`,
+        resource: { previewId: `preview-${id}` } as LocalServicePreviewRow['resource'],
+        accessUrl: null,
+        expiresAt: null,
+        accessUnavailableReasonCode: 'preview_private_route_unavailable',
+        diagnostics: [],
+    }));
+    return { ...createLocalServicePreviewState(), generatedAt: 1_000, previewIds: rows.map((row) => row.previewId),
+        previewsById: new Map(rows.map((row) => [row.previewId, row])) };
+}
+const PREVIEWS_UNREACHABLE = unreachablePreviews();
+
+const MACHINE_ONLINE = { name: 'MacBook Pro', homeDir: '/Users/leeroy', reachability: 'reachable' as const };
 
 function PublishedHeader(): React.ReactElement {
     const published = usePublishedPaneHeaderContent('services');
@@ -153,7 +185,7 @@ function PublishedHeader(): React.ReactElement {
     );
 }
 
-export function ServicesSpecimen(props: Readonly<{ phone: boolean }>): React.ReactElement {
+export function ServicesSpecimen(props: Readonly<{ phone: boolean; scan?: 'denied'; remote?: boolean }>): React.ReactElement {
     const [scope, setScope] = React.useState<ServicesScope>('workspace');
     const onForget = React.useCallback(async (target: LocalServiceLaunchTarget) => {
         publishPresentationNotice({
@@ -172,7 +204,7 @@ export function ServicesSpecimen(props: Readonly<{ phone: boolean }>): React.Rea
                         <PublishedHeader />
                         <PaneHeaderSlotScope slotKey="services">
                             <DetectedLocalServicesPane
-                                inventoryState={INVENTORY}
+                                inventoryState={props.scan === 'denied' ? INVENTORY_SCAN_DENIED : INVENTORY}
                                 launcherState={LAUNCHER}
                                 sessionId={SESSION}
                                 scope={scope}
@@ -184,6 +216,7 @@ export function ServicesSpecimen(props: Readonly<{ phone: boolean }>): React.Rea
                                 onForgetDetectedService={onForget}
                                 onCopyServiceUrl={async () => true}
                                 publicPreviewState={PUBLIC_PREVIEW}
+                                {...(props.remote ? { previewState: PREVIEWS_UNREACHABLE } : {})}
                                 publicPreviewActions={PUBLIC_PREVIEW_ACTIONS}
                                 onRefresh={() => undefined}
                                 testID="services-specimen-pane"
