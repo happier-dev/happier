@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { PluginJsonValueV2 } from '../../identity.js';
+import type { ActionFailureCauseV1 } from './pluginActionDtoSupport.generated.js';
 
 export type PluginDevLoopActionInputById = {
     readonly "plugins.scaffold": {
@@ -15,13 +16,19 @@ export type PluginDevLoopActionInputById = {
     readonly "plugins.install": {
         path: string;
         machineId?: string | undefined;
-        kind?: 'path' | 'archive' | 'npm' | undefined;
+        kind?: 'archive' | 'npm' | 'path' | undefined;
         selector?: string | undefined;
         integrity?: string | undefined;
         sdkRegistryOrigin?: string | undefined;
         dev?: boolean | undefined;
         dryRun?: boolean | undefined;
         force?: boolean | undefined;
+    } | {
+        source: {
+            kind: 'installed';
+            pluginId: string;
+        };
+        machineId?: string | undefined;
     } | {
         source: {
             kind: 'marketplace';
@@ -31,29 +38,23 @@ export type PluginDevLoopActionInputById = {
             packageName?: string | undefined;
         };
         machineId: string;
-    } | {
-        source: {
-            kind: 'installed';
-            pluginId: string;
-        };
-        machineId?: string | undefined;
     };
     readonly "plugins.uninstall": {
         pluginId: string;
         machineId?: string | undefined;
-        managedResourceDispositions?: {
+        managedResourceDispositions?: undefined | {
             managedId: string;
             expectedIntentRevision: number;
-            expectedAllocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             responsibility: 'manual';
-            expectedResource?: {
+            expectedResource?: undefined | {
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
                 value: unknown;
-                devcontainerObservation?: {
+                devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
                     workspaceFolder: string;
@@ -65,22 +66,22 @@ export type PluginDevLoopActionInputById = {
                         kind: 'child';
                         childPath: string;
                     };
-                } | undefined;
-            } | undefined;
-            expectedNativeOperationRef?: {
+                };
+            };
+            expectedNativeOperationRef?: undefined | {
                 value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-            } | undefined;
-            expectedRecovery?: {
+            };
+            expectedRecovery?: undefined | {
                 reference: string;
                 reason: string;
                 consoleUrl?: string | undefined;
-            } | undefined;
-        }[] | undefined;
+            };
+        }[];
         deleteData?: boolean | undefined;
     };
     readonly "plugins.enable": {
@@ -90,19 +91,19 @@ export type PluginDevLoopActionInputById = {
     };
     readonly "plugins.disable": {
         pluginId: string;
-        managedResourceDispositions?: {
+        managedResourceDispositions?: undefined | {
             managedId: string;
             expectedIntentRevision: number;
-            expectedAllocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             responsibility: 'manual';
-            expectedResource?: {
+            expectedResource?: undefined | {
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
                 value: unknown;
-                devcontainerObservation?: {
+                devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
                     workspaceFolder: string;
@@ -114,22 +115,22 @@ export type PluginDevLoopActionInputById = {
                         kind: 'child';
                         childPath: string;
                     };
-                } | undefined;
-            } | undefined;
-            expectedNativeOperationRef?: {
+                };
+            };
+            expectedNativeOperationRef?: undefined | {
                 value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-            } | undefined;
-            expectedRecovery?: {
+            };
+            expectedRecovery?: undefined | {
                 reference: string;
                 reason: string;
                 consoleUrl?: string | undefined;
-            } | undefined;
-        }[] | undefined;
+            };
+        }[];
         scope?: 'account' | 'machine' | undefined;
         machineId?: string | undefined;
     };
@@ -169,6 +170,639 @@ export type PluginDevLoopActionInputById = {
         projectRoot: string;
         sdkRegistryOrigin?: string | undefined;
     };
+    readonly "plugins.dev.publication.inspect": {
+        packageName?: string | undefined;
+        cursor?: string | undefined;
+        includeGithub?: true | undefined;
+        projectRoot?: string | undefined;
+        botTemplate?: undefined | {
+            draftArtifactId: string;
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+            release: {
+                v: 1;
+                version: string;
+                releasedAtMs: number;
+                changelog: string;
+                content: {
+                    v: 1;
+                    instructions: {
+                        markdown: string;
+                    };
+                    memoryRules: {
+                        key: string;
+                        text: string;
+                        topic?: string | undefined;
+                    }[];
+                    skills: {
+                        key: string;
+                        title: string;
+                        bundleSchemaId: 'skills.skill_md_v1';
+                        entries: {
+                            path: string;
+                            contentBase64: string;
+                            contentKind: 'binary' | 'utf8';
+                            unixMode?: null | number | undefined;
+                        }[];
+                    }[];
+                    needs: {
+                        software: {
+                            recipe: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            key: string;
+                            name: string;
+                            requirement: 'optional' | 'required';
+                            purpose: string;
+                            skipConsequence: string;
+                        }[];
+                        connectedAccounts: {
+                            serviceId: string;
+                            key: string;
+                            name: string;
+                            requirement: 'optional' | 'required';
+                            purpose: string;
+                            skipConsequence: string;
+                        }[];
+                        mcpServers: {
+                            definition: {
+                                name: string;
+                                transport: 'http' | 'sse' | 'stdio';
+                                env: Record<string, {
+                                    kind: 'input';
+                                    key: string;
+                                }>;
+                                inputs: {
+                                    key: string;
+                                    label: string;
+                                    purpose: string;
+                                    secret: boolean;
+                                    required: boolean;
+                                }[];
+                                description?: string | undefined;
+                                stdio?: undefined | {
+                                    command: {
+                                        kind: 'input';
+                                        key: string;
+                                    } | {
+                                        kind: 'literal';
+                                        value: string;
+                                    };
+                                    args: ({
+                                        kind: 'input';
+                                        key: string;
+                                    } | {
+                                        kind: 'literal';
+                                        value: string;
+                                    })[];
+                                    cwd?: undefined | {
+                                        kind: 'input';
+                                        key: string;
+                                    } | {
+                                        kind: 'session';
+                                    };
+                                };
+                                remote?: undefined | {
+                                    url: {
+                                        baseUrl: {
+                                            kind: 'input';
+                                            key: string;
+                                        } | {
+                                            kind: 'literal';
+                                            value: string;
+                                        };
+                                        query: {
+                                            key: {
+                                                kind: 'input';
+                                                key: string;
+                                            } | {
+                                                kind: 'literal';
+                                                value: string;
+                                            };
+                                            value: {
+                                                kind: 'input';
+                                                key: string;
+                                            };
+                                        }[];
+                                        username?: undefined | {
+                                            kind: 'input';
+                                            key: string;
+                                        };
+                                        password?: undefined | {
+                                            kind: 'input';
+                                            key: string;
+                                        };
+                                    };
+                                    headers: Record<string, {
+                                        kind: 'input';
+                                        key: string;
+                                    }>;
+                                };
+                                auth?: undefined | {
+                                    kind: 'oauth';
+                                };
+                            };
+                            key: string;
+                            name: string;
+                            requirement: 'optional' | 'required';
+                            purpose: string;
+                            skipConsequence: string;
+                        }[];
+                    };
+                    identity: {
+                        name: string;
+                        description: string;
+                        madeFromName?: string | undefined;
+                        face?: undefined | {
+                            style?: 'dither' | 'dots' | 'pixel' | 'planet' | 'solid' | undefined;
+                            body?: 'antlers' | 'bag' | 'bean' | 'beetle' | 'bracelegs' | 'brackets' | 'cat' | 'crab' | 'cursor' | 'cursortail' | 'drip' | 'drone' | 'feet' | 'ghost' | 'hopper' | 'jelly' | 'loaf' | 'octopus' | 'puddle' | 'pup' | 'robot' | 'rocket' | 'semi' | 'specter' | 'spider' | 'squat' | 'squid' | 'stilts' | 'tagclaws' | 'tail' | 'tall' | 'termbody' | 'tower' | 'ufo' | 'walker' | undefined;
+                            palette?: 'aurora' | 'daybreak' | 'glacier' | 'indigo' | 'ink' | 'lagoon' | 'moss' | 'orchid' | 'sand' | undefined;
+                            seed?: string | undefined;
+                            shape?: undefined | {
+                                v: 1;
+                                fill: string[];
+                                mouth: [
+                                    number,
+                                    number,
+                                    number
+                                ];
+                                stroke?: [
+                                    string,
+                                    number
+                                ][] | undefined;
+                                cut?: ([
+                                    string,
+                                    number
+                                ] | string)[] | undefined;
+                                origin?: 'custom' | 'surprise' | undefined;
+                            };
+                        };
+                    };
+                    suggestedAgent?: undefined | {
+                        agentId: string;
+                        modelId?: string | undefined;
+                    };
+                    firstTask?: string | undefined;
+                };
+            };
+        };
+        machineId?: string | undefined;
+        profileId?: string | undefined;
+    };
+    readonly "plugins.dev.publication.prepare": {
+        publication?: undefined | {
+            packageName?: string | undefined;
+            title?: string | undefined;
+            description?: string | undefined;
+            version?: string | undefined;
+            keywords?: string[] | undefined;
+            readme?: string | undefined;
+            changelog?: string | undefined;
+            icon?: undefined | {
+                iconResourceId: string;
+                monochrome?: boolean | undefined;
+            };
+            iconSource?: undefined | {
+                dataBase64: string;
+                contentType: 'image/png';
+            };
+        };
+        projectRoot?: string | undefined;
+        botTemplate?: undefined | {
+            draftArtifactId: string;
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+            release: {
+                v: 1;
+                version: string;
+                releasedAtMs: number;
+                changelog: string;
+                content: {
+                    v: 1;
+                    instructions: {
+                        markdown: string;
+                    };
+                    memoryRules: {
+                        key: string;
+                        text: string;
+                        topic?: string | undefined;
+                    }[];
+                    skills: {
+                        key: string;
+                        title: string;
+                        bundleSchemaId: 'skills.skill_md_v1';
+                        entries: {
+                            path: string;
+                            contentBase64: string;
+                            contentKind: 'binary' | 'utf8';
+                            unixMode?: null | number | undefined;
+                        }[];
+                    }[];
+                    needs: {
+                        software: {
+                            recipe: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            key: string;
+                            name: string;
+                            requirement: 'optional' | 'required';
+                            purpose: string;
+                            skipConsequence: string;
+                        }[];
+                        connectedAccounts: {
+                            serviceId: string;
+                            key: string;
+                            name: string;
+                            requirement: 'optional' | 'required';
+                            purpose: string;
+                            skipConsequence: string;
+                        }[];
+                        mcpServers: {
+                            definition: {
+                                name: string;
+                                transport: 'http' | 'sse' | 'stdio';
+                                env: Record<string, {
+                                    kind: 'input';
+                                    key: string;
+                                }>;
+                                inputs: {
+                                    key: string;
+                                    label: string;
+                                    purpose: string;
+                                    secret: boolean;
+                                    required: boolean;
+                                }[];
+                                description?: string | undefined;
+                                stdio?: undefined | {
+                                    command: {
+                                        kind: 'input';
+                                        key: string;
+                                    } | {
+                                        kind: 'literal';
+                                        value: string;
+                                    };
+                                    args: ({
+                                        kind: 'input';
+                                        key: string;
+                                    } | {
+                                        kind: 'literal';
+                                        value: string;
+                                    })[];
+                                    cwd?: undefined | {
+                                        kind: 'input';
+                                        key: string;
+                                    } | {
+                                        kind: 'session';
+                                    };
+                                };
+                                remote?: undefined | {
+                                    url: {
+                                        baseUrl: {
+                                            kind: 'input';
+                                            key: string;
+                                        } | {
+                                            kind: 'literal';
+                                            value: string;
+                                        };
+                                        query: {
+                                            key: {
+                                                kind: 'input';
+                                                key: string;
+                                            } | {
+                                                kind: 'literal';
+                                                value: string;
+                                            };
+                                            value: {
+                                                kind: 'input';
+                                                key: string;
+                                            };
+                                        }[];
+                                        username?: undefined | {
+                                            kind: 'input';
+                                            key: string;
+                                        };
+                                        password?: undefined | {
+                                            kind: 'input';
+                                            key: string;
+                                        };
+                                    };
+                                    headers: Record<string, {
+                                        kind: 'input';
+                                        key: string;
+                                    }>;
+                                };
+                                auth?: undefined | {
+                                    kind: 'oauth';
+                                };
+                            };
+                            key: string;
+                            name: string;
+                            requirement: 'optional' | 'required';
+                            purpose: string;
+                            skipConsequence: string;
+                        }[];
+                    };
+                    identity: {
+                        name: string;
+                        description: string;
+                        madeFromName?: string | undefined;
+                        face?: undefined | {
+                            style?: 'dither' | 'dots' | 'pixel' | 'planet' | 'solid' | undefined;
+                            body?: 'antlers' | 'bag' | 'bean' | 'beetle' | 'bracelegs' | 'brackets' | 'cat' | 'crab' | 'cursor' | 'cursortail' | 'drip' | 'drone' | 'feet' | 'ghost' | 'hopper' | 'jelly' | 'loaf' | 'octopus' | 'puddle' | 'pup' | 'robot' | 'rocket' | 'semi' | 'specter' | 'spider' | 'squat' | 'squid' | 'stilts' | 'tagclaws' | 'tail' | 'tall' | 'termbody' | 'tower' | 'ufo' | 'walker' | undefined;
+                            palette?: 'aurora' | 'daybreak' | 'glacier' | 'indigo' | 'ink' | 'lagoon' | 'moss' | 'orchid' | 'sand' | undefined;
+                            seed?: string | undefined;
+                            shape?: undefined | {
+                                v: 1;
+                                fill: string[];
+                                mouth: [
+                                    number,
+                                    number,
+                                    number
+                                ];
+                                stroke?: [
+                                    string,
+                                    number
+                                ][] | undefined;
+                                cut?: ([
+                                    string,
+                                    number
+                                ] | string)[] | undefined;
+                                origin?: 'custom' | 'surprise' | undefined;
+                            };
+                        };
+                    };
+                    suggestedAgent?: undefined | {
+                        agentId: string;
+                        modelId?: string | undefined;
+                    };
+                    firstTask?: string | undefined;
+                };
+            };
+        };
+        machineId?: string | undefined;
+        profileId?: string | undefined;
+    };
+    readonly "plugins.dev.publish": {
+        access: 'public';
+        mode: 'direct' | 'staged';
+        expectedArchiveIntegrity?: string | undefined;
+        github?: undefined | {
+            repository: {
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                deployment: string;
+                repository: string;
+            };
+            createRepository?: undefined | {
+                [x: string]: unknown;
+                providerKind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                owner: string;
+                repositoryName: string;
+                visibility: 'internal' | 'private' | 'public';
+                remoteName: unknown;
+                cwd?: string | undefined;
+                backendPreference?: undefined | {
+                    kind: 'prefer';
+                    backendId: string;
+                };
+                outcomeVersion?: 1 | undefined;
+                providerId?: string | undefined;
+                providerBaseUrl?: string | undefined;
+                ownerKind?: 'org' | 'user' | undefined;
+                description?: string | undefined;
+                remoteUrlKind?: 'https' | 'ssh' | undefined;
+                remoteConflictStrategy?: 'fail' | 'set-url' | undefined;
+                pushCurrentBranch?: boolean | undefined;
+            };
+            source?: undefined | {
+                remote: string;
+                branch: string;
+                commit?: undefined | {
+                    message: string;
+                    paths: string[];
+                };
+            };
+            release?: undefined | {
+                tagName: string;
+                targetCommitish: string;
+                name: string;
+                body: string;
+                prerelease: boolean;
+                makeLatest: 'false' | 'legacy' | 'true';
+                releaseId?: string | undefined;
+            };
+        };
+        githubOnly?: true | undefined;
+        publication?: undefined | {
+            packageName?: string | undefined;
+            title?: string | undefined;
+            description?: string | undefined;
+            version?: string | undefined;
+            keywords?: string[] | undefined;
+            readme?: string | undefined;
+            changelog?: string | undefined;
+            icon?: undefined | {
+                iconResourceId: string;
+                monochrome?: boolean | undefined;
+            };
+            iconSource?: undefined | {
+                dataBase64: string;
+                contentType: 'image/png';
+            };
+        };
+        projectRoot?: string | undefined;
+        botTemplate?: undefined | {
+            draftArtifactId: string;
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+            release: {
+                v: 1;
+                version: string;
+                releasedAtMs: number;
+                changelog: string;
+                content: {
+                    v: 1;
+                    instructions: {
+                        markdown: string;
+                    };
+                    memoryRules: {
+                        key: string;
+                        text: string;
+                        topic?: string | undefined;
+                    }[];
+                    skills: {
+                        key: string;
+                        title: string;
+                        bundleSchemaId: 'skills.skill_md_v1';
+                        entries: {
+                            path: string;
+                            contentBase64: string;
+                            contentKind: 'binary' | 'utf8';
+                            unixMode?: null | number | undefined;
+                        }[];
+                    }[];
+                    needs: {
+                        software: {
+                            recipe: {
+                                pluginId: string;
+                                recipeId: string;
+                                revision: string;
+                            };
+                            key: string;
+                            name: string;
+                            requirement: 'optional' | 'required';
+                            purpose: string;
+                            skipConsequence: string;
+                        }[];
+                        connectedAccounts: {
+                            serviceId: string;
+                            key: string;
+                            name: string;
+                            requirement: 'optional' | 'required';
+                            purpose: string;
+                            skipConsequence: string;
+                        }[];
+                        mcpServers: {
+                            definition: {
+                                name: string;
+                                transport: 'http' | 'sse' | 'stdio';
+                                env: Record<string, {
+                                    kind: 'input';
+                                    key: string;
+                                }>;
+                                inputs: {
+                                    key: string;
+                                    label: string;
+                                    purpose: string;
+                                    secret: boolean;
+                                    required: boolean;
+                                }[];
+                                description?: string | undefined;
+                                stdio?: undefined | {
+                                    command: {
+                                        kind: 'input';
+                                        key: string;
+                                    } | {
+                                        kind: 'literal';
+                                        value: string;
+                                    };
+                                    args: ({
+                                        kind: 'input';
+                                        key: string;
+                                    } | {
+                                        kind: 'literal';
+                                        value: string;
+                                    })[];
+                                    cwd?: undefined | {
+                                        kind: 'input';
+                                        key: string;
+                                    } | {
+                                        kind: 'session';
+                                    };
+                                };
+                                remote?: undefined | {
+                                    url: {
+                                        baseUrl: {
+                                            kind: 'input';
+                                            key: string;
+                                        } | {
+                                            kind: 'literal';
+                                            value: string;
+                                        };
+                                        query: {
+                                            key: {
+                                                kind: 'input';
+                                                key: string;
+                                            } | {
+                                                kind: 'literal';
+                                                value: string;
+                                            };
+                                            value: {
+                                                kind: 'input';
+                                                key: string;
+                                            };
+                                        }[];
+                                        username?: undefined | {
+                                            kind: 'input';
+                                            key: string;
+                                        };
+                                        password?: undefined | {
+                                            kind: 'input';
+                                            key: string;
+                                        };
+                                    };
+                                    headers: Record<string, {
+                                        kind: 'input';
+                                        key: string;
+                                    }>;
+                                };
+                                auth?: undefined | {
+                                    kind: 'oauth';
+                                };
+                            };
+                            key: string;
+                            name: string;
+                            requirement: 'optional' | 'required';
+                            purpose: string;
+                            skipConsequence: string;
+                        }[];
+                    };
+                    identity: {
+                        name: string;
+                        description: string;
+                        madeFromName?: string | undefined;
+                        face?: undefined | {
+                            style?: 'dither' | 'dots' | 'pixel' | 'planet' | 'solid' | undefined;
+                            body?: 'antlers' | 'bag' | 'bean' | 'beetle' | 'bracelegs' | 'brackets' | 'cat' | 'crab' | 'cursor' | 'cursortail' | 'drip' | 'drone' | 'feet' | 'ghost' | 'hopper' | 'jelly' | 'loaf' | 'octopus' | 'puddle' | 'pup' | 'robot' | 'rocket' | 'semi' | 'specter' | 'spider' | 'squat' | 'squid' | 'stilts' | 'tagclaws' | 'tail' | 'tall' | 'termbody' | 'tower' | 'ufo' | 'walker' | undefined;
+                            palette?: 'aurora' | 'daybreak' | 'glacier' | 'indigo' | 'ink' | 'lagoon' | 'moss' | 'orchid' | 'sand' | undefined;
+                            seed?: string | undefined;
+                            shape?: undefined | {
+                                v: 1;
+                                fill: string[];
+                                mouth: [
+                                    number,
+                                    number,
+                                    number
+                                ];
+                                stroke?: [
+                                    string,
+                                    number
+                                ][] | undefined;
+                                cut?: ([
+                                    string,
+                                    number
+                                ] | string)[] | undefined;
+                                origin?: 'custom' | 'surprise' | undefined;
+                            };
+                        };
+                    };
+                    suggestedAgent?: undefined | {
+                        agentId: string;
+                        modelId?: string | undefined;
+                    };
+                    firstTask?: string | undefined;
+                };
+            };
+        };
+        machineId?: string | undefined;
+        profileId?: string | undefined;
+    };
+    readonly "plugins.dev.publication.status": {
+        profileId: string;
+        packageName: string;
+        version: string;
+        integrity: string;
+        machineId?: string | undefined;
+    };
     readonly "plugins.doctor": {
         locator: string;
     };
@@ -180,18 +814,13 @@ export type PluginDevLoopActionInputById = {
     readonly "plugins.reload": {
         pluginId: string;
     };
-    readonly "plugins.list": Record<string, never>;
+    readonly "plugins.list": {
+        projection?: 'summary' | undefined;
+    };
     readonly "plugins.change.status": {
         pendingChangeId: string;
     };
     readonly "plugins.sessionHooks.status.get": {
-        intent: 'passive_inventory';
-        agent?: {
-            localId: string;
-        } | undefined;
-        cursor?: string | undefined;
-        limit?: number | undefined;
-    } | {
         intent: 'install_preview';
         agent: {
             localId: string;
@@ -202,6 +831,13 @@ export type PluginDevLoopActionInputById = {
             localId: string;
         };
         installationId: string;
+    } | {
+        intent: 'passive_inventory';
+        agent?: undefined | {
+            localId: string;
+        };
+        cursor?: string | undefined;
+        limit?: number | undefined;
     };
     readonly "plugins.sessionHooks.install": {
         agent: {
@@ -231,13 +867,21 @@ export type PluginDevLoopActionInputById = {
 export type PluginDevLoopActionResultById = {
     readonly "plugins.scaffold": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -252,24 +896,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.install": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -284,24 +928,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.uninstall": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -316,24 +960,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.enable": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -348,24 +992,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.disable": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -380,24 +1024,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.rollback": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -412,24 +1056,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.trust.forget": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -444,24 +1088,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.update_policy.set": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -476,24 +1120,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.dev.submit": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -508,24 +1152,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.dev.unregister": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -540,24 +1184,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.dev.install": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -572,24 +1216,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.dev.typecheck": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -604,24 +1248,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.dev.build": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -636,24 +1280,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.dev.test": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -668,24 +1312,674 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
+    };
+    readonly "plugins.dev.publication.inspect": {
         ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
+        kind: 'plugins_dev_publication_inspect';
+        result: {
+            status: 'failed';
+            diagnostics: {
+                code: string;
+                message: string;
+            }[];
+            scaffold?: undefined | {
+                sourceRootPath: string;
+                sessionDirectory: string;
+            };
+        } | {
+            status: 'ready';
+            publication: {
+                packageName?: string | undefined;
+                title?: string | undefined;
+                description?: string | undefined;
+                version?: string | undefined;
+                keywords?: string[] | undefined;
+                readme?: string | undefined;
+                changelog?: string | undefined;
+                icon?: undefined | {
+                    iconResourceId: string;
+                    monochrome?: boolean | undefined;
+                };
+                iconSource?: undefined | {
+                    dataBase64: string;
+                    contentType: 'image/png';
+                };
+            };
+            profiles: {
+                displayName: string;
+                origin: string;
+                scopes: string[];
+                useAsDefault: boolean;
+                allowPrivateNetwork: boolean;
+                profileId: string;
+                hasCredentials: boolean;
+                authenticationState: 'configured' | 'missing';
+                availability: 'available' | 'offline' | 'sign_in_required' | 'unknown';
+                lastSuccessfulCheckAtMs: null | number;
+                updatedAtMs: number;
+            }[];
+            projectRoot?: string | undefined;
+            resources?: undefined | {
+                path: string;
+                id: string;
+                kind: 'asset' | 'config' | 'prompt' | 'skill' | 'template';
+                contentType: string;
+            }[];
+            github?: undefined | {
+                status: 'ready' | 'unavailable';
+                reason?: string | undefined;
+                repository?: undefined | {
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    deployment: string;
+                    repository: string;
+                };
+                remote?: string | undefined;
+                branch?: string | undefined;
+                publishTargets?: undefined | {
+                    [x: string]: unknown;
+                    success: false;
+                    error: string;
+                    outcome?: undefined | {
+                        kind: 'cancelled';
+                        repositoryState: {
+                            hasConflicts: boolean;
+                            operation: null | {
+                                kind: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
+                                canContinue: boolean;
+                                canAbort: boolean;
+                                sourceRef?: null | string | undefined;
+                                replayCommit?: string | undefined;
+                                baseOid?: string | undefined;
+                                headOid?: string | undefined;
+                                unresolvedCount?: number | undefined;
+                                conflicts?: undefined | {
+                                    path: string;
+                                    kind: string;
+                                    indexStages?: undefined | {
+                                        base?: string | undefined;
+                                        ours?: string | undefined;
+                                        theirs?: string | undefined;
+                                    };
+                                }[];
+                                canSkip?: boolean | undefined;
+                            };
+                            headOid?: string | undefined;
+                        };
+                        v: 1;
+                        nextActions: ({
+                            kind: 'abort' | 'authenticate' | 'choose_dirty_policy' | 'choose_reconcile' | 'configure_upstream' | 'continue' | 'reconcile_index' | 'refresh' | 'resolve_conflicts' | 'retry' | 'skip';
+                        } | {
+                            kind: 'open_url';
+                            url: string;
+                        })[];
+                        errorCode?: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported' | undefined;
+                        message?: string | undefined;
+                        recoveryStash?: undefined | {
+                            stashOid: string;
+                            stashRef?: string | undefined;
+                        };
+                    } | {
+                        kind: 'conflicted';
+                        errorCode: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported';
+                        repositoryState: {
+                            hasConflicts: boolean;
+                            operation: null | {
+                                kind: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
+                                canContinue: boolean;
+                                canAbort: boolean;
+                                sourceRef?: null | string | undefined;
+                                replayCommit?: string | undefined;
+                                baseOid?: string | undefined;
+                                headOid?: string | undefined;
+                                unresolvedCount?: number | undefined;
+                                conflicts?: undefined | {
+                                    path: string;
+                                    kind: string;
+                                    indexStages?: undefined | {
+                                        base?: string | undefined;
+                                        ours?: string | undefined;
+                                        theirs?: string | undefined;
+                                    };
+                                }[];
+                                canSkip?: boolean | undefined;
+                            };
+                            headOid?: string | undefined;
+                        };
+                        v: 1;
+                        nextActions: ({
+                            kind: 'abort' | 'authenticate' | 'choose_dirty_policy' | 'choose_reconcile' | 'configure_upstream' | 'continue' | 'reconcile_index' | 'refresh' | 'resolve_conflicts' | 'retry' | 'skip';
+                        } | {
+                            kind: 'open_url';
+                            url: string;
+                        })[];
+                        message?: string | undefined;
+                        recoveryStash?: undefined | {
+                            stashOid: string;
+                            stashRef?: string | undefined;
+                        };
+                    } | {
+                        kind: 'effect_applied_with_warning';
+                        errorCode: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported';
+                        effect: {
+                            kind: 'branch';
+                            name: string;
+                            headOid?: string | undefined;
+                        } | {
+                            kind: 'commit';
+                            commitSha: string;
+                        } | {
+                            kind: 'pull_request';
+                            url: string;
+                            number?: number | undefined;
+                        } | {
+                            kind: 'remote';
+                            remote: string;
+                            branch?: string | undefined;
+                            remoteOid?: string | undefined;
+                        } | {
+                            kind: 'stash';
+                            stashOid: string;
+                            stashRef?: string | undefined;
+                        };
+                        v: 1;
+                        nextActions: ({
+                            kind: 'abort' | 'authenticate' | 'choose_dirty_policy' | 'choose_reconcile' | 'configure_upstream' | 'continue' | 'reconcile_index' | 'refresh' | 'resolve_conflicts' | 'retry' | 'skip';
+                        } | {
+                            kind: 'open_url';
+                            url: string;
+                        })[];
+                        repositoryState?: undefined | {
+                            hasConflicts: boolean;
+                            operation: null | {
+                                kind: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
+                                canContinue: boolean;
+                                canAbort: boolean;
+                                sourceRef?: null | string | undefined;
+                                replayCommit?: string | undefined;
+                                baseOid?: string | undefined;
+                                headOid?: string | undefined;
+                                unresolvedCount?: number | undefined;
+                                conflicts?: undefined | {
+                                    path: string;
+                                    kind: string;
+                                    indexStages?: undefined | {
+                                        base?: string | undefined;
+                                        ours?: string | undefined;
+                                        theirs?: string | undefined;
+                                    };
+                                }[];
+                                canSkip?: boolean | undefined;
+                            };
+                            headOid?: string | undefined;
+                        };
+                        message?: string | undefined;
+                        recoveryStash?: undefined | {
+                            stashOid: string;
+                            stashRef?: string | undefined;
+                        };
+                    } | {
+                        kind: 'failed';
+                        errorCode: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported';
+                        v: 1;
+                        nextActions: ({
+                            kind: 'abort' | 'authenticate' | 'choose_dirty_policy' | 'choose_reconcile' | 'configure_upstream' | 'continue' | 'reconcile_index' | 'refresh' | 'resolve_conflicts' | 'retry' | 'skip';
+                        } | {
+                            kind: 'open_url';
+                            url: string;
+                        })[];
+                        repositoryState?: undefined | {
+                            hasConflicts: boolean;
+                            operation: null | {
+                                kind: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
+                                canContinue: boolean;
+                                canAbort: boolean;
+                                sourceRef?: null | string | undefined;
+                                replayCommit?: string | undefined;
+                                baseOid?: string | undefined;
+                                headOid?: string | undefined;
+                                unresolvedCount?: number | undefined;
+                                conflicts?: undefined | {
+                                    path: string;
+                                    kind: string;
+                                    indexStages?: undefined | {
+                                        base?: string | undefined;
+                                        ours?: string | undefined;
+                                        theirs?: string | undefined;
+                                    };
+                                }[];
+                                canSkip?: boolean | undefined;
+                            };
+                            headOid?: string | undefined;
+                        };
+                        message?: string | undefined;
+                        recoveryStash?: undefined | {
+                            stashOid: string;
+                            stashRef?: string | undefined;
+                        };
+                    } | {
+                        kind: 'needs_input';
+                        errorCode: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported';
+                        v: 1;
+                        nextActions: ({
+                            kind: 'abort' | 'authenticate' | 'choose_dirty_policy' | 'choose_reconcile' | 'configure_upstream' | 'continue' | 'reconcile_index' | 'refresh' | 'resolve_conflicts' | 'retry' | 'skip';
+                        } | {
+                            kind: 'open_url';
+                            url: string;
+                        })[];
+                        repositoryState?: undefined | {
+                            hasConflicts: boolean;
+                            operation: null | {
+                                kind: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
+                                canContinue: boolean;
+                                canAbort: boolean;
+                                sourceRef?: null | string | undefined;
+                                replayCommit?: string | undefined;
+                                baseOid?: string | undefined;
+                                headOid?: string | undefined;
+                                unresolvedCount?: number | undefined;
+                                conflicts?: undefined | {
+                                    path: string;
+                                    kind: string;
+                                    indexStages?: undefined | {
+                                        base?: string | undefined;
+                                        ours?: string | undefined;
+                                        theirs?: string | undefined;
+                                    };
+                                }[];
+                                canSkip?: boolean | undefined;
+                            };
+                            headOid?: string | undefined;
+                        };
+                        message?: string | undefined;
+                        recoveryStash?: undefined | {
+                            stashOid: string;
+                            stashRef?: string | undefined;
+                        };
+                    } | {
+                        kind: 'outcome_unknown';
+                        errorCode: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported';
+                        reconciliation: {
+                            kind: 'commit';
+                            commitSha: string;
+                        } | {
+                            kind: 'pull_request';
+                            head: string;
+                            base?: string | undefined;
+                            providerId?: string | undefined;
+                            repository?: string | undefined;
+                            url?: string | undefined;
+                        } | {
+                            kind: 'remote_ref';
+                            remote: string;
+                            branch?: string | undefined;
+                            expectedOid?: string | undefined;
+                        } | {
+                            kind: 'repository_status';
+                            cwd?: string | undefined;
+                        } | {
+                            kind: 'stash';
+                            stashOid?: string | undefined;
+                            message?: string | undefined;
+                        };
+                        v: 1;
+                        nextActions: ({
+                            kind: 'abort' | 'authenticate' | 'choose_dirty_policy' | 'choose_reconcile' | 'configure_upstream' | 'continue' | 'reconcile_index' | 'refresh' | 'resolve_conflicts' | 'retry' | 'skip';
+                        } | {
+                            kind: 'open_url';
+                            url: string;
+                        })[];
+                        repositoryState?: undefined | {
+                            hasConflicts: boolean;
+                            operation: null | {
+                                kind: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
+                                canContinue: boolean;
+                                canAbort: boolean;
+                                sourceRef?: null | string | undefined;
+                                replayCommit?: string | undefined;
+                                baseOid?: string | undefined;
+                                headOid?: string | undefined;
+                                unresolvedCount?: number | undefined;
+                                conflicts?: undefined | {
+                                    path: string;
+                                    kind: string;
+                                    indexStages?: undefined | {
+                                        base?: string | undefined;
+                                        ours?: string | undefined;
+                                        theirs?: string | undefined;
+                                    };
+                                }[];
+                                canSkip?: boolean | undefined;
+                            };
+                            headOid?: string | undefined;
+                        };
+                        message?: string | undefined;
+                        recoveryStash?: undefined | {
+                            stashOid: string;
+                            stashRef?: string | undefined;
+                        };
+                    } | {
+                        kind: 'succeeded';
+                        v: 1;
+                        nextActions: ({
+                            kind: 'abort' | 'authenticate' | 'choose_dirty_policy' | 'choose_reconcile' | 'configure_upstream' | 'continue' | 'reconcile_index' | 'refresh' | 'resolve_conflicts' | 'retry' | 'skip';
+                        } | {
+                            kind: 'open_url';
+                            url: string;
+                        })[];
+                        effect?: undefined | {
+                            kind: 'branch';
+                            name: string;
+                            headOid?: string | undefined;
+                        } | {
+                            kind: 'commit';
+                            commitSha: string;
+                        } | {
+                            kind: 'pull_request';
+                            url: string;
+                            number?: number | undefined;
+                        } | {
+                            kind: 'remote';
+                            remote: string;
+                            branch?: string | undefined;
+                            remoteOid?: string | undefined;
+                        } | {
+                            kind: 'stash';
+                            stashOid: string;
+                            stashRef?: string | undefined;
+                        };
+                        repositoryState?: undefined | {
+                            hasConflicts: boolean;
+                            operation: null | {
+                                kind: 'cherry_pick' | 'merge' | 'rebase' | 'revert';
+                                canContinue: boolean;
+                                canAbort: boolean;
+                                sourceRef?: null | string | undefined;
+                                replayCommit?: string | undefined;
+                                baseOid?: string | undefined;
+                                headOid?: string | undefined;
+                                unresolvedCount?: number | undefined;
+                                conflicts?: undefined | {
+                                    path: string;
+                                    kind: string;
+                                    indexStages?: undefined | {
+                                        base?: string | undefined;
+                                        ours?: string | undefined;
+                                        theirs?: string | undefined;
+                                    };
+                                }[];
+                                canSkip?: boolean | undefined;
+                            };
+                            headOid?: string | undefined;
+                        };
+                        message?: string | undefined;
+                        recoveryStash?: undefined | {
+                            stashOid: string;
+                            stashRef?: string | undefined;
+                        };
+                    };
+                    errorCode?: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported' | undefined;
+                    failureCause?: ActionFailureCauseV1 | undefined;
+                    remediation?: undefined | {
+                        [x: string]: unknown;
+                        kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                        label?: string | undefined;
+                        action?: string | undefined;
+                        url?: string | undefined;
+                    };
+                    retryNotBeforeMs?: number | undefined;
+                    stdout?: string | undefined;
+                    stderr?: string | undefined;
+                } | {
+                    [x: string]: unknown;
+                    success: true;
+                    auth: {
+                        [x: string]: unknown;
+                        state: 'authenticated' | 'authentication_required' | 'unknown' | 'unsupported';
+                        profileKind: 'connected_account' | 'no_auth' | 'provider_cli' | 'unknown';
+                        profileKey?: string | undefined;
+                        label?: string | undefined;
+                        remediation?: undefined | {
+                            [x: string]: unknown;
+                            kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                            label?: string | undefined;
+                            action?: string | undefined;
+                            url?: string | undefined;
+                        };
+                    };
+                    defaultRepositoryName: string;
+                    targets: {
+                        [x: string]: unknown;
+                        provider: {
+                            [x: string]: unknown;
+                            id: string;
+                            kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                            displayName: string;
+                            baseUrl: string;
+                            urlSafety: {
+                                [x: string]: unknown;
+                                allowedSchemes: string[];
+                            };
+                            nameWithOwner?: string | undefined;
+                            repositoryWebUrl?: string | undefined;
+                            remoteName?: string | undefined;
+                        };
+                        owner: string;
+                        ownerKind: 'org' | 'user';
+                        label: string;
+                        supportedVisibilities: ('internal' | 'private' | 'public')[];
+                        supportedRemoteUrlKinds: ('https' | 'ssh')[];
+                        isDefault?: boolean | undefined;
+                        auth?: undefined | {
+                            [x: string]: unknown;
+                            state: 'authenticated' | 'authentication_required' | 'unknown' | 'unsupported';
+                            profileKind: 'connected_account' | 'no_auth' | 'provider_cli' | 'unknown';
+                            profileKey?: string | undefined;
+                            label?: string | undefined;
+                            remediation?: undefined | {
+                                [x: string]: unknown;
+                                kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+                                label?: string | undefined;
+                                action?: string | undefined;
+                                url?: string | undefined;
+                            };
+                        };
+                        diagnostics?: string[] | undefined;
+                    }[];
+                    diagnostics?: string[] | undefined;
+                };
+            };
+            nextVersions?: undefined | {
+                patch: string;
+                minor: string;
+                major: string;
+            };
+            history?: undefined | {
+                versions: {
+                    version: string;
+                    versionUrl?: string | undefined;
+                    integrity?: string | undefined;
+                    publishedAt?: string | undefined;
+                }[];
+                packageUrl?: string | undefined;
+                cursor?: string | undefined;
+            };
+        };
+    };
+    readonly "plugins.dev.publication.prepare": {
+        ok: boolean;
+        kind: 'plugins_dev_publication_prepare';
+        result: {
+            status: 'failed';
+            diagnostics: {
+                code: string;
+                message: string;
+            }[];
+        } | {
+            status: 'prepared';
+            packageName: string;
+            version: string;
+            publication: {
+                packageName?: string | undefined;
+                title?: string | undefined;
+                description?: string | undefined;
+                version?: string | undefined;
+                keywords?: string[] | undefined;
+                readme?: string | undefined;
+                changelog?: string | undefined;
+                icon?: undefined | {
+                    iconResourceId: string;
+                    monochrome?: boolean | undefined;
+                };
+                iconSource?: undefined | {
+                    dataBase64: string;
+                    contentType: 'image/png';
+                };
+            };
+            archiveIntegrity: string;
+            npmIntegrity: string;
+            archiveSizeBytes: number;
+            files: {
+                path: string;
+                sizeBytes: number;
+            }[];
+            diagnostics: {
+                code: string;
+                message: string;
+            }[];
+            projectRoot?: string | undefined;
+            sdkVersion?: string | undefined;
+            tests?: undefined | {
+                status: 'failed' | 'not_configured' | 'passed';
+            };
+            stages?: undefined | {
+                validation: 'failed' | 'passed';
+                build: 'failed' | 'not_configured' | 'passed';
+            };
+        };
+    };
+    readonly "plugins.dev.publish": {
+        ok: boolean;
+        kind: 'plugins_dev_publish';
+        result: {
+            status: 'authentication_failed' | 'authentication_required' | 'awaiting_maintainer' | 'cancelled' | 'challenge' | 'failed' | 'missing' | 'outcome_unknown' | 'published' | 'version_conflict';
+            packageName?: string | undefined;
+            version?: string | undefined;
+            integrity?: string | undefined;
+            registryOrigin?: string | undefined;
+            packageUrl?: string | undefined;
+            stageId?: string | undefined;
+            reviewUrl?: string | undefined;
+            code?: string | undefined;
+            github?: undefined | {
+                status: 'cancelled' | 'conflict' | 'failed' | 'outcome_unknown' | 'partial' | 'published';
+                phase: 'commit' | 'push' | 'release' | 'repository';
+                pushed: boolean;
+                repositoryUrl?: string | undefined;
+                releaseUrl?: string | undefined;
+                releaseId?: string | undefined;
+                commitSha?: string | undefined;
+                errorCode?: string | undefined;
+            };
+        } | {
+            status: 'failed';
+            diagnostics: {
+                code: string;
+                message: string;
+            }[];
+        } | {
+            status: 'review_required';
+            preparation: {
+                status: 'prepared';
+                packageName: string;
+                version: string;
+                publication: {
+                    packageName?: string | undefined;
+                    title?: string | undefined;
+                    description?: string | undefined;
+                    version?: string | undefined;
+                    keywords?: string[] | undefined;
+                    readme?: string | undefined;
+                    changelog?: string | undefined;
+                    icon?: undefined | {
+                        iconResourceId: string;
+                        monochrome?: boolean | undefined;
+                    };
+                    iconSource?: undefined | {
+                        dataBase64: string;
+                        contentType: 'image/png';
+                    };
+                };
+                archiveIntegrity: string;
+                npmIntegrity: string;
+                archiveSizeBytes: number;
+                files: {
+                    path: string;
+                    sizeBytes: number;
+                }[];
+                diagnostics: {
+                    code: string;
+                    message: string;
+                }[];
+                projectRoot?: string | undefined;
+                sdkVersion?: string | undefined;
+                tests?: undefined | {
+                    status: 'failed' | 'not_configured' | 'passed';
+                };
+                stages?: undefined | {
+                    validation: 'failed' | 'passed';
+                    build: 'failed' | 'not_configured' | 'passed';
+                };
+            };
+        };
+    };
+    readonly "plugins.dev.publication.status": {
+        ok: boolean;
+        kind: 'plugins_dev_publication_status';
+        result: {
+            status: 'authentication_failed' | 'authentication_required' | 'awaiting_maintainer' | 'cancelled' | 'challenge' | 'failed' | 'missing' | 'outcome_unknown' | 'published' | 'version_conflict';
+            packageName?: string | undefined;
+            version?: string | undefined;
+            integrity?: string | undefined;
+            registryOrigin?: string | undefined;
+            packageUrl?: string | undefined;
+            stageId?: string | undefined;
+            reviewUrl?: string | undefined;
+            code?: string | undefined;
+            github?: undefined | {
+                status: 'cancelled' | 'conflict' | 'failed' | 'outcome_unknown' | 'partial' | 'published';
+                phase: 'commit' | 'push' | 'release' | 'repository';
+                pushed: boolean;
+                repositoryUrl?: string | undefined;
+                releaseUrl?: string | undefined;
+                releaseId?: string | undefined;
+                commitSha?: string | undefined;
+                errorCode?: string | undefined;
+            };
+        } | {
+            status: 'failed';
+            diagnostics: {
+                code: string;
+                message: string;
+            }[];
+        };
     };
     readonly "plugins.doctor": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -700,24 +1994,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.pack": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -732,24 +2026,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.reload": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -764,24 +2058,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.list": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -796,24 +2090,24 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.change.status": {
         [x: string]: unknown;
+        ok: boolean;
+        kind: 'plugins_dev_build' | 'plugins_dev_install' | 'plugins_dev_submit' | 'plugins_dev_test' | 'plugins_dev_typecheck' | 'plugins_dev_unregister' | 'plugins_disable' | 'plugins_doctor' | 'plugins_enable' | 'plugins_install' | 'plugins_list' | 'plugins_pack' | 'plugins_reload' | 'plugins_rollback' | 'plugins_scaffold' | 'plugins_trust_forget' | 'plugins_uninstall' | 'plugins_update_policy_set';
+        outcome?: 'applied' | 'failed' | undefined;
+        pendingReview?: undefined;
+        pendingChangeId?: undefined;
+        review?: undefined;
+    } | {
+        [x: string]: unknown;
         ok: false;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload';
+        kind: 'plugins_dev_submit' | 'plugins_install' | 'plugins_reload';
         outcome: 'reviewRequired';
         pendingReview: {
             [x: string]: unknown;
             kind: 'reviewRequired';
-            reviewKind: 'projectTrust' | 'installation';
+            reviewKind: 'installation' | 'projectTrust';
             pendingChangeId: string;
             review: {
                 [x: string]: unknown;
@@ -828,16 +2122,14 @@ export type PluginDevLoopActionResultById = {
         status: {
             [x: string]: unknown;
         };
-    } | {
-        [x: string]: unknown;
-        ok: boolean;
-        kind: 'plugins_install' | 'plugins_dev_submit' | 'plugins_reload' | 'plugins_scaffold' | 'plugins_uninstall' | 'plugins_enable' | 'plugins_disable' | 'plugins_rollback' | 'plugins_trust_forget' | 'plugins_update_policy_set' | 'plugins_dev_unregister' | 'plugins_dev_install' | 'plugins_dev_typecheck' | 'plugins_dev_build' | 'plugins_dev_test' | 'plugins_doctor' | 'plugins_pack' | 'plugins_list';
-        outcome?: 'failed' | 'applied' | undefined;
-        pendingReview?: undefined;
-        pendingChangeId?: undefined;
-        review?: undefined;
     };
     readonly "plugins.sessionHooks.status.get": {
+        ok: false;
+        diagnostic: {
+            code: 'agent_unavailable' | 'concurrent_edit' | 'feature_disabled' | 'installation_replaced' | 'installation_unsupported' | 'invalid_config' | 'listener_unavailable' | 'operation_failed' | 'permission_denied' | 'version_unsupported';
+            retryable: boolean;
+        };
+    } | {
         ok: true;
         rows: {
             agent: {
@@ -845,6 +2137,39 @@ export type PluginDevLoopActionResultById = {
                 localId: string;
             };
             status: {
+                state: 'installed_disabled';
+                installationId: string;
+            } | {
+                state: 'installed_enabled';
+                installationId: string;
+            } | {
+                state: 'needs_attention';
+                diagnostic: {
+                    code: string;
+                    severity: 'error' | 'info' | 'warning';
+                    message?: string | undefined;
+                    details?: PluginJsonValueV2 | undefined;
+                    remediation?: undefined | {
+                        kind: 'installDependency';
+                        dependencyId: string;
+                    } | {
+                        kind: 'openSettings';
+                        path: string;
+                    } | {
+                        kind: 'openUrl';
+                        url: string;
+                    } | {
+                        kind: 'retry';
+                    } | {
+                        kind: 'selectAccount';
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                };
+                installationId?: string | undefined;
+            } | {
                 state: 'not_installed';
                 installPreview?: Readonly<{
                     previewId: string;
@@ -857,7 +2182,7 @@ export type PluginDevLoopActionResultById = {
                             eventId: string;
                             nativeEventName: string;
                             entry: Readonly<{
-                                matcher: string | null;
+                                matcher: null | string;
                                 hooks: readonly [
                                     Readonly<{
                                         type: 'command';
@@ -870,71 +2195,32 @@ export type PluginDevLoopActionResultById = {
                     }>[];
                 }> | undefined;
             } | {
-                state: 'installed_enabled';
-                installationId: string;
-            } | {
-                state: 'installed_disabled';
-                installationId: string;
-            } | {
-                state: 'needs_attention';
-                diagnostic: {
-                    code: string;
-                    severity: 'error' | 'info' | 'warning';
-                    message?: string | undefined;
-                    details?: PluginJsonValueV2 | undefined;
-                    remediation?: {
-                        kind: 'retry';
-                    } | {
-                        kind: 'openSettings';
-                        path: string;
-                    } | {
-                        kind: 'selectAccount';
-                        service: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                    } | {
-                        kind: 'installDependency';
-                        dependencyId: string;
-                    } | {
-                        kind: 'openUrl';
-                        url: string;
-                    } | undefined;
-                };
-                installationId?: string | undefined;
-            } | {
-                state: 'unsupported';
-                reason: 'version_unsupported' | 'installation_unsupported';
-            } | {
                 state: 'unavailable';
                 installationId: string;
+            } | {
+                state: 'unsupported';
+                reason: 'installation_unsupported' | 'version_unsupported';
             };
         }[];
-        nextCursor: string | null;
+        nextCursor: null | string;
         diagnostics: {
             code: 'installation_record_invalid' | 'installation_record_read_failed';
             retryable: boolean;
         }[];
-    } | {
-        ok: false;
-        diagnostic: {
-            code: 'version_unsupported' | 'installation_unsupported' | 'feature_disabled' | 'agent_unavailable' | 'invalid_config' | 'concurrent_edit' | 'listener_unavailable' | 'permission_denied' | 'installation_replaced' | 'operation_failed';
-            retryable: boolean;
-        };
     };
     readonly "plugins.sessionHooks.install": {
         ok: false;
         diagnostic: {
-            code: 'version_unsupported' | 'installation_unsupported' | 'feature_disabled' | 'agent_unavailable' | 'invalid_config' | 'concurrent_edit' | 'listener_unavailable' | 'permission_denied' | 'installation_replaced' | 'operation_failed';
+            code: 'agent_unavailable' | 'concurrent_edit' | 'feature_disabled' | 'installation_replaced' | 'installation_unsupported' | 'invalid_config' | 'listener_unavailable' | 'operation_failed' | 'permission_denied' | 'version_unsupported';
             retryable: boolean;
         };
     } | {
         ok: true;
         status: {
-            state: 'installed_enabled';
+            state: 'installed_disabled';
             installationId: string;
         } | {
-            state: 'installed_disabled';
+            state: 'installed_enabled';
             installationId: string;
         } | {
             state: 'needs_attention';
@@ -943,24 +2229,24 @@ export type PluginDevLoopActionResultById = {
                 severity: 'error' | 'info' | 'warning';
                 message?: string | undefined;
                 details?: PluginJsonValueV2 | undefined;
-                remediation?: {
-                    kind: 'retry';
+                remediation?: undefined | {
+                    kind: 'installDependency';
+                    dependencyId: string;
                 } | {
                     kind: 'openSettings';
                     path: string;
+                } | {
+                    kind: 'openUrl';
+                    url: string;
+                } | {
+                    kind: 'retry';
                 } | {
                     kind: 'selectAccount';
                     service: {
                         pluginId: string;
                         localId: string;
                     };
-                } | {
-                    kind: 'installDependency';
-                    dependencyId: string;
-                } | {
-                    kind: 'openUrl';
-                    url: string;
-                } | undefined;
+                };
             };
             installationId: string;
         };
@@ -968,16 +2254,16 @@ export type PluginDevLoopActionResultById = {
     readonly "plugins.sessionHooks.disable": {
         ok: false;
         diagnostic: {
-            code: 'version_unsupported' | 'installation_unsupported' | 'feature_disabled' | 'agent_unavailable' | 'invalid_config' | 'concurrent_edit' | 'listener_unavailable' | 'permission_denied' | 'installation_replaced' | 'operation_failed';
+            code: 'agent_unavailable' | 'concurrent_edit' | 'feature_disabled' | 'installation_replaced' | 'installation_unsupported' | 'invalid_config' | 'listener_unavailable' | 'operation_failed' | 'permission_denied' | 'version_unsupported';
             retryable: boolean;
         };
     } | {
         ok: true;
         status: {
-            state: 'installed_enabled';
+            state: 'installed_disabled';
             installationId: string;
         } | {
-            state: 'installed_disabled';
+            state: 'installed_enabled';
             installationId: string;
         } | {
             state: 'needs_attention';
@@ -986,24 +2272,24 @@ export type PluginDevLoopActionResultById = {
                 severity: 'error' | 'info' | 'warning';
                 message?: string | undefined;
                 details?: PluginJsonValueV2 | undefined;
-                remediation?: {
-                    kind: 'retry';
+                remediation?: undefined | {
+                    kind: 'installDependency';
+                    dependencyId: string;
                 } | {
                     kind: 'openSettings';
                     path: string;
+                } | {
+                    kind: 'openUrl';
+                    url: string;
+                } | {
+                    kind: 'retry';
                 } | {
                     kind: 'selectAccount';
                     service: {
                         pluginId: string;
                         localId: string;
                     };
-                } | {
-                    kind: 'installDependency';
-                    dependencyId: string;
-                } | {
-                    kind: 'openUrl';
-                    url: string;
-                } | undefined;
+                };
             };
             installationId: string;
         };
@@ -1011,16 +2297,16 @@ export type PluginDevLoopActionResultById = {
     readonly "plugins.sessionHooks.enable": {
         ok: false;
         diagnostic: {
-            code: 'version_unsupported' | 'installation_unsupported' | 'feature_disabled' | 'agent_unavailable' | 'invalid_config' | 'concurrent_edit' | 'listener_unavailable' | 'permission_denied' | 'installation_replaced' | 'operation_failed';
+            code: 'agent_unavailable' | 'concurrent_edit' | 'feature_disabled' | 'installation_replaced' | 'installation_unsupported' | 'invalid_config' | 'listener_unavailable' | 'operation_failed' | 'permission_denied' | 'version_unsupported';
             retryable: boolean;
         };
     } | {
         ok: true;
         status: {
-            state: 'installed_enabled';
+            state: 'installed_disabled';
             installationId: string;
         } | {
-            state: 'installed_disabled';
+            state: 'installed_enabled';
             installationId: string;
         } | {
             state: 'needs_attention';
@@ -1029,24 +2315,24 @@ export type PluginDevLoopActionResultById = {
                 severity: 'error' | 'info' | 'warning';
                 message?: string | undefined;
                 details?: PluginJsonValueV2 | undefined;
-                remediation?: {
-                    kind: 'retry';
+                remediation?: undefined | {
+                    kind: 'installDependency';
+                    dependencyId: string;
                 } | {
                     kind: 'openSettings';
                     path: string;
+                } | {
+                    kind: 'openUrl';
+                    url: string;
+                } | {
+                    kind: 'retry';
                 } | {
                     kind: 'selectAccount';
                     service: {
                         pluginId: string;
                         localId: string;
                     };
-                } | {
-                    kind: 'installDependency';
-                    dependencyId: string;
-                } | {
-                    kind: 'openUrl';
-                    url: string;
-                } | undefined;
+                };
             };
             installationId: string;
         };
@@ -1054,7 +2340,7 @@ export type PluginDevLoopActionResultById = {
     readonly "plugins.sessionHooks.uninstall": {
         ok: false;
         diagnostic: {
-            code: 'version_unsupported' | 'installation_unsupported' | 'feature_disabled' | 'agent_unavailable' | 'invalid_config' | 'concurrent_edit' | 'listener_unavailable' | 'permission_denied' | 'installation_replaced' | 'operation_failed';
+            code: 'agent_unavailable' | 'concurrent_edit' | 'feature_disabled' | 'installation_replaced' | 'installation_unsupported' | 'invalid_config' | 'listener_unavailable' | 'operation_failed' | 'permission_denied' | 'version_unsupported';
             retryable: boolean;
         };
     } | {

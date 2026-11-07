@@ -6,60 +6,123 @@
 export type ScopeActionInputById = {
     readonly "file.editor.save": {
         tabId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "file.editor.resolve": {
-        resolution: 'useMine' | 'useTheirs' | 'discardDraft';
+        resolution: 'discardDraft' | 'useMine' | 'useTheirs';
         tabId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "file.view.get": {
         tabId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "file.view.set": {
         tabId?: string | undefined;
-        mode?: 'view' | 'changes' | 'preview' | 'source' | 'edit' | undefined;
-        changesScope?: {
+        mode?: 'changes' | 'edit' | 'preview' | 'source' | 'view' | undefined;
+        changesScope?: undefined | {
+            kind: 'session';
+        } | {
             kind: 'turn';
             turnId: string;
         } | {
-            kind: 'session';
-        } | {
             kind: 'workingTree';
-        } | undefined;
+        };
         blame?: boolean | undefined;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "workflow.library.view.get": Record<string, never>;
+    readonly "file.view.preference.set": {
+        mutation: {
+            kind: 'clear';
+            selector: unknown;
+        } | {
+            kind: 'select';
+            selector: unknown;
+            viewer: {
+                kind: 'builtin';
+            } | {
+                kind: 'plugin';
+                pluginId: string;
+                contributionLocalId: string;
+            };
+        };
+        expectedSettingsVersion?: number | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "workflow.library.view.get": {
+        clientId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "workflow.library.view.set": {
-        view?: 'all' | 'triggered' | 'running' | undefined;
+        clientId?: string | undefined;
+        filters?: undefined | {
+            view?: 'all' | 'running' | 'triggered' | undefined;
+            extensions?: Record<string, {
+                kind: 'boolean';
+                value: boolean;
+            } | {
+                kind: 'set';
+                include: string[];
+                exclude: string[];
+            } | {
+                kind: 'time';
+                selection: {
+                    op: 'after';
+                    atMs: number;
+                } | {
+                    op: 'before';
+                    atMs: number;
+                } | {
+                    op: 'between';
+                    fromMs: number;
+                    toMs: number;
+                };
+            }> | undefined;
+        };
         searchQuery?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "workflow.library.view.reset": Record<string, never>;
+    readonly "workflow.library.view.reset": {
+        clientId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
     readonly "session.list.view.get": {
-        view?: {
+        view?: undefined | {
             kind: 'global';
         } | {
             kind: 'team';
             serverId: string;
             teamId: string;
-        } | undefined;
+        };
         storage?: 'active' | 'archived' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.list.view.set": {
-        view?: {
+        view?: undefined | {
             kind: 'global';
         } | {
             kind: 'team';
             serverId: string;
             teamId: string;
-        } | undefined;
+        };
         storage?: 'active' | 'archived' | undefined;
-        filters?: {
-            show?: 'sessions' | 'runs' | 'both' | undefined;
-            startedBy?: ('you' | 'triggers' | 'agents')[] | undefined;
-            scope?: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible' | undefined;
+        filters?: undefined | {
+            show?: 'both' | 'runs' | 'sessions' | undefined;
+            startedBy?: ('agents' | 'triggers' | 'you')[] | undefined;
+            scope?: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work' | undefined;
             attention?: 'any' | 'needs_my_attention' | undefined;
             bot?: 'bot' | 'ordinary' | undefined;
             coordinator?: 'coordinator' | undefined;
-            projects?: {
+            projects?: undefined | {
                 include: {
                     serverId: string;
                     projectKey: string;
@@ -68,10 +131,10 @@ export type ScopeActionInputById = {
                     serverId: string;
                     projectKey: string;
                 }[];
-            } | undefined;
-            statuses?: ('unknown' | 'archived' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-            excludedStatuses?: ('unknown' | 'archived' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-            machines?: {
+            };
+            statuses?: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+            excludedStatuses?: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+            machines?: undefined | {
                 include: {
                     serverId: string;
                     machineId: string;
@@ -80,12 +143,12 @@ export type ScopeActionInputById = {
                     serverId: string;
                     machineId: string;
                 }[];
-            } | undefined;
-            agents?: {
+            };
+            agents?: undefined | {
                 include: string[];
                 exclude: string[];
-            } | undefined;
-            sections?: {
+            };
+            sections?: undefined | {
                 include: {
                     serverId: string;
                     sectionId: string;
@@ -94,8 +157,8 @@ export type ScopeActionInputById = {
                     serverId: string;
                     sectionId: string;
                 }[];
-            } | undefined;
-            owners?: {
+            };
+            owners?: undefined | {
                 include: {
                     serverId: string;
                     accountId: string;
@@ -104,37 +167,37 @@ export type ScopeActionInputById = {
                     serverId: string;
                     accountId: string;
                 }[];
-            } | undefined;
-            branches?: {
+            };
+            branches?: undefined | {
                 include: string[];
                 exclude: string[];
-            } | undefined;
-            updated?: {
-                op: 'before';
+            };
+            updated?: undefined | {
+                op: 'after';
                 atMs: number;
             } | {
-                op: 'after';
+                op: 'before';
                 atMs: number;
             } | {
                 op: 'between';
                 fromMs: number;
                 toMs: number;
-            } | undefined;
+            };
             includeInactive?: boolean | undefined;
             extensions?: Record<string, {
+                kind: 'boolean';
+                value: boolean;
+            } | {
                 kind: 'set';
                 include: string[];
                 exclude: string[];
             } | {
-                kind: 'boolean';
-                value: boolean;
-            } | {
                 kind: 'time';
                 selection: {
-                    op: 'before';
+                    op: 'after';
                     atMs: number;
                 } | {
-                    op: 'after';
+                    op: 'before';
                     atMs: number;
                 } | {
                     op: 'between';
@@ -145,76 +208,183 @@ export type ScopeActionInputById = {
             underSessionId?: string | undefined;
             homeServerIds?: string[] | undefined;
             audiences?: ({
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+                serverId: string;
+            } | {
                 kind: 'outside_teams';
                 serverId: string;
             } | {
                 kind: 'team';
                 teamId: string;
                 serverId: string;
-            } | {
-                kind: 'group';
-                teamId: string;
-                groupId: string;
-                serverId: string;
             })[] | undefined;
-            tagIds?: {
+            tagIds?: undefined | {
                 serverId: string;
                 tagId: string;
-            }[] | undefined;
-            source?: 'all' | 'persisted' | 'direct' | undefined;
+            }[];
+            source?: 'all' | 'direct' | 'persisted' | undefined;
             searchQuery?: string | undefined;
-        } | undefined;
-        includeInactive?: boolean | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.list.view.reset": {
-        view?: {
+        view?: undefined | {
             kind: 'global';
         } | {
             kind: 'team';
             serverId: string;
             teamId: string;
-        } | undefined;
+        };
         storage?: 'active' | 'archived' | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "discussion.list.view.get": {
+        serverId: string;
+        accountId: string;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "discussion.list.view.set": {
+        filters: {
+            state: 'active' | 'archived';
+            attention: 'any' | 'needs_you';
+            unreadOnly: boolean;
+            extensions?: Record<string, {
+                kind: 'boolean';
+                value: boolean;
+            } | {
+                kind: 'set';
+                include: string[];
+                exclude: string[];
+            } | {
+                kind: 'time';
+                selection: {
+                    op: 'after';
+                    atMs: number;
+                } | {
+                    op: 'before';
+                    atMs: number;
+                } | {
+                    op: 'between';
+                    fromMs: number;
+                    toMs: number;
+                };
+            }> | undefined;
+        };
+        serverId: string;
+        accountId: string;
+        searchQuery?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "discussion.list.view.reset": {
+        serverId: string;
+        accountId: string;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "settings.column.filter.get": {
+        column: 'agents' | 'connected-services' | 'mcp' | 'plugins' | 'providers' | 'skills' | 'store';
+        serverId: string;
+        accountId: string;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "settings.column.filter.set": {
+        filters: Record<string, unknown>;
+        column: 'agents' | 'connected-services' | 'mcp' | 'plugins' | 'providers' | 'skills' | 'store';
+        serverId: string;
+        accountId: string;
+        searchQuery?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "settings.column.filter.clear": {
+        column: 'agents' | 'connected-services' | 'mcp' | 'plugins' | 'providers' | 'skills' | 'store';
+        serverId: string;
+        accountId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "shell.column.get": {
-        column?: 'navigation' | 'main' | 'side' | undefined;
+        column?: 'main' | 'navigation' | 'side' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "shell.column.set": {
         visible: boolean;
-        column?: 'navigation' | 'main' | 'side' | undefined;
+        column?: 'main' | 'navigation' | 'side' | undefined;
         tab?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type ScopeActionResultById = {
     readonly "file.editor.save": {
-        status: 'saved' | 'clean' | 'conflict' | 'unavailable';
+        status: 'clean' | 'conflict' | 'saved' | 'unavailable';
         hash?: string | undefined;
     };
     readonly "file.editor.resolve": {
-        status: 'unavailable' | 'resolved';
+        status: 'resolved' | 'unavailable';
         hash?: string | undefined;
     };
     readonly "file.view.get": {
         tabId: string;
-        mode: 'view' | 'changes' | 'preview' | 'source' | 'edit';
+        mode: 'changes' | 'edit' | 'preview' | 'source' | 'view';
         blame: boolean;
-        changesScope?: {
+        changesScope?: undefined | {
+            kind: 'session';
+        } | {
             kind: 'turn';
             turnId: string;
         } | {
-            kind: 'session';
-        } | {
             kind: 'workingTree';
-        } | undefined;
+        };
     };
     readonly "file.view.set": {
         ok: true;
     };
+    readonly "file.view.preference.set": {
+        status: 'applied';
+        settingsVersion: number;
+    };
     readonly "workflow.library.view.get": {
-        view: 'all' | 'triggered' | 'running';
+        view: 'all' | 'running' | 'triggered';
+        filters: {
+            view: 'all' | 'running' | 'triggered';
+            extensions?: Record<string, {
+                kind: 'boolean';
+                value: boolean;
+            } | {
+                kind: 'set';
+                include: string[];
+                exclude: string[];
+            } | {
+                kind: 'time';
+                selection: {
+                    op: 'after';
+                    atMs: number;
+                } | {
+                    op: 'before';
+                    atMs: number;
+                } | {
+                    op: 'between';
+                    fromMs: number;
+                    toMs: number;
+                };
+            }> | undefined;
+        };
         searchQuery: string;
-        offeredViews: ('all' | 'triggered' | 'running')[];
+        offeredViews: ('all' | 'running' | 'triggered')[];
         visibleKeys: string[];
+        coverage: 'complete' | 'partial' | 'unavailable';
+        selectedSpaceId: string;
+        answeringClientId?: string | undefined;
+        answeringClientIds?: string[] | undefined;
     };
     readonly "workflow.library.view.set": {
         ok: true;
@@ -232,33 +402,33 @@ export type ScopeActionResultById = {
         };
         storage: 'active' | 'archived';
         filters: {
-            show: 'sessions' | 'runs' | 'both';
-            startedBy: ('you' | 'triggers' | 'agents')[];
-            scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
+            show: 'both' | 'runs' | 'sessions';
+            startedBy: ('agents' | 'triggers' | 'you')[];
+            scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
             attention: 'any' | 'needs_my_attention';
             homeServerIds: string[];
             audiences: ({
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+                serverId: string;
+            } | {
                 kind: 'outside_teams';
                 serverId: string;
             } | {
                 kind: 'team';
                 teamId: string;
                 serverId: string;
-            } | {
-                kind: 'group';
-                teamId: string;
-                groupId: string;
-                serverId: string;
             })[];
             tagIds: {
                 serverId: string;
                 tagId: string;
             }[];
-            source: 'all' | 'persisted' | 'direct';
+            source: 'all' | 'direct' | 'persisted';
             searchQuery: string;
             bot?: 'bot' | 'ordinary' | undefined;
             coordinator?: 'coordinator' | undefined;
-            projects?: {
+            projects?: undefined | {
                 include: {
                     serverId: string;
                     projectKey: string;
@@ -267,10 +437,10 @@ export type ScopeActionResultById = {
                     serverId: string;
                     projectKey: string;
                 }[];
-            } | undefined;
-            statuses?: ('unknown' | 'archived' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-            excludedStatuses?: ('unknown' | 'archived' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-            machines?: {
+            };
+            statuses?: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+            excludedStatuses?: ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+            machines?: undefined | {
                 include: {
                     serverId: string;
                     machineId: string;
@@ -279,12 +449,12 @@ export type ScopeActionResultById = {
                     serverId: string;
                     machineId: string;
                 }[];
-            } | undefined;
-            agents?: {
+            };
+            agents?: undefined | {
                 include: string[];
                 exclude: string[];
-            } | undefined;
-            sections?: {
+            };
+            sections?: undefined | {
                 include: {
                     serverId: string;
                     sectionId: string;
@@ -293,8 +463,8 @@ export type ScopeActionResultById = {
                     serverId: string;
                     sectionId: string;
                 }[];
-            } | undefined;
-            owners?: {
+            };
+            owners?: undefined | {
                 include: {
                     serverId: string;
                     accountId: string;
@@ -303,46 +473,48 @@ export type ScopeActionResultById = {
                     serverId: string;
                     accountId: string;
                 }[];
-            } | undefined;
-            branches?: {
+            };
+            branches?: undefined | {
                 include: string[];
                 exclude: string[];
-            } | undefined;
-            updated?: {
-                op: 'between';
-                fromMs: number;
-                toMs: number;
+            };
+            updated?: undefined | {
+                op: 'after';
+                atMs: number;
             } | {
                 op: 'before';
                 atMs: number;
             } | {
-                op: 'after';
-                atMs: number;
-            } | undefined;
+                op: 'between';
+                fromMs: number;
+                toMs: number;
+            };
             includeInactive?: boolean | undefined;
             extensions?: Record<string, {
+                kind: 'boolean';
+                value: boolean;
+            } | {
                 kind: 'set';
                 include: string[];
                 exclude: string[];
             } | {
-                kind: 'boolean';
-                value: boolean;
-            } | {
                 kind: 'time';
                 selection: {
-                    op: 'between';
-                    fromMs: number;
-                    toMs: number;
+                    op: 'after';
+                    atMs: number;
                 } | {
                     op: 'before';
                     atMs: number;
                 } | {
-                    op: 'after';
-                    atMs: number;
+                    op: 'between';
+                    fromMs: number;
+                    toMs: number;
                 };
             }> | undefined;
             underSessionId?: string | undefined;
         };
+        selectedSpaceId: string;
+        coverage: 'complete' | 'partial' | 'unavailable';
         includeInactive: boolean;
         queryEnabled: boolean;
         followingAvailable: boolean;
@@ -358,6 +530,63 @@ export type ScopeActionResultById = {
     readonly "session.list.view.reset": {
         ok: true;
     };
+    readonly "discussion.list.view.get": {
+        serverId: string;
+        accountId: string;
+        filters: {
+            state: 'active' | 'archived';
+            attention: 'any' | 'needs_you';
+            unreadOnly: boolean;
+            extensions?: Record<string, {
+                kind: 'boolean';
+                value: boolean;
+            } | {
+                kind: 'set';
+                include: string[];
+                exclude: string[];
+            } | {
+                kind: 'time';
+                selection: {
+                    op: 'after';
+                    atMs: number;
+                } | {
+                    op: 'before';
+                    atMs: number;
+                } | {
+                    op: 'between';
+                    fromMs: number;
+                    toMs: number;
+                };
+            }> | undefined;
+        };
+        searchQuery: string;
+        selectedSpaceId: string;
+        coverage: 'complete' | 'partial' | 'unavailable';
+    };
+    readonly "discussion.list.view.set": {
+        ok: true;
+    };
+    readonly "discussion.list.view.reset": {
+        ok: true;
+    };
+    readonly "settings.column.filter.get": {
+        filters: Record<string, Readonly<{
+            include: readonly string[];
+            exclude: readonly string[];
+        }>>;
+        matchedCount: number;
+        coverage: 'complete' | 'partial' | 'unavailable';
+        column: 'agents' | 'connected-services' | 'mcp' | 'plugins' | 'providers' | 'skills' | 'store';
+        serverId: string;
+        accountId: string;
+        searchQuery?: string | undefined;
+    };
+    readonly "settings.column.filter.set": {
+        ok: true;
+    };
+    readonly "settings.column.filter.clear": {
+        ok: true;
+    };
     readonly "shell.column.get": {
         present: boolean;
         visible: boolean;
@@ -365,6 +594,14 @@ export type ScopeActionResultById = {
         tabs?: string[] | undefined;
         activeTab?: string | undefined;
         label?: string | undefined;
+        items?: undefined | {
+            id: string;
+            label: string;
+            available: boolean;
+            placement: 'hidden' | 'overflow' | 'pinned';
+            pageKind: string;
+            reason?: string | undefined;
+        }[];
     };
     readonly "shell.column.set": {
         ok: true;

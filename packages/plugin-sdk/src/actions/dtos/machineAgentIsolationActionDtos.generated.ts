@@ -29,6 +29,27 @@ export type MachineAgentIsolationActionInputById = {
 };
 export type MachineAgentIsolationActionResultById = {
     readonly "machines.agentIsolation.status": {
+        protection: 'member_separated';
+        status: {
+            kind: 'effective';
+            platform: 'linux';
+        };
+        directories?: undefined | {
+            home: string;
+            workspace: string;
+        };
+    } | {
+        protection: 'setup_pending';
+        status: {
+            kind: 'applying';
+            phase: 'account' | 'runtime_replacement' | 'sudoers' | 'workspace';
+        } | {
+            kind: 'disabled';
+        } | {
+            kind: 'enable_required';
+            reason: 'existing_machine_workspace_migration';
+        };
+    } | {
         protection: 'shared_user';
         status: {
             kind: 'effective';
@@ -36,75 +57,128 @@ export type MachineAgentIsolationActionResultById = {
             agentUser: 'happier-agent';
         };
     } | {
-        protection: 'member_separated';
-        status: {
-            kind: 'effective';
-            platform: 'linux';
-        };
-    } | {
-        protection: 'setup_pending';
-        status: {
-            kind: 'disabled';
-        } | {
-            kind: 'enable_required';
-            reason: 'existing_machine_workspace_migration';
-        } | {
-            kind: 'applying';
-            phase: 'account' | 'sudoers' | 'workspace' | 'runtime_replacement';
-        };
-    } | {
-        protection: 'unavailable';
-        status: {
-            kind: 'unavailable';
-            code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
-            setup?: {
-                outcome: 'not_applied';
-                reasonCode: 'mode_none' | 'not_preauthorized' | 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                failure?: {
-                    kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                    reason?: 'native_effect_failed' | 'required_fact_unavailable' | 'needs_admin_to_check' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
-                    requiredFact?: string | undefined;
-                    remedy?: string | undefined;
-                } | undefined;
-            } | undefined;
-            prerequisite?: {
-                reason: 'required_fact_unavailable';
-                requiredFact: 'session_inventory' | 'daemon_identity' | 'workspace_census' | 'workspace_paths';
-                remedy: string;
-            } | undefined;
-        };
-    } | {
         protection: 'trusted_administrator';
         status: {
-            kind: 'unavailable';
-            code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
-            setup?: {
-                outcome: 'not_applied';
-                reasonCode: 'mode_none' | 'not_preauthorized' | 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                failure?: {
-                    kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                    reason?: 'native_effect_failed' | 'required_fact_unavailable' | 'needs_admin_to_check' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
-                    requiredFact?: string | undefined;
-                    remedy?: string | undefined;
-                } | undefined;
-            } | undefined;
-            prerequisite?: {
-                reason: 'required_fact_unavailable';
-                requiredFact: 'session_inventory' | 'daemon_identity' | 'workspace_census' | 'workspace_paths';
-                remedy: string;
-            } | undefined;
+            kind: 'applying';
+            phase: 'account' | 'runtime_replacement' | 'sudoers' | 'workspace';
+        } | {
+            kind: 'disabled';
         } | {
             kind: 'effective';
             platform: 'linux';
             agentUser: 'happier-agent';
         } | {
-            kind: 'disabled';
-        } | {
             kind: 'enable_required';
             reason: 'existing_machine_workspace_migration';
         } | {
-            kind: 'applying';
-            phase: 'account' | 'sudoers' | 'workspace' | 'runtime_replacement';
+            kind: 'unavailable';
+            code: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+            probeFailure?: undefined | {
+                exitCode: number;
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            } | {
+                transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            };
+            setup?: undefined | {
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                outcome: 'not_applied';
+                failure?: undefined | {
+                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    stepId?: string | undefined;
+                    phase?: 'apply' | 'check' | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                    nativeCommand?: undefined | {
+                        command: 'apt-get';
+                        phase: 'install' | 'update';
+                        exitCode: null | number;
+                        category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                    };
+                };
+            };
+            prerequisite?: undefined | {
+                reason: 'native_effect_pending';
+                requiredFact: string;
+                remedy: 'machines.agentIsolation.preview';
+                detail?: string | undefined;
+                path?: string | undefined;
+            } | {
+                reason: 'required_fact_unavailable';
+                requiredFact: 'daemon_identity' | 'session_inventory' | 'workspace_census' | 'workspace_paths';
+                remedy: string;
+            };
+        };
+    } | {
+        protection: 'unavailable';
+        status: {
+            kind: 'unavailable';
+            code: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+            probeFailure?: undefined | {
+                exitCode: number;
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            } | {
+                transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            };
+            setup?: undefined | {
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                outcome: 'not_applied';
+                failure?: undefined | {
+                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    stepId?: string | undefined;
+                    phase?: 'apply' | 'check' | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                    nativeCommand?: undefined | {
+                        command: 'apt-get';
+                        phase: 'install' | 'update';
+                        exitCode: null | number;
+                        category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                    };
+                };
+            };
+            prerequisite?: undefined | {
+                reason: 'native_effect_pending';
+                requiredFact: string;
+                remedy: 'machines.agentIsolation.preview';
+                detail?: string | undefined;
+                path?: string | undefined;
+            } | {
+                reason: 'required_fact_unavailable';
+                requiredFact: 'daemon_identity' | 'session_inventory' | 'workspace_census' | 'workspace_paths';
+                remedy: string;
+            };
         };
     };
     readonly "machines.agentIsolation.preview": {
@@ -113,7 +187,7 @@ export type MachineAgentIsolationActionResultById = {
             roots: {
                 rootId: string;
                 path: string;
-                changes: ('group' | 'setgid' | 'mode' | 'gitShared' | 'safeDirectory')[];
+                changes: ('gitShared' | 'group' | 'mode' | 'safeDirectory' | 'setgid')[];
             }[];
             ancestorAcls: {
                 path: string;
@@ -127,15 +201,15 @@ export type MachineAgentIsolationActionResultById = {
                 stepId: string;
                 kind: string;
                 target: string;
-                observation: 'unknown' | 'absent' | 'present';
-                action: 'remove' | 'none';
+                observation: 'absent' | 'present' | 'unknown';
+                action: 'none' | 'remove';
             } | {
                 stepId: string;
                 kind: string;
                 target: string;
-                observation: 'unknown' | 'present';
+                observation: 'present' | 'unknown';
                 action: 'retain';
-                reasonCode: 'native_check_unavailable' | 'foreign_effect_conflict' | 'ownership_unproven' | 'authored_data' | 'shared_resource' | 'prior_value_unknown';
+                reasonCode: 'authored_data' | 'foreign_effect_conflict' | 'native_check_unavailable' | 'ownership_unproven' | 'prior_value_unknown' | 'shared_resource';
                 remedy: string;
             })[] | undefined;
         };
@@ -145,71 +219,152 @@ export type MachineAgentIsolationActionResultById = {
         };
         metadataVersion: number;
         status: {
-            kind: 'unavailable';
-            code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
-            setup?: {
-                outcome: 'not_applied';
-                reasonCode: 'mode_none' | 'not_preauthorized' | 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                failure?: {
-                    kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                    reason?: 'native_effect_failed' | 'required_fact_unavailable' | 'needs_admin_to_check' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
-                    requiredFact?: string | undefined;
-                    remedy?: string | undefined;
-                } | undefined;
-            } | undefined;
-            prerequisite?: {
-                reason: 'required_fact_unavailable';
-                requiredFact: 'session_inventory' | 'daemon_identity' | 'workspace_census' | 'workspace_paths';
-                remedy: string;
-            } | undefined;
+            kind: 'applying';
+            phase: 'account' | 'runtime_replacement' | 'sudoers' | 'workspace';
+        } | {
+            kind: 'disabled';
         } | {
             kind: 'effective';
             platform: 'linux';
             agentUser: 'happier-agent';
         } | {
-            kind: 'disabled';
-        } | {
             kind: 'enable_required';
             reason: 'existing_machine_workspace_migration';
         } | {
-            kind: 'applying';
-            phase: 'account' | 'sudoers' | 'workspace' | 'runtime_replacement';
+            kind: 'unavailable';
+            code: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+            probeFailure?: undefined | {
+                exitCode: number;
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            } | {
+                transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            };
+            setup?: undefined | {
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                outcome: 'not_applied';
+                failure?: undefined | {
+                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    stepId?: string | undefined;
+                    phase?: 'apply' | 'check' | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                    nativeCommand?: undefined | {
+                        command: 'apt-get';
+                        phase: 'install' | 'update';
+                        exitCode: null | number;
+                        category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                    };
+                };
+            };
+            prerequisite?: undefined | {
+                reason: 'native_effect_pending';
+                requiredFact: string;
+                remedy: 'machines.agentIsolation.preview';
+                detail?: string | undefined;
+                path?: string | undefined;
+            } | {
+                reason: 'required_fact_unavailable';
+                requiredFact: 'daemon_identity' | 'session_inventory' | 'workspace_census' | 'workspace_paths';
+                remedy: string;
+            };
         };
     } | {
         kind: 'unavailable';
         status: {
             kind: 'unavailable';
-            code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
-            setup?: {
+            code: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+            probeFailure?: undefined | {
+                exitCode: number;
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            } | {
+                transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            };
+            setup?: undefined | {
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
                 outcome: 'not_applied';
-                reasonCode: 'mode_none' | 'not_preauthorized' | 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                failure?: {
-                    kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                    reason?: 'native_effect_failed' | 'required_fact_unavailable' | 'needs_admin_to_check' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
+                failure?: undefined | {
+                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    stepId?: string | undefined;
+                    phase?: 'apply' | 'check' | undefined;
                     requiredFact?: string | undefined;
                     remedy?: string | undefined;
-                } | undefined;
-            } | undefined;
-            prerequisite?: {
+                    nativeCommand?: undefined | {
+                        command: 'apt-get';
+                        phase: 'install' | 'update';
+                        exitCode: null | number;
+                        category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                    };
+                };
+            };
+            prerequisite?: undefined | {
+                reason: 'native_effect_pending';
+                requiredFact: string;
+                remedy: 'machines.agentIsolation.preview';
+                detail?: string | undefined;
+                path?: string | undefined;
+            } | {
                 reason: 'required_fact_unavailable';
-                requiredFact: 'session_inventory' | 'daemon_identity' | 'workspace_census' | 'workspace_paths';
+                requiredFact: 'daemon_identity' | 'session_inventory' | 'workspace_census' | 'workspace_paths';
                 remedy: string;
-            } | undefined;
+            };
         };
-        setup?: {
+        setup?: undefined | {
             outcome: 'not_applied';
-            reasonCode: 'mode_none' | 'not_preauthorized' | 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-            failure?: {
-                kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                reason?: 'native_effect_failed' | 'required_fact_unavailable' | 'needs_admin_to_check' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
+            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+            failure?: undefined | {
+                kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                stepId?: string | undefined;
+                phase?: 'apply' | 'check' | undefined;
                 requiredFact?: string | undefined;
                 remedy?: string | undefined;
-            } | undefined;
-            recovery?: {
+                nativeCommand?: undefined | {
+                    command: 'apt-get';
+                    phase: 'install' | 'update';
+                    exitCode: null | number;
+                    category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                };
+            };
+            recovery?: undefined | {
+                kind: 'configure_admin_access';
+                mode: 'preauthorized';
+            } | {
                 kind: 'install_managed_cli';
                 executablePath: string;
-            } | undefined;
-            restoration?: {
+            };
+            restoration?: undefined | {
                 status: 'verified';
                 recovery: {
                     rules: {
@@ -224,121 +379,115 @@ export type MachineAgentIsolationActionResultById = {
                         kind: 'file';
                         content: string;
                     };
-                    table: string | null;
+                    table: null | string;
                     boot: {
                         present: boolean;
                         enabled: boolean;
                         running: boolean;
                     };
                 };
-            } | undefined;
-        } | undefined;
+            };
+        };
     };
     readonly "machines.agentIsolation.set": {
         kind: 'accepted';
         operationId: string;
         metadataVersion: number;
         status: {
-            kind: 'unavailable';
-            code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
-            setup?: {
-                outcome: 'not_applied';
-                reasonCode: 'mode_none' | 'not_preauthorized' | 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                failure?: {
-                    kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                    reason?: 'native_effect_failed' | 'required_fact_unavailable' | 'needs_admin_to_check' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
-                    requiredFact?: string | undefined;
-                    remedy?: string | undefined;
-                } | undefined;
-            } | undefined;
-            prerequisite?: {
-                reason: 'required_fact_unavailable';
-                requiredFact: 'session_inventory' | 'daemon_identity' | 'workspace_census' | 'workspace_paths';
-                remedy: string;
-            } | undefined;
+            kind: 'applying';
+            phase: 'account' | 'runtime_replacement' | 'sudoers' | 'workspace';
+        } | {
+            kind: 'disabled';
         } | {
             kind: 'effective';
             platform: 'linux';
             agentUser: 'happier-agent';
         } | {
-            kind: 'disabled';
-        } | {
             kind: 'enable_required';
             reason: 'existing_machine_workspace_migration';
         } | {
-            kind: 'applying';
-            phase: 'account' | 'sudoers' | 'workspace' | 'runtime_replacement';
+            kind: 'unavailable';
+            code: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+            probeFailure?: undefined | {
+                exitCode: number;
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            } | {
+                transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            };
+            setup?: undefined | {
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                outcome: 'not_applied';
+                failure?: undefined | {
+                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    stepId?: string | undefined;
+                    phase?: 'apply' | 'check' | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                    nativeCommand?: undefined | {
+                        command: 'apt-get';
+                        phase: 'install' | 'update';
+                        exitCode: null | number;
+                        category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                    };
+                };
+            };
+            prerequisite?: undefined | {
+                reason: 'native_effect_pending';
+                requiredFact: string;
+                remedy: 'machines.agentIsolation.preview';
+                detail?: string | undefined;
+                path?: string | undefined;
+            } | {
+                reason: 'required_fact_unavailable';
+                requiredFact: 'daemon_identity' | 'session_inventory' | 'workspace_census' | 'workspace_paths';
+                remedy: string;
+            };
         };
-        retirement?: {
+        retirement?: undefined | {
             removed: string[];
             retained: ({
                 stepId: string;
                 kind: string;
                 target: string;
-                observation: 'unknown' | 'absent' | 'present';
-                action: 'remove' | 'none';
+                observation: 'absent' | 'present' | 'unknown';
+                action: 'none' | 'remove';
             } | {
                 stepId: string;
                 kind: string;
                 target: string;
-                observation: 'unknown' | 'present';
+                observation: 'present' | 'unknown';
                 action: 'retain';
-                reasonCode: 'native_check_unavailable' | 'foreign_effect_conflict' | 'ownership_unproven' | 'authored_data' | 'shared_resource' | 'prior_value_unknown';
+                reasonCode: 'authored_data' | 'foreign_effect_conflict' | 'native_check_unavailable' | 'ownership_unproven' | 'prior_value_unknown' | 'shared_resource';
                 remedy: string;
             })[];
-        } | undefined;
+        };
     } | {
-        kind: 'unchanged';
-        metadataVersion: number;
-        status: {
-            kind: 'unavailable';
-            code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
-            setup?: {
-                outcome: 'not_applied';
-                reasonCode: 'mode_none' | 'not_preauthorized' | 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                failure?: {
-                    kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                    reason?: 'native_effect_failed' | 'required_fact_unavailable' | 'needs_admin_to_check' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
-                    requiredFact?: string | undefined;
-                    remedy?: string | undefined;
-                } | undefined;
-            } | undefined;
-            prerequisite?: {
-                reason: 'required_fact_unavailable';
-                requiredFact: 'session_inventory' | 'daemon_identity' | 'workspace_census' | 'workspace_paths';
-                remedy: string;
-            } | undefined;
-        } | {
-            kind: 'effective';
-            platform: 'linux';
-            agentUser: 'happier-agent';
-        } | {
-            kind: 'disabled';
-        } | {
-            kind: 'enable_required';
-            reason: 'existing_machine_workspace_migration';
-        } | {
-            kind: 'applying';
-            phase: 'account' | 'sudoers' | 'workspace' | 'runtime_replacement';
+        kind: 'conflict';
+        policy: {
+            enabled: boolean;
+            memberProvisioning?: 'linuxUsersV1' | undefined;
         };
-        retirement?: {
-            removed: string[];
-            retained: ({
-                stepId: string;
-                kind: string;
-                target: string;
-                observation: 'unknown' | 'absent' | 'present';
-                action: 'remove' | 'none';
-            } | {
-                stepId: string;
-                kind: string;
-                target: string;
-                observation: 'unknown' | 'present';
-                action: 'retain';
-                reasonCode: 'native_check_unavailable' | 'foreign_effect_conflict' | 'ownership_unproven' | 'authored_data' | 'shared_resource' | 'prior_value_unknown';
-                remedy: string;
-            })[];
-        } | undefined;
+        metadataVersion: number;
+    } | {
+        kind: 'failed';
+        code: 'cancelled' | 'denied' | 'invalid' | 'locked' | 'outcome_unknown' | 'unavailable';
+        operationId?: string | undefined;
     } | {
         kind: 'plan_changed';
         current: {
@@ -347,7 +496,7 @@ export type MachineAgentIsolationActionResultById = {
                 roots: {
                     rootId: string;
                     path: string;
-                    changes: ('group' | 'setgid' | 'mode' | 'gitShared' | 'safeDirectory')[];
+                    changes: ('gitShared' | 'group' | 'mode' | 'safeDirectory' | 'setgid')[];
                 }[];
                 ancestorAcls: {
                     path: string;
@@ -361,15 +510,15 @@ export type MachineAgentIsolationActionResultById = {
                     stepId: string;
                     kind: string;
                     target: string;
-                    observation: 'unknown' | 'absent' | 'present';
-                    action: 'remove' | 'none';
+                    observation: 'absent' | 'present' | 'unknown';
+                    action: 'none' | 'remove';
                 } | {
                     stepId: string;
                     kind: string;
                     target: string;
-                    observation: 'unknown' | 'present';
+                    observation: 'present' | 'unknown';
                     action: 'retain';
-                    reasonCode: 'native_check_unavailable' | 'foreign_effect_conflict' | 'ownership_unproven' | 'authored_data' | 'shared_resource' | 'prior_value_unknown';
+                    reasonCode: 'authored_data' | 'foreign_effect_conflict' | 'native_check_unavailable' | 'ownership_unproven' | 'prior_value_unknown' | 'shared_resource';
                     remedy: string;
                 })[] | undefined;
             };
@@ -379,48 +528,159 @@ export type MachineAgentIsolationActionResultById = {
             };
             metadataVersion: number;
             status: {
-                kind: 'unavailable';
-                code: 'unsupported_platform' | 'sudo_unavailable' | 'sudoers_invalid' | 'agent_user_missing' | 'workspace_not_ready' | 'payload_not_accessible' | 'workspace_ancestor_not_traversable' | 'agent_launch_kind_unavailable' | 'provisioning_unavailable' | 'launch_probe_failed' | 'mcp_socket_access_unavailable' | 'local_admin_api_accessible' | 'metadata_unavailable';
-                setup?: {
-                    outcome: 'not_applied';
-                    reasonCode: 'mode_none' | 'not_preauthorized' | 'denied' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                    failure?: {
-                        kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                        reason?: 'native_effect_failed' | 'required_fact_unavailable' | 'needs_admin_to_check' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
-                        requiredFact?: string | undefined;
-                        remedy?: string | undefined;
-                    } | undefined;
-                } | undefined;
-                prerequisite?: {
-                    reason: 'required_fact_unavailable';
-                    requiredFact: 'session_inventory' | 'daemon_identity' | 'workspace_census' | 'workspace_paths';
-                    remedy: string;
-                } | undefined;
+                kind: 'applying';
+                phase: 'account' | 'runtime_replacement' | 'sudoers' | 'workspace';
+            } | {
+                kind: 'disabled';
             } | {
                 kind: 'effective';
                 platform: 'linux';
                 agentUser: 'happier-agent';
             } | {
-                kind: 'disabled';
-            } | {
                 kind: 'enable_required';
                 reason: 'existing_machine_workspace_migration';
             } | {
-                kind: 'applying';
-                phase: 'account' | 'sudoers' | 'workspace' | 'runtime_replacement';
+                kind: 'unavailable';
+                code: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+                probeFailure?: undefined | {
+                    exitCode: number;
+                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                    identity: {
+                        username: string;
+                        uid: number;
+                        gid: number;
+                        home: string;
+                        cwd: string;
+                    };
+                } | {
+                    transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                    check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                    identity: {
+                        username: string;
+                        uid: number;
+                        gid: number;
+                        home: string;
+                        cwd: string;
+                    };
+                };
+                setup?: undefined | {
+                    reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                    outcome: 'not_applied';
+                    failure?: undefined | {
+                        kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                        reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                        stepId?: string | undefined;
+                        phase?: 'apply' | 'check' | undefined;
+                        requiredFact?: string | undefined;
+                        remedy?: string | undefined;
+                        nativeCommand?: undefined | {
+                            command: 'apt-get';
+                            phase: 'install' | 'update';
+                            exitCode: null | number;
+                            category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                        };
+                    };
+                };
+                prerequisite?: undefined | {
+                    reason: 'native_effect_pending';
+                    requiredFact: string;
+                    remedy: 'machines.agentIsolation.preview';
+                    detail?: string | undefined;
+                    path?: string | undefined;
+                } | {
+                    reason: 'required_fact_unavailable';
+                    requiredFact: 'daemon_identity' | 'session_inventory' | 'workspace_census' | 'workspace_paths';
+                    remedy: string;
+                };
             };
         };
         operationId?: string | undefined;
     } | {
-        kind: 'conflict';
-        policy: {
-            enabled: boolean;
-            memberProvisioning?: 'linuxUsersV1' | undefined;
-        };
+        kind: 'unchanged';
         metadataVersion: number;
-    } | {
-        kind: 'failed';
-        code: 'unavailable' | 'denied' | 'cancelled' | 'locked' | 'invalid' | 'outcome_unknown';
-        operationId?: string | undefined;
+        status: {
+            kind: 'applying';
+            phase: 'account' | 'runtime_replacement' | 'sudoers' | 'workspace';
+        } | {
+            kind: 'disabled';
+        } | {
+            kind: 'effective';
+            platform: 'linux';
+            agentUser: 'happier-agent';
+        } | {
+            kind: 'enable_required';
+            reason: 'existing_machine_workspace_migration';
+        } | {
+            kind: 'unavailable';
+            code: 'agent_launch_kind_unavailable' | 'agent_user_missing' | 'launch_probe_failed' | 'local_admin_api_accessible' | 'mcp_socket_access_unavailable' | 'metadata_unavailable' | 'payload_not_accessible' | 'provisioning_unavailable' | 'sudo_unavailable' | 'sudoers_invalid' | 'unsupported_platform' | 'workspace_ancestor_not_traversable' | 'workspace_not_ready';
+            probeFailure?: undefined | {
+                exitCode: number;
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            } | {
+                transportError: 'execution_failed' | 'signalled' | 'spawn_failed';
+                check: 'agent_payload' | 'docker_socket' | 'groups' | 'home' | 'launch' | 'managed_payload' | 'mcp_anonymous' | 'mcp_authentication' | 'output' | 'private_path' | 'root_sudo' | 'uid' | 'umask' | 'user' | 'workspace';
+                identity: {
+                    username: string;
+                    uid: number;
+                    gid: number;
+                    home: string;
+                    cwd: string;
+                };
+            };
+            setup?: undefined | {
+                reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+                outcome: 'not_applied';
+                failure?: undefined | {
+                    kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                    reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                    stepId?: string | undefined;
+                    phase?: 'apply' | 'check' | undefined;
+                    requiredFact?: string | undefined;
+                    remedy?: string | undefined;
+                    nativeCommand?: undefined | {
+                        command: 'apt-get';
+                        phase: 'install' | 'update';
+                        exitCode: null | number;
+                        category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                    };
+                };
+            };
+            prerequisite?: undefined | {
+                reason: 'native_effect_pending';
+                requiredFact: string;
+                remedy: 'machines.agentIsolation.preview';
+                detail?: string | undefined;
+                path?: string | undefined;
+            } | {
+                reason: 'required_fact_unavailable';
+                requiredFact: 'daemon_identity' | 'session_inventory' | 'workspace_census' | 'workspace_paths';
+                remedy: string;
+            };
+        };
+        retirement?: undefined | {
+            removed: string[];
+            retained: ({
+                stepId: string;
+                kind: string;
+                target: string;
+                observation: 'absent' | 'present' | 'unknown';
+                action: 'none' | 'remove';
+            } | {
+                stepId: string;
+                kind: string;
+                target: string;
+                observation: 'present' | 'unknown';
+                action: 'retain';
+                reasonCode: 'authored_data' | 'foreign_effect_conflict' | 'native_check_unavailable' | 'ownership_unproven' | 'prior_value_unknown' | 'shared_resource';
+                remedy: string;
+            })[];
+        };
     };
 };

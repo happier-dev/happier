@@ -10,123 +10,6 @@ export type DesktopWindowsActionInputById = {
             serverId: string;
             kind: 'home';
         } | {
-            sessionId: string;
-            accountId: string;
-            serverId: string;
-            kind: 'session';
-            destination?: {
-                kind: 'scmReview';
-                comparison: {
-                    kind: 'turnCheckpoint';
-                    sessionId?: string;
-                    turnId?: string;
-                    checkpointReceiptId?: string;
-                    evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-                } | {
-                    kind: 'session';
-                    sessionId: string;
-                } | {
-                    kind: 'workingTree';
-                } | {
-                    kind: 'branch';
-                    head: string;
-                    base: string;
-                } | {
-                    kind: 'commit';
-                    commit: string;
-                    parent?: string;
-                } | {
-                    kind: 'revisionRange';
-                    baseOid: string;
-                    headOid: string;
-                } | {
-                    kind: 'pullRequest';
-                    locator: {
-                        providerId: string;
-                        repository: string;
-                        number: number;
-                        baseOid?: string;
-                        headOid?: string;
-                        sourceAction?: {
-                            action: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            input?: JsonValue;
-                            clientId?: string;
-                            messageActionReference?: {
-                                v: 1;
-                                sessionId: string;
-                                messageId: string;
-                                observedRevision: string;
-                            };
-                        };
-                    };
-                };
-                view: 'files' | 'walkthrough' | 'commits';
-                explain?: boolean | undefined;
-                comparisonId?: string | undefined;
-            } | undefined;
-        } | {
-            tabId: string;
-            serverId: string;
-            accountId: string;
-            kind: 'workspaceTab';
-            layoutId?: string | undefined;
-            destination?: {
-                kind: 'scmReview';
-                comparison: {
-                    kind: 'turnCheckpoint';
-                    sessionId?: string;
-                    turnId?: string;
-                    checkpointReceiptId?: string;
-                    evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-                } | {
-                    kind: 'session';
-                    sessionId: string;
-                } | {
-                    kind: 'workingTree';
-                } | {
-                    kind: 'branch';
-                    head: string;
-                    base: string;
-                } | {
-                    kind: 'commit';
-                    commit: string;
-                    parent?: string;
-                } | {
-                    kind: 'revisionRange';
-                    baseOid: string;
-                    headOid: string;
-                } | {
-                    kind: 'pullRequest';
-                    locator: {
-                        providerId: string;
-                        repository: string;
-                        number: number;
-                        baseOid?: string;
-                        headOid?: string;
-                        sourceAction?: {
-                            action: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            input?: JsonValue;
-                            clientId?: string;
-                            messageActionReference?: {
-                                v: 1;
-                                sessionId: string;
-                                messageId: string;
-                                observedRevision: string;
-                            };
-                        };
-                    };
-                };
-                view: 'files' | 'walkthrough' | 'commits';
-                explain?: boolean | undefined;
-                comparisonId?: string | undefined;
-            } | undefined;
-        } | {
             href: string;
             accountId: string;
             serverId: string;
@@ -140,22 +23,201 @@ export type DesktopWindowsActionInputById = {
             layoutId: string;
             kind: 'paneTab';
             resourceId?: string | undefined;
+        } | {
+            sessionId: string;
+            accountId: string;
+            serverId: string;
+            kind: 'session';
+            destination?: undefined | {
+                kind: 'scmReview';
+                comparison: {
+                    kind: 'branch';
+                    head: string;
+                    base: string;
+                } | {
+                    kind: 'commit';
+                    commit: string;
+                    parent?: string;
+                } | {
+                    kind: 'pullRequest';
+                    locator: {
+                        providerId: string;
+                        repository: string;
+                        number: number;
+                        baseOid?: string;
+                        headOid?: string;
+                        sourceAction?: {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input?: JsonValue;
+                            clientId?: string;
+                            messageActionReference?: {
+                                v: 1;
+                                sessionId: string;
+                                messageId: string;
+                                observedRevision: string;
+                            };
+                        };
+                        fileViewedActions?: {
+                            read: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            set: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                        };
+                    };
+                } | {
+                    kind: 'revisionRange';
+                    baseOid: string;
+                    headOid: string;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                } | {
+                    kind: 'turnCheckpoint';
+                    sessionId?: string;
+                    turnId?: string;
+                    checkpointReceiptId?: string;
+                    evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+                } | {
+                    kind: 'workingTree';
+                };
+                view: 'commits' | 'files' | 'walkthrough';
+                explain?: boolean | undefined;
+                comparisonId?: string | undefined;
+            };
+        } | {
+            tabId: string;
+            serverId: string;
+            accountId: string;
+            kind: 'workspaceTab';
+            layoutId?: string | undefined;
+            destination?: undefined | {
+                kind: 'scmReview';
+                comparison: {
+                    kind: 'branch';
+                    head: string;
+                    base: string;
+                } | {
+                    kind: 'commit';
+                    commit: string;
+                    parent?: string;
+                } | {
+                    kind: 'pullRequest';
+                    locator: {
+                        providerId: string;
+                        repository: string;
+                        number: number;
+                        baseOid?: string;
+                        headOid?: string;
+                        sourceAction?: {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input?: JsonValue;
+                            clientId?: string;
+                            messageActionReference?: {
+                                v: 1;
+                                sessionId: string;
+                                messageId: string;
+                                observedRevision: string;
+                            };
+                        };
+                        fileViewedActions?: {
+                            read: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            set: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                        };
+                    };
+                } | {
+                    kind: 'revisionRange';
+                    baseOid: string;
+                    headOid: string;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                } | {
+                    kind: 'turnCheckpoint';
+                    sessionId?: string;
+                    turnId?: string;
+                    checkpointReceiptId?: string;
+                    evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+                } | {
+                    kind: 'workingTree';
+                };
+                view: 'commits' | 'files' | 'walkthrough';
+                explain?: boolean | undefined;
+                comparisonId?: string | undefined;
+            };
         };
         windowId?: string | undefined;
         chrome?: 'full' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type DesktopWindowsActionResultById = {
     readonly "desktop.windows.open": {
-        status: 'opened' | 'focused';
+        status: 'cancelled';
+    } | {
+        status: 'focused' | 'opened';
         windowId: string;
-        rect?: {
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
-    } | {
-        status: 'cancelled';
+        };
     };
 };

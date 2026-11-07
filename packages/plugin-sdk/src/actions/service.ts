@@ -1,9 +1,10 @@
 import { ActionApprovalRequestCreatedResultSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { getActionSpec as canonicalGetActionSpec } from '@happier-dev/protocol/actions/actionSpecs';
+import { getActionSpec as canonicalGetActionSpec, PLUGIN_ACTION_INPUT_SCHEMAS, PluginInvocableActionIdSchema } from '@happier-dev/protocol/actions/actionSpecs';
 
 import type { JsonValue, PluginContributionRef } from '../identity.js';
 import type { QualifiedConnectedAccountRef } from '../connectedAccounts.js';
 import type { PluginCancellationOptions } from '../lifecycle.js';
+import type { ActionSessionAddressV1 } from '../sessions/sessionTargets.js';
 import type { Disposable } from '../lifecycle.js';
 import {
   actionInputOptionValueKey,
@@ -14,9 +15,8 @@ import {
 } from './inputHints.js';
 import { PluginMachineExecutionOriginV1Schema } from './executionOrigin.js';
 import type { PluginMachineExecutionRoutingV1 } from './executionOrigin.js';
+import type { ActionExecuteResult, ActionApprovalRequestCreatedResult } from './dtos/pluginActionDtoSupport.generated.js';
 import type {
-  ActionExecuteResult,
-  ActionApprovalRequestCreatedResult,
   ActionInputFieldHint,
   ActionInputHints,
   ActionInputOption,
@@ -27,14 +27,15 @@ import type {
   PluginActionInputById,
   PluginActionResultById,
   PluginActionContributionV2,
-  PluginCommandContributionV2,
   PluginInvocableActionId,
   PluginMachineExecutionOriginV1,
   SessionTranscriptGetExternalShareableInputV1,
   SessionTranscriptGetExternalShareableResultV1,
-  PluginToolContributionV2,
 } from './actionTypeMap.generated.js';
 import type { ActionContract, ActionHandler } from './contracts.js';
+export type { PluginActionInvocationBindingV1 } from '@happier-dev/protocol/plugins/actions/v2';
+/** Statically declared input operands rendered by the host's Action confirmation. */
+export type { PluginActionConfirmationInputFieldV2 as ActionConfirmationInputField } from '@happier-dev/protocol/plugins/actions/v2';
 import { projectProtocolValue } from '../protocol/projectProtocolValue.js';
 import type {
   AdmittedTargetedOperationExecutionHandle,
@@ -86,12 +87,10 @@ export type {
   PluginActionInputById,
   PluginActionResultById,
   PluginActionContributionV2 as ActionContribution,
-  PluginCommandContributionV2 as CommandContribution,
   PluginInvocableActionId,
   PluginMachineExecutionOriginV1,
   SessionTranscriptGetExternalShareableInputV1,
   SessionTranscriptGetExternalShareableResultV1,
-  PluginToolContributionV2 as ToolContribution,
 };
 
 /** Canonical host Action identifier accepted by {@link getActionSpec}. */
@@ -104,6 +103,27 @@ export type PluginActionWorkflowDefinitionV1 = PluginActionResultById['workflow.
 export const getActionSpec: (
   id: ActionId,
 ) => ActionSpec = /* @__PURE__ */ projectProtocolValue(canonicalGetActionSpec);
+
+const hostActionIdParser: Readonly<{ parse(value: unknown): PluginInvocableActionId }> =
+  /* @__PURE__ */ projectProtocolValue(PluginInvocableActionIdSchema);
+
+/** A dynamic request validated by the canonical plugin-surface Action schemas. */
+export type PluginHostActionInvocation = Readonly<{
+  actionId: PluginInvocableActionId;
+  input: PluginActionInputById[PluginInvocableActionId];
+}>;
+
+// Dynamic lookup returns the facade's input union, not a union of every
+// distinct parser signature. Exact per-Action types remain in the public map.
+const hostActionInputParsers: Readonly<Record<PluginInvocableActionId, Readonly<{
+  parse(value: unknown): PluginHostActionInvocation['input'];
+}>>> = /* @__PURE__ */ projectProtocolValue(PLUGIN_ACTION_INPUT_SCHEMAS);
+
+/** Validate dynamic data before ordinary `actions.execute`; this grants no admission or approval. */
+export function parsePluginHostActionInvocation(action: unknown, input: unknown): PluginHostActionInvocation {
+  const actionId = hostActionIdParser.parse(action);
+  return { actionId, input: hostActionInputParsers[actionId].parse(input) };
+}
 export {
   actionInputOptionValueKey,
   isSameActionInputOptionValue,
@@ -182,6 +202,7 @@ export function isPluginActionApprovalRequestCreated(
  */
 /** Invocation routing and availability preferences; these never grant permission or resolve a selector. */
 export type ActionExecutionOptions = PluginCancellationOptions & Readonly<{
+  sessionAddress?: ActionSessionAddressV1;
   /** Read available sources now rather than awaiting an optional Machine connection.
    * Inherited by nested Actions. Omission retains ordinary connection settlement.
    * This is a latency hint, never authority or an execution target. */

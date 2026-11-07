@@ -2,12 +2,154 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, relative, resolve } from 'node:path';
+import { dirname, relative, resolve, sep } from 'node:path';
 import { spawnSync } from 'node:child_process';
 import ts from 'typescript';
-import { deriveActionDtoSchemas } from './deriveActionDtos.mjs';
+import { captureActionSchemaInputs, deriveActionDtoBindings, deriveActionDtoSchemas } from './deriveActionDtos.mjs';
+
+test('Action DTO support omits private symbol keys and retains named wire fields', t => {
+  const root = mkdtempSync(resolve(tmpdir(), 'happier-dto-private-symbol-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const source = resolve(root, 'packages/protocol/src/payload.ts');
+  mkdirSync(dirname(source), { recursive: true });
+  writeFileSync(source, `
+    const internalAdmission = Symbol('internalAdmission');
+    const field = 'publicValue';
+    export type Payload = { [field]: number; [internalAdmission]?: { secret: string } };
+  `);
+  const result = deriveActionDtoBindings({ repoRoot: root, bindings: [['payload.ts', 'Payload']] });
+  const output = result.declarations.find(([name]) => name === 'Payload')?.[1];
+  assert.ok(output);
+  assert.match(output, /publicValue: number/u);
+  assert.doesNotMatch(output, /internalAdmission|secret/u);
+});
+
+test('Action DTO derivation publishes only plugin-callable rows and omits host-only families', async t => {
+  const cache = resolve('packages/plugin-sdk/node_modules/.cache');
+  mkdirSync(cache, { recursive: true });
+  const root = mkdtempSync(resolve(cache, 'schema-plugin-exposure-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const actions = resolve(root, 'packages/protocol/src/actions');
+  mkdirSync(actions, { recursive: true });
+  writeFileSync(resolve(actions, 'actionIds.ts'), `export const ACTION_ID_FAMILIES_V1 = {
+    inventory: ['inventory.list', 'inventory.rebuild'], internal: ['internal.refresh']
+  } as const;`);
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), `export const PLUGIN_SURFACE_EXCLUSION_REASONS = {
+    'inventory.rebuild': 'Host projection maintenance', 'internal.refresh': 'Host lifecycle'
+  } as const;`);
+  writeFileSync(resolve(actions, 'actionSpecs.ts'), `import { z } from 'zod/mini';
+    const input = z.strictObject({ query: z.string() });
+    const output = z.strictObject({ count: z.number() });
+    const IDS = Object.freeze({ list: 'inventory.list', rebuild: 'inventory.rebuild' });
+    const ID_MAP = new Map([['rebuild', IDS.rebuild]] as const);
+    export const ACTION_SPECS = [
+      { id: IDS.list, inputSchema: input, outputSchema: output },
+      { id: ID_MAP.get('rebuild'), inputSchema: input, outputSchema: output },
+      { id: 'internal.refresh', inputSchema: input, outputSchema: output }
+    ];`);
+  const derive = () => deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['inventory', 'internal'] });
+  const derived = await derive();
+  assert.deepEqual([...derived.outputs.keys()], [resolve(actions, 'inventoryActionDtos.ts')]);
+  const dto = ts.createSourceFile('dto.ts', derived.outputs.get(resolve(actions, 'inventoryActionDtos.ts')),
+    ts.ScriptTarget.ES2022, true);
+  for (const kind of ['Input', 'Result']) {
+    const rows = dto.statements.find(node => ts.isTypeAliasDeclaration(node)
+      && node.name.text === `InventoryAction${kind}ById`).type.members;
+    assert.deepEqual(rows.map(row => row.name.text), ['inventory.list']);
+  }
+  // Changing the existing exposure owner must restore the same typed Actions;
+  // no generator-owned allowlist or permanently suppressed family is involved.
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  const exposed = await derive();
+  assert.deepEqual([...exposed.outputs.keys()], [resolve(actions, 'inventoryActionDtos.ts'), resolve(actions, 'internalActionDtos.ts')]);
+  const restored = ts.createSourceFile('dto.ts', exposed.outputs.get(resolve(actions, 'inventoryActionDtos.ts')),
+    ts.ScriptTarget.ES2022, true);
+  for (const kind of ['Input', 'Result']) {
+    const rows = restored.statements.find(node => ts.isTypeAliasDeclaration(node)
+      && node.name.text === `InventoryAction${kind}ById`).type.members;
+    assert.deepEqual(rows.map(row => row.name.text), ['inventory.list', 'inventory.rebuild']);
+  }
+});
+
+test('union ordering is canonical across complete and single-family derivation without moving fields', async t => {
+  const cache = resolve('packages/plugin-sdk/node_modules/.cache');
+  mkdirSync(cache, { recursive: true });
+  const root = mkdtempSync(resolve(cache, 'schema-canonical-unions-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const actions = resolve(root, 'packages/protocol/src/actions');
+  mkdirSync(actions, { recursive: true });
+  writeFileSync(resolve(actions, 'actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { first: ['first.read'], second: ['second.read'] } as const;");
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  writeFileSync(resolve(actions, 'actionSpecs.ts'), `import { z } from 'zod/mini';
+    const first = z.object({ zed: z.union([z.literal('z'), z.literal('a')]), alpha: z.string() });
+    const second = z.object({ zed: z.union([z.literal('a'), z.literal('z')]), alpha: z.string() });
+    export const ACTION_SPECS = [
+      { id: 'first.read', inputSchema: first, outputSchema: first },
+      { id: 'second.read', inputSchema: second, outputSchema: second }];`);
+  const full = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['first', 'second'] });
+  const repeated = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['first', 'second'] });
+  const scoped = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['second'] });
+  assert.deepEqual([...full.outputs], [...repeated.outputs], 'equal inputs must emit identical bytes');
+  const second = scoped.outputs.get(resolve(actions, 'secondActionDtos.ts'));
+  assert.equal(second, full.outputs.get(resolve(actions, 'secondActionDtos.ts')),
+    'another family creating the same literal types first must not affect scoped output');
+  assert.match(second, /zed: 'a' \| 'z';/u);
+  const source = ts.createSourceFile('dto.ts', second, ts.ScriptTarget.ES2022, true);
+  const input = source.statements.find(node => ts.isTypeAliasDeclaration(node)
+    && node.name.text === 'SecondActionInputById').type.members[0].type;
+  assert.deepEqual(input.members.map(member => member.name.text), ['zed', 'alpha'],
+    'canonicalizing unions must retain the authored property order');
+});
+
+test('Action DTO derivation preserves the canonical catalog input projection', async t => {
+  const cache = resolve('packages/plugin-sdk/node_modules/.cache');
+  mkdirSync(cache, { recursive: true });
+  const root = mkdtempSync(resolve(cache, 'schema-client-routing-'));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const actions = resolve(root, 'packages/protocol/src/actions');
+  mkdirSync(actions, { recursive: true });
+  writeFileSync(resolve(actions, 'actionIds.ts'), "export const ACTION_ID_FAMILIES_V1 = { inventory: ['inventory.open', 'inventory.list'] } as const; export type ActionId = 'inventory.open' | 'inventory.list';");
+  writeFileSync(resolve(actions, 'pluginActionSurface.ts'), 'export const PLUGIN_SURFACE_EXCLUSION_REASONS = {} as const;');
+  writeFileSync(resolve(actions, 'actionSpecs.ts'), `import { z } from 'zod/mini';
+    import type { ActionId } from './actionIds.js';
+    import type { ClientRoutedActionId } from './clientRoutedActionIds.generated.js';
+    export type WithClientRoutingInput<Id extends ActionId, Input> = Id extends ClientRoutedActionId ? Input & { clientId?: string } : Input;
+    const input = z.strictObject({ name: z.string() });
+    const result = z.strictObject({ status: z.literal('ready') });
+    export const ACTION_SPECS = [
+      { id: 'inventory.open', executionPlacement: 'client', inputSchema: input, outputSchema: result },
+      { id: 'inventory.list', executionPlacement: 'machine', inputSchema: input, outputSchema: result }];`);
+  const derived = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['inventory'] });
+  const source = ts.createSourceFile('dto.ts', derived.outputs.get(resolve(actions, 'inventoryActionDtos.ts')), ts.ScriptTarget.ES2022, true);
+  const rows = source.statements.find(node => ts.isTypeAliasDeclaration(node) && node.name.text === 'InventoryActionInputById').type.members;
+  const open = rows.find(row => row.name.text === 'inventory.open').type;
+  const list = rows.find(row => row.name.text === 'inventory.list').type;
+  const members = type => ts.isIntersectionTypeNode(type) ? type.types.flatMap(members)
+    : ts.isTypeLiteralNode(type) ? [...type.members] : [];
+  const selector = members(open).find(member => member.name.text === 'clientId');
+  assert.ok(selector?.questionToken, 'the client-owned Action must retain its optional exact selector');
+  const selectorTypes = ts.isUnionTypeNode(selector.type) ? selector.type.types : [selector.type];
+  assert.ok(selectorTypes.some(type => type.kind === ts.SyntaxKind.StringKeyword));
+  assert.ok(selectorTypes.every(type => type.kind === ts.SyntaxKind.StringKeyword || type.kind === ts.SyntaxKind.UndefinedKeyword));
+  assert.equal(members(list).some(member => member.name.text === 'clientId'), false);
+  const placement = derived.catalogOutputs.get(resolve(actions, 'clientRoutedActionIds.generated.ts'));
+  assert.match(placement, /"inventory.open"/u);
+  assert.doesNotMatch(placement, /"inventory.list"/u);
+});
 import { prepareActionTypeMap } from './generateActionTypeMap.mjs';
 import { resolveTypeScriptCliInvocation } from '../../../scripts/workspaces/resolveTypeScriptCliInvocation.mjs';
+
+test('Session target inspection derives contributed Action ids from the canonical string schema', async () => {
+  const derived = await deriveActionDtoSchemas({ repoRoot: process.cwd(), onlyFamilies: ['session_targeting'] });
+  const dto = derived.outputs.get(resolve('packages/protocol/src/actions/sessionTargetingActionDtos.ts'));
+  assert.ok(dto, 'the target inspection family must produce its canonical DTO');
+  const source = ts.createSourceFile('dto.ts', dto, ts.ScriptTarget.ES2022, true);
+  const input = source.statements.find(node => ts.isTypeAliasDeclaration(node)
+    && node.name.text === 'SessionTargetingActionInputById').type.members
+    .find(member => member.name.text === 'session.targets.resolve').type;
+  assert.equal(input.members.find(member => member.name.text === 'actionId')?.type.kind, ts.SyntaxKind.StringKeyword,
+    'the canonical refined string accepts qualified contributed ids as well as built-in Action ids');
+});
 
 test('literal Action rows derive the plugin surface input and output instead of host schemas', async t => {
   const cache = resolve('packages/plugin-sdk/node_modules/.cache');
@@ -130,11 +272,19 @@ for (const dialect of ['zod', 'zod/mini']) test(`optional ${dialect} catchall fi
     const absent: InventoryActionInputById['inventory.list'] = { attempts: 2 };
     const present: InventoryActionInputById['inventory.list'] = { reconnectCause: 'listed_needs_reauth', healthy: false };
     const output: InventoryActionResultById['inventory.list'] = present;
+    type Canonical = Record<string, string | number | boolean | null> & {
+      reconnectCause?: 'listed_needs_reauth' | 'stored_health_rejected';
+    };
+    const toCanonical = (value: InventoryActionResultById['inventory.list']): Canonical => value;
+    const fromCanonical = (value: Canonical): InventoryActionResultById['inventory.list'] => value;
     // @ts-expect-error Known fields must retain their declared enum.
     const invalidCause: InventoryActionInputById['inventory.list'] = { reconnectCause: 'other' };
     // @ts-expect-error Catchall values must retain their scalar contract.
     const invalidExtra: InventoryActionResultById['inventory.list'] = { extra: [] };
-    void absent; void output; void invalidCause; void invalidExtra;`);
+    // @ts-expect-error An absent named field must not widen arbitrary extra values.
+    const undefinedExtra: InventoryActionResultById['inventory.list'] = { extra: undefined };
+    void absent; void output; void invalidCause; void invalidExtra;
+    void toCanonical; void fromCanonical; void undefinedExtra;`);
   const invocation = resolveTypeScriptCliInvocation({ repoRoot: process.cwd(), workspaceDir: process.cwd() });
   const compiled = spawnSync(invocation.command, [...invocation.argsPrefix, '--ignoreConfig', '--strict', '--skipLibCheck', '--noEmit',
     '--target', 'ES2022', '--module', 'ESNext', '--moduleResolution', 'Bundler', '--types', 'node', resolve(root, 'consumer.ts')], { encoding: 'utf8' });
@@ -276,14 +426,10 @@ test('Account operand mapped keys stay lexical in public support projections', t
   mkdirSync(cache, { recursive: true });
   const root = mkdtempSync(resolve(cache, 'schema-account-operand-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const request = resolve(root, 'request.json'), resultPath = resolve(root, 'result.json');
-  writeFileSync(request, JSON.stringify({ repoRoot: process.cwd(), bindings: [
+  const result = deriveActionDtoBindings({ repoRoot: process.cwd(), bindings: [
     ['providers/providerActionsV1.ts', 'AccountOperand'],
     ['providers/providerActionsV1.ts', 'AccountCreationOperand'],
-  ] }));
-  const generated = spawnSync(process.execPath, [resolve('packages/plugin-sdk/scripts/deriveActionDtos.mjs'), request, resultPath], { encoding: 'utf8' });
-  assert.equal(generated.status, 0, generated.stdout + generated.stderr);
-  const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+  ] });
   writeFileSync(resolve(root, 'dto.ts'), result.declarations.map(([, text]) => text).join('\n'));
   writeFileSync(resolve(root, 'consumer.ts'), `
     import type { AccountOperand, AccountCreationOperand } from './dto.js';
@@ -302,7 +448,7 @@ test('Account operand mapped keys stay lexical in public support projections', t
   assert.equal(compile.status, 0, compile.stdout + compile.stderr);
 });
 
-test('family workers derive one input snapshot despite a mid-run schema edit', async t => {
+test('family derivation uses captured inputs despite a subsequent schema edit', async t => {
   const cache = resolve('packages/plugin-sdk/node_modules/.cache');
   mkdirSync(cache, { recursive: true });
   const root = mkdtempSync(resolve(cache, 'schema-action-overlays-'));
@@ -329,10 +475,10 @@ test('family workers derive one input snapshot despite a mid-run schema edit', a
     const OUTPUTS = { 'first.read': FirstOutput, 'second.read': SecondOutput } as const;
     type CanonicalActionSchemaDefinition<Id, Input, Output> = { id: Id; inputSchema: Input; outputSchema: Output };
     type Definition = { [Id in 'first.read' | 'second.read']: CanonicalActionSchemaDefinition<Id, (typeof INPUTS)[Id], (typeof OUTPUTS)[Id]> };`);
-  const pending = deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['first', 'second'] });
+  const inputSnapshot = captureActionSchemaInputs(root);
   const edited = original.replace('z.string()', 'z.boolean()').replace('second: z.number()', 'second: z.string()');
   writeFileSync(shared, edited);
-  const derived = await pending;
+  const derived = await deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['first', 'second'], inputSnapshot });
   assert.equal(readFileSync(shared, 'utf8'), edited, 'derivation must preserve the concurrent source edit');
   const first = derived.outputs.get(resolve(actions, 'firstActionDtos.ts'));
   const second = derived.outputs.get(resolve(actions, 'secondActionDtos.ts'));
@@ -360,8 +506,11 @@ test('external authors can type inline Workflow and Session triggers and cannot 
 test('explicit Action generation derives current LocalServices preview schemas instead of copying stale DTOs', async t => {
   const started = performance.now();
   const prepared = await prepareActionTypeMap();
-  assert.ok([...prepared.outputs.keys()].every(path => path.includes('/packages/plugin-sdk/src/')),
-    'the producer publishes only consumed SDK DTOs, never duplicate Protocol copies');
+  const placementPath = resolve('packages/protocol/src/actions/clientRoutedActionIds.generated.ts');
+  const sdkSourcePrefix = resolve('packages/plugin-sdk/src') + sep;
+  assert.ok(prepared.outputs.has(placementPath), 'the placement type is published by this one producer');
+  assert.ok([...prepared.outputs.keys()].every(path => path.startsWith(sdkSourcePrefix) || path === placementPath),
+    'only the consumed placement type may accompany SDK DTOs, never duplicate Protocol family copies');
   t.diagnostic(JSON.stringify({ coldGenerateMs: Math.round(performance.now() - started), parentMaxRssKiB: process.resourceUsage().maxRSS,
     familyMetrics: prepared.familyMetrics, inputs: prepared.inputKeys.length, results: prepared.resultKeys.length, modules: prepared.outputs.size }));
   const preview = [...prepared.outputs].find(([path]) => path.endsWith('/localServicesPreviewActionDtos.generated.ts'));
@@ -501,23 +650,17 @@ test('Action schema derivation admits imported declarations without unrelated am
     import { ImportedInput } from 'explicit-schema';
     export const ACTION_SPECS = [{ id: 'inventory.list', inputSchema: ImportedInput, outputSchema: z.number() }] as const;
   `);
-  const request = resolve(root, 'request.json');
-  const result = resolve(root, 'result.json');
-  writeFileSync(request, JSON.stringify({ repoRoot: root, keys: ['inventory.list'], bindings: [
+  const derived = deriveActionDtoBindings({ repoRoot: root, keys: ['inventory.list'], bindings: [
     ['actions/actionSpecs.ts', 'PluginActionInputById', 'MeasuredInput', true],
     ['actions/actionSpecs.ts', 'PluginActionResultById', 'MeasuredResult', false],
-  ] }));
-  const generated = spawnSync(process.execPath, [resolve('packages/plugin-sdk/scripts/deriveActionDtos.mjs'), request, result],
-    { cwd: root, encoding: 'utf8' });
-  assert.equal(generated.status, 0, generated.stdout + generated.stderr);
-  const derived = JSON.parse(readFileSync(result, 'utf8'));
+  ] });
   const inputs = new Map(derived.inputDigests);
   assert.match(derived.declarations.map(([, text]) => text).join('\n'), /"inventory.list": string/u);
   assert.ok(inputs.has(imported), 'explicitly imported schema declarations remain derivation inputs');
   assert.ok(!inputs.has(ambient), 'unrelated ambient packages must not enter the Action derivation input identity');
 });
 
-test('Action families reuse unchanged compiler sources and refresh changed schema overlays and imports', async t => {
+test('Action families share one checker and refresh changed schema overlays and imports', async t => {
   const cache = resolve('packages/plugin-sdk/node_modules/.cache');
   mkdirSync(cache, { recursive: true });
   const root = mkdtempSync(resolve(cache, 'schema-shared-host-'));
@@ -540,11 +683,13 @@ test('Action families reuse unchanged compiler sources and refresh changed schem
   `);
   const derive = () => deriveActionDtoSchemas({ repoRoot: root, onlyFamilies: ['first', 'repeated'] });
   const initial = await derive();
+  assert.equal(initial.metrics.reduce((count, family) => count + family.programsCreated, 0), 1,
+    'all families in one derivation must share one compiler program and checker');
   const output = family => initial.outputs.get(resolve(actions, `${family}ActionDtos.ts`));
   assert.match(output('first'), /"first.read": number/u);
   assert.match(output('repeated'), /"first.read": number/u);
   assert.doesNotMatch(output('repeated'), /"second.read"/u);
-  assert.ok(initial.metrics[1].sourceFilesReused > 0, 'unchanged family sources must reuse their parsed ASTs');
+  assert.ok(initial.metrics[0].sourceFilesParsed > 0, 'the shared program must parse the canonical source closure');
   assert.equal(initial.metrics[1].sourceFilesParsed, 0, 'an identical overlay must not be parsed again');
   writeFileSync(resolve(actions, 'actionIds.ts'), `export const ACTION_ID_FAMILIES_V1 = {
     first: ['first.read'], repeated: ['first.read', 'second.read']
@@ -553,8 +698,9 @@ test('Action families reuse unchanged compiler sources and refresh changed schem
   const expanded = changed.outputs.get(resolve(actions, 'repeatedActionDtos.ts'));
   assert.match(expanded, /"first.read": number/u);
   assert.match(expanded, /"second.read": boolean/u);
-  assert.ok(changed.metrics[1].sourceFilesParsed > 0, 'different schema overlays must be parsed afresh');
-  assert.ok(changed.metrics[1].sourceFilesReused > 0, 'changing an overlay must retain common declaration ASTs');
+  assert.equal(changed.metrics.reduce((count, family) => count + family.programsCreated, 0), 1,
+    'changed family membership must still use one compiler program');
+  assert.equal(changed.metrics[1].sourceFilesParsed, 0, 'changed family membership must not reparse the shared program');
   writeFileSync(imported, "import { z } from 'zod'; export const Input = z.boolean();");
   const refreshed = await derive();
   for (const text of refreshed.outputs.values()) {
@@ -756,13 +902,9 @@ for (const dialect of ['zod', 'zod/mini']) test(`composer effect support derives
       kind: z.literal('composerApply'), text: z.string(), cursor: ${dialect === 'zod/mini' ? 'z._default(z.number(), 0)' : 'z.number().default(0)'}
     });
     export type PluginDeclarativeComposerApplyEffectV1 = { authoredAliasOnly: true };`);
-  const request = resolve(root, 'request.json'), resultPath = resolve(root, 'result.json');
-  writeFileSync(request, JSON.stringify({ repoRoot: root, bindings: [
+  const result = deriveActionDtoBindings({ repoRoot: root, bindings: [
     ['plugins/contributions/ui/v2.ts', 'PluginDeclarativeComposerApplyEffectV1'],
-  ] }));
-  const generated = spawnSync(process.execPath, [resolve('packages/plugin-sdk/scripts/deriveActionDtos.mjs'), request, resultPath], { encoding: 'utf8' });
-  assert.equal(generated.status, 0, generated.stdout + generated.stderr);
-  const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+  ] });
   const declaration = result.declarations.find(([name]) => name === 'PluginDeclarativeComposerApplyEffectV1')?.[1];
   assert.ok(declaration);
   assert.match(declaration, /kind: ["']composerApply["']/u);
@@ -776,8 +918,7 @@ test('public support roots preserve canonical mutable projections and recursive 
   mkdirSync(cache, { recursive: true });
   const root = mkdtempSync(resolve(cache, 'schema-action-support-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const request = resolve(root, 'request.json'), resultPath = resolve(root, 'result.json');
-  writeFileSync(request, JSON.stringify({ repoRoot: process.cwd(), bindings: [
+  const result = deriveActionDtoBindings({ repoRoot: process.cwd(), bindings: [
     ...['PluginAgentExternalSessionLinkDataArray', 'PluginAgentExternalSessionLinkDataObject', 'PluginAgentExternalSessionLinkDataValue']
       .map(name => ['plugins/contributions/agentExternalSessions.ts', name]),
     ['plugins/contributions/publicTypes.ts', 'PluginContributionReferenceV2', 'PluginContributionReference'],
@@ -788,10 +929,7 @@ test('public support roots preserve canonical mutable projections and recursive 
       .map(name => ['plugins/ui/entityDragDropHost.ts', name]),
     ...['PluginUiWidgetAreaRequestV1', 'PluginUiWidgetAreaResultV1', 'PluginUiWidgetAreaOperationV1']
       .map(name => ['plugins/ui/widgetArea.ts', name]),
-  ] }));
-  const generated = spawnSync(process.execPath, [resolve('packages/plugin-sdk/scripts/deriveActionDtos.mjs'), request, resultPath], { encoding: 'utf8' });
-  assert.equal(generated.status, 0, generated.stdout + generated.stderr);
-  const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+  ] });
   writeFileSync(resolve(root, 'dto.ts'), `import type { JsonValue } from '${resolve('packages/protocol/src/json/strictJsonValue.js')}';\n`
     + `import type { PluginUiJsonValueV1 } from '${resolve('packages/protocol/src/plugins/contributions/ui/json.js')}';\n`
     + `import type { PluginJsonValueV2, PluginJsonSchemaV2 as PluginJsonSchema } from '${resolve('packages/protocol/src/plugins/contributions/jsonSchema.js')}';\n`
@@ -843,15 +981,11 @@ test('public support roots preserve requested re-export aliases and explicit pro
   mkdirSync(cache, { recursive: true });
   const root = mkdtempSync(resolve(cache, 'schema-action-alias-'));
   t.after(() => rmSync(root, { recursive: true, force: true }));
-  const request = resolve(root, 'request.json'), resultPath = resolve(root, 'result.json');
-  writeFileSync(request, JSON.stringify({ repoRoot: process.cwd(), bindings: [
+  const result = deriveActionDtoBindings({ repoRoot: process.cwd(), bindings: [
     ['actions/actionInputHintsRuntime.ts', 'ActionInputFieldHint'],
     ['actions/actionInputHintsRuntime.ts', 'ActionInputHints'],
     ['actions/actionInputHintsRuntime.ts', 'ActionInputOption', 'ProjectedOption'],
-  ] }));
-  const generated = spawnSync(process.execPath, [resolve('packages/plugin-sdk/scripts/deriveActionDtos.mjs'), request, resultPath], { encoding: 'utf8' });
-  assert.equal(generated.status, 0, generated.stdout + generated.stderr);
-  const result = JSON.parse(readFileSync(resultPath, 'utf8'));
+  ] });
   for (const name of ['ActionInputFieldHint', 'ActionInputHints', 'ProjectedOption']) {
     assert.ok(result.declarations.some(([candidate]) => candidate === name), `missing exported DTO ${name}`);
   }

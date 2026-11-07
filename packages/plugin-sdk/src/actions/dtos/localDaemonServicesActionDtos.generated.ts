@@ -6,43 +6,57 @@ import type { SystemTaskJsonValue } from './pluginActionDtoSupport.generated.js'
 export type LocalDaemonServicesActionInputById = {
     readonly "machines.local.service.status": {
         serverId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.local.service.start": {
         serverId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.local.service.stop": {
         serverId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.local.service.restart": {
         serverId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.local.service.autostart.set": {
         serverId: string;
         autostart: 'at-login' | 'on-demand';
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.local.service.update": {
         serverId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.local.service.disconnect": {
         serverId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.services.exec": {
-        target: {
-            kind: 'current';
-            serviceId: string;
-            expectedGeneration: string;
-        };
-        mode: 'exec' | 'run';
-        serverId: string;
-        machineId: string;
-        argv: string[];
-    } | {
         target: {
             kind: 'candidate';
             deploymentId: string;
             service: string;
         };
         mode: 'run';
+        serverId: string;
+        machineId: string;
+        argv: string[];
+    } | {
+        target: {
+            kind: 'current';
+            serviceId: string;
+            expectedGeneration: string;
+        };
+        mode: 'exec' | 'run';
         serverId: string;
         machineId: string;
         argv: string[];
@@ -55,10 +69,10 @@ export type LocalDaemonServicesActionInputById = {
     readonly "machines.services.discovery": {
         serverId: string;
         machineId: string;
-        adapter?: {
+        adapter?: undefined | {
             pluginId: string;
             localId: string;
-        } | undefined;
+        };
     };
     readonly "machines.services.detail": {
         serviceId: string;
@@ -69,7 +83,7 @@ export type LocalDaemonServicesActionInputById = {
     readonly "machines.services.watch": {
         candidateId: string;
         expectedRevision: string;
-        lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
+        lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
         serverId: string;
         machineId: string;
     };
@@ -82,7 +96,7 @@ export type LocalDaemonServicesActionInputById = {
     readonly "machines.services.control": {
         serviceId: string;
         expectedGeneration: string;
-        operation: 'start' | 'stop' | 'restart';
+        operation: 'restart' | 'start' | 'stop';
         serverId: string;
         machineId: string;
     };
@@ -90,29 +104,21 @@ export type LocalDaemonServicesActionInputById = {
         serverId: string;
         machineId: string;
         serviceId: string;
-        cursor?: {
+        cursor?: undefined | {
             sourceRevision: string;
             token: string;
-        } | undefined;
+        };
     };
     readonly "machines.services.adopt": {
-        mode: 'review';
-        serverId: string;
-        machineId: string;
-        serviceId: string;
-        expectedGeneration: string;
-        requestKey: string;
-        profiles: string[];
-    } | {
         mode: 'apply';
         reviewedDigest: string;
         destination: {
-            purpose: 'standard' | 'preview';
-            protection: 'production' | 'nonProduction';
-            deployerMode: 'managers' | 'members' | 'chosen';
+            purpose: 'preview' | 'standard';
+            protection: 'nonProduction' | 'production';
+            deployerMode: 'chosen' | 'managers' | 'members';
             name: string;
             projectSourceId?: string | undefined;
-            newProject?: {
+            newProject?: undefined | {
                 name: string;
                 requestKey: string;
                 owner: {
@@ -122,11 +128,11 @@ export type LocalDaemonServicesActionInputById = {
                     kind: 'team';
                     teamId: string;
                 };
-            } | undefined;
-            deployerPrincipals?: {
+            };
+            deployerPrincipals?: undefined | {
                 principalKind: 'account' | 'teamGroup';
                 principalId: string;
-            }[] | undefined;
+            }[];
             buildMachineId?: string | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
             controllerMachineId?: string | undefined;
@@ -135,29 +141,37 @@ export type LocalDaemonServicesActionInputById = {
         bindingsConfirmed: true;
         bindings: {
             source: {
+                kind: 'deploymentFact';
+                fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+            } | {
+                kind: 'deploymentFact';
+                fact: 'domainUrl';
+                domainId: string;
+            } | {
+                kind: 'reference';
+                environmentId: string;
+                export: string;
+                via: 'auto' | 'privateNetwork' | 'public';
+            } | {
                 kind: 'secret';
                 ref: string;
                 resourceRevision: number;
             } | {
                 kind: 'value';
                 value: string;
-            } | {
-                kind: 'reference';
-                environmentId: string;
-                export: string;
-                via: 'public' | 'auto' | 'privateNetwork';
-            } | {
-                kind: 'deploymentFact';
-                fact: 'deploymentId' | 'primaryUrl' | 'commitSha' | 'environmentName';
-            } | {
-                kind: 'deploymentFact';
-                fact: 'domainUrl';
-                domainId: string;
             };
             purpose: 'variable';
             name: string;
             phase: 'build' | 'runtime';
         }[];
+        serverId: string;
+        machineId: string;
+        serviceId: string;
+        expectedGeneration: string;
+        requestKey: string;
+        profiles: string[];
+    } | {
+        mode: 'review';
         serverId: string;
         machineId: string;
         serviceId: string;
@@ -172,16 +186,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
-            protocolVersion: 1;
-            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.start": {
@@ -189,16 +203,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
-            protocolVersion: 1;
-            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.stop": {
@@ -206,16 +220,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
-            protocolVersion: 1;
-            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.restart": {
@@ -223,16 +237,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
-            protocolVersion: 1;
-            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.autostart.set": {
@@ -240,16 +254,16 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
-            protocolVersion: 1;
-            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.update": {
@@ -257,23 +271,23 @@ export type LocalDaemonServicesActionResultById = {
         result: {
             protocolVersion: 1;
             taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
-            protocolVersion: 1;
-            taskId: string;
             ok: false;
             error: {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     };
     readonly "machines.local.service.disconnect": {
-        outcome: 'removed' | 'no_service';
+        outcome: 'no_service' | 'removed';
     } | {
         outcome: 'user_owned';
-        label: string | null;
+        label: null | string;
     };
     readonly "machines.services.exec": {
         exitCode: number;
@@ -289,10 +303,10 @@ export type LocalDaemonServicesActionResultById = {
         services: {
             serviceId: string;
             name: string;
-            authority: 'project' | 'machine' | 'plugin';
-            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
-            generation: string | null;
-            state: 'unknown' | 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
+            authority: 'machine' | 'plugin' | 'project';
+            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
+            generation: null | string;
+            state: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | 'unknown';
             capabilities: {
                 start: boolean;
                 stop: boolean;
@@ -300,33 +314,33 @@ export type LocalDaemonServicesActionResultById = {
                 logs: boolean;
                 accounting: boolean;
             };
-            unavailableReason?: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled' | undefined;
-            native?: {
-                phase: 'unknown' | 'running' | 'stopped';
-                readiness: 'ready' | 'not_ready' | 'not_reported';
+            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
+            native?: undefined | {
+                phase: 'running' | 'stopped' | 'unknown';
+                readiness: 'not_ready' | 'not_reported' | 'ready';
                 displayName?: string | undefined;
-            } | undefined;
-            configuration?: {
+            };
+            configuration?: null | undefined | {
                 ports: {
-                    target: string | number | null;
-                    published: string | number | null;
-                    bindAddress: string | null;
-                    protocol: string | null;
+                    target: null | number | string;
+                    published: null | number | string;
+                    bindAddress: null | string;
+                    protocol: null | string;
                 }[];
-            } | null | undefined;
-            accounting?: {
+            };
+            accounting?: undefined | {
                 memoryBytes?: number | undefined;
                 startedAtMs?: number | undefined;
-            } | undefined;
-            health?: {
-                status: 'unknown' | 'up' | 'down' | 'degraded';
-                observedAtMs: number | null;
+            };
+            health?: undefined | {
+                status: 'degraded' | 'down' | 'unknown' | 'up';
+                observedAtMs: null | number;
                 freshness: 'current' | 'unavailable';
                 since?: number | undefined;
                 reason?: string | undefined;
                 expectedDown?: 'stop' | undefined;
-            } | undefined;
-            deployment?: {
+            };
+            deployment?: undefined | {
                 deploymentId: string;
                 installationId: string;
                 service: {
@@ -337,28 +351,25 @@ export type LocalDaemonServicesActionResultById = {
                     composeService: string;
                     serviceId: string;
                 };
-            } | undefined;
-            nativeInstance?: {
+            };
+            nativeInstance?: undefined | {
                 adapter: {
                     pluginId: string;
                     localId: string;
                 };
                 nativeResourceId: string;
-            } | undefined;
-            baseUrl?: string | null | undefined;
-            port?: number | null | undefined;
+            };
+            baseUrl?: null | string | undefined;
+            port?: null | number | undefined;
             environmentId?: string | undefined;
             watchId?: string | undefined;
             watchRevision?: string | undefined;
         }[];
     } | {
         kind: 'unavailable';
-        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.discovery": {
-        kind: 'unavailable';
-        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
-    } | {
         kind: 'snapshot';
         candidates: {
             candidateId: string;
@@ -370,9 +381,9 @@ export type LocalDaemonServicesActionResultById = {
             };
             nativeResourceId: string;
             observation: {
-                phase: 'unknown' | 'running' | 'stopped';
-                readiness: 'ready' | 'not_ready' | 'not_reported';
-                endpoint: string | null;
+                phase: 'running' | 'stopped' | 'unknown';
+                readiness: 'not_ready' | 'not_reported' | 'ready';
+                endpoint: null | string;
                 displayName?: string | undefined;
             };
         }[];
@@ -383,19 +394,19 @@ export type LocalDaemonServicesActionResultById = {
             };
             code: string;
         }[];
+    } | {
+        kind: 'unavailable';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.detail": {
-        kind: 'unavailable';
-        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
-    } | {
         kind: 'service';
         service: {
             serviceId: string;
             name: string;
-            authority: 'project' | 'machine' | 'plugin';
-            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
-            generation: string | null;
-            state: 'unknown' | 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
+            authority: 'machine' | 'plugin' | 'project';
+            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
+            generation: null | string;
+            state: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | 'unknown';
             capabilities: {
                 start: boolean;
                 stop: boolean;
@@ -403,33 +414,33 @@ export type LocalDaemonServicesActionResultById = {
                 logs: boolean;
                 accounting: boolean;
             };
-            unavailableReason?: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled' | undefined;
-            native?: {
-                phase: 'unknown' | 'running' | 'stopped';
-                readiness: 'ready' | 'not_ready' | 'not_reported';
+            unavailableReason?: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported' | undefined;
+            native?: undefined | {
+                phase: 'running' | 'stopped' | 'unknown';
+                readiness: 'not_ready' | 'not_reported' | 'ready';
                 displayName?: string | undefined;
-            } | undefined;
-            configuration?: {
+            };
+            configuration?: null | undefined | {
                 ports: {
-                    target: string | number | null;
-                    published: string | number | null;
-                    bindAddress: string | null;
-                    protocol: string | null;
+                    target: null | number | string;
+                    published: null | number | string;
+                    bindAddress: null | string;
+                    protocol: null | string;
                 }[];
-            } | null | undefined;
-            accounting?: {
+            };
+            accounting?: undefined | {
                 memoryBytes?: number | undefined;
                 startedAtMs?: number | undefined;
-            } | undefined;
-            health?: {
-                status: 'unknown' | 'up' | 'down' | 'degraded';
-                observedAtMs: number | null;
+            };
+            health?: undefined | {
+                status: 'degraded' | 'down' | 'unknown' | 'up';
+                observedAtMs: null | number;
                 freshness: 'current' | 'unavailable';
                 since?: number | undefined;
                 reason?: string | undefined;
                 expectedDown?: 'stop' | undefined;
-            } | undefined;
-            deployment?: {
+            };
+            deployment?: undefined | {
                 deploymentId: string;
                 installationId: string;
                 service: {
@@ -440,130 +451,133 @@ export type LocalDaemonServicesActionResultById = {
                     composeService: string;
                     serviceId: string;
                 };
-            } | undefined;
-            nativeInstance?: {
+            };
+            nativeInstance?: undefined | {
                 adapter: {
                     pluginId: string;
                     localId: string;
                 };
                 nativeResourceId: string;
-            } | undefined;
-            baseUrl?: string | null | undefined;
-            port?: number | null | undefined;
+            };
+            baseUrl?: null | string | undefined;
+            port?: null | number | undefined;
             environmentId?: string | undefined;
             watchId?: string | undefined;
             watchRevision?: string | undefined;
         };
-        accounting?: {
-            kind: 'unavailable';
-            reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
-        } | {
+        accounting?: undefined | {
             kind: 'sample';
             samples: {
                 nativeResourceId: string;
-                cpuPercent: number | null;
-                memoryBytes: number | null;
+                cpuPercent: null | number;
+                memoryBytes: null | number;
             }[];
-        } | undefined;
-        runtimeFacts?: {
-            configuration: {
+        } | {
+            kind: 'unavailable';
+            reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        };
+        runtimeFacts?: undefined | {
+            configuration: null | {
                 name: string;
-                replicas: string | number | null;
+                replicas: null | number | string;
                 resources: {
-                    cpus: string | number | null;
-                    memory: string | number | null;
+                    cpus: null | number | string;
+                    memory: null | number | string;
                 };
-                restartPolicy: string | null;
-                healthcheck: 'configured' | 'absent';
+                restartPolicy: null | string;
+                healthcheck: 'absent' | 'configured';
                 ports: {
-                    target: string | number | null;
-                    published: string | number | null;
-                    bindAddress: string | null;
-                    protocol: string | null;
+                    target: null | number | string;
+                    published: null | number | string;
+                    bindAddress: null | string;
+                    protocol: null | string;
                 }[];
                 mounts: {
-                    type: string | null;
-                    source: string | null;
-                    target: string | null;
+                    type: null | string;
+                    source: null | string;
+                    target: null | string;
                     readOnly: boolean;
                 }[];
-            } | null;
-            observedAt: number | null;
+            };
+            observedAt: null | number;
             freshness: 'current' | 'unavailable';
-            accounting?: {
+            accounting?: undefined | {
                 memoryBytes?: number | undefined;
                 startedAtMs?: number | undefined;
-            } | undefined;
+            };
             healthSince?: number | undefined;
-        } | undefined;
-    };
-    readonly "machines.services.watch": {
-        kind: 'unavailable';
-        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
-    } | {
-        kind: 'applied' | 'unchanged' | 'conflict';
-        revision: string;
-        watch?: {
-            v: 1;
-            watchId: string;
-            name: string;
-            adapter: {
-                pluginId: string;
-                localId: string;
-            };
-            nativeResourceId: string;
-            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
-        } | undefined;
-    };
-    readonly "machines.services.unwatch": {
-        kind: 'unavailable';
-        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
-    } | {
-        kind: 'applied' | 'unchanged' | 'conflict';
-        revision: string;
-        watch?: {
-            v: 1;
-            watchId: string;
-            name: string;
-            adapter: {
-                pluginId: string;
-                localId: string;
-            };
-            nativeResourceId: string;
-            lifecyclePurpose: 'development' | 'deployment' | 'infrastructure';
-        } | undefined;
-    };
-    readonly "machines.services.control": {
-        kind: 'observed';
-        serviceId: string;
-        generation: string;
-        state: 'unknown' | 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed';
-        operation: {
-            operationId: string;
         };
     } | {
+        kind: 'unavailable';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+    };
+    readonly "machines.services.watch": {
+        kind: 'applied' | 'conflict' | 'unchanged';
+        revision: string;
+        watch?: undefined | {
+            v: 1;
+            watchId: string;
+            name: string;
+            adapter: {
+                pluginId: string;
+                localId: string;
+            };
+            nativeResourceId: string;
+            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
+        };
+    } | {
+        kind: 'unavailable';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+    };
+    readonly "machines.services.unwatch": {
+        kind: 'applied' | 'conflict' | 'unchanged';
+        revision: string;
+        watch?: undefined | {
+            v: 1;
+            watchId: string;
+            name: string;
+            adapter: {
+                pluginId: string;
+                localId: string;
+            };
+            nativeResourceId: string;
+            lifecyclePurpose: 'deployment' | 'development' | 'infrastructure';
+        };
+    } | {
+        kind: 'unavailable';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+    };
+    readonly "machines.services.control": {
         kind: 'accepted';
         operation: {
             operationId: string;
         };
     } | {
-        kind: 'unsupported';
-        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
+        kind: 'observed';
+        serviceId: string;
+        generation: string;
+        state: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | 'unknown';
+        operation: {
+            operationId: string;
+        };
     } | {
         kind: 'outcome_unknown';
         operation: {
             operationId: string;
         };
+    } | {
+        kind: 'unsupported';
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
     };
     readonly "machines.services.logs.read": {
         kind: 'page';
         page: {
             sourceRevision: string;
             text: string;
-            nextCursor: {
+            nextCursor: null | {
                 sourceRevision: string;
                 token: string;
-            } | null;
+            };
             truncated: boolean;
             secretMasking?: 'incomplete' | undefined;
         };
@@ -572,28 +586,14 @@ export type LocalDaemonServicesActionResultById = {
         sourceRevision: string;
     } | {
         kind: 'unavailable';
-        reason: 'unsupported' | 'unavailable' | 'admission_unavailable' | 'secret_redaction_unavailable' | 'denied' | 'cancelled';
-        recipeRemedy?: {
+        reason: 'admission_unavailable' | 'cancelled' | 'denied' | 'secret_redaction_unavailable' | 'unavailable' | 'unsupported';
+        recipeRemedy?: undefined | {
             pluginId: string;
             recipeId: string;
             revision: string;
-        } | undefined;
+        };
     };
     readonly "machines.services.adopt": {
-        kind: 'review';
-        reviewedDigest: string;
-        originalProfiles: 'unknown';
-        document: string;
-        variables: {
-            name: string;
-            phase: 'runtime';
-            required: boolean;
-            hasDefault: boolean;
-        }[];
-        services: string[];
-        profiles: string[];
-        availableProfiles: string[];
-    } | {
         kind: 'adopted';
         environmentId: string;
         revision: number;
@@ -602,9 +602,9 @@ export type LocalDaemonServicesActionResultById = {
         kind: 'partial';
         errorCode: string;
         preparedCreate: {
-            protection: 'production' | 'nonProduction';
-            purpose: 'standard' | 'preview';
-            deployerMode: 'managers' | 'members' | 'chosen';
+            protection: 'nonProduction' | 'production';
+            purpose: 'preview' | 'standard';
+            deployerMode: 'chosen' | 'managers' | 'members';
             controllerMachineId: string;
             contentArtifactId: string;
             contentHeaderVersion: number;
@@ -612,7 +612,7 @@ export type LocalDaemonServicesActionResultById = {
             serverId: string;
             requestKey: string;
             projectSourceId?: string | undefined;
-            newProject?: {
+            newProject?: undefined | {
                 name: string;
                 requestKey: string;
                 owner: {
@@ -622,20 +622,20 @@ export type LocalDaemonServicesActionResultById = {
                     kind: 'team';
                     teamId: string;
                 };
-            } | undefined;
-            deployerPrincipals?: {
+            };
+            deployerPrincipals?: undefined | {
                 principalKind: 'account' | 'teamGroup';
                 principalId: string;
-            }[] | undefined;
+            }[];
             buildMachineId?: string | undefined;
             managedRetention?: 'keep' | 'until-delete' | undefined;
-            preview?: {
+            preview?: undefined | {
                 templateEnvironmentId: string;
                 expectedTemplateRevision: number;
                 pullRequestId: string;
                 runtimeTargetLinkId: string;
-            } | undefined;
-            firstTargetLink?: {
+            };
+            firstTargetLink?: undefined | {
                 machines: {
                     machineId: string;
                     installationId: string;
@@ -643,56 +643,29 @@ export type LocalDaemonServicesActionResultById = {
                 contentArtifactId: string;
                 contentHeaderVersion: number;
                 contentBodyVersion: number;
-            } | undefined;
-            copyFrom?: {
+            };
+            copyFrom?: undefined | {
                 environmentId: string;
                 expectedRevision: number;
                 choices: {
                     secrets: ({
                         kind: 'omit';
                         binding: {
-                            purpose: 'variable';
-                            name: string;
-                            phase: 'build' | 'runtime';
-                        } | {
-                            purpose: 'registry';
-                            targetLinkId: string;
-                            registryOrigin: string;
-                        } | {
                             purpose: 'backupDestination';
                             configKey: 'destination';
-                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                         } | {
                             purpose: 'domainCredential';
                             domainId: string;
                             role: 'basicAuth' | 'certificateChain' | 'privateKey';
                         } | {
-                            service: string;
-                            purpose: 'dataRole';
-                            role: 'readOnlyPassword';
-                        } | {
-                            targetLinkId: string;
-                            purpose: 'dataRole';
-                            role: 'readOnlyPassword';
-                        };
-                    } | {
-                        kind: 'useSameReference';
-                        binding: {
-                            purpose: 'variable';
-                            name: string;
-                            phase: 'build' | 'runtime';
-                        } | {
                             purpose: 'registry';
                             targetLinkId: string;
                             registryOrigin: string;
                         } | {
-                            purpose: 'backupDestination';
-                            configKey: 'destination';
-                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
-                        } | {
-                            purpose: 'domainCredential';
-                            domainId: string;
-                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
                         } | {
                             service: string;
                             purpose: 'dataRole';
@@ -710,21 +683,48 @@ export type LocalDaemonServicesActionResultById = {
                             resourceRevision: number;
                         };
                         binding: {
-                            purpose: 'variable';
-                            name: string;
-                            phase: 'build' | 'runtime';
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
                         } | {
                             purpose: 'registry';
                             targetLinkId: string;
                             registryOrigin: string;
                         } | {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
+                        } | {
+                            service: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        } | {
+                            targetLinkId: string;
+                            purpose: 'dataRole';
+                            role: 'readOnlyPassword';
+                        };
+                    } | {
+                        kind: 'useSameReference';
+                        binding: {
                             purpose: 'backupDestination';
                             configKey: 'destination';
-                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                         } | {
                             purpose: 'domainCredential';
                             domainId: string;
                             role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                        } | {
+                            purpose: 'registry';
+                            targetLinkId: string;
+                            registryOrigin: string;
+                        } | {
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
                         } | {
                             service: string;
                             purpose: 'dataRole';
@@ -736,23 +736,23 @@ export type LocalDaemonServicesActionResultById = {
                         };
                     })[];
                     values: ({
-                        kind: 'omit';
+                        kind: 'include';
                         binding: {
-                            purpose: 'variable';
-                            name: string;
-                            phase: 'build' | 'runtime';
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
                         } | {
                             purpose: 'registry';
                             targetLinkId: string;
                             registryOrigin: string;
                         } | {
-                            purpose: 'backupDestination';
-                            configKey: 'destination';
-                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
-                        } | {
-                            purpose: 'domainCredential';
-                            domainId: string;
-                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
                         } | {
                             service: string;
                             purpose: 'dataRole';
@@ -763,23 +763,23 @@ export type LocalDaemonServicesActionResultById = {
                             role: 'readOnlyPassword';
                         };
                     } | {
-                        kind: 'include';
+                        kind: 'omit';
                         binding: {
-                            purpose: 'variable';
-                            name: string;
-                            phase: 'build' | 'runtime';
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
                         } | {
                             purpose: 'registry';
                             targetLinkId: string;
                             registryOrigin: string;
                         } | {
-                            purpose: 'backupDestination';
-                            configKey: 'destination';
-                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
-                        } | {
-                            purpose: 'domainCredential';
-                            domainId: string;
-                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
                         } | {
                             service: string;
                             purpose: 'dataRole';
@@ -792,37 +792,37 @@ export type LocalDaemonServicesActionResultById = {
                     } | {
                         kind: 'remap';
                         source: {
-                            kind: 'value';
-                            value: string;
-                        } | {
-                            kind: 'reference';
-                            environmentId: string;
-                            export: string;
-                            via: 'public' | 'auto' | 'privateNetwork';
-                        } | {
                             kind: 'deploymentFact';
-                            fact: 'deploymentId' | 'primaryUrl' | 'commitSha' | 'environmentName';
+                            fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
                         } | {
                             kind: 'deploymentFact';
                             fact: 'domainUrl';
                             domainId: string;
+                        } | {
+                            kind: 'reference';
+                            environmentId: string;
+                            export: string;
+                            via: 'auto' | 'privateNetwork' | 'public';
+                        } | {
+                            kind: 'value';
+                            value: string;
                         };
                         binding: {
-                            purpose: 'variable';
-                            name: string;
-                            phase: 'build' | 'runtime';
+                            purpose: 'backupDestination';
+                            configKey: 'destination';
+                            role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
+                        } | {
+                            purpose: 'domainCredential';
+                            domainId: string;
+                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
                         } | {
                             purpose: 'registry';
                             targetLinkId: string;
                             registryOrigin: string;
                         } | {
-                            purpose: 'backupDestination';
-                            configKey: 'destination';
-                            role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
-                        } | {
-                            purpose: 'domainCredential';
-                            domainId: string;
-                            role: 'basicAuth' | 'certificateChain' | 'privateKey';
+                            purpose: 'variable';
+                            name: string;
+                            phase: 'build' | 'runtime';
                         } | {
                             service: string;
                             purpose: 'dataRole';
@@ -835,37 +835,13 @@ export type LocalDaemonServicesActionResultById = {
                     })[];
                     data: {
                         targetLinkId: string;
-                        kind: 'omit' | 'reuse' | 'createEmpty' | 'restoreBackup';
+                        kind: 'createEmpty' | 'omit' | 'restoreBackup' | 'reuse';
                     }[];
-                    retainPreviousDeployments?: 'default' | 'copy' | undefined;
+                    retainPreviousDeployments?: 'copy' | 'default' | undefined;
                 };
-            } | undefined;
-            copyPlan?: {
+            };
+            copyPlan?: undefined | {
                 bindings: ({
-                    source: {
-                        kind: 'secret';
-                        ref: string;
-                        resourceRevision: number;
-                    } | {
-                        kind: 'value';
-                        value: string;
-                    } | {
-                        kind: 'reference';
-                        environmentId: string;
-                        export: string;
-                        via: 'public' | 'auto' | 'privateNetwork';
-                    } | {
-                        kind: 'deploymentFact';
-                        fact: 'deploymentId' | 'primaryUrl' | 'commitSha' | 'environmentName';
-                    } | {
-                        kind: 'deploymentFact';
-                        fact: 'domainUrl';
-                        domainId: string;
-                    };
-                    purpose: 'variable';
-                    name: string;
-                    phase: 'build' | 'runtime';
-                } | {
                     access: 'pull' | 'pushPull';
                     source: {
                         kind: 'secret';
@@ -877,13 +853,37 @@ export type LocalDaemonServicesActionResultById = {
                     registryOrigin: string;
                 } | {
                     source: {
+                        kind: 'deploymentFact';
+                        fact: 'commitSha' | 'deploymentId' | 'environmentName' | 'primaryUrl';
+                    } | {
+                        kind: 'deploymentFact';
+                        fact: 'domainUrl';
+                        domainId: string;
+                    } | {
+                        kind: 'reference';
+                        environmentId: string;
+                        export: string;
+                        via: 'auto' | 'privateNetwork' | 'public';
+                    } | {
+                        kind: 'secret';
+                        ref: string;
+                        resourceRevision: number;
+                    } | {
+                        kind: 'value';
+                        value: string;
+                    };
+                    purpose: 'variable';
+                    name: string;
+                    phase: 'build' | 'runtime';
+                } | {
+                    source: {
                         kind: 'secret';
                         ref: string;
                         resourceRevision: number;
                     };
                     purpose: 'backupDestination';
                     configKey: 'destination';
-                    role: 'accessKeyId' | 'secretAccessKey' | 'sessionToken' | 'repositoryPassword' | 'sshPrivateKey';
+                    role: 'accessKeyId' | 'repositoryPassword' | 'secretAccessKey' | 'sessionToken' | 'sshPrivateKey';
                 } | {
                     source: {
                         kind: 'secret';
@@ -913,11 +913,25 @@ export type LocalDaemonServicesActionResultById = {
                     role: 'readOnlyPassword';
                 })[];
                 sourceRuntimeTargetLinkId?: string | undefined;
-            } | undefined;
+            };
             copyIntentCommitment?: string | undefined;
         };
         environmentId?: string | undefined;
         revision?: number | undefined;
         targetLinkId?: string | undefined;
+    } | {
+        kind: 'review';
+        reviewedDigest: string;
+        originalProfiles: 'unknown';
+        document: string;
+        variables: {
+            name: string;
+            phase: 'runtime';
+            required: boolean;
+            hasDefault: boolean;
+        }[];
+        services: string[];
+        profiles: string[];
+        availableProfiles: string[];
     };
 };

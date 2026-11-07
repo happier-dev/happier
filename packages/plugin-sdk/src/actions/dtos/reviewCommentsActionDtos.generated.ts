@@ -6,45 +6,42 @@
 export type ReviewCommentsActionInputById = {
     readonly "reviews.comments.create": {
         anchor: {
-            kind: 'line';
+            kind: 'binary';
             filePath: string;
-            line: number;
-            side?: 'before' | 'after' | undefined;
-        } | {
-            kind: 'range';
-            filePath: string;
-            startLine: number;
-            endLine: number;
-            side?: 'before' | 'after' | undefined;
-        } | {
-            kind: 'hunk';
-            filePath: string;
-            hunkId: string;
-            side?: 'before' | 'after' | undefined;
+            sizeBytes: number;
+            sha256: string;
         } | {
             kind: 'file';
             filePath: string;
-        } | {
-            kind: 'folder';
-            folderPath: string;
-        } | {
-            kind: 'workspace';
-            workspaceId: string;
-        } | {
-            kind: 'project';
-            projectId: string;
-        } | {
-            kind: 'run';
-            runId: string;
         } | {
             kind: 'finding';
             runId: string;
             findingId: string;
         } | {
-            kind: 'binary';
+            kind: 'folder';
+            folderPath: string;
+        } | {
+            kind: 'hunk';
             filePath: string;
-            sizeBytes: number;
-            sha256: string;
+            hunkId: string;
+            side?: 'after' | 'before' | undefined;
+        } | {
+            kind: 'line';
+            filePath: string;
+            line: number;
+            side?: 'after' | 'before' | undefined;
+        } | {
+            kind: 'project';
+            projectId: string;
+        } | {
+            kind: 'range';
+            filePath: string;
+            startLine: number;
+            endLine: number;
+            side?: 'after' | 'before' | undefined;
+        } | {
+            kind: 'run';
+            runId: string;
         } | {
             kind: 'submodule';
             filePath: string;
@@ -54,46 +51,20 @@ export type ReviewCommentsActionInputById = {
             kind: 'symlink';
             filePath: string;
             targetPath: string;
+        } | {
+            kind: 'workspace';
+            workspaceId: string;
         };
         snapshot: {
-            t: 'plain';
-            v: unknown;
-        } | {
-            t: 'encrypted';
-            c: string;
-        } | {
-            kind: 'none';
-            capturedAt: number;
-        } | {
-            kind: 'text';
-            selectedLines: string[];
-            beforeContext: string[];
-            afterContext: string[];
-            selectedLinesHash: string;
-            contextWindowHash: string;
-            capturedAt: number;
-            fileLength: number;
-            source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-            isUncommitted: boolean;
-            isUntracked: boolean;
-            truncated: boolean;
-            hasBidiControls: boolean;
-            likelyMinified: boolean;
-            commitSha?: string | undefined;
-            truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-            diffContext?: {
-                side: 'before' | 'after';
-                baseSha?: string | undefined;
-                headSha?: string | undefined;
-                startSha?: string | undefined;
-            } | undefined;
-        } | {
             kind: 'binary';
             sizeBytes: number;
             sha256: string;
-            source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+            source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
             capturedAt: number;
             mimeType?: string | undefined;
+        } | {
+            kind: 'none';
+            capturedAt: number;
         } | {
             kind: 'submodule';
             filePath: string;
@@ -107,19 +78,50 @@ export type ReviewCommentsActionInputById = {
             capturedAt: number;
             targetExists?: boolean | undefined;
         } | {
+            kind: 'text';
+            selectedLines: string[];
+            beforeContext: string[];
+            afterContext: string[];
+            selectedLinesHash: string;
+            contextWindowHash: string;
+            capturedAt: number;
+            fileLength: number;
+            source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+            isUncommitted: boolean;
+            isUntracked: boolean;
+            truncated: boolean;
+            hasBidiControls: boolean;
+            likelyMinified: boolean;
+            commitSha?: string | undefined;
+            truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+            diffContext?: undefined | {
+                side: 'after' | 'before';
+                baseSha?: string | undefined;
+                headSha?: string | undefined;
+                startSha?: string | undefined;
+            };
+        } | {
             kind: 'too_large';
             filePath: string;
             sizeBytes: number;
             capBytes: number;
             capturedAt: number;
             sha256?: string | undefined;
-        };
-        body: string | {
-            t: 'plain';
-            v: unknown;
         } | {
             t: 'encrypted';
             c: string;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
+        body: string | {
+            t: 'encrypted';
+            c: string;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
         };
         clientMutationId: string;
         workspaceId?: string | undefined;
@@ -128,28 +130,29 @@ export type ReviewCommentsActionInputById = {
         engineId?: string | undefined;
         findingId?: string | undefined;
         findingIdentity?: string | undefined;
-        findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-        reviewedFingerprint?: string | null | undefined;
-        eventEnvelope?: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+        reviewedFingerprint?: null | string | undefined;
+        eventEnvelope?: undefined | {
             t: 'encrypted';
             c: string;
-        } | undefined;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         authorIntent?: 'open' | 'propose' | undefined;
-        fingerprint?: {
+        fingerprint?: undefined | {
             normalizedMessageHash: string;
             ruleId?: string | undefined;
             fileSha?: string | undefined;
-            lineRange?: {
+            lineRange?: undefined | {
                 startLine: number;
                 endLine: number;
-            } | undefined;
+            };
             engineId?: string | undefined;
-        } | undefined;
+        };
         linkedRefs?: ({
-            kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+            kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
             id?: string | undefined;
             url?: string | undefined;
         } | {
@@ -157,63 +160,63 @@ export type ReviewCommentsActionInputById = {
             id: string;
             url?: string | undefined;
         })[] | undefined;
-        suggestedFix?: {
+        suggestedFix?: undefined | {
             kind: 'external' | 'patch' | 'replacement';
             patch?: string | undefined;
             replacementText?: string | undefined;
             url?: string | undefined;
-        } | undefined;
+        };
         evidence?: ({
+            kind: 'agentMessage';
+            sessionId: string;
+            messageId: string;
+        } | {
             kind: 'diff';
             diffRef: string;
             summary?: string | undefined;
-        } | {
-            kind: 'test';
-            testResultRef: string;
-            status: 'passed' | 'failed' | 'mixed';
-            summary?: string | undefined;
-        } | {
-            kind: 'reasoning';
-            message: string;
         } | {
             kind: 'external';
             url: string;
             label?: string | undefined;
         } | {
-            kind: 'agentMessage';
-            sessionId: string;
-            messageId: string;
+            kind: 'reasoning';
+            message: string;
+        } | {
+            kind: 'test';
+            testResultRef: string;
+            status: 'failed' | 'mixed' | 'passed';
+            summary?: string | undefined;
         })[] | undefined;
         authorDeviceId?: string | undefined;
         clientLamport?: number | undefined;
-        metadata?: {
+        metadata?: undefined | {
             reviewGroupIds?: string[] | undefined;
-            severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+            severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
             taxonomyIds?: string[] | undefined;
             tags?: string[] | undefined;
-        } | undefined;
+        };
         projectId?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             machineId: string;
             path: string;
-        } | undefined;
+        };
     };
     readonly "reviews.comments.list": {
-        workspace?: {
+        workspace?: undefined | {
             machineId: string;
             path: string;
-        } | undefined;
+        };
         workspaceId?: string | undefined;
         projectId?: string | undefined;
         sessionId?: string | undefined;
         runId?: string | undefined;
-        states?: ('open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed')[] | undefined;
-        authorKind?: 'user' | 'plugin' | 'agent' | 'workflow' | undefined;
+        states?: ('delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved')[] | undefined;
+        authorKind?: 'agent' | 'plugin' | 'user' | 'workflow' | undefined;
         authorId?: string | undefined;
         engineId?: string | undefined;
         filePath?: string | undefined;
         folderPath?: string | undefined;
-        severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+        severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
         taxonomyIds?: unknown;
         includeHistory?: boolean | undefined;
         cursor?: string | undefined;
@@ -225,57 +228,59 @@ export type ReviewCommentsActionInputById = {
         includeHistory?: boolean | undefined;
     };
     readonly "reviews.comments.transition": {
-        toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
-        expectedState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+        toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
+        expectedState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
         expectedServerRevision: number;
         clientMutationId: string;
         commentId: string;
-        reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+        reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
         reviewGroupId?: string | undefined;
         reason?: string | undefined;
         evidence?: ({
+            kind: 'agentMessage';
+            sessionId: string;
+            messageId: string;
+        } | {
             kind: 'diff';
             diffRef: string;
             summary?: string | undefined;
-        } | {
-            kind: 'test';
-            testResultRef: string;
-            status: 'passed' | 'failed' | 'mixed';
-            summary?: string | undefined;
-        } | {
-            kind: 'reasoning';
-            message: string;
         } | {
             kind: 'external';
             url: string;
             label?: string | undefined;
         } | {
-            kind: 'agentMessage';
-            sessionId: string;
-            messageId: string;
+            kind: 'reasoning';
+            message: string;
+        } | {
+            kind: 'test';
+            testResultRef: string;
+            status: 'failed' | 'mixed' | 'passed';
+            summary?: string | undefined;
         })[] | undefined;
         authorDeviceId?: string | undefined;
         clientLamport?: number | undefined;
-        eventEnvelope?: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        eventEnvelope?: undefined | {
             t: 'encrypted';
             c: string;
-        } | undefined;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         projectId?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             machineId: string;
             path: string;
-        } | undefined;
+        };
     };
     readonly "reviews.comments.edit": {
         nextBody: string | {
-            t: 'plain';
-            v: unknown;
-        } | {
             t: 'encrypted';
             c: string;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
         };
         expectedBodyVersion: number;
         expectedServerRevision: number;
@@ -284,65 +289,68 @@ export type ReviewCommentsActionInputById = {
         reason?: string | undefined;
         authorDeviceId?: string | undefined;
         clientLamport?: number | undefined;
-        eventEnvelope?: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        eventEnvelope?: undefined | {
             t: 'encrypted';
             c: string;
-        } | undefined;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         projectId?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             machineId: string;
             path: string;
-        } | undefined;
+        };
     };
     readonly "reviews.comments.reply": {
         expectedParentServerRevision: number;
         body: string | {
-            t: 'plain';
-            v: unknown;
-        } | {
             t: 'encrypted';
             c: string;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
         };
         clientMutationId: string;
         parentCommentId: string;
         evidence?: ({
+            kind: 'agentMessage';
+            sessionId: string;
+            messageId: string;
+        } | {
             kind: 'diff';
             diffRef: string;
             summary?: string | undefined;
-        } | {
-            kind: 'test';
-            testResultRef: string;
-            status: 'passed' | 'failed' | 'mixed';
-            summary?: string | undefined;
-        } | {
-            kind: 'reasoning';
-            message: string;
         } | {
             kind: 'external';
             url: string;
             label?: string | undefined;
         } | {
-            kind: 'agentMessage';
-            sessionId: string;
-            messageId: string;
+            kind: 'reasoning';
+            message: string;
+        } | {
+            kind: 'test';
+            testResultRef: string;
+            status: 'failed' | 'mixed' | 'passed';
+            summary?: string | undefined;
         })[] | undefined;
         authorDeviceId?: string | undefined;
         clientLamport?: number | undefined;
-        eventEnvelope?: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        eventEnvelope?: undefined | {
             t: 'encrypted';
             c: string;
-        } | undefined;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         projectId?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             machineId: string;
             path: string;
-        } | undefined;
+        };
     };
     readonly "reviews.comments.redact": {
         expectedServerRevision: number;
@@ -352,122 +360,126 @@ export type ReviewCommentsActionInputById = {
         redactBody?: boolean | undefined;
         authorDeviceId?: string | undefined;
         clientLamport?: number | undefined;
-        eventEnvelope?: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        eventEnvelope?: undefined | {
             t: 'encrypted';
             c: string;
-        } | undefined;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         projectId?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             machineId: string;
             path: string;
-        } | undefined;
+        };
     };
     readonly "reviews.comments.setDisposition": {
         expectedServerRevision: number;
-        disposition: 'working' | 'satisfied' | 'blocking';
+        disposition: 'blocking' | 'satisfied' | 'working';
         clientMutationId: string;
         commentId: string;
         authorDeviceId?: string | undefined;
         clientLamport?: number | undefined;
-        eventEnvelope?: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        eventEnvelope?: undefined | {
             t: 'encrypted';
             c: string;
-        } | undefined;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         projectId?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             machineId: string;
             path: string;
-        } | undefined;
+        };
     };
     readonly "reviews.comments.attachEvidence": {
         expectedServerRevision: number;
         evidence: ({
+            kind: 'agentMessage';
+            sessionId: string;
+            messageId: string;
+        } | {
             kind: 'diff';
             diffRef: string;
             summary?: string | undefined;
-        } | {
-            kind: 'test';
-            testResultRef: string;
-            status: 'passed' | 'failed' | 'mixed';
-            summary?: string | undefined;
-        } | {
-            kind: 'reasoning';
-            message: string;
         } | {
             kind: 'external';
             url: string;
             label?: string | undefined;
         } | {
-            kind: 'agentMessage';
-            sessionId: string;
-            messageId: string;
+            kind: 'reasoning';
+            message: string;
+        } | {
+            kind: 'test';
+            testResultRef: string;
+            status: 'failed' | 'mixed' | 'passed';
+            summary?: string | undefined;
         })[];
         clientMutationId: string;
         commentId: string;
         authorDeviceId?: string | undefined;
         clientLamport?: number | undefined;
-        eventEnvelope?: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        eventEnvelope?: undefined | {
             t: 'encrypted';
             c: string;
-        } | undefined;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         projectId?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             machineId: string;
             path: string;
-        } | undefined;
+        };
     };
     readonly "reviews.comments.bulkTransition": {
         commentIds: string[];
-        toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
-        expectedState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+        toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
+        expectedState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
         expectedServerRevisions: Record<string, number>;
         clientMutationId: string;
         evidence?: ({
+            kind: 'agentMessage';
+            sessionId: string;
+            messageId: string;
+        } | {
             kind: 'diff';
             diffRef: string;
             summary?: string | undefined;
-        } | {
-            kind: 'test';
-            testResultRef: string;
-            status: 'passed' | 'failed' | 'mixed';
-            summary?: string | undefined;
-        } | {
-            kind: 'reasoning';
-            message: string;
         } | {
             kind: 'external';
             url: string;
             label?: string | undefined;
         } | {
-            kind: 'agentMessage';
-            sessionId: string;
-            messageId: string;
+            kind: 'reasoning';
+            message: string;
+        } | {
+            kind: 'test';
+            testResultRef: string;
+            status: 'failed' | 'mixed' | 'passed';
+            summary?: string | undefined;
         })[] | undefined;
         reason?: string | undefined;
         bulkActionId?: string | undefined;
         authorDeviceId?: string | undefined;
         clientLamport?: number | undefined;
-        eventEnvelope?: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        eventEnvelope?: undefined | {
             t: 'encrypted';
             c: string;
-        } | undefined;
+            k?: undefined;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         projectId?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             machineId: string;
             path: string;
-        } | undefined;
+        };
     };
     readonly "reviews.comments.claimPublicationDispatch": {
         target: {
@@ -479,10 +491,10 @@ export type ReviewCommentsActionInputById = {
                 collisionScope: string;
                 entryId: string;
             };
-            subtarget: {
-                kindId: 'review-thread' | 'review-comment';
+            subtarget: null | {
+                kindId: 'review-comment' | 'review-thread';
                 targetId: string;
-            } | null;
+            };
         } | {
             nativeService: {
                 pluginId: string;
@@ -495,56 +507,53 @@ export type ReviewCommentsActionInputById = {
                 collisionScope: string;
                 entryId: string;
             };
-            subtarget: {
-                kindId: 'review-thread' | 'review-comment';
+            subtarget: null | {
+                kindId: 'review-comment' | 'review-thread';
                 targetId: string;
-            } | null;
+            };
         };
-        baseRevision: string | null;
-        headRevision: string | null;
+        baseRevision: null | string;
+        headRevision: null | string;
         entries: {
             happierCommentId: string;
             expectedServerRevision: number;
             anchor: {
-                kind: 'line';
+                kind: 'binary';
                 filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'range';
-                filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -554,40 +563,20 @@ export type ReviewCommentsActionInputById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -601,6 +590,29 @@ export type ReviewCommentsActionInputById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
@@ -610,28 +622,28 @@ export type ReviewCommentsActionInputById = {
             };
             body: string;
         }[];
-        verdict: {
-            kind: 'approve' | 'requestChanges' | 'comment';
+        verdict: null | {
+            kind: 'approve' | 'comment' | 'requestChanges';
             body: string;
-        } | null;
-        settlement?: {
-            dispatchToken: string | null;
+        };
+        settlement?: undefined | {
+            dispatchToken: null | string;
             result: {
                 publicationPlanId: string;
                 entries: {
                     happierCommentId: string;
                     publicationCorrelationId: string;
                     outcome: {
-                        kind: 'published';
-                        externalRef: string;
-                    } | {
                         kind: 'failed';
                         code: string;
                         message?: string | undefined;
                     } | {
-                        kind: 'uncertain';
+                        kind: 'published';
+                        externalRef: string;
                     } | {
                         kind: 'skippedPriorFailure';
+                    } | {
+                        kind: 'uncertain';
                     };
                 }[];
                 verdict: {
@@ -639,67 +651,64 @@ export type ReviewCommentsActionInputById = {
                 } | {
                     publicationCorrelationId: string;
                     outcome: {
-                        kind: 'published';
-                        externalRef?: string | undefined;
-                    } | {
                         kind: 'failed';
                         code: string;
                         message?: string | undefined;
                         externalRef?: string | undefined;
                     } | {
-                        kind: 'uncertain';
+                        kind: 'published';
                         externalRef?: string | undefined;
                     } | {
                         kind: 'skippedPriorFailure';
+                    } | {
+                        kind: 'uncertain';
+                        externalRef?: string | undefined;
                     };
                 };
             };
-        } | undefined;
+        };
     };
 };
 export type ReviewCommentsActionResultById = {
     readonly "reviews.comments.create": {
         comment: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -709,46 +718,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -762,71 +745,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -834,51 +850,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -898,63 +914,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -962,68 +978,65 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         };
         replayed?: boolean | undefined;
     };
     readonly "reviews.comments.list": {
         items: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -1033,46 +1046,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -1086,71 +1073,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -1158,51 +1178,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -1222,63 +1242,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -1286,68 +1306,65 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         }[];
-        cursor: string | null;
+        cursor: null | string;
     };
     readonly "reviews.comments.get": {
         comment: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -1357,46 +1374,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -1410,71 +1401,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -1482,51 +1506,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -1546,63 +1570,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -1610,67 +1634,64 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         };
     };
     readonly "reviews.comments.transition": {
         comment: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -1680,46 +1701,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -1733,71 +1728,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -1805,51 +1833,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -1869,63 +1897,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -1933,67 +1961,64 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         };
     };
     readonly "reviews.comments.edit": {
         comment: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -2003,46 +2028,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -2056,71 +2055,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -2128,51 +2160,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -2192,63 +2224,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -2256,67 +2288,64 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         };
     };
     readonly "reviews.comments.reply": {
         comment: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -2326,46 +2355,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -2379,71 +2382,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -2451,51 +2487,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -2515,63 +2551,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -2579,65 +2615,62 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         };
         parent: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -2647,46 +2680,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -2700,71 +2707,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -2772,51 +2812,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -2836,63 +2876,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -2900,67 +2940,64 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         };
     };
     readonly "reviews.comments.redact": {
         comment: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -2970,46 +3007,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -3023,71 +3034,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -3095,51 +3139,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -3159,63 +3203,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -3223,67 +3267,64 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         };
     };
     readonly "reviews.comments.setDisposition": {
         comment: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -3293,46 +3334,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -3346,71 +3361,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -3418,51 +3466,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -3482,63 +3530,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -3546,67 +3594,64 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         };
     };
     readonly "reviews.comments.attachEvidence": {
         comment: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -3616,46 +3661,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -3669,71 +3688,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -3741,51 +3793,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -3805,63 +3857,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -3869,68 +3921,65 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         };
     };
     readonly "reviews.comments.bulkTransition": {
         bulkActionId: string;
         updated: {
             anchor: {
-                kind: 'range';
+                kind: 'binary';
                 filePath: string;
-                startLine: number;
-                endLine: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'line';
-                filePath: string;
-                line: number;
-                side?: 'before' | 'after' | undefined;
-            } | {
-                kind: 'hunk';
-                filePath: string;
-                hunkId: string;
-                side?: 'before' | 'after' | undefined;
+                sizeBytes: number;
+                sha256: string;
             } | {
                 kind: 'file';
                 filePath: string;
-            } | {
-                kind: 'folder';
-                folderPath: string;
-            } | {
-                kind: 'workspace';
-                workspaceId: string;
-            } | {
-                kind: 'project';
-                projectId: string;
-            } | {
-                kind: 'run';
-                runId: string;
             } | {
                 kind: 'finding';
                 runId: string;
                 findingId: string;
             } | {
-                kind: 'binary';
+                kind: 'folder';
+                folderPath: string;
+            } | {
+                kind: 'hunk';
                 filePath: string;
-                sizeBytes: number;
-                sha256: string;
+                hunkId: string;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'line';
+                filePath: string;
+                line: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'project';
+                projectId: string;
+            } | {
+                kind: 'range';
+                filePath: string;
+                startLine: number;
+                endLine: number;
+                side?: 'after' | 'before' | undefined;
+            } | {
+                kind: 'run';
+                runId: string;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -3940,46 +3989,20 @@ export type ReviewCommentsActionResultById = {
                 kind: 'symlink';
                 filePath: string;
                 targetPath: string;
+            } | {
+                kind: 'workspace';
+                workspaceId: string;
             };
             snapshot: {
-                t: 'plain';
-                v: unknown;
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | {
-                kind: 'none';
-                capturedAt: number;
-            } | {
-                kind: 'text';
-                selectedLines: string[];
-                beforeContext: string[];
-                afterContext: string[];
-                selectedLinesHash: string;
-                contextWindowHash: string;
-                capturedAt: number;
-                fileLength: number;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
-                isUncommitted: boolean;
-                isUntracked: boolean;
-                truncated: boolean;
-                hasBidiControls: boolean;
-                likelyMinified: boolean;
-                commitSha?: string | undefined;
-                truncationReason?: 'file_too_large' | 'line_too_long' | 'context_cap' | undefined;
-                diffContext?: {
-                    side: 'before' | 'after';
-                    baseSha?: string | undefined;
-                    headSha?: string | undefined;
-                    startSha?: string | undefined;
-                } | undefined;
-            } | {
                 kind: 'binary';
                 sizeBytes: number;
                 sha256: string;
-                source: 'workingTree' | 'committed' | 'diffSide' | 'agentBuffer' | 'untracked';
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
                 capturedAt: number;
                 mimeType?: string | undefined;
+            } | {
+                kind: 'none';
+                capturedAt: number;
             } | {
                 kind: 'submodule';
                 filePath: string;
@@ -3993,71 +4016,104 @@ export type ReviewCommentsActionResultById = {
                 capturedAt: number;
                 targetExists?: boolean | undefined;
             } | {
+                kind: 'text';
+                selectedLines: string[];
+                beforeContext: string[];
+                afterContext: string[];
+                selectedLinesHash: string;
+                contextWindowHash: string;
+                capturedAt: number;
+                fileLength: number;
+                source: 'agentBuffer' | 'committed' | 'diffSide' | 'untracked' | 'workingTree';
+                isUncommitted: boolean;
+                isUntracked: boolean;
+                truncated: boolean;
+                hasBidiControls: boolean;
+                likelyMinified: boolean;
+                commitSha?: string | undefined;
+                truncationReason?: 'context_cap' | 'file_too_large' | 'line_too_long' | undefined;
+                diffContext?: undefined | {
+                    side: 'after' | 'before';
+                    baseSha?: string | undefined;
+                    headSha?: string | undefined;
+                    startSha?: string | undefined;
+                };
+            } | {
                 kind: 'too_large';
                 filePath: string;
                 sizeBytes: number;
                 capBytes: number;
                 capturedAt: number;
                 sha256?: string | undefined;
-            };
-            body: string | {
-                t: 'plain';
-                v: unknown;
             } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
+            };
+            body: string | {
+                t: 'encrypted';
+                c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             bodyVersion: number;
             edits: {
                 editId: string;
                 editedAt: number;
                 editedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 previousBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 nextBody: string | {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
                 reason?: string | undefined;
             }[];
             author: {
-                kind: 'user';
-                userId: string;
+                kind: 'agent';
+                agentId: string;
+                sessionId: string;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 engineRunId?: string | undefined;
             } | {
-                kind: 'agent';
-                agentId: string;
-                sessionId: string;
+                kind: 'user';
+                userId: string;
             } | {
                 kind: 'workflow';
                 runId: string;
             };
-            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
             flags: {
                 stale?: boolean | undefined;
                 outdated?: boolean | undefined;
@@ -4065,51 +4121,51 @@ export type ReviewCommentsActionResultById = {
                 redacted?: boolean | undefined;
                 disputed?: boolean | undefined;
             };
-            dispositions: Record<string, 'working' | 'satisfied' | 'blocking'>;
+            dispositions: Record<string, 'blocking' | 'satisfied' | 'working'>;
             threadId: string;
             transitions: {
                 transitionId: string;
-                toState: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                toState: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                 transitionedAt: number;
                 transitionedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
-                fromState?: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed' | undefined;
-                reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+                fromState?: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved' | undefined;
+                reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
                 reviewGroupId?: string | undefined;
                 reason?: string | undefined;
                 evidence?: ({
+                    kind: 'agentMessage';
+                    sessionId: string;
+                    messageId: string;
+                } | {
                     kind: 'diff';
                     diffRef: string;
                     summary?: string | undefined;
-                } | {
-                    kind: 'test';
-                    testResultRef: string;
-                    status: 'passed' | 'failed' | 'mixed';
-                    summary?: string | undefined;
-                } | {
-                    kind: 'reasoning';
-                    message: string;
                 } | {
                     kind: 'external';
                     url: string;
                     label?: string | undefined;
                 } | {
-                    kind: 'agentMessage';
-                    sessionId: string;
-                    messageId: string;
+                    kind: 'reasoning';
+                    message: string;
+                } | {
+                    kind: 'test';
+                    testResultRef: string;
+                    status: 'failed' | 'mixed' | 'passed';
+                    summary?: string | undefined;
                 })[] | undefined;
                 bulkActionId?: string | undefined;
                 clientMutationId?: string | undefined;
@@ -4129,63 +4185,63 @@ export type ReviewCommentsActionResultById = {
             engineId?: string | undefined;
             findingId?: string | undefined;
             findingIdentity?: string | undefined;
-            findingSeverity?: 'blocker' | 'high' | 'medium' | 'low' | 'nit' | undefined;
-            reviewedFingerprint?: string | null | undefined;
-            reviewTriageStatus?: 'accept' | 'reject' | 'defer' | 'needs_refinement' | undefined;
+            findingSeverity?: 'blocker' | 'high' | 'low' | 'medium' | 'nit' | undefined;
+            reviewedFingerprint?: null | string | undefined;
+            reviewTriageStatus?: 'accept' | 'defer' | 'needs_refinement' | 'reject' | undefined;
             parentCommentId?: string | undefined;
             evidence?: ({
+                kind: 'agentMessage';
+                sessionId: string;
+                messageId: string;
+            } | {
                 kind: 'diff';
                 diffRef: string;
                 summary?: string | undefined;
-            } | {
-                kind: 'test';
-                testResultRef: string;
-                status: 'passed' | 'failed' | 'mixed';
-                summary?: string | undefined;
-            } | {
-                kind: 'reasoning';
-                message: string;
             } | {
                 kind: 'external';
                 url: string;
                 label?: string | undefined;
             } | {
-                kind: 'agentMessage';
-                sessionId: string;
-                messageId: string;
+                kind: 'reasoning';
+                message: string;
+            } | {
+                kind: 'test';
+                testResultRef: string;
+                status: 'failed' | 'mixed' | 'passed';
+                summary?: string | undefined;
             })[] | undefined;
-            tombstone?: {
+            tombstone?: undefined | {
                 deletedAt: number;
                 deletedBy: {
-                    kind: 'user';
-                    userId: string;
+                    kind: 'agent';
+                    agentId: string;
+                    sessionId: string;
                 } | {
                     kind: 'plugin';
                     pluginId: string;
                     engineRunId?: string | undefined;
                 } | {
-                    kind: 'agent';
-                    agentId: string;
-                    sessionId: string;
+                    kind: 'user';
+                    userId: string;
                 } | {
                     kind: 'workflow';
                     runId: string;
                 };
                 redacted: boolean;
                 reason?: string | undefined;
-            } | undefined;
-            fingerprint?: {
+            };
+            fingerprint?: undefined | {
                 normalizedMessageHash: string;
                 ruleId?: string | undefined;
                 fileSha?: string | undefined;
-                lineRange?: {
+                lineRange?: undefined | {
                     startLine: number;
                     endLine: number;
-                } | undefined;
+                };
                 engineId?: string | undefined;
-            } | undefined;
+            };
             linkedRefs?: ({
-                kind: 'executionRun' | 'session' | 'pullRequest' | 'commit' | 'checkpoint' | 'external';
+                kind: 'checkpoint' | 'commit' | 'executionRun' | 'external' | 'pullRequest' | 'session';
                 id?: string | undefined;
                 url?: string | undefined;
             } | {
@@ -4193,61 +4249,61 @@ export type ReviewCommentsActionResultById = {
                 id: string;
                 url?: string | undefined;
             })[] | undefined;
-            suggestedFix?: {
+            suggestedFix?: undefined | {
                 kind: 'external' | 'patch' | 'replacement';
                 patch?: string | undefined;
                 replacementText?: string | undefined;
                 url?: string | undefined;
-            } | undefined;
-            metadata?: {
+            };
+            metadata?: undefined | {
                 reviewGroupIds?: string[] | undefined;
-                severity?: 'info' | 'warning' | 'error' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            } | undefined;
+            };
             projectId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 machineId: string;
                 path: string;
-            } | undefined;
+            };
         }[];
         failed: {
             commentId: string;
-            errorCode: 'review_comment_not_found' | 'review_comment_invalid_request' | 'review_comment_invalid_transition' | 'review_comment_permission_denied' | 'review_comment_direct_write_permission_required' | 'review_comment_encryption_mode_mismatch' | 'review_comment_invalid_filter' | 'review_comment_snapshot_invalid' | 'review_comment_conflict' | 'review_comment_idempotency_conflict' | 'review_comment_thread_closed' | 'review_comment_already_redacted';
+            errorCode: 'review_comment_already_redacted' | 'review_comment_conflict' | 'review_comment_direct_write_permission_required' | 'review_comment_encryption_mode_mismatch' | 'review_comment_idempotency_conflict' | 'review_comment_invalid_filter' | 'review_comment_invalid_request' | 'review_comment_invalid_transition' | 'review_comment_not_found' | 'review_comment_permission_denied' | 'review_comment_snapshot_invalid' | 'review_comment_thread_closed';
             error: string;
         }[];
     };
     readonly "reviews.comments.claimPublicationDispatch": {
         disposition: 'dispatch' | 'reconcile';
-        dispatchToken: string | null;
+        dispatchToken: null | string;
         publicationPlanId: string;
         entries: {
             happierCommentId: string;
             publicationCorrelationId: string;
         }[];
-        verdict: {
+        verdict: null | {
             publicationCorrelationId: string;
-        } | null;
-        instructions: {
-            entries: ('dispatch' | 'reconcile' | 'confirmed' | 'held')[];
-            verdict: 'dispatch' | 'reconcile' | 'confirmed' | 'held' | null;
         };
-        priorResult: {
+        instructions: {
+            entries: ('confirmed' | 'dispatch' | 'held' | 'reconcile')[];
+            verdict: 'confirmed' | 'dispatch' | 'held' | 'reconcile' | null;
+        };
+        priorResult: null | {
             publicationPlanId: string;
             entries: {
                 happierCommentId: string;
                 publicationCorrelationId: string;
                 outcome: {
-                    kind: 'published';
-                    externalRef: string;
-                } | {
                     kind: 'failed';
                     code: string;
                     message?: string | undefined;
                 } | {
-                    kind: 'uncertain';
+                    kind: 'published';
+                    externalRef: string;
                 } | {
                     kind: 'skippedPriorFailure';
+                } | {
+                    kind: 'uncertain';
                 };
             }[];
             verdict: {
@@ -4255,20 +4311,20 @@ export type ReviewCommentsActionResultById = {
             } | {
                 publicationCorrelationId: string;
                 outcome: {
-                    kind: 'published';
-                    externalRef?: string | undefined;
-                } | {
                     kind: 'failed';
                     code: string;
                     message?: string | undefined;
                     externalRef?: string | undefined;
                 } | {
-                    kind: 'uncertain';
+                    kind: 'published';
                     externalRef?: string | undefined;
                 } | {
                     kind: 'skippedPriorFailure';
+                } | {
+                    kind: 'uncertain';
+                    externalRef?: string | undefined;
                 };
             };
-        } | null;
+        };
     };
 };

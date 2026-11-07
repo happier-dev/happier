@@ -2,69 +2,43 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { ActionFailureCauseV1 } from './pluginActionDtoSupport.generated.js';
 
 export type InventoryActionInputById = {
     readonly "agents.models.list": {
         purpose?: 'scm_diff_summary' | undefined;
         discoveryTargetKey?: string | undefined;
-        modelSelector?: {
+        modelSelector?: undefined | {
             profileId?: string | undefined;
             modelId?: string | undefined;
             backendTargetKey?: string | undefined;
-        } | undefined;
-        agentId?: string | undefined;
-        backendTargetKey?: string | undefined;
-        machineId?: string | undefined;
-        serverId?: undefined;
-        limit?: number | undefined;
-        probe?: {
-            cwd?: string | undefined;
-            timeoutMs?: number | undefined;
-            transportTimeoutMs?: number | undefined;
-            bypassCache?: boolean | undefined;
-            profileId?: string | undefined;
-            runtimeDescriptorV1?: unknown;
-            connectedServices?: {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                }>;
+            modelSelection?: undefined | {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
             } | {
-                v: 1;
-                bindingsByServiceId: Record<string, {
-                    source: 'native';
-                } | {
-                    source: 'connected';
-                    selection: 'group';
-                    groupId: string;
-                    profileId?: string | undefined;
-                } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
-                }>;
-            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            connectedServices?: null | undefined | {
                 v: 2;
                 bindingsByServiceId?: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
                 } | {
                     source: 'team_resource';
                     resourceId: string;
@@ -76,15 +50,84 @@ export type InventoryActionInputById = {
                         };
                         accountId: string;
                     };
+                }> | undefined;
+            };
+        };
+        agentId?: string | undefined;
+        backendTargetKey?: string | undefined;
+        machineId?: string | undefined;
+        serverId?: undefined;
+        limit?: number | undefined;
+        probe?: undefined | {
+            cwd?: string | undefined;
+            timeoutMs?: number | undefined;
+            transportTimeoutMs?: number | undefined;
+            bypassCache?: boolean | undefined;
+            profileId?: string | undefined;
+            runtimeDescriptorV1?: unknown;
+            connectedServices?: undefined | {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                }>;
+            } | {
+                v: 1;
+                bindingsByServiceId: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                }>;
+            } | {
+                v: 2;
+                bindingsByServiceId?: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
                 } | {
                     source: 'team_resource';
                     resourceId: string;
                     deliveryMode: 'brokered';
-                    disclosedMember?: undefined;
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
                 }> | undefined;
-            } | undefined;
-            configOptionOverrides?: Record<string, string | number | boolean | null> | undefined;
-        } | undefined;
+            };
+            configOptionOverrides?: Record<string, boolean | null | number | string> | undefined;
+        };
     };
     readonly "agents.config_options.list": {
         agentId?: string | undefined;
@@ -93,54 +136,61 @@ export type InventoryActionInputById = {
         limit?: number | undefined;
         modelId?: string | undefined;
         serverId?: undefined;
-        probe?: {
+        probe?: undefined | {
             cwd?: string | undefined;
             timeoutMs?: number | undefined;
             transportTimeoutMs?: number | undefined;
             bypassCache?: boolean | undefined;
             profileId?: string | undefined;
             runtimeDescriptorV1?: unknown;
-            connectedServices?: {
+            connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
                 }>;
             } | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
                 }>;
             } | {
                 v: 2;
                 bindingsByServiceId?: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
                 } | {
                     source: 'team_resource';
                     resourceId: string;
@@ -152,15 +202,10 @@ export type InventoryActionInputById = {
                         };
                         accountId: string;
                     };
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'brokered';
-                    disclosedMember?: undefined;
                 }> | undefined;
-            } | undefined;
-            configOptionOverrides?: Record<string, string | number | boolean | null> | undefined;
-        } | undefined;
+            };
+            configOptionOverrides?: Record<string, boolean | null | number | string> | undefined;
+        };
     };
     readonly "agents.session_modes.list": {
         agentId?: string | undefined;
@@ -168,54 +213,61 @@ export type InventoryActionInputById = {
         machineId?: string | undefined;
         limit?: number | undefined;
         serverId?: undefined;
-        probe?: {
+        probe?: undefined | {
             cwd?: string | undefined;
             timeoutMs?: number | undefined;
             transportTimeoutMs?: number | undefined;
             bypassCache?: boolean | undefined;
             profileId?: string | undefined;
             runtimeDescriptorV1?: unknown;
-            connectedServices?: {
+            connectedServices?: undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
                 }>;
             } | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
                 }>;
             } | {
                 v: 2;
                 bindingsByServiceId?: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
                 } | {
                     source: 'team_resource';
                     resourceId: string;
@@ -227,15 +279,10 @@ export type InventoryActionInputById = {
                         };
                         accountId: string;
                     };
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'brokered';
-                    disclosedMember?: undefined;
                 }> | undefined;
-            } | undefined;
-            configOptionOverrides?: Record<string, string | number | boolean | null> | undefined;
-        } | undefined;
+            };
+            configOptionOverrides?: Record<string, boolean | null | number | string> | undefined;
+        };
     };
     readonly "sessions.spawn.profiles.list": {
         [x: string]: unknown;
@@ -251,6 +298,7 @@ export type InventoryActionInputById = {
         machineId?: string | undefined;
         limit?: number | undefined;
         includeUnavailable?: boolean | undefined;
+        includeDefaults?: boolean | undefined;
         serverId?: undefined;
     };
     readonly "sessions.spawn.mcp_servers.preview": {
@@ -287,7 +335,7 @@ export type InventoryActionInputById = {
     };
     readonly "review.engines.list": {
         [x: string]: unknown;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
         machineId?: string | undefined;
         includeDisabled?: boolean | undefined;
         scope?: 'paths' | undefined;
@@ -302,19 +350,19 @@ export type InventoryActionInputById = {
             serverId: string;
             projectKey: string;
         };
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         intent: {
             kind: 'attach';
             entry: {
                 id: string;
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
                 enabled?: boolean | undefined;
-                maxChars?: number | undefined;
                 required?: boolean | undefined;
+                maxChars?: number | undefined;
                 placement?: 'system_append' | undefined;
             };
         } | {
@@ -324,11 +372,11 @@ export type InventoryActionInputById = {
             kind: 'reorder';
             entryId: string;
             siblingId: string;
-            position: 'before' | 'after';
+            position: 'after' | 'before';
         } | {
             kind: 'set_budget';
             entryId: string;
-            maxChars: number | null;
+            maxChars: null | number;
         } | {
             kind: 'set_enabled';
             entryId: string;
@@ -340,7 +388,7 @@ export type InventoryActionInputById = {
             serverId: string;
             projectKey: string;
         };
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         label?: null | string | undefined;
         environmentBinding?: undefined | {
             name: string;
@@ -355,13 +403,13 @@ export type InventoryActionInputById = {
             serverId: string;
             projectKey: string;
         };
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         hidden: boolean;
     };
     readonly "projects.workspace.update": {
         serverId: string;
         workspaceId: string;
-        label?: string | null | undefined;
+        label?: null | string | undefined;
         pinned?: boolean | undefined;
     };
     readonly "projects.workspace.forget": {
@@ -378,17 +426,27 @@ export type InventoryActionInputById = {
         serverId: string;
         machineId: string;
         source: {
-            kind: 'workspace';
-            workspaceId: string;
-            checkout?: {
-                serverId: string;
-                workspaceId: string;
-                machineId: string;
-                rootPath: string;
-            } | undefined;
-        } | {
             kind: 'folder';
             path: string;
+        } | {
+            kind: 'repository';
+            selector: {
+                provider: {
+                    id: string;
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                    displayName: string;
+                    baseUrl: string;
+                };
+                repository: {
+                    nameWithOwner: string;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
+                    webUrl?: string | undefined;
+                    cloneUrl?: string | undefined;
+                    sshUrl?: string | undefined;
+                };
+                protocol: 'auto' | 'https' | 'ssh';
+            };
         } | {
             kind: 'source';
             id: string;
@@ -396,95 +454,89 @@ export type InventoryActionInputById = {
             selector: {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
+                protocol: 'auto' | 'https' | 'ssh';
             };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
-            checkout?: {
+            checkout?: undefined | {
                 serverId: string;
                 workspaceId: string;
                 machineId: string;
                 rootPath: string;
-            } | undefined;
+            };
         } | {
-            kind: 'repository';
-            selector: {
-                provider: {
-                    id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
-                    displayName: string;
-                    baseUrl: string;
-                };
-                repository: {
-                    nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
-                    webUrl?: string | undefined;
-                    cloneUrl?: string | undefined;
-                    sshUrl?: string | undefined;
-                };
-                protocol: 'auto' | 'ssh' | 'https';
+            kind: 'workspace';
+            workspaceId: string;
+            checkout?: undefined | {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
             };
         };
         materialization: {
-            kind: 'attach';
-        } | {
-            kind: 'worktree';
-            checkout: {
-                kind: 'git_worktree';
-                displayName: string;
-                baseRef: string | null;
-                branchMode?: 'new' | 'existing' | undefined;
-            };
-            targetPath?: string | undefined;
-        } | {
             destinationParentPath: string;
             destinationDirectoryName: string;
             kind: 'clone';
+            initialCheckout?: undefined | {
+                branch: 'main' | null;
+                commit: string;
+            };
+        } | {
+            kind: 'attach';
         } | {
             kind: 'sync';
             targetPath: string;
             workspaceAction: {
-                kind: 'none';
-            } | {
                 kind: 'copy_once';
                 contentPolicy: {
                     v: 1;
-                    selection: 'git_worktree' | 'all_files';
+                    selection: 'all_files' | 'git_worktree';
                     extraIgnorePatterns: readonly string[];
                     extraIncludePatterns: readonly string[];
                     policyDigest: string;
                 };
             } | {
                 kind: 'create_relationship';
-                mode: 'keep_synced' | 'mirror_exactly' | 'keep_both_in_sync';
+                mode: 'keep_both_in_sync' | 'keep_synced' | 'mirror_exactly';
                 contentPolicy: {
                     v: 1;
-                    selection: 'git_worktree' | 'all_files';
+                    selection: 'all_files' | 'git_worktree';
                     extraIgnorePatterns: readonly string[];
                     extraIncludePatterns: readonly string[];
                     policyDigest: string;
                 };
                 flushBeforeCommit: true;
             } | {
+                kind: 'linked_workspace';
+            } | {
+                kind: 'none';
+            } | {
                 kind: 'relationship';
                 relationshipId: string;
                 flushBeforeCommit: boolean;
-            } | {
-                kind: 'linked_workspace';
             };
+        } | {
+            kind: 'worktree';
+            checkout: {
+                kind: 'git_worktree';
+                displayName: string;
+                baseRef: null | string;
+                branchMode?: 'existing' | 'new' | undefined;
+            };
+            targetPath?: string | undefined;
         };
         ref?: string | undefined;
         subdir?: string | undefined;
@@ -501,6 +553,8 @@ export type InventoryActionInputById = {
     readonly "servers.list": {
         [x: string]: unknown;
         limit?: number | undefined;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type InventoryActionResultById = {
@@ -516,85 +570,98 @@ export type InventoryActionResultById = {
             label: string;
             enabled: boolean;
             agentId?: string | undefined;
-            identity?: {
+            identity?: undefined | {
                 pluginId: string;
                 localId: string;
-            } | undefined;
+            };
+            agentTarget?: undefined | {
+                kind: 'agent';
+                identity: {
+                    pluginId: string;
+                    localId: string;
+                };
+                definitionId?: string | undefined;
+            };
             backendId?: string | undefined;
             description?: string | undefined;
         }[];
+        defaultTargetKey?: string | undefined;
     };
     readonly "machines.agents.list": {
         items: {
             installed: boolean;
-            version: string | null;
-            latestVersion: string | null;
+            version: null | string;
+            latestVersion: null | string;
             update: {
                 supported: boolean;
-                command: string | null;
+                command: null | string;
             };
             signIn: {
-                status: 'unknown' | 'signedIn' | 'signedOut';
-                loginSupport: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
+                status: 'signedIn' | 'signedOut' | 'unknown';
+                loginSupport: 'login_terminal' | 'manual_only' | 'status_only' | 'unsupported';
                 required?: boolean | undefined;
                 accountLabel?: string | undefined;
             };
             platform: {
-                supported: true;
-            } | {
                 supported: false;
-                reason: 'os' | 'arch';
+                reason: 'arch' | 'os';
+            } | {
+                supported: true;
             };
             install: {
                 available: boolean;
-                mode: 'none' | 'managed' | 'vendor_recipe' | 'manual';
-                sizeBytes: number | null;
-                guideUrl: string | null;
+                mode: 'managed' | 'manual' | 'none' | 'vendor_recipe';
+                sizeBytes: null | number;
+                guideUrl: null | string;
             };
             dependencies: {
                 key: string;
                 installed: boolean;
-                version: string | null;
+                version: null | string;
             }[];
             agentId: string;
             title: string;
             managed?: boolean | undefined;
-            fit?: {
+            fit?: undefined | {
                 kind: 'can_run';
-                via: 'command' | 'npm' | 'archive' | 'uv';
-                target?: 'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64' | undefined;
+                via: 'archive' | 'command' | 'npm' | 'uv';
+                target?: 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-arm64' | 'win32-x64' | undefined;
             } | {
                 kind: 'cant_run';
-                reason: 'no_build_for_platform' | 'archive_type_unsupported';
+                reason: 'archive_type_unsupported' | 'no_build_for_platform';
             } | {
                 kind: 'unknown';
-                reason: 'platform_unknown' | 'arch_unknown';
-            } | undefined;
+                reason: 'arch_unknown' | 'platform_unknown';
+            };
             definitionId?: string | undefined;
         }[];
-        unavailable?: {
+        unavailable?: undefined | {
             agentId: string;
-            reason: 'missing_result' | 'probe_failed' | 'invalid_facts';
+            reason: 'invalid_facts' | 'missing_result' | 'probe_failed';
             definitionId?: string | undefined;
             errorCode?: string | undefined;
-        }[] | undefined;
-        definitionCatalog?: {
+        }[];
+        definitionCatalog?: undefined | {
             status: 'unavailable';
             reason: string;
-        } | undefined;
+        };
     };
     readonly "prompts.invocations.list": JsonValue;
     readonly "prompts.invocation.resolve": JsonValue;
     readonly "review.engines.list": JsonValue;
     readonly "paths.list_recent": JsonValue;
     readonly "projects.context.update": {
+        ok: false;
+        errorCode: 'artifact_unavailable' | 'artifact_wrong_kind' | 'entry_conflict' | 'entry_not_found' | 'invalid_parameters' | 'project_context_access_denied' | 'project_context_conflict' | 'project_context_unavailable';
+        currentRevision?: 'absent' | number | undefined;
+    } | {
         ok: true;
         row: {
-            atmosphere?: 'home' | {
-                behindSessions: boolean;
-                source: 'none' | 'planet' | 'picture';
+            atmosphere?: 'home' | undefined | {
+                showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
+                source: 'none' | 'picture' | 'planet';
                 planet: {
-                    placement: 'corner' | 'side' | 'rise';
+                    placement: 'corner' | 'rise' | 'side';
                     style: 'airy' | 'balanced' | 'rich';
                     digits: boolean;
                 };
@@ -607,13 +674,14 @@ export type InventoryActionResultById = {
                         localId: string;
                     };
                     layout: 'horizon' | 'wallpaper';
+                    selectedAtMs?: number | undefined;
                 };
                 looks: Record<string, {
-                    look?: 'original' | 'fine' | 'painted-fine' | 'halftone' | 'mosaic' | 'painted' | 'haze' | 'engraving' | undefined;
+                    look?: 'engraving' | 'fine' | 'halftone' | 'haze' | 'mosaic' | 'original' | 'painted' | 'painted-fine' | undefined;
                     strength?: number | undefined;
-                    dissolve?: 'haze' | 'ordered' | 'gradient' | 'shrink' | 'rows' | undefined;
+                    dissolve?: 'gradient' | 'haze' | 'ordered' | 'rows' | 'shrink' | undefined;
                 }>;
-            } | undefined;
+            };
             hidden?: boolean | undefined;
             pinned?: boolean | undefined;
             label?: string | undefined;
@@ -624,34 +692,34 @@ export type InventoryActionResultById = {
                     revision?: number | undefined;
                 }>;
             };
-            promptStack?: {
+            promptStack?: undefined | {
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
                 id: string;
                 enabled: boolean;
-                placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                 maxChars?: number | undefined;
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
-            }[] | undefined;
+            }[];
         };
         revision: number;
-    } | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'entry_conflict' | 'entry_not_found' | 'project_context_conflict' | 'project_context_unavailable' | 'project_context_access_denied' | 'artifact_unavailable' | 'artifact_wrong_kind';
-        currentRevision?: number | 'absent' | undefined;
     };
     readonly "projects.organization.update": {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'project_organization_access_denied' | 'project_organization_conflict' | 'project_organization_unavailable';
+        currentRevision?: 'absent' | number | undefined;
+    } | {
         ok: true;
         row: {
-            atmosphere?: 'home' | {
-                behindSessions: boolean;
-                source: 'none' | 'planet' | 'picture';
+            atmosphere?: 'home' | undefined | {
+                showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
+                source: 'none' | 'picture' | 'planet';
                 planet: {
-                    placement: 'corner' | 'side' | 'rise';
+                    placement: 'corner' | 'rise' | 'side';
                     style: 'airy' | 'balanced' | 'rich';
                     digits: boolean;
                 };
@@ -664,13 +732,14 @@ export type InventoryActionResultById = {
                         localId: string;
                     };
                     layout: 'horizon' | 'wallpaper';
+                    selectedAtMs?: number | undefined;
                 };
                 looks: Record<string, {
-                    look?: 'original' | 'fine' | 'painted-fine' | 'halftone' | 'mosaic' | 'painted' | 'haze' | 'engraving' | undefined;
+                    look?: 'engraving' | 'fine' | 'halftone' | 'haze' | 'mosaic' | 'original' | 'painted' | 'painted-fine' | undefined;
                     strength?: number | undefined;
-                    dissolve?: 'haze' | 'ordered' | 'gradient' | 'shrink' | 'rows' | undefined;
+                    dissolve?: 'gradient' | 'haze' | 'ordered' | 'rows' | 'shrink' | undefined;
                 }>;
-            } | undefined;
+            };
             hidden?: boolean | undefined;
             pinned?: boolean | undefined;
             label?: string | undefined;
@@ -681,34 +750,34 @@ export type InventoryActionResultById = {
                     revision?: number | undefined;
                 }>;
             };
-            promptStack?: {
+            promptStack?: undefined | {
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
                 id: string;
                 enabled: boolean;
-                placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                 maxChars?: number | undefined;
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
-            }[] | undefined;
+            }[];
         };
         revision: number;
-    } | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'project_organization_conflict' | 'project_organization_access_denied' | 'project_organization_unavailable';
-        currentRevision?: number | 'absent' | undefined;
     };
     readonly "projects.visibility.set": {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'project_visibility_access_denied' | 'project_visibility_conflict' | 'project_visibility_unavailable';
+        currentRevision?: 'absent' | number | undefined;
+    } | {
         ok: true;
         row: {
-            atmosphere?: 'home' | {
-                behindSessions: boolean;
-                source: 'none' | 'planet' | 'picture';
+            atmosphere?: 'home' | undefined | {
+                showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
+                source: 'none' | 'picture' | 'planet';
                 planet: {
-                    placement: 'corner' | 'side' | 'rise';
+                    placement: 'corner' | 'rise' | 'side';
                     style: 'airy' | 'balanced' | 'rich';
                     digits: boolean;
                 };
@@ -721,13 +790,14 @@ export type InventoryActionResultById = {
                         localId: string;
                     };
                     layout: 'horizon' | 'wallpaper';
+                    selectedAtMs?: number | undefined;
                 };
                 looks: Record<string, {
-                    look?: 'original' | 'fine' | 'painted-fine' | 'halftone' | 'mosaic' | 'painted' | 'haze' | 'engraving' | undefined;
+                    look?: 'engraving' | 'fine' | 'halftone' | 'haze' | 'mosaic' | 'original' | 'painted' | 'painted-fine' | undefined;
                     strength?: number | undefined;
-                    dissolve?: 'haze' | 'ordered' | 'gradient' | 'shrink' | 'rows' | undefined;
+                    dissolve?: 'gradient' | 'haze' | 'ordered' | 'rows' | 'shrink' | undefined;
                 }>;
-            } | undefined;
+            };
             hidden?: boolean | undefined;
             pinned?: boolean | undefined;
             label?: string | undefined;
@@ -738,27 +808,34 @@ export type InventoryActionResultById = {
                     revision?: number | undefined;
                 }>;
             };
-            promptStack?: {
+            promptStack?: undefined | {
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
                 id: string;
                 enabled: boolean;
-                placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                 maxChars?: number | undefined;
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
-            }[] | undefined;
+            }[];
         };
         revision: number;
-    } | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'project_visibility_conflict' | 'project_visibility_access_denied' | 'project_visibility_unavailable';
-        currentRevision?: number | 'absent' | undefined;
     };
     readonly "projects.workspace.update": {
+        ok: false;
+        errorCode: string;
+        error: string;
+        requestId?: string | undefined;
+        effectAttempted?: boolean | undefined;
+        details?: unknown;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
+    } | {
         ok: true;
         workspaceRef: {
             id: string;
@@ -766,25 +843,25 @@ export type InventoryActionResultById = {
             machineId: string;
             rootPath: string;
             createdAtMs: number;
-            label?: string | null | undefined;
-            lastOpenedAtMs?: number | null | undefined;
+            label?: null | string | undefined;
+            lastOpenedAtMs?: null | number | undefined;
             projectKey?: string | undefined;
-            repositoryIdentity?: {
-                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+            repositoryIdentity?: undefined | {
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                 deployment: string;
                 repository: string;
-            } | undefined;
-            source?: {
+            };
+            source?: undefined | {
                 sourceId: string;
                 revision: number;
-            } | undefined;
+            };
         };
-        organization?: {
-            atmosphere?: 'home' | {
-                behindSessions: boolean;
-                source: 'none' | 'planet' | 'picture';
+        organization?: undefined | {
+            atmosphere?: 'home' | undefined | {
+                showOn: ('home' | 'new-session' | 'pages' | 'projects' | 'sessions')[];
+                source: 'none' | 'picture' | 'planet';
                 planet: {
-                    placement: 'corner' | 'side' | 'rise';
+                    placement: 'corner' | 'rise' | 'side';
                     style: 'airy' | 'balanced' | 'rich';
                     digits: boolean;
                 };
@@ -797,13 +874,14 @@ export type InventoryActionResultById = {
                         localId: string;
                     };
                     layout: 'horizon' | 'wallpaper';
+                    selectedAtMs?: number | undefined;
                 };
                 looks: Record<string, {
-                    look?: 'original' | 'fine' | 'painted-fine' | 'halftone' | 'mosaic' | 'painted' | 'haze' | 'engraving' | undefined;
+                    look?: 'engraving' | 'fine' | 'halftone' | 'haze' | 'mosaic' | 'original' | 'painted' | 'painted-fine' | undefined;
                     strength?: number | undefined;
-                    dissolve?: 'haze' | 'ordered' | 'gradient' | 'shrink' | 'rows' | undefined;
+                    dissolve?: 'gradient' | 'haze' | 'ordered' | 'rows' | 'shrink' | undefined;
                 }>;
-            } | undefined;
+            };
             hidden?: boolean | undefined;
             pinned?: boolean | undefined;
             label?: string | undefined;
@@ -814,67 +892,38 @@ export type InventoryActionResultById = {
                     revision?: number | undefined;
                 }>;
             };
-            promptStack?: {
+            promptStack?: undefined | {
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
                 id: string;
                 enabled: boolean;
-                placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                 maxChars?: number | undefined;
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
-            }[] | undefined;
-        } | undefined;
-    } | {
-        ok: false;
-        errorCode: string;
-        error: string;
-        effectAttempted?: boolean | undefined;
-        details?: unknown;
-        goalControlFailure?: {
-            phase: 'native_effect' | 'provider_completion' | 'tail_drain' | 'missing_matching_publication' | 'host_publication_rejected';
-        } | undefined;
+            }[];
+        };
     };
     readonly "projects.workspace.forget": {
         ok: false;
         errorCode: string;
         error: string;
+        requestId?: string | undefined;
         effectAttempted?: boolean | undefined;
         details?: unknown;
-        goalControlFailure?: {
-            phase: 'native_effect' | 'provider_completion' | 'tail_drain' | 'missing_matching_publication' | 'host_publication_rejected';
-        } | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        goalControlFailure?: undefined | {
+            phase: 'host_publication_rejected' | 'missing_matching_publication' | 'native_effect' | 'provider_completion' | 'tail_drain';
+        };
     } | {
         ok: true;
         workspaceId: string;
     };
     readonly "projects.list": JsonValue;
     readonly "projects.open": {
-        kind: 'opened';
-        workspace: {
-            serverId: string;
-            workspaceId: string;
-            machineId: string;
-            rootPath: string;
-        };
-        directory: string;
-        setup: 'notRequired' | 'approvalRequired' | 'prepared' | 'failed';
-        facts?: {
-            projectKey?: string | undefined;
-            repositoryIdentity?: {
-                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
-                deployment: string;
-                repository: string;
-            } | undefined;
-            source?: {
-                sourceId: string;
-                revision: number;
-            } | undefined;
-        } | undefined;
-    } | {
         kind: 'ambiguous';
         candidates: {
             id: string;
@@ -883,50 +932,81 @@ export type InventoryActionResultById = {
             rootPath: string;
             createdAtMs: number;
             projectKey?: string | undefined;
-            repositoryIdentity?: {
-                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+            repositoryIdentity?: undefined | {
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                 deployment: string;
                 repository: string;
-            } | undefined;
-            source?: {
+            };
+            source?: undefined | {
                 sourceId: string;
                 revision: number;
-            } | undefined;
-            label?: string | null | undefined;
-            lastOpenedAtMs?: number | null | undefined;
+            };
+            label?: null | string | undefined;
+            lastOpenedAtMs?: null | number | undefined;
         }[];
     } | {
-        kind: 'refused';
-        code: string;
-        retryNotBeforeMs?: number | undefined;
-        remediation?: {
-            kind: 'retry' | 'commit_required' | 'set_url_required' | 'auth_required' | 'install_required' | 'unsupported_provider' | 'confirmation_required';
-            label?: string | undefined;
-            action?: string | undefined;
-            url?: string | undefined;
-        } | undefined;
+        kind: 'opened';
+        workspace: {
+            serverId: string;
+            workspaceId: string;
+            machineId: string;
+            rootPath: string;
+        };
+        directory: string;
+        setup: 'approvalRequired' | 'failed' | 'notRequired' | 'prepared';
+        facts?: undefined | {
+            projectKey?: string | undefined;
+            repositoryIdentity?: undefined | {
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
+                deployment: string;
+                repository: string;
+            };
+            source?: undefined | {
+                sourceId: string;
+                revision: number;
+            };
+        };
     } | {
         kind: 'outcomeUnknown';
         operationId?: string | undefined;
+    } | {
+        kind: 'refused';
+        code: string;
+        effectAttempted?: boolean | undefined;
+        failureCause?: ActionFailureCauseV1 | undefined;
+        destinationReview?: undefined | {
+            accountId: string;
+            serverId: string;
+            machineId: string;
+            destinationParentPath: string;
+            destinationDirectoryName: string;
+        };
+        retryNotBeforeMs?: number | undefined;
+        remediation?: undefined | {
+            kind: 'auth_required' | 'commit_required' | 'confirmation_required' | 'install_required' | 'retry' | 'set_url_required' | 'unsupported_provider';
+            label?: string | undefined;
+            action?: string | undefined;
+            url?: string | undefined;
+        };
     };
     readonly "machines.presence.read": {
         kind: 'present';
         machineId: string;
-        transitions: {
+        transitions: null | {
             v: 1;
             revision: number;
-            offline: {
+            offline: null | {
                 revision: number;
                 occurredAt: number;
-            } | null;
-            online: {
+            };
+            online: null | {
                 revision: number;
                 occurredAt: number;
-            } | null;
-        } | null;
+            };
+        };
     } | {
         kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
+        code: 'access_denied' | 'content_unpublished' | 'custodian_only' | 'custodian_protected' | 'daemon_upgrade_required' | 'data_key_not_required' | 'encryption_material_unavailable' | 'invalid_recipient_envelope' | 'machine_key_changed' | 'machine_unavailable' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'unsupported_operation';
     };
     readonly "machines.list": JsonValue;
     readonly "servers.list": JsonValue;

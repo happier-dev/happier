@@ -6,16 +6,21 @@ import type { JsonValue } from '../../identity.js';
 export type ObservationActionInputById = {
     readonly wait: {
         target: {
+            kind: 'action_operation';
+            serverId: string;
+            machineId: string;
+            operationId: string;
+        } | {
             kind: 'execution_run';
             serverId: string;
             machineId: string;
             runId: string;
             sessionId?: string | undefined;
         } | {
-            kind: 'action_operation';
+            kind: 'plugin_source';
             serverId: string;
-            machineId: string;
-            operationId: string;
+            pluginId: string;
+            sourceId: string;
         } | {
             kind: 'session';
             serverId: string;
@@ -24,40 +29,40 @@ export type ObservationActionInputById = {
             kind: 'workflow_run';
             serverId: string;
             runId: string;
-        } | {
-            kind: 'plugin_source';
-            serverId: string;
-            pluginId: string;
-            sourceId: string;
         };
         condition: {
-            kind: 'terminal' | 'needs_attention' | 'terminal_or_needs_attention' | 'idle' | 'ready';
-        } | {
-            kind: 'turn_terminal';
-            turnId: string;
+            kind: 'idle' | 'needs_attention' | 'ready' | 'terminal' | 'terminal_or_needs_attention';
         } | {
             kind: 'plugin';
             actionLocalId: string;
             condition: string;
+        } | {
+            kind: 'turn_terminal';
+            turnId: string;
         };
-        timeout?: {
+        timeout?: undefined | {
             durationMs: number;
-        } | undefined;
+        };
     };
 };
 export type ObservationActionResultById = {
     readonly wait: {
         target: {
+            kind: 'action_operation';
+            serverId: string;
+            machineId: string;
+            operationId: string;
+        } | {
             kind: 'execution_run';
             serverId: string;
             machineId: string;
             runId: string;
             sessionId?: string | undefined;
         } | {
-            kind: 'action_operation';
+            kind: 'plugin_source';
             serverId: string;
-            machineId: string;
-            operationId: string;
+            pluginId: string;
+            sourceId: string;
         } | {
             kind: 'session';
             serverId: string;
@@ -66,23 +71,18 @@ export type ObservationActionResultById = {
             kind: 'workflow_run';
             serverId: string;
             runId: string;
-        } | {
-            kind: 'plugin_source';
-            serverId: string;
-            pluginId: string;
-            sourceId: string;
         };
         condition: {
-            kind: 'terminal' | 'needs_attention' | 'terminal_or_needs_attention' | 'idle' | 'ready';
-        } | {
-            kind: 'turn_terminal';
-            turnId: string;
+            kind: 'idle' | 'needs_attention' | 'ready' | 'terminal' | 'terminal_or_needs_attention';
         } | {
             kind: 'plugin';
             actionLocalId: string;
             condition: string;
+        } | {
+            kind: 'turn_terminal';
+            turnId: string;
         };
-        disposition: 'matched' | 'observation_timeout' | 'cancelled' | 'target_unavailable' | 'permission_denied' | 'unsupported_condition' | 'disconnected' | 'outcome_uncertain';
+        disposition: 'cancelled' | 'disconnected' | 'matched' | 'observation_timeout' | 'outcome_uncertain' | 'permission_denied' | 'target_unavailable' | 'unsupported_condition';
         snapshot?: JsonValue | undefined;
     };
 };

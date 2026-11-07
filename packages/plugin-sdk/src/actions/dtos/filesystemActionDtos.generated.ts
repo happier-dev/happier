@@ -14,7 +14,7 @@ export type FilesystemActionInputById = {
         rootPath: string;
         path: string;
         content: string;
-        expectedHash?: string | null | undefined;
+        expectedHash?: null | string | undefined;
     };
     readonly "daemon.filesystem.createDirectory": {
         rootPath: string;
@@ -32,12 +32,6 @@ export type FilesystemActionInputById = {
         recursive: boolean;
     };
     readonly "daemon.filesystem.copy": {
-        rootPath: string;
-        from: string;
-        to: string;
-        overwrite: boolean;
-        recursive: boolean;
-    } | {
         kind: 'prepared_transfer';
         source: {
             kind: 'file';
@@ -50,9 +44,9 @@ export type FilesystemActionInputById = {
             sha256: string;
         } | {
             path: string;
-            rootPath: string;
             serverId: string;
             machineId: string;
+            rootPath: string;
             sourceId: string;
             sizeBytes: number;
             sha256: string;
@@ -60,18 +54,18 @@ export type FilesystemActionInputById = {
             entryTree: {
                 operationId: string;
                 expectation: {
-                    kind: 'missing';
+                    kind: 'directory';
+                    fingerprint: string;
                 } | {
                     kind: 'file';
                     digest: string;
                     executable: boolean;
                     size: number;
                 } | {
+                    kind: 'missing';
+                } | {
                     kind: 'symlink';
                     target: string;
-                } | {
-                    kind: 'directory';
-                    fingerprint: string;
                 };
                 blobs: {
                     transferId: string;
@@ -104,6 +98,12 @@ export type FilesystemActionInputById = {
         };
         overwrite: boolean;
         recursive: boolean;
+    } | {
+        rootPath: string;
+        from: string;
+        to: string;
+        overwrite: boolean;
+        recursive: boolean;
     };
     readonly "daemon.filesystem.upload": {
         rootPath: string;
@@ -114,7 +114,7 @@ export type FilesystemActionInputById = {
             sha256?: string | undefined;
         };
         overwrite: boolean;
-        expectedHash?: string | null | undefined;
+        expectedHash?: null | string | undefined;
     };
     readonly "daemon.filesystem.download": {
         rootPath: string;
@@ -127,7 +127,7 @@ export type FilesystemActionInputById = {
     };
     readonly "daemon.filesystem.transfer.cancel": {
         rootPath: string;
-        direction: 'upload' | 'download';
+        direction: 'download' | 'upload';
         transferId: string;
     };
     readonly "daemon.filesystem.listDirectory": {
@@ -143,19 +143,25 @@ export type FilesystemActionInputById = {
 };
 export type FilesystemActionResultById = {
     readonly "daemon.filesystem.readFile": {
+        success: false;
+        error: string;
+        errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
         success: true;
         content: string;
         sizeBytes?: number | undefined;
         eof?: boolean | undefined;
-    } | {
-        success: false;
-        error: string;
-        errorCode?: string | undefined;
     };
     readonly "daemon.filesystem.writeFile": {
         success: false;
         error: string;
         errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         success: true;
         hash: string;
@@ -164,6 +170,9 @@ export type FilesystemActionResultById = {
         success: false;
         error: string;
         errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         success: true;
     };
@@ -171,6 +180,9 @@ export type FilesystemActionResultById = {
         success: false;
         error: string;
         errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         success: true;
     };
@@ -178,6 +190,9 @@ export type FilesystemActionResultById = {
         success: false;
         error: string;
         errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         success: true;
     };
@@ -185,46 +200,17 @@ export type FilesystemActionResultById = {
         success: false;
         error: string;
         errorCode?: string | undefined;
-    } | {
-        success: true;
-    } | {
-        success: true;
-        status: 'accepted';
-        operationId: string;
-        sourceId: string;
-        prepared: {
-            uploadId: string;
-            destDisplayPath: string;
-            expectedSizeBytes: number;
-            chunkSizeBytes: number;
-            recipientPublicKeyBase64: string;
-            expiresAt: number;
-            endpointCandidates: ({
-                [x: string]: unknown;
-                kind: 'tcp' | 'http' | 'https';
-                url: string;
-                expiresAt: number;
-                authorizationToken?: string | undefined;
-            } & {
-                kind: 'http' | 'https';
-                url: string;
-                expiresAt: number;
-                authorizationToken?: string | undefined;
-            })[];
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
         };
     } | {
-        success: true;
-        status: 'completed';
-        transferId: string;
-        sourceId: string;
-        path: string;
-        sizeBytes: number;
-        sha256: string;
-    } | {
         success: false;
-        status: 'unknown' | 'failed' | 'cancelled';
+        status: 'cancelled' | 'failed' | 'unknown';
         error: string;
         errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         success: true;
         status: 'accepted';
@@ -240,7 +226,7 @@ export type FilesystemActionResultById = {
                 expiresAt: number;
                 endpointCandidates: ({
                     [x: string]: unknown;
-                    kind: 'tcp' | 'http' | 'https';
+                    kind: 'http' | 'https' | 'tcp';
                     url: string;
                     expiresAt: number;
                     authorizationToken?: string | undefined;
@@ -262,7 +248,7 @@ export type FilesystemActionResultById = {
                     expiresAt: number;
                     endpointCandidates: ({
                         [x: string]: unknown;
-                        kind: 'tcp' | 'http' | 'https';
+                        kind: 'http' | 'https' | 'tcp';
                         url: string;
                         expiresAt: number;
                         authorizationToken?: string | undefined;
@@ -277,25 +263,68 @@ export type FilesystemActionResultById = {
         };
     } | {
         success: true;
+        status: 'accepted';
+        operationId: string;
+        sourceId: string;
+        prepared: {
+            uploadId: string;
+            destDisplayPath: string;
+            expectedSizeBytes: number;
+            chunkSizeBytes: number;
+            recipientPublicKeyBase64: string;
+            expiresAt: number;
+            endpointCandidates: ({
+                [x: string]: unknown;
+                kind: 'http' | 'https' | 'tcp';
+                url: string;
+                expiresAt: number;
+                authorizationToken?: string | undefined;
+            } & {
+                kind: 'http' | 'https';
+                url: string;
+                expiresAt: number;
+                authorizationToken?: string | undefined;
+            })[];
+        };
+    } | {
+        success: true;
         status: 'completed';
         sourceId: string;
         path: string;
         expectation: {
-            kind: 'missing';
+            kind: 'directory';
+            fingerprint: string;
         } | {
             kind: 'file';
             digest: string;
             executable: boolean;
             size: number;
         } | {
+            kind: 'missing';
+        } | {
             kind: 'symlink';
             target: string;
-        } | {
-            kind: 'directory';
-            fingerprint: string;
         };
+    } | {
+        success: true;
+        status: 'completed';
+        transferId: string;
+        sourceId: string;
+        path: string;
+        sizeBytes: number;
+        sha256: string;
+    } | {
+        success: true;
     };
     readonly "daemon.filesystem.upload": {
+        success: false;
+        status: 'cancelled' | 'failed' | 'unknown';
+        error: string;
+        errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
         success: true;
         status: 'accepted';
         operationId: string;
@@ -309,7 +338,7 @@ export type FilesystemActionResultById = {
             expiresAt: number;
             endpointCandidates: ({
                 [x: string]: unknown;
-                kind: 'tcp' | 'http' | 'https';
+                kind: 'http' | 'https' | 'tcp';
                 url: string;
                 expiresAt: number;
                 authorizationToken?: string | undefined;
@@ -328,17 +357,15 @@ export type FilesystemActionResultById = {
         path: string;
         sizeBytes: number;
         sha256: string;
-    } | {
-        success: false;
-        status: 'unknown' | 'failed' | 'cancelled';
-        error: string;
-        errorCode?: string | undefined;
     };
     readonly "daemon.filesystem.download": {
         success: false;
-        status: 'unknown' | 'failed' | 'cancelled';
+        status: 'cancelled' | 'failed' | 'unknown';
         error: string;
         errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         success: true;
         status: 'accepted';
@@ -352,7 +379,7 @@ export type FilesystemActionResultById = {
             expiresAt: number;
             endpointCandidates: ({
                 [x: string]: unknown;
-                kind: 'tcp' | 'http' | 'https';
+                kind: 'http' | 'https' | 'tcp';
                 url: string;
                 expiresAt: number;
                 authorizationToken?: string | undefined;
@@ -366,18 +393,18 @@ export type FilesystemActionResultById = {
         entryTree: {
             operationId: string;
             expectation: {
-                kind: 'missing';
+                kind: 'directory';
+                fingerprint: string;
             } | {
                 kind: 'file';
                 digest: string;
                 executable: boolean;
                 size: number;
             } | {
+                kind: 'missing';
+            } | {
                 kind: 'symlink';
                 target: string;
-            } | {
-                kind: 'directory';
-                fingerprint: string;
             };
             blobs: {
                 transferId: string;
@@ -398,7 +425,7 @@ export type FilesystemActionResultById = {
             expiresAt: number;
             endpointCandidates: ({
                 [x: string]: unknown;
-                kind: 'tcp' | 'http' | 'https';
+                kind: 'http' | 'https' | 'tcp';
                 url: string;
                 expiresAt: number;
                 authorizationToken?: string | undefined;
@@ -419,22 +446,28 @@ export type FilesystemActionResultById = {
         sha256: string;
     };
     readonly "daemon.filesystem.transfer.cancel": {
-        success: true;
-        aborted: boolean;
-    } | {
         success: false;
         error: string;
         errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
+        success: true;
+        aborted: boolean;
     };
     readonly "daemon.filesystem.listDirectory": {
         success: false;
         error: string;
         errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         success: true;
         entries: {
             name: string;
-            type: 'file' | 'directory' | 'other';
+            type: 'directory' | 'file' | 'other';
             size?: number | undefined;
             modified?: number | undefined;
             gitIgnored?: boolean | undefined;
@@ -446,6 +479,9 @@ export type FilesystemActionResultById = {
         success: false;
         error: string;
         errorCode?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         success: true;
         tree: FilesystemTreeNode;

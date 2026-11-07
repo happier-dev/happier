@@ -6,33 +6,33 @@ import type { PluginActionWorkflowBlockV1 } from './pluginActionDtoSupport.gener
 
 export type WorkflowDiagnosticsActionInputById = {
     readonly "workflow.trigger.test": {
-        trigger: {
+        trigger: null | {
+            sourceInstanceId: string;
             eventRef: {
                 pluginId: string;
                 localId: string;
             };
-            sourceInstanceId: string;
             sourceContractVersion: number;
-            filter: {
+            filter: null | {
                 v: 1;
                 all: ({
                     op: 'eq';
                     field: string;
-                    value: string | number | boolean | null;
+                    value: boolean | null | number | string;
                 } | {
                     op: 'in';
                     field: string;
-                    values: (string | number | boolean | null)[];
+                    values: (boolean | null | number | string)[];
                 })[];
-            } | null;
-            maximumObservationAgeMs: number | null;
-        } | null;
+            };
+            maximumObservationAgeMs: null | number;
+        };
         observation: {
+            sourceInstanceId: string;
             eventRef: {
                 pluginId: string;
                 localId: string;
             };
-            sourceInstanceId: string;
             sourceContractVersion: number;
             occurredAt: number;
             observationReceivedAt: number;
@@ -41,28 +41,28 @@ export type WorkflowDiagnosticsActionInputById = {
     };
     readonly "workflow.starters.list": Record<string, never>;
     readonly "workflow.starters.resolve": {
-        key: 'ask-once' | 'review-pull-request' | 'work-through-each-file' | 'repair-until-it-passes' | 'triage-an-issue' | 'morning-digest' | 'notify-when-agent-waits' | 'daily-summary-in-session' | 'memory-upkeep-in-session' | 'install-deps-in-worktree' | 'test-after-every-turn';
-        session?: {
+        key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
+        session?: undefined | {
             sessionId: string;
             machineId: string;
-        } | undefined;
-        timezone?: string | null | undefined;
+        };
+        timezone?: null | string | undefined;
     };
 };
 export type WorkflowDiagnosticsActionResultById = {
     readonly "workflow.trigger.test": {
-        result: 'matched' | 'noMatch' | 'sourceMismatch' | 'tooOld' | 'invalid';
+        result: 'invalid' | 'matched' | 'noMatch' | 'sourceMismatch' | 'tooOld';
     };
     readonly "workflow.starters.list": {
         examples: {
-            key: 'ask-once' | 'review-pull-request' | 'work-through-each-file' | 'repair-until-it-passes' | 'triage-an-issue' | 'morning-digest' | 'notify-when-agent-waits' | 'daily-summary-in-session' | 'memory-upkeep-in-session' | 'install-deps-in-worktree' | 'test-after-every-turn';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{
                 version: 1;
                 inputs: readonly {
                     name: string;
-                    valueType: 'string' | 'number' | 'boolean' | 'json';
+                    valueType: 'boolean' | 'json' | 'number' | 'string';
                     required: boolean;
                     multiple?: boolean | undefined;
                     minItems?: number | undefined;
@@ -73,28 +73,28 @@ export type WorkflowDiagnosticsActionResultById = {
                     defaultFrom?: 'origin_session' | undefined;
                     description?: string | undefined;
                     optionsSourceId?: string | undefined;
-                    inputType?: {
-                        pluginId: string;
-                        localId: string;
+                    inputType?: undefined | {
+                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                     } | {
                         hostType: 'usageQuery';
-                        field?: 'session' | 'period' | undefined;
+                        field?: 'period' | 'session' | undefined;
                     } | {
-                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                    } | undefined;
+                        pluginId: string;
+                        localId: string;
+                    };
                 }[];
                 defaults: {
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
-                    agentTarget?: {
+                    agentTarget?: null | undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
                             localId: string;
                         };
                         definitionId?: string | undefined;
-                    } | null | undefined;
-                    modelSelection?: {
+                    };
+                    modelSelection?: null | undefined | {
                         v: 1;
                         ref: {
                             agentTargetKey: string;
@@ -106,48 +106,54 @@ export type WorkflowDiagnosticsActionResultById = {
                             modelId: string;
                         };
                         updatedAt: number;
-                    } | null | undefined;
-                    profileId?: string | null | undefined;
-                    permissionMode?: string | null | undefined;
-                    acpSessionModeId?: string | null | undefined;
-                    sessionConfigOptionOverrides?: {
+                    };
+                    profileId?: null | string | undefined;
+                    approvalProfileId?: null | string | undefined;
+                    permissionMode?: null | string | undefined;
+                    acpSessionModeId?: null | string | undefined;
+                    sessionConfigOptionOverrides?: null | undefined | {
                         [x: string]: unknown;
                         v: 1;
                         updatedAt: number;
                         overrides: Record<string, {
                             [x: string]: unknown;
                             updatedAt: number;
-                            value: string | number | boolean | null;
+                            value: boolean | null | number | string;
                         }>;
-                    } | null | undefined;
-                    capabilitySelection?: {
-                        mcp?: {
+                    };
+                    capabilitySelection?: null | undefined | {
+                        mcp?: undefined | {
                             forceIncludeServerIds: string[];
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
                             happierToolsEnabled?: boolean | undefined;
-                        } | undefined;
-                        skills?: {
+                        };
+                        skills?: undefined | {
                             forceIncludeSkillIds: string[];
                             forceExcludeSkillIds: string[];
                             excludeNativeSkillNames: string[];
                             v: 1;
-                        } | undefined;
-                    } | null | undefined;
-                    connectedServices?: {
+                        };
+                    };
+                    connectedServices?: null | undefined | {
                         v: 2;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
-                        } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
                             source: 'connected';
                             selection: 'profile';
                             profileId: string;
+                        } | {
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
                         } | {
                             source: 'team_resource';
                             resourceId: string;
@@ -159,105 +165,96 @@ export type WorkflowDiagnosticsActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
                         }>;
-                    } | null | undefined;
-                    transcriptStorage?: 'persisted' | 'direct' | null | undefined;
-                    terminal?: {
-                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                        tmux?: {
+                    };
+                    transcriptStorage?: 'direct' | 'persisted' | null | undefined;
+                    terminal?: null | undefined | {
+                        mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                        tmux?: undefined | {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
-                            tmpDir?: string | null | undefined;
-                        } | undefined;
-                        herdr?: {
+                            tmpDir?: null | string | undefined;
+                        };
+                        herdr?: undefined | {
                             sessionName?: string | undefined;
-                        } | undefined;
-                        windows?: {
-                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                        };
+                        windows?: undefined | {
+                            launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
-                        } | undefined;
-                    } | null | undefined;
-                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                        };
+                    };
+                    windowsRemoteSessionLaunchMode?: 'console' | 'hidden' | 'windows_terminal' | null | undefined;
                     windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
-                    windowsTerminalWindowName?: string | null | undefined;
-                    runtimeDescriptorV1?: {
+                    windowsTerminalWindowName?: null | string | undefined;
+                    runtimeDescriptorV1?: null | undefined | {
                         v: 1;
                         agentId: string;
                         agent: {
                             backendMode: string;
-                            home?: 'user' | 'connectedService' | undefined;
+                            home?: 'connectedService' | 'user' | undefined;
                             connectedServiceId?: string | undefined;
                             connectedServiceProfileId?: string | undefined;
                             connectedServiceGroupId?: string | undefined;
                         };
-                    } | null | undefined;
+                    };
                     permissionModeUpdatedAt?: number | undefined;
-                    launchEnvironment?: {
+                    launchEnvironment?: undefined | {
                         values: Record<string, string>;
                         unset: string[];
-                    } | undefined;
-                    providerSessionResume?: {
+                    };
+                    providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
-                    } | undefined;
-                    conversation?: {
-                        kind: 'shared_run';
+                    };
+                    conversation?: undefined | {
+                        kind: 'existing_session';
+                        sessionId: string;
+                        machineId: string;
                     } | {
                         kind: 'fresh';
                     } | {
-                        kind: 'origin_session';
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            };
+                        };
                     } | {
                         kind: 'input';
                         name: string;
                     } | {
+                        kind: 'origin_session';
+                    } | {
+                        kind: 'shared_run';
+                    };
+                    workspace?: undefined | {
                         kind: 'from_step';
                         producer: {
                             blockId: string;
                             scope: {
                                 kind: 'current';
                             } | {
-                                kind: 'previous_iteration';
-                                loopBlockId: string;
-                            } | {
                                 kind: 'outer';
                                 levels: number;
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
                             };
                         };
                     } | {
-                        kind: 'existing_session';
-                        sessionId: string;
-                        machineId: string;
-                    } | undefined;
-                    workspace?: {
                         kind: 'inherit';
-                    } | {
-                        kind: 'project_checkout';
-                    } | {
-                        kind: 'from_step';
-                        producer: {
-                            blockId: string;
-                            scope: {
-                                kind: 'current';
-                            } | {
-                                kind: 'previous_iteration';
-                                loopBlockId: string;
-                            } | {
-                                kind: 'outer';
-                                levels: number;
-                            };
-                        };
                     } | {
                         kind: 'new_worktree';
                         source: {
                             kind: 'original';
-                        } | {
-                            kind: 'workflow';
                         } | {
                             kind: 'step';
                             producer: {
@@ -265,20 +262,22 @@ export type WorkflowDiagnosticsActionResultById = {
                                 scope: {
                                     kind: 'current';
                                 } | {
-                                    kind: 'previous_iteration';
-                                    loopBlockId: string;
-                                } | {
                                     kind: 'outer';
                                     levels: number;
+                                } | {
+                                    kind: 'previous_iteration';
+                                    loopBlockId: string;
                                 };
                             };
+                        } | {
+                            kind: 'workflow';
                         };
                         displayName?: string | undefined;
-                        baseRef?: string | null | undefined;
-                    } | undefined;
-                    engine?: {
-                        role: string;
+                        baseRef?: null | string | undefined;
                     } | {
+                        kind: 'project_checkout';
+                    };
+                    engine?: undefined | {
                         agentTarget: {
                             kind: 'agent';
                             identity: {
@@ -287,7 +286,7 @@ export type WorkflowDiagnosticsActionResultById = {
                             };
                             definitionId?: string | undefined;
                         };
-                        modelSelection?: {
+                        modelSelection?: null | undefined | {
                             v: 1;
                             ref: {
                                 agentTargetKey: string;
@@ -299,134 +298,134 @@ export type WorkflowDiagnosticsActionResultById = {
                                 modelId: string;
                             };
                             updatedAt: number;
-                        } | null | undefined;
+                        };
                         effort?: string | undefined;
                     } | {
                         kind: 'input';
                         name: string;
-                        path?: (string | number)[] | undefined;
+                        path?: (number | string)[] | undefined;
                     } | {
                         kind: 'item';
                         field: 'value';
-                        path?: (string | number)[] | undefined;
-                    } | undefined;
-                    participant?: {
+                        path?: (number | string)[] | undefined;
+                    } | {
+                        role: string;
+                    };
+                    participant?: undefined | {
                         kind: 'input';
                         name: string;
-                        path?: (string | number)[] | undefined;
+                        path?: (number | string)[] | undefined;
                     } | {
                         kind: 'item';
                         field: 'value';
-                        path?: (string | number)[] | undefined;
+                        path?: (number | string)[] | undefined;
                         roster?: string | undefined;
-                    } | undefined;
-                    executionTarget?: {
-                        kind: 'session';
-                    } | {
+                    };
+                    executionTarget?: undefined | {
                         kind: 'detached_run';
-                    } | undefined;
+                    } | {
+                        kind: 'session';
+                    };
                 };
                 roles?: readonly ({
                     roleId: string;
-                    engine?: {
+                    engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
                         effort?: string | undefined;
-                    } | undefined;
-                    runsAs?: {
-                        kind: 'session';
-                    } | {
+                    };
+                    runsAs?: undefined | {
                         kind: 'background_run';
-                        intent: 'scm_diff_summary' | 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message';
-                    } | undefined;
+                        intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                    } | {
+                        kind: 'session';
+                    };
                     profileId?: string | undefined;
-                    workspaceWrites?: 'deny' | 'allow' | undefined;
-                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'encouraged' | 'off' | undefined;
                     canDelegateToOtherRoles?: boolean | undefined;
                 } | {
                     roleId: string;
                     name: string;
                     instructions: string;
                     runsAs: {
-                        kind: 'session';
-                    } | {
                         kind: 'background_run';
-                        intent: 'scm_diff_summary' | 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message';
+                        intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                    } | {
+                        kind: 'session';
                     };
-                    engine?: {
+                    engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
                         effort?: string | undefined;
-                    } | undefined;
+                    };
                     profileId?: string | undefined;
-                    workspaceWrites?: 'deny' | 'allow' | undefined;
-                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'encouraged' | 'off' | undefined;
                     canDelegateToOtherRoles?: boolean | undefined;
                 })[] | undefined;
                 blocks: readonly PluginActionWorkflowBlockV1[];
-                finalOutput?: {
+                finalOutput?: undefined | {
                     kind: 'result';
                     producer: {
                         blockId: string;
                         scope: {
                             kind: 'current';
                         } | {
-                            kind: 'previous_iteration';
-                            loopBlockId: string;
-                        } | {
                             kind: 'outer';
                             levels: number;
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
                         };
                     };
-                    path: (string | number)[];
+                    path: (number | string)[];
                     optional?: true | undefined;
-                } | undefined;
-            }>;
-            triggerSeed?: {
-                kind: 'schedule';
-                schedule: {
-                    kind: 'cron';
-                    scheduleExpr: string;
-                    everyMs: null;
-                    timezone: string | null;
-                } | {
-                    kind: 'interval';
-                    scheduleExpr: null;
-                    everyMs: number;
-                    timezone: string | null;
                 };
+            }>;
+            triggerSeed?: undefined | {
                 enabled: boolean;
-            } | {
                 kind: 'sessionLifecycle';
-                enabled: boolean;
-                events: ('parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnCancelled' | 'userActionRequired' | 'sessionStarted' | 'sessionArchived')[];
                 policy: {
                     kind: 'currentTurn';
                     sourceTurnId: string;
+                } | {
+                    kind: 'everyMatch';
                 } | {
                     kind: 'firstMatch';
                 } | {
                     kind: 'nextMatches';
                     count: number;
-                } | {
-                    kind: 'everyMatch';
                 };
-            } | undefined;
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+            } | {
+                kind: 'schedule';
+                schedule: {
+                    kind: 'cron';
+                    scheduleExpr: string;
+                    everyMs: null;
+                    timezone: null | string;
+                } | {
+                    kind: 'interval';
+                    scheduleExpr: null;
+                    everyMs: number;
+                    timezone: null | string;
+                };
+                enabled: boolean;
+            };
         }[];
     };
     readonly "workflow.starters.resolve": {
-        status: 'requires_session';
-    } | {
         status: 'ready';
         example: {
-            key: 'ask-once' | 'review-pull-request' | 'work-through-each-file' | 'repair-until-it-passes' | 'triage-an-issue' | 'morning-digest' | 'notify-when-agent-waits' | 'daily-summary-in-session' | 'memory-upkeep-in-session' | 'install-deps-in-worktree' | 'test-after-every-turn';
+            key: 'ask-once' | 'backup-verify' | 'check-for-drift' | 'daily-health-digest' | 'daily-summary-in-session' | 'deploy-on-push' | 'install-deps-in-worktree' | 'memory-upkeep-in-session' | 'morning-digest' | 'nightly-backups' | 'notify-when-agent-waits' | 'repair-until-it-passes' | 'review-pull-request' | 'run-a-job-on-a-schedule' | 'test-after-every-turn' | 'triage-an-issue' | 'work-through-each-file';
             titleKey: string;
             descriptionKey: string;
             definition: Readonly<{
                 version: 1;
                 inputs: readonly {
                     name: string;
-                    valueType: 'string' | 'number' | 'boolean' | 'json';
+                    valueType: 'boolean' | 'json' | 'number' | 'string';
                     required: boolean;
                     multiple?: boolean | undefined;
                     minItems?: number | undefined;
@@ -437,28 +436,28 @@ export type WorkflowDiagnosticsActionResultById = {
                     defaultFrom?: 'origin_session' | undefined;
                     description?: string | undefined;
                     optionsSourceId?: string | undefined;
-                    inputType?: {
-                        pluginId: string;
-                        localId: string;
+                    inputType?: undefined | {
+                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                     } | {
                         hostType: 'usageQuery';
-                        field?: 'session' | 'period' | undefined;
+                        field?: 'period' | 'session' | undefined;
                     } | {
-                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                    } | undefined;
+                        pluginId: string;
+                        localId: string;
+                    };
                 }[];
                 defaults: {
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
-                    agentTarget?: {
+                    agentTarget?: null | undefined | {
                         kind: 'agent';
                         identity: {
                             pluginId: string;
                             localId: string;
                         };
                         definitionId?: string | undefined;
-                    } | null | undefined;
-                    modelSelection?: {
+                    };
+                    modelSelection?: null | undefined | {
                         v: 1;
                         ref: {
                             agentTargetKey: string;
@@ -470,48 +469,54 @@ export type WorkflowDiagnosticsActionResultById = {
                             modelId: string;
                         };
                         updatedAt: number;
-                    } | null | undefined;
-                    profileId?: string | null | undefined;
-                    permissionMode?: string | null | undefined;
-                    acpSessionModeId?: string | null | undefined;
-                    sessionConfigOptionOverrides?: {
+                    };
+                    profileId?: null | string | undefined;
+                    approvalProfileId?: null | string | undefined;
+                    permissionMode?: null | string | undefined;
+                    acpSessionModeId?: null | string | undefined;
+                    sessionConfigOptionOverrides?: null | undefined | {
                         [x: string]: unknown;
                         v: 1;
                         updatedAt: number;
                         overrides: Record<string, {
                             [x: string]: unknown;
                             updatedAt: number;
-                            value: string | number | boolean | null;
+                            value: boolean | null | number | string;
                         }>;
-                    } | null | undefined;
-                    capabilitySelection?: {
-                        mcp?: {
+                    };
+                    capabilitySelection?: null | undefined | {
+                        mcp?: undefined | {
                             forceIncludeServerIds: string[];
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
                             happierToolsEnabled?: boolean | undefined;
-                        } | undefined;
-                        skills?: {
+                        };
+                        skills?: undefined | {
                             forceIncludeSkillIds: string[];
                             forceExcludeSkillIds: string[];
                             excludeNativeSkillNames: string[];
                             v: 1;
-                        } | undefined;
-                    } | null | undefined;
-                    connectedServices?: {
+                        };
+                    };
+                    connectedServices?: null | undefined | {
                         v: 2;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
-                        } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
                             source: 'connected';
                             selection: 'profile';
                             profileId: string;
+                        } | {
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
                         } | {
                             source: 'team_resource';
                             resourceId: string;
@@ -523,105 +528,96 @@ export type WorkflowDiagnosticsActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
                         }>;
-                    } | null | undefined;
-                    transcriptStorage?: 'persisted' | 'direct' | null | undefined;
-                    terminal?: {
-                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                        tmux?: {
+                    };
+                    transcriptStorage?: 'direct' | 'persisted' | null | undefined;
+                    terminal?: null | undefined | {
+                        mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                        tmux?: undefined | {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
-                            tmpDir?: string | null | undefined;
-                        } | undefined;
-                        herdr?: {
+                            tmpDir?: null | string | undefined;
+                        };
+                        herdr?: undefined | {
                             sessionName?: string | undefined;
-                        } | undefined;
-                        windows?: {
-                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                        };
+                        windows?: undefined | {
+                            launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
-                        } | undefined;
-                    } | null | undefined;
-                    windowsRemoteSessionLaunchMode?: 'windows_terminal' | 'hidden' | 'console' | null | undefined;
+                        };
+                    };
+                    windowsRemoteSessionLaunchMode?: 'console' | 'hidden' | 'windows_terminal' | null | undefined;
                     windowsRemoteSessionConsole?: 'hidden' | 'visible' | null | undefined;
-                    windowsTerminalWindowName?: string | null | undefined;
-                    runtimeDescriptorV1?: {
+                    windowsTerminalWindowName?: null | string | undefined;
+                    runtimeDescriptorV1?: null | undefined | {
                         v: 1;
                         agentId: string;
                         agent: {
                             backendMode: string;
-                            home?: 'user' | 'connectedService' | undefined;
+                            home?: 'connectedService' | 'user' | undefined;
                             connectedServiceId?: string | undefined;
                             connectedServiceProfileId?: string | undefined;
                             connectedServiceGroupId?: string | undefined;
                         };
-                    } | null | undefined;
+                    };
                     permissionModeUpdatedAt?: number | undefined;
-                    launchEnvironment?: {
+                    launchEnvironment?: undefined | {
                         values: Record<string, string>;
                         unset: string[];
-                    } | undefined;
-                    providerSessionResume?: {
+                    };
+                    providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
-                    } | undefined;
-                    conversation?: {
-                        kind: 'shared_run';
+                    };
+                    conversation?: undefined | {
+                        kind: 'existing_session';
+                        sessionId: string;
+                        machineId: string;
                     } | {
                         kind: 'fresh';
                     } | {
-                        kind: 'origin_session';
+                        kind: 'from_step';
+                        producer: {
+                            blockId: string;
+                            scope: {
+                                kind: 'current';
+                            } | {
+                                kind: 'outer';
+                                levels: number;
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
+                            };
+                        };
                     } | {
                         kind: 'input';
                         name: string;
                     } | {
+                        kind: 'origin_session';
+                    } | {
+                        kind: 'shared_run';
+                    };
+                    workspace?: undefined | {
                         kind: 'from_step';
                         producer: {
                             blockId: string;
                             scope: {
                                 kind: 'current';
                             } | {
-                                kind: 'previous_iteration';
-                                loopBlockId: string;
-                            } | {
                                 kind: 'outer';
                                 levels: number;
+                            } | {
+                                kind: 'previous_iteration';
+                                loopBlockId: string;
                             };
                         };
                     } | {
-                        kind: 'existing_session';
-                        sessionId: string;
-                        machineId: string;
-                    } | undefined;
-                    workspace?: {
                         kind: 'inherit';
-                    } | {
-                        kind: 'project_checkout';
-                    } | {
-                        kind: 'from_step';
-                        producer: {
-                            blockId: string;
-                            scope: {
-                                kind: 'current';
-                            } | {
-                                kind: 'previous_iteration';
-                                loopBlockId: string;
-                            } | {
-                                kind: 'outer';
-                                levels: number;
-                            };
-                        };
                     } | {
                         kind: 'new_worktree';
                         source: {
                             kind: 'original';
-                        } | {
-                            kind: 'workflow';
                         } | {
                             kind: 'step';
                             producer: {
@@ -629,20 +625,22 @@ export type WorkflowDiagnosticsActionResultById = {
                                 scope: {
                                     kind: 'current';
                                 } | {
-                                    kind: 'previous_iteration';
-                                    loopBlockId: string;
-                                } | {
                                     kind: 'outer';
                                     levels: number;
+                                } | {
+                                    kind: 'previous_iteration';
+                                    loopBlockId: string;
                                 };
                             };
+                        } | {
+                            kind: 'workflow';
                         };
                         displayName?: string | undefined;
-                        baseRef?: string | null | undefined;
-                    } | undefined;
-                    engine?: {
-                        role: string;
+                        baseRef?: null | string | undefined;
                     } | {
+                        kind: 'project_checkout';
+                    };
+                    engine?: undefined | {
                         agentTarget: {
                             kind: 'agent';
                             identity: {
@@ -651,7 +649,7 @@ export type WorkflowDiagnosticsActionResultById = {
                             };
                             definitionId?: string | undefined;
                         };
-                        modelSelection?: {
+                        modelSelection?: null | undefined | {
                             v: 1;
                             ref: {
                                 agentTargetKey: string;
@@ -663,148 +661,134 @@ export type WorkflowDiagnosticsActionResultById = {
                                 modelId: string;
                             };
                             updatedAt: number;
-                        } | null | undefined;
+                        };
                         effort?: string | undefined;
                     } | {
                         kind: 'input';
                         name: string;
-                        path?: (string | number)[] | undefined;
+                        path?: (number | string)[] | undefined;
                     } | {
                         kind: 'item';
                         field: 'value';
-                        path?: (string | number)[] | undefined;
-                    } | undefined;
-                    participant?: {
+                        path?: (number | string)[] | undefined;
+                    } | {
+                        role: string;
+                    };
+                    participant?: undefined | {
                         kind: 'input';
                         name: string;
-                        path?: (string | number)[] | undefined;
+                        path?: (number | string)[] | undefined;
                     } | {
                         kind: 'item';
                         field: 'value';
-                        path?: (string | number)[] | undefined;
+                        path?: (number | string)[] | undefined;
                         roster?: string | undefined;
-                    } | undefined;
-                    executionTarget?: {
-                        kind: 'session';
-                    } | {
+                    };
+                    executionTarget?: undefined | {
                         kind: 'detached_run';
-                    } | undefined;
+                    } | {
+                        kind: 'session';
+                    };
                 };
                 roles?: readonly ({
                     roleId: string;
-                    engine?: {
+                    engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
                         effort?: string | undefined;
-                    } | undefined;
-                    runsAs?: {
-                        kind: 'session';
-                    } | {
+                    };
+                    runsAs?: undefined | {
                         kind: 'background_run';
-                        intent: 'scm_diff_summary' | 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message';
-                    } | undefined;
+                        intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                    } | {
+                        kind: 'session';
+                    };
                     profileId?: string | undefined;
-                    workspaceWrites?: 'deny' | 'allow' | undefined;
-                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'encouraged' | 'off' | undefined;
                     canDelegateToOtherRoles?: boolean | undefined;
                 } | {
                     roleId: string;
                     name: string;
                     instructions: string;
                     runsAs: {
-                        kind: 'session';
-                    } | {
                         kind: 'background_run';
-                        intent: 'scm_diff_summary' | 'agent' | 'review' | 'plan' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message';
+                        intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                    } | {
+                        kind: 'session';
                     };
-                    engine?: {
+                    engine?: undefined | {
                         agentTargetKey: string;
                         modelId?: string | undefined;
                         effort?: string | undefined;
-                    } | undefined;
+                    };
                     profileId?: string | undefined;
-                    workspaceWrites?: 'deny' | 'allow' | undefined;
-                    secondOpinion?: 'off' | 'encouraged' | undefined;
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    secondOpinion?: 'encouraged' | 'off' | undefined;
                     canDelegateToOtherRoles?: boolean | undefined;
                 })[] | undefined;
                 blocks: readonly PluginActionWorkflowBlockV1[];
-                finalOutput?: {
+                finalOutput?: undefined | {
                     kind: 'result';
                     producer: {
                         blockId: string;
                         scope: {
                             kind: 'current';
                         } | {
-                            kind: 'previous_iteration';
-                            loopBlockId: string;
-                        } | {
                             kind: 'outer';
                             levels: number;
+                        } | {
+                            kind: 'previous_iteration';
+                            loopBlockId: string;
                         };
                     };
-                    path: (string | number)[];
+                    path: (number | string)[];
                     optional?: true | undefined;
-                } | undefined;
+                };
             }>;
-            triggerSeed?: {
-                kind: 'schedule';
-                schedule: {
-                    kind: 'cron';
-                    scheduleExpr: string;
-                    everyMs: null;
-                    timezone: string | null;
-                } | {
-                    kind: 'interval';
-                    scheduleExpr: null;
-                    everyMs: number;
-                    timezone: string | null;
-                };
+            triggerSeed?: undefined | {
                 enabled: boolean;
-            } | {
                 kind: 'sessionLifecycle';
-                enabled: boolean;
-                events: ('parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnCancelled' | 'userActionRequired' | 'sessionStarted' | 'sessionArchived')[];
                 policy: {
                     kind: 'currentTurn';
                     sourceTurnId: string;
+                } | {
+                    kind: 'everyMatch';
                 } | {
                     kind: 'firstMatch';
                 } | {
                     kind: 'nextMatches';
                     count: number;
-                } | {
-                    kind: 'everyMatch';
                 };
-            } | undefined;
-            trigger?: {
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+            } | {
                 kind: 'schedule';
                 schedule: {
                     kind: 'cron';
                     scheduleExpr: string;
                     everyMs: null;
-                    timezone: string | null;
+                    timezone: null | string;
                 } | {
                     kind: 'interval';
                     scheduleExpr: null;
                     everyMs: number;
-                    timezone: string | null;
+                    timezone: null | string;
+                };
+                enabled: boolean;
+            };
+            trigger?: undefined | {
+                kind: 'ciFailed' | 'prComment';
+                pullRequest: {
+                    repository: string;
+                    number: number;
                 };
                 enabled: boolean;
             } | {
-                sourceSessionId: string;
-                events: ('parentTurnCompleted' | 'parentTurnFailed' | 'parentTurnCancelled' | 'userActionRequired' | 'sessionStarted' | 'sessionArchived')[];
-                policy: {
-                    kind: 'currentTurn';
-                    sourceTurnId: string;
-                } | {
-                    kind: 'firstMatch';
-                } | {
-                    kind: 'nextMatches';
-                    count: number;
-                } | {
-                    kind: 'everyMatch';
+                kind: 'ciFailed' | 'prComment';
+                triggerDefinitionEnvelope: {
+                    t: 'encrypted';
+                    c: string;
                 };
-                kind: 'sessionLifecycle';
                 enabled: boolean;
             } | {
                 kind: 'pluginEvent';
@@ -824,13 +808,6 @@ export type WorkflowDiagnosticsActionResultById = {
                         pluginId: string;
                     };
                 } | {
-                    kind: 'socket';
-                    watcherMaterializationRef: {
-                        machineId: string;
-                        materializationId: string;
-                        pluginId: string;
-                    };
-                } | {
                     kind: 'durablePush';
                     webhookEndpointId: string;
                     endpointMaterializationRef: {
@@ -843,24 +820,34 @@ export type WorkflowDiagnosticsActionResultById = {
                         kind: 'accountEndpointV1';
                         credential: 'serverGenerated';
                     } | {
+                        kind: 'capabilityUrlV1';
+                        checkId: string;
+                    } | {
                         kind: 'githubSharedInstallationV1';
                         installationId: string;
                         installationAuthorizationRef: string;
                     };
+                } | {
+                    kind: 'socket';
+                    watcherMaterializationRef: {
+                        machineId: string;
+                        materializationId: string;
+                        pluginId: string;
+                    };
                 };
-                filter: {
+                filter: null | {
                     v: 1;
                     all: ({
                         op: 'eq';
                         field: string;
-                        value: string | number | boolean | null;
+                        value: boolean | null | number | string;
                     } | {
                         op: 'in';
                         field: string;
-                        values: (string | number | boolean | null)[];
+                        values: (boolean | null | number | string)[];
                     })[];
-                } | null;
-                maximumObservationAgeMs: number | null;
+                };
+                maximumObservationAgeMs: null | number;
                 enabled: boolean;
             } | {
                 kind: 'pluginEvent';
@@ -878,13 +865,6 @@ export type WorkflowDiagnosticsActionResultById = {
                         pluginId: string;
                     };
                 } | {
-                    kind: 'socket';
-                    watcherMaterializationRef: {
-                        machineId: string;
-                        materializationId: string;
-                        pluginId: string;
-                    };
-                } | {
                     kind: 'durablePush';
                     webhookEndpointId: string;
                     endpointMaterializationRef: {
@@ -897,9 +877,19 @@ export type WorkflowDiagnosticsActionResultById = {
                         kind: 'accountEndpointV1';
                         credential: 'serverGenerated';
                     } | {
+                        kind: 'capabilityUrlV1';
+                        checkId: string;
+                    } | {
                         kind: 'githubSharedInstallationV1';
                         installationId: string;
                         installationAuthorizationRef: string;
+                    };
+                } | {
+                    kind: 'socket';
+                    watcherMaterializationRef: {
+                        machineId: string;
+                        materializationId: string;
+                        pluginId: string;
                     };
                 };
                 triggerDefinitionEnvelope: {
@@ -908,49 +898,67 @@ export type WorkflowDiagnosticsActionResultById = {
                 };
                 enabled: boolean;
             } | {
+                kind: 'schedule';
+                schedule: {
+                    kind: 'cron';
+                    scheduleExpr: string;
+                    everyMs: null;
+                    timezone: null | string;
+                } | {
+                    kind: 'interval';
+                    scheduleExpr: null;
+                    everyMs: number;
+                    timezone: null | string;
+                };
+                enabled: boolean;
+            } | {
                 source: {
                     kind: 'execution_run';
                     machineId: string;
                     runId: string;
                     sessionId?: string | undefined;
-                    observation?: {
+                    observation?: undefined | {
+                        comparisonId: string;
+                        kind: 'scm_diff_summary';
+                        output: 'commitPlan' | 'summary' | 'walkthrough';
+                        resultId?: string | undefined;
+                        afterRevision?: number | undefined;
+                    } | {
                         kind: 'review_walkthrough';
                         comparisonId: string;
                         resultId?: string | undefined;
                         afterRevision?: number | undefined;
-                    } | {
-                        comparisonId: string;
-                        kind: 'scm_diff_summary';
-                        output: 'summary' | 'walkthrough' | 'commitPlan';
-                        resultId?: string | undefined;
-                        afterRevision?: number | undefined;
-                    } | undefined;
+                    };
                 } | {
                     kind: 'workflow_run';
                     runId: string;
                 };
-                condition: 'terminal' | 'needs_attention';
+                condition: 'needs_attention' | 'terminal';
                 kind: 'runLifecycle';
                 enabled: boolean;
             } | {
-                kind: 'prComment' | 'ciFailed';
-                pullRequest: {
-                    repository: string;
-                    number: number;
+                sourceSessionId: string;
+                events: ('parentTurnCancelled' | 'parentTurnCompleted' | 'parentTurnFailed' | 'sessionArchived' | 'sessionStarted' | 'userActionRequired')[];
+                policy: {
+                    kind: 'currentTurn';
+                    sourceTurnId: string;
+                } | {
+                    kind: 'everyMatch';
+                } | {
+                    kind: 'firstMatch';
+                } | {
+                    kind: 'nextMatches';
+                    count: number;
                 };
+                kind: 'sessionLifecycle';
                 enabled: boolean;
-            } | {
-                kind: 'prComment' | 'ciFailed';
-                triggerDefinitionEnvelope: {
-                    t: 'encrypted';
-                    c: string;
-                };
-                enabled: boolean;
-            } | undefined;
-            sessionTarget?: {
+            };
+            sessionTarget?: undefined | {
                 sessionId: string;
                 machineId: string;
-            } | undefined;
+            };
         };
+    } | {
+        status: 'requires_session';
     };
 };

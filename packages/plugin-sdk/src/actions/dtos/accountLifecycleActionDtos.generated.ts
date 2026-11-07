@@ -7,20 +7,26 @@ export type AccountLifecycleActionInputById = {
     readonly "account.signOut": {
         serverId: string;
         accountId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "account.credentials.forgetAll": {
         serverId: string;
         accountId: string;
         scope: 'all-credentials';
+    } & {
+        clientId?: string | undefined;
     };
     readonly "account.delete": {
         serverId: string;
         accountId: string;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type AccountLifecycleActionResultById = {
     readonly "account.signOut": {
-        status: 'signed_out' | 'cancelled';
+        status: 'cancelled' | 'signed_out';
     };
     readonly "account.credentials.forgetAll": {
         status: 'cancelled' | 'forgotten';

@@ -10,26 +10,29 @@ export type BrowserControlActionInputById = {
     };
     readonly "browser.extensions.install": {
         source: {
-            kind: 'webStore';
-            extensionId: string;
-        } | {
             kind: 'unpacked';
             directory: string;
+        } | {
+            kind: 'webStore';
+            extensionId: string;
         };
         machineId: string;
         profileId: string;
-        reviewedPermissions?: {
+        reviewedPermissions?: undefined | {
             version: string;
             permissions: string[];
             hostPermissions: string[];
-        } | undefined;
+        };
         expectedVersion?: string | undefined;
-        provenance?: {
+        provenance?: undefined | {
             sourceId: string;
-            format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+            format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
             sourceUrl: string;
             itemId: string;
             ref: {
+                kind: 'content';
+                digest: string;
+            } | {
                 kind: 'gitTree';
                 repo: string;
                 path: string;
@@ -39,15 +42,18 @@ export type BrowserControlActionInputById = {
                 kind: 'version';
                 version: string;
             } | {
-                kind: 'content';
-                digest: string;
-            } | {
                 kind: 'wellKnown';
                 indexUrl: string;
                 name: string;
                 digest: string;
                 publishedDigest?: string | undefined;
-            } | {
+            };
+            importedAt: number;
+        } | {
+            sourceId: string;
+            format: 'happier-catalog';
+            itemId: string;
+            ref: {
                 digest: string;
                 pluginId: string;
                 pluginVersion: string;
@@ -56,7 +62,8 @@ export type BrowserControlActionInputById = {
                 kind: 'packageContent';
             };
             importedAt: number;
-        } | undefined;
+            sourceUrl?: undefined;
+        };
         restartConfirmed?: boolean | undefined;
     };
     readonly "browser.extensions.update": {
@@ -64,11 +71,11 @@ export type BrowserControlActionInputById = {
         extensionId: string;
         machineId: string;
         profileId: string;
-        reviewedPermissions?: {
+        reviewedPermissions?: undefined | {
             version: string;
             permissions: string[];
             hostPermissions: string[];
-        } | undefined;
+        };
         restartConfirmed?: boolean | undefined;
     };
     readonly "browser.extensions.enable": {
@@ -113,10 +120,10 @@ export type BrowserControlActionInputById = {
         browserSessionId: string;
         viewId: string;
         profileId: string;
-        source?: {
-            browser: 'firefox' | 'chromium' | 'safari';
+        source?: undefined | {
+            browser: 'chromium' | 'firefox' | 'safari';
             profileId: string;
-        } | undefined;
+        };
     } | {
         kind: 'passkeys';
         refs: string[];
@@ -125,26 +132,68 @@ export type BrowserControlActionInputById = {
         viewId: string;
         profileId: string;
     };
+    readonly "browser.view.list": {
+        machineId: string;
+        browserSessionId: string;
+    };
     readonly "browser.workspace.open": {
         scopeId: string;
         commandId: string;
         target: {
+            kind: 'streamedBrowser';
             targetId: string;
-            kind: 'localServicePreview';
-            machineId: string;
-            display?: {
+            streamId: string;
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+            daemonView?: undefined | {
+                browserSessionId: string;
+                viewId: string;
+            };
+        } | {
+            targetId: string;
+            kind: 'externalUrl';
+            url: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'hostedPluginWeb';
+            pluginId: string;
+            contributionId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'localServicePreview';
+            machineId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sessionId?: string | undefined;
-            serviceTarget?: {
-                machineId: string;
+            serviceTarget?: undefined | {
                 kind: 'managed_service';
-                managedServiceId: string;
+                machineId: string;
                 cwd: string;
+                managedServiceId: string;
                 declaration: {
                     workspaceRefId: string;
                     selection: {
@@ -154,7 +203,7 @@ export type BrowserControlActionInputById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -169,58 +218,22 @@ export type BrowserControlActionInputById = {
                     };
                 };
                 workspaceId?: string | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'hostedPluginWeb';
-            pluginId: string;
-            contributionId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'externalUrl';
-            url: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            kind: 'streamedBrowser';
-            targetId: string;
-            streamId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
-            daemonView?: {
-                browserSessionId: string;
-                viewId: string;
-            } | undefined;
+            };
         } | {
             targetId: string;
             kind: 'simulatorPreview';
             deviceId: string;
-            display?: {
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sourceId?: string | undefined;
         };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "browser.sandbox.install": {
         machineId: string;
@@ -243,22 +256,60 @@ export type BrowserControlActionInputById = {
         viewId: string;
         kind: 'openView';
         target: {
+            kind: 'streamedBrowser';
             targetId: string;
-            kind: 'localServicePreview';
-            machineId: string;
-            display?: {
+            streamId: string;
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+            daemonView?: undefined | {
+                browserSessionId: string;
+                viewId: string;
+            };
+        } | {
+            targetId: string;
+            kind: 'externalUrl';
+            url: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'hostedPluginWeb';
+            pluginId: string;
+            contributionId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'localServicePreview';
+            machineId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sessionId?: string | undefined;
-            serviceTarget?: {
-                machineId: string;
+            serviceTarget?: undefined | {
                 kind: 'managed_service';
-                managedServiceId: string;
+                machineId: string;
                 cwd: string;
+                managedServiceId: string;
                 declaration: {
                     workspaceRefId: string;
                     selection: {
@@ -268,7 +319,7 @@ export type BrowserControlActionInputById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -283,65 +334,33 @@ export type BrowserControlActionInputById = {
                     };
                 };
                 workspaceId?: string | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'hostedPluginWeb';
-            pluginId: string;
-            contributionId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'externalUrl';
-            url: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            kind: 'streamedBrowser';
-            targetId: string;
-            streamId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
-            daemonView?: {
-                browserSessionId: string;
-                viewId: string;
-            } | undefined;
+            };
         } | {
             targetId: string;
             kind: 'simulatorPreview';
             deviceId: string;
-            display?: {
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sourceId?: string | undefined;
         };
-        platform: 'web' | 'desktop' | 'ios' | 'android';
+        platform: 'android' | 'desktop' | 'ios' | 'web';
         currentUrl?: string | undefined;
         currentUrlExpiresAt?: number | undefined;
         focus?: boolean | undefined;
+        profileId?: string | undefined;
         openerViewId?: string | undefined;
     };
     readonly "browser.view.openExternal": {
+        browserSessionId: string;
+        viewId: string;
+        commandId: string;
+    };
+    readonly "browser.view.openDevtools": {
         browserSessionId: string;
         viewId: string;
         commandId: string;
@@ -367,7 +386,7 @@ export type BrowserControlActionInputById = {
             kind: 'fitViewer';
         } | {
             kind: 'preset';
-            presetId: 'desktop' | 'phone' | 'smallPhone' | 'tablet' | 'laptop';
+            presetId: 'desktop' | 'laptop' | 'phone' | 'smallPhone' | 'tablet';
         };
     };
     readonly "browser.target.set": {
@@ -376,22 +395,60 @@ export type BrowserControlActionInputById = {
         viewId: string;
         kind: 'setTarget';
         target: {
+            kind: 'streamedBrowser';
             targetId: string;
-            kind: 'localServicePreview';
-            machineId: string;
-            display?: {
+            streamId: string;
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+            daemonView?: undefined | {
+                browserSessionId: string;
+                viewId: string;
+            };
+        } | {
+            targetId: string;
+            kind: 'externalUrl';
+            url: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'hostedPluginWeb';
+            pluginId: string;
+            contributionId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'localServicePreview';
+            machineId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sessionId?: string | undefined;
-            serviceTarget?: {
-                machineId: string;
+            serviceTarget?: undefined | {
                 kind: 'managed_service';
-                managedServiceId: string;
+                machineId: string;
                 cwd: string;
+                managedServiceId: string;
                 declaration: {
                     workspaceRefId: string;
                     selection: {
@@ -401,7 +458,7 @@ export type BrowserControlActionInputById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -416,56 +473,18 @@ export type BrowserControlActionInputById = {
                     };
                 };
                 workspaceId?: string | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'hostedPluginWeb';
-            pluginId: string;
-            contributionId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'externalUrl';
-            url: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            kind: 'streamedBrowser';
-            targetId: string;
-            streamId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
-            daemonView?: {
-                browserSessionId: string;
-                viewId: string;
-            } | undefined;
+            };
         } | {
             targetId: string;
             kind: 'simulatorPreview';
             deviceId: string;
-            display?: {
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sourceId?: string | undefined;
         };
         currentUrl?: string | undefined;
@@ -513,23 +532,26 @@ export type BrowserControlActionResultById = {
                 version: string;
                 enabled: boolean;
                 source: {
-                    kind: 'webStore';
-                    extensionId: string;
-                } | {
                     kind: 'unpacked';
                     directory: string;
+                } | {
+                    kind: 'webStore';
+                    extensionId: string;
                 };
                 directory: string;
                 permissions: string[];
                 hostPermissions: string[];
                 actionPopup?: string | undefined;
                 optionsPage?: string | undefined;
-                provenance?: {
+                provenance?: undefined | {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -539,15 +561,18 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -556,10 +581,21 @@ export type BrowserControlActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
-                } | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                    sourceUrl?: undefined;
+                };
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -569,34 +605,40 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
             restartRequired: boolean;
         }[];
     } | {
         status: 'unavailable';
-        code: 'managed_browser_required' | 'persistent_profile_required' | 'extension_not_found' | 'extension_disabled' | 'missing_popup' | 'missing_options' | 'source_unavailable' | 'invalid_manifest' | 'unsupported_manifest' | 'permission_denied' | 'canceled' | 'version_changed' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed';
+        code: 'canceled' | 'extension_disabled' | 'extension_not_found' | 'invalid_manifest' | 'managed_browser_required' | 'missing_options' | 'missing_popup' | 'permission_denied' | 'persistent_profile_required' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed' | 'source_unavailable' | 'unsupported_manifest' | 'version_changed';
         message?: string | undefined;
     };
     readonly "browser.extensions.install": {
+        status: 'needs_restart_confirmation';
+        profileId: string;
+    } | {
+        status: 'needs_review';
+        review: {
+            version: string;
+            permissions: string[];
+            hostPermissions: string[];
+        };
+        restartRequired?: true | undefined;
+    } | {
+        status: 'removed';
+        profileId: string;
+        extensionId: string;
+        restartRequired: true;
+    } | {
         status: 'unavailable';
-        code: 'managed_browser_required' | 'persistent_profile_required' | 'extension_not_found' | 'extension_disabled' | 'missing_popup' | 'missing_options' | 'source_unavailable' | 'invalid_manifest' | 'unsupported_manifest' | 'permission_denied' | 'canceled' | 'version_changed' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed';
+        code: 'canceled' | 'extension_disabled' | 'extension_not_found' | 'invalid_manifest' | 'managed_browser_required' | 'missing_options' | 'missing_popup' | 'permission_denied' | 'persistent_profile_required' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed' | 'source_unavailable' | 'unsupported_manifest' | 'version_changed';
         message?: string | undefined;
     } | {
         status: 'updated';
@@ -608,23 +650,26 @@ export type BrowserControlActionResultById = {
                 version: string;
                 enabled: boolean;
                 source: {
-                    kind: 'webStore';
-                    extensionId: string;
-                } | {
                     kind: 'unpacked';
                     directory: string;
+                } | {
+                    kind: 'webStore';
+                    extensionId: string;
                 };
                 directory: string;
                 permissions: string[];
                 hostPermissions: string[];
                 actionPopup?: string | undefined;
                 optionsPage?: string | undefined;
-                provenance?: {
+                provenance?: undefined | {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -634,15 +679,18 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -651,10 +699,21 @@ export type BrowserControlActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
-                } | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                    sourceUrl?: undefined;
+                };
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -664,47 +723,37 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
             restartRequired: boolean;
         };
         restartRequired: true;
-    } | {
-        status: 'removed';
-        profileId: string;
-        extensionId: string;
-        restartRequired: true;
-    } | {
-        status: 'needs_review';
-        review: {
-            version: string;
-            permissions: string[];
-            hostPermissions: string[];
-        };
-        restartRequired?: true | undefined;
-    } | {
-        status: 'needs_restart_confirmation';
-        profileId: string;
     };
     readonly "browser.extensions.update": {
+        status: 'needs_restart_confirmation';
+        profileId: string;
+    } | {
+        status: 'needs_review';
+        review: {
+            version: string;
+            permissions: string[];
+            hostPermissions: string[];
+        };
+        restartRequired?: true | undefined;
+    } | {
+        status: 'removed';
+        profileId: string;
+        extensionId: string;
+        restartRequired: true;
+    } | {
         status: 'unavailable';
-        code: 'managed_browser_required' | 'persistent_profile_required' | 'extension_not_found' | 'extension_disabled' | 'missing_popup' | 'missing_options' | 'source_unavailable' | 'invalid_manifest' | 'unsupported_manifest' | 'permission_denied' | 'canceled' | 'version_changed' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed';
+        code: 'canceled' | 'extension_disabled' | 'extension_not_found' | 'invalid_manifest' | 'managed_browser_required' | 'missing_options' | 'missing_popup' | 'permission_denied' | 'persistent_profile_required' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed' | 'source_unavailable' | 'unsupported_manifest' | 'version_changed';
         message?: string | undefined;
     } | {
         status: 'updated';
@@ -716,23 +765,26 @@ export type BrowserControlActionResultById = {
                 version: string;
                 enabled: boolean;
                 source: {
-                    kind: 'webStore';
-                    extensionId: string;
-                } | {
                     kind: 'unpacked';
                     directory: string;
+                } | {
+                    kind: 'webStore';
+                    extensionId: string;
                 };
                 directory: string;
                 permissions: string[];
                 hostPermissions: string[];
                 actionPopup?: string | undefined;
                 optionsPage?: string | undefined;
-                provenance?: {
+                provenance?: undefined | {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -742,15 +794,18 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -759,10 +814,21 @@ export type BrowserControlActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
-                } | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                    sourceUrl?: undefined;
+                };
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -772,47 +838,37 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
             restartRequired: boolean;
         };
         restartRequired: true;
-    } | {
-        status: 'removed';
-        profileId: string;
-        extensionId: string;
-        restartRequired: true;
-    } | {
-        status: 'needs_review';
-        review: {
-            version: string;
-            permissions: string[];
-            hostPermissions: string[];
-        };
-        restartRequired?: true | undefined;
-    } | {
-        status: 'needs_restart_confirmation';
-        profileId: string;
     };
     readonly "browser.extensions.enable": {
+        status: 'needs_restart_confirmation';
+        profileId: string;
+    } | {
+        status: 'needs_review';
+        review: {
+            version: string;
+            permissions: string[];
+            hostPermissions: string[];
+        };
+        restartRequired?: true | undefined;
+    } | {
+        status: 'removed';
+        profileId: string;
+        extensionId: string;
+        restartRequired: true;
+    } | {
         status: 'unavailable';
-        code: 'managed_browser_required' | 'persistent_profile_required' | 'extension_not_found' | 'extension_disabled' | 'missing_popup' | 'missing_options' | 'source_unavailable' | 'invalid_manifest' | 'unsupported_manifest' | 'permission_denied' | 'canceled' | 'version_changed' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed';
+        code: 'canceled' | 'extension_disabled' | 'extension_not_found' | 'invalid_manifest' | 'managed_browser_required' | 'missing_options' | 'missing_popup' | 'permission_denied' | 'persistent_profile_required' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed' | 'source_unavailable' | 'unsupported_manifest' | 'version_changed';
         message?: string | undefined;
     } | {
         status: 'updated';
@@ -824,23 +880,26 @@ export type BrowserControlActionResultById = {
                 version: string;
                 enabled: boolean;
                 source: {
-                    kind: 'webStore';
-                    extensionId: string;
-                } | {
                     kind: 'unpacked';
                     directory: string;
+                } | {
+                    kind: 'webStore';
+                    extensionId: string;
                 };
                 directory: string;
                 permissions: string[];
                 hostPermissions: string[];
                 actionPopup?: string | undefined;
                 optionsPage?: string | undefined;
-                provenance?: {
+                provenance?: undefined | {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -850,15 +909,18 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -867,10 +929,21 @@ export type BrowserControlActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
-                } | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                    sourceUrl?: undefined;
+                };
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -880,47 +953,37 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
             restartRequired: boolean;
         };
         restartRequired: true;
-    } | {
-        status: 'removed';
-        profileId: string;
-        extensionId: string;
-        restartRequired: true;
-    } | {
-        status: 'needs_review';
-        review: {
-            version: string;
-            permissions: string[];
-            hostPermissions: string[];
-        };
-        restartRequired?: true | undefined;
-    } | {
-        status: 'needs_restart_confirmation';
-        profileId: string;
     };
     readonly "browser.extensions.disable": {
+        status: 'needs_restart_confirmation';
+        profileId: string;
+    } | {
+        status: 'needs_review';
+        review: {
+            version: string;
+            permissions: string[];
+            hostPermissions: string[];
+        };
+        restartRequired?: true | undefined;
+    } | {
+        status: 'removed';
+        profileId: string;
+        extensionId: string;
+        restartRequired: true;
+    } | {
         status: 'unavailable';
-        code: 'managed_browser_required' | 'persistent_profile_required' | 'extension_not_found' | 'extension_disabled' | 'missing_popup' | 'missing_options' | 'source_unavailable' | 'invalid_manifest' | 'unsupported_manifest' | 'permission_denied' | 'canceled' | 'version_changed' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed';
+        code: 'canceled' | 'extension_disabled' | 'extension_not_found' | 'invalid_manifest' | 'managed_browser_required' | 'missing_options' | 'missing_popup' | 'permission_denied' | 'persistent_profile_required' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed' | 'source_unavailable' | 'unsupported_manifest' | 'version_changed';
         message?: string | undefined;
     } | {
         status: 'updated';
@@ -932,23 +995,26 @@ export type BrowserControlActionResultById = {
                 version: string;
                 enabled: boolean;
                 source: {
-                    kind: 'webStore';
-                    extensionId: string;
-                } | {
                     kind: 'unpacked';
                     directory: string;
+                } | {
+                    kind: 'webStore';
+                    extensionId: string;
                 };
                 directory: string;
                 permissions: string[];
                 hostPermissions: string[];
                 actionPopup?: string | undefined;
                 optionsPage?: string | undefined;
-                provenance?: {
+                provenance?: undefined | {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -958,15 +1024,18 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -975,10 +1044,21 @@ export type BrowserControlActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
-                } | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                    sourceUrl?: undefined;
+                };
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -988,47 +1068,37 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
             restartRequired: boolean;
         };
         restartRequired: true;
-    } | {
-        status: 'removed';
-        profileId: string;
-        extensionId: string;
-        restartRequired: true;
-    } | {
-        status: 'needs_review';
-        review: {
-            version: string;
-            permissions: string[];
-            hostPermissions: string[];
-        };
-        restartRequired?: true | undefined;
-    } | {
-        status: 'needs_restart_confirmation';
-        profileId: string;
     };
     readonly "browser.extensions.remove": {
+        status: 'needs_restart_confirmation';
+        profileId: string;
+    } | {
+        status: 'needs_review';
+        review: {
+            version: string;
+            permissions: string[];
+            hostPermissions: string[];
+        };
+        restartRequired?: true | undefined;
+    } | {
+        status: 'removed';
+        profileId: string;
+        extensionId: string;
+        restartRequired: true;
+    } | {
         status: 'unavailable';
-        code: 'managed_browser_required' | 'persistent_profile_required' | 'extension_not_found' | 'extension_disabled' | 'missing_popup' | 'missing_options' | 'source_unavailable' | 'invalid_manifest' | 'unsupported_manifest' | 'permission_denied' | 'canceled' | 'version_changed' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed';
+        code: 'canceled' | 'extension_disabled' | 'extension_not_found' | 'invalid_manifest' | 'managed_browser_required' | 'missing_options' | 'missing_popup' | 'permission_denied' | 'persistent_profile_required' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed' | 'source_unavailable' | 'unsupported_manifest' | 'version_changed';
         message?: string | undefined;
     } | {
         status: 'updated';
@@ -1040,23 +1110,26 @@ export type BrowserControlActionResultById = {
                 version: string;
                 enabled: boolean;
                 source: {
-                    kind: 'webStore';
-                    extensionId: string;
-                } | {
                     kind: 'unpacked';
                     directory: string;
+                } | {
+                    kind: 'webStore';
+                    extensionId: string;
                 };
                 directory: string;
                 permissions: string[];
                 hostPermissions: string[];
                 actionPopup?: string | undefined;
                 optionsPage?: string | undefined;
-                provenance?: {
+                provenance?: undefined | {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -1066,15 +1139,18 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -1083,10 +1159,21 @@ export type BrowserControlActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
-                } | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                    sourceUrl?: undefined;
+                };
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -1096,60 +1183,28 @@ export type BrowserControlActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
             restartRequired: boolean;
         };
         restartRequired: true;
-    } | {
-        status: 'removed';
-        profileId: string;
-        extensionId: string;
-        restartRequired: true;
-    } | {
-        status: 'needs_review';
-        review: {
-            version: string;
-            permissions: string[];
-            hostPermissions: string[];
-        };
-        restartRequired?: true | undefined;
-    } | {
-        status: 'needs_restart_confirmation';
-        profileId: string;
     };
     readonly "browser.extensions.openActionPopup": {
         status: 'unavailable';
-        code: 'managed_browser_required' | 'persistent_profile_required' | 'extension_not_found' | 'extension_disabled' | 'missing_popup' | 'missing_options' | 'source_unavailable' | 'invalid_manifest' | 'unsupported_manifest' | 'permission_denied' | 'canceled' | 'version_changed' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed';
+        code: 'canceled' | 'extension_disabled' | 'extension_not_found' | 'invalid_manifest' | 'managed_browser_required' | 'missing_options' | 'missing_popup' | 'permission_denied' | 'persistent_profile_required' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed' | 'source_unavailable' | 'unsupported_manifest' | 'version_changed';
         message?: string | undefined;
     } | {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -1159,423 +1214,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -1585,17 +1234,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -1606,8 +1255,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -1630,20 +1288,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -1658,9 +1358,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -1675,39 +1484,285 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.extensions.openOptions": {
         status: 'unavailable';
-        code: 'managed_browser_required' | 'persistent_profile_required' | 'extension_not_found' | 'extension_disabled' | 'missing_popup' | 'missing_options' | 'source_unavailable' | 'invalid_manifest' | 'unsupported_manifest' | 'permission_denied' | 'canceled' | 'version_changed' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed';
+        code: 'canceled' | 'extension_disabled' | 'extension_not_found' | 'invalid_manifest' | 'managed_browser_required' | 'missing_options' | 'missing_popup' | 'permission_denied' | 'persistent_profile_required' | 'profile_not_found' | 'profile_unavailable' | 'restart_failed' | 'source_unavailable' | 'unsupported_manifest' | 'version_changed';
         message?: string | undefined;
     } | {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -1717,423 +1772,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -2143,17 +1792,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -2164,8 +1813,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -2188,20 +1846,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -2216,9 +1916,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -2233,22 +2042,274 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.profile.logins.import": {
         status: 'completed';
@@ -2256,38 +2317,680 @@ export type BrowserControlActionResultById = {
             domain: string;
             name: string;
             status: 'failed' | 'imported' | 'skipped';
-            code?: 'source_unavailable' | 'permission_denied' | 'canceled' | 'source_locked' | 'source_format_unsupported' | 'partition_unsupported' | 'expired' | 'destination_unavailable' | 'profile_mismatch' | 'engine_unsupported' | 'import_failed' | 'import_unknown' | 'passkey_import_unavailable' | 'app_bound_encryption' | undefined;
+            code?: 'app_bound_encryption' | 'canceled' | 'destination_unavailable' | 'engine_unsupported' | 'expired' | 'import_failed' | 'import_unknown' | 'partition_unsupported' | 'passkey_import_unavailable' | 'permission_denied' | 'profile_mismatch' | 'source_format_unsupported' | 'source_locked' | 'source_unavailable' | undefined;
             reason?: 'this passkey tracks a usage counter' | undefined;
         }[];
     } | {
         status: 'needs_source';
     } | {
         status: 'unavailable';
-        code: 'source_unavailable' | 'permission_denied' | 'canceled' | 'source_locked' | 'source_format_unsupported' | 'partition_unsupported' | 'expired' | 'destination_unavailable' | 'profile_mismatch' | 'engine_unsupported' | 'import_failed' | 'import_unknown' | 'passkey_import_unavailable' | 'app_bound_encryption';
+        code: 'app_bound_encryption' | 'canceled' | 'destination_unavailable' | 'engine_unsupported' | 'expired' | 'import_failed' | 'import_unknown' | 'partition_unsupported' | 'passkey_import_unavailable' | 'permission_denied' | 'profile_mismatch' | 'source_format_unsupported' | 'source_locked' | 'source_unavailable';
+    };
+    readonly "browser.view.list": {
+        protocolVersion: 1;
+        views: {
+            browserSessionId: string;
+            viewId: string;
+            sourceId: string;
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'streamedBrowserSurface';
+            events: ({
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                kind: 'sessionClosed';
+                reasonCode?: string | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                kind: 'sessionCreated';
+                profileId: string;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'adapterUnavailable';
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                reasonCode: string;
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'controllerChanged';
+                state: {
+                    browserSessionId: string;
+                    viewId: string;
+                    controller: 'agent' | 'human' | 'none' | 'system';
+                    controlEpoch: number;
+                    activeAutomationRequestId?: string | undefined;
+                    activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                    activeTarget?: undefined | {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                        label?: string | undefined;
+                    };
+                    interruptionSettling?: boolean | undefined;
+                    uncertain?: boolean | undefined;
+                    confidentialityHeld?: boolean | undefined;
+                };
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'downloadRequested';
+                downloadRequestId: string;
+                url: string;
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'externalOpenRequested';
+                url: string;
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'faviconChanged';
+                navigationGeneration?: number | undefined;
+                faviconUrl?: string | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'loadingProgressChanged';
+                loadingProgress: number;
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'navigationCommitted';
+                currentUrl: string;
+                navigationGeneration?: number | undefined;
+                securityOrigin?: string | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'navigationFailed';
+                errorCode: string;
+                navigationGeneration?: number | undefined;
+                failedUrl?: string | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'navigationFinished';
+                navigationGeneration?: number | undefined;
+                currentUrl?: string | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'navigationStarted';
+                pendingUrl: string;
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'navigationStateChanged';
+                loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+                canGoBack: boolean;
+                canGoForward: boolean;
+                navigationGeneration?: number | undefined;
+                currentUrl?: string | undefined;
+                pendingUrl?: string | undefined;
+                title?: string | undefined;
+                faviconUrl?: string | undefined;
+                loadingProgress?: number | undefined;
+                securityOrigin?: string | undefined;
+                lastError?: string | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'permissionRequested';
+                permissionRequestId: string;
+                permissionKind: string;
+                navigationGeneration?: number | undefined;
+                origin?: string | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'popupRequested';
+                popupRequestId: string;
+                url: string;
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'targetChanged';
+                target: {
+                    kind: 'streamedBrowser';
+                    targetId: string;
+                    streamId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    daemonView?: undefined | {
+                        browserSessionId: string;
+                        viewId: string;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'externalUrl';
+                    url: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'hostedPluginWeb';
+                    pluginId: string;
+                    contributionId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'localServicePreview';
+                    machineId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    sessionId?: string | undefined;
+                    serviceTarget?: undefined | {
+                        kind: 'managed_service';
+                        machineId: string;
+                        cwd: string;
+                        managedServiceId: string;
+                        declaration: {
+                            workspaceRefId: string;
+                            selection: {
+                                kind: 'manifest';
+                                name: string;
+                            } | {
+                                kind: 'native';
+                                source: {
+                                    kind: 'native';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                    file: string;
+                                    target: string;
+                                } | {
+                                    kind: 'pluginNative';
+                                    adapter: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    file: string;
+                                    target: string;
+                                };
+                            };
+                        };
+                        workspaceId?: string | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'simulatorPreview';
+                    deviceId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    sourceId?: string | undefined;
+                };
+                navigationGeneration?: number | undefined;
+                currentUrl?: string | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'titleChanged';
+                title: string;
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'viewClosed';
+                navigationGeneration?: number | undefined;
+                reasonCode?: string | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'viewCrashed';
+                reasonCode: string;
+                autoReloadAttempted: boolean;
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'viewFocused';
+                navigationGeneration?: number | undefined;
+            } | {
+                eventId: string;
+                browserSessionId: string;
+                occurredAt: number;
+                viewId: string;
+                kind: 'viewOpened';
+                target: {
+                    kind: 'streamedBrowser';
+                    targetId: string;
+                    streamId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    daemonView?: undefined | {
+                        browserSessionId: string;
+                        viewId: string;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'externalUrl';
+                    url: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'hostedPluginWeb';
+                    pluginId: string;
+                    contributionId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'localServicePreview';
+                    machineId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    sessionId?: string | undefined;
+                    serviceTarget?: undefined | {
+                        kind: 'managed_service';
+                        machineId: string;
+                        cwd: string;
+                        managedServiceId: string;
+                        declaration: {
+                            workspaceRefId: string;
+                            selection: {
+                                kind: 'manifest';
+                                name: string;
+                            } | {
+                                kind: 'native';
+                                source: {
+                                    kind: 'native';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                    file: string;
+                                    target: string;
+                                } | {
+                                    kind: 'pluginNative';
+                                    adapter: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    file: string;
+                                    target: string;
+                                };
+                            };
+                        };
+                        workspaceId?: string | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'simulatorPreview';
+                    deviceId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    sourceId?: string | undefined;
+                };
+                platform: 'android' | 'desktop' | 'ios' | 'web';
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+                adapterCapabilities: {
+                    adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                    supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                    supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                    navigation: {
+                        canNavigate: boolean;
+                        canGoBack: boolean;
+                        canGoForward: boolean;
+                        canReload: boolean;
+                        canStop: boolean;
+                    };
+                    diagnosticsFidelityByFamily: {
+                        console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                        pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                        network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                        elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                        resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                        storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                        pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                        performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                        screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                        proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    };
+                    contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                    inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                    supportsDownloads: boolean;
+                    supportsUploads: boolean;
+                    supportsPopups: boolean;
+                    supportsPermissions: boolean;
+                    supportsStreamingDisplay: boolean;
+                    disabledReasons: string[];
+                    automationActions?: undefined | {
+                        snapshot: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        semanticSnapshot: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        locatorQuery: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        navigate: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        click: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        tap: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        type: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        press: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        scroll: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        hover: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        upload: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        drag: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        waitFor: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        evaluate: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        elementPicker: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        screenshotReference: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        recording: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        trustedInput: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                        crossOriginFrameAccess: {
+                            available: boolean;
+                            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                            trustedInput: boolean;
+                            disabledReasons: string[];
+                        };
+                    };
+                };
+                navigationGeneration?: number | undefined;
+                currentUrl?: string | undefined;
+                currentUrlExpiresAt?: number | undefined;
+                openerViewId?: string | undefined;
+            })[];
+            captureSource?: undefined | {
+                [x: string]: unknown;
+                v: 1;
+                sourceId: string;
+                sourceKind: 'browser' | 'device' | 'plugin' | 'screen' | 'simulator';
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                sidebands: ('accessibility_tree' | 'app_metadata' | 'capture_health' | 'device_config' | 'logs' | 'network_diagnostics' | 'route')[];
+                health: {
+                    status: 'available' | 'degraded' | 'starting' | 'unavailable';
+                    reasonCode?: string | undefined;
+                    droppedFrames?: number | undefined;
+                    lastFrameAtMs?: number | undefined;
+                };
+                displayName?: string | undefined;
+                maxWidth?: number | undefined;
+                maxHeight?: number | undefined;
+                maxFramesPerSecond?: number | undefined;
+            };
+        }[];
     };
     readonly "browser.workspace.open": {
         v: 1;
         commandId: string;
-        status: 'failed';
-        error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
-            message: string;
-            retryable?: boolean | undefined;
-        };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
-    } | {
-        v: 1;
-        commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -2297,423 +3000,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -2723,17 +3020,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -2744,8 +3041,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -2768,20 +3074,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -2796,9 +3144,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -2813,31 +3270,288 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
-        outcome: 'workspaceTab' | 'externalTab';
+        outcome: 'externalTab' | 'workspaceTab';
+    } | {
+        v: 1;
+        commandId: string;
+        status: 'failed';
+        error: {
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            message: string;
+            retryable?: boolean | undefined;
+        };
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.sandbox.install": {
-        status: 'installed';
-    } | {
         status: 'failed';
-        code: 'platform_unsupported' | 'managed_browser_unavailable' | 'managed_browser_install_failed' | 'os_authorization_required' | 'sandbox_install_failed' | 'cancelled';
+        code: 'cancelled' | 'managed_browser_install_failed' | 'managed_browser_unavailable' | 'os_authorization_required' | 'platform_unsupported' | 'sandbox_install_failed';
+    } | {
+        status: 'installed';
     };
     readonly "browser.control.takeControl": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -2847,423 +3561,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -3273,17 +3581,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -3294,8 +3602,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -3318,20 +3635,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -3346,9 +3705,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -3363,22 +3831,274 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     } | {
         v: 1;
         status: 'interrupted';
@@ -3389,14 +4109,8 @@ export type BrowserControlActionResultById = {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -3406,423 +4120,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -3832,17 +4140,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -3853,8 +4161,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -3877,20 +4194,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -3905,9 +4264,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -3922,22 +4390,274 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     } | {
         v: 1;
         status: 'interrupted';
@@ -3948,14 +4668,8 @@ export type BrowserControlActionResultById = {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -3965,423 +4679,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -4391,17 +4699,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -4412,8 +4720,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -4436,20 +4753,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -4464,9 +4823,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -4481,22 +4949,274 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     } | {
         v: 1;
         status: 'in_progress';
@@ -4510,14 +5230,8 @@ export type BrowserControlActionResultById = {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -4527,423 +5241,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -4953,17 +5261,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -4974,8 +5282,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -4998,6 +5315,57 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
+            navigationGeneration?: number | undefined;
+            securityOrigin?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFailed';
+            errorCode: string;
+            navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
             kind: 'permissionRequested';
             permissionRequestId: string;
             permissionKind: string;
@@ -5008,8 +5376,8 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
+            kind: 'popupRequested';
+            popupRequestId: string;
             url: string;
             navigationGeneration?: number | undefined;
         } | {
@@ -5017,8 +5385,459 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'popupRequested';
-            popupRequestId: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewCrashed';
+            reasonCode: string;
+            autoReloadAttempted: boolean;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewFocused';
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
+        })[];
+    } | {
+        v: 1;
+        commandId: string;
+        status: 'failed';
+        error: {
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
+            message: string;
+            retryable?: boolean | undefined;
+        };
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
+    };
+    readonly "browser.view.openDevtools": {
+        v: 1;
+        commandId: string;
+        status: 'dispatched';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        events: ({
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            kind: 'sessionClosed';
+            reasonCode?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            kind: 'sessionCreated';
+            profileId: string;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'controllerChanged';
+            state: {
+                browserSessionId: string;
+                viewId: string;
+                controller: 'agent' | 'human' | 'none' | 'system';
+                controlEpoch: number;
+                activeAutomationRequestId?: string | undefined;
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                    label?: string | undefined;
+                };
+                interruptionSettling?: boolean | undefined;
+                uncertain?: boolean | undefined;
+                confidentialityHeld?: boolean | undefined;
+            };
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
             url: string;
             navigationGeneration?: number | undefined;
         } | {
@@ -5034,6 +5853,209 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
+            kind: 'faviconChanged';
+            navigationGeneration?: number | undefined;
+            faviconUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'loadingProgressChanged';
+            loadingProgress: number;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
+            navigationGeneration?: number | undefined;
+            securityOrigin?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFailed';
+            errorCode: string;
+            navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'popupRequested';
+            popupRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
             kind: 'viewCrashed';
             reasonCode: string;
             autoReloadAttempted: boolean;
@@ -5043,35 +6065,281 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.view.close": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -5081,423 +6349,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -5507,17 +6369,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -5528,8 +6390,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -5552,20 +6423,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -5580,9 +6493,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -5597,35 +6619,281 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.view.focus": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -5635,423 +6903,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -6061,17 +6923,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -6082,8 +6944,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -6106,20 +6977,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -6134,9 +7047,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -6151,35 +7173,281 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.view.setViewport": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -6189,423 +7457,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -6615,17 +7477,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -6636,8 +7498,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -6660,20 +7531,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -6688,9 +7601,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -6705,35 +7727,281 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.target.set": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -6743,423 +8011,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -7169,17 +8031,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -7190,8 +8052,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -7214,20 +8085,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -7242,9 +8155,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -7259,35 +8281,281 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.navigate": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -7297,423 +8565,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -7723,17 +8585,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -7744,8 +8606,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -7768,20 +8639,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -7796,9 +8709,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -7813,35 +8835,281 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.reload": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -7851,423 +9119,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -8277,17 +9139,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -8298,8 +9160,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -8322,20 +9193,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -8350,9 +9263,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -8367,35 +9389,281 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.goBack": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -8405,423 +9673,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -8831,17 +9693,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -8852,8 +9714,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -8876,20 +9747,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -8904,9 +9817,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -8921,35 +9943,281 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.goForward": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -8959,423 +10227,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -9385,17 +10247,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -9406,8 +10268,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -9430,20 +10301,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -9458,9 +10371,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -9475,35 +10497,281 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
     readonly "browser.stop": {
         v: 1;
         commandId: string;
         status: 'dispatched';
-        adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
         events: ({
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            kind: 'sessionCreated';
-            profileId: string;
-        } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
@@ -9513,423 +10781,17 @@ export type BrowserControlActionResultById = {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
-            viewId: string;
-            kind: 'viewOpened';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            platform: 'web' | 'desktop' | 'ios' | 'android';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            engineKind: 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface';
-            adapterCapabilities: {
-                adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-                supportedTargetKinds: ('localServicePreview' | 'hostedPluginWeb' | 'externalUrl' | 'streamedBrowser' | 'simulatorPreview')[];
-                supportedRenderEngines: ('unavailable' | 'webIframe' | 'nativeWebView' | 'desktopWebView' | 'electronWebContentsView' | 'streamedSurface')[];
-                navigation: {
-                    canNavigate: boolean;
-                    canGoBack: boolean;
-                    canGoForward: boolean;
-                    canReload: boolean;
-                    canStop: boolean;
-                };
-                diagnosticsFidelityByFamily: {
-                    console?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageError?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    network?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    elements?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    resources?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    storage?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    pageInfo?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    performance?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    screenshot?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                    proxyTunnel?: 'unavailable' | 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | undefined;
-                };
-                contextKinds: ('browserPageReference' | 'browserScreenshot' | 'browserTextSelection' | 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserSelectedElement' | 'browserAnnotation' | 'browserRecordingEvidence' | 'browserNetworkSummary' | 'browserConsoleSummary')[];
-                inputRouting: 'native' | 'none' | 'pmsControlSideband';
-                supportsDownloads: boolean;
-                supportsUploads: boolean;
-                supportsPopups: boolean;
-                supportsPermissions: boolean;
-                supportsStreamingDisplay: boolean;
-                disabledReasons: string[];
-                automationActions?: {
-                    snapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    semanticSnapshot: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    locatorQuery: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    navigate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    click: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    tap: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    type: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    press: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    scroll: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    hover: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    upload: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    drag: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    waitFor: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    evaluate: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    elementPicker: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    screenshotReference: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    recording: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    trustedInput: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                    crossOriginFrameAccess: {
-                        available: boolean;
-                        fidelity: 'unavailable' | 'webIframe' | 'nativeWebView' | 'streamedSurface' | 'cdp' | 'previewProxy' | 'injectedPage';
-                        trustedInput: boolean;
-                        disabledReasons: string[];
-                    };
-                } | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            currentUrlExpiresAt?: number | undefined;
-            openerViewId?: string | undefined;
+            kind: 'sessionCreated';
+            profileId: string;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'viewClosed';
+            kind: 'adapterUnavailable';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            reasonCode: string;
             navigationGeneration?: number | undefined;
-            reasonCode?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'viewFocused';
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'targetChanged';
-            target: {
-                targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    cwd: string;
-                    declaration: {
-                        workspaceRefId: string;
-                        selection: {
-                            kind: 'manifest';
-                            name: string;
-                        } | {
-                            kind: 'native';
-                            source: {
-                                kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                file: string;
-                                target: string;
-                            } | {
-                                kind: 'pluginNative';
-                                adapter: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                file: string;
-                                target: string;
-                            };
-                        };
-                    };
-                    workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'simulatorPreview';
-                deviceId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                sourceId?: string | undefined;
-            };
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStarted';
-            pendingUrl: string;
-            navigationGeneration?: number | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationCommitted';
-            currentUrl: string;
-            navigationGeneration?: number | undefined;
-            securityOrigin?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFinished';
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationFailed';
-            errorCode: string;
-            navigationGeneration?: number | undefined;
-            failedUrl?: string | undefined;
-        } | {
-            eventId: string;
-            browserSessionId: string;
-            occurredAt: number;
-            viewId: string;
-            kind: 'navigationStateChanged';
-            loadingState: 'ready' | 'idle' | 'loading' | 'failed';
-            canGoBack: boolean;
-            canGoForward: boolean;
-            navigationGeneration?: number | undefined;
-            currentUrl?: string | undefined;
-            pendingUrl?: string | undefined;
-            title?: string | undefined;
-            faviconUrl?: string | undefined;
-            loadingProgress?: number | undefined;
-            securityOrigin?: string | undefined;
-            lastError?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -9939,17 +10801,17 @@ export type BrowserControlActionResultById = {
             state: {
                 browserSessionId: string;
                 viewId: string;
-                controller: 'none' | 'human' | 'agent' | 'system';
+                controller: 'agent' | 'human' | 'none' | 'system';
                 controlEpoch: number;
                 activeAutomationRequestId?: string | undefined;
-                activeActionKind?: 'type' | 'focus' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'snapshot' | 'semanticSnapshot' | 'click' | 'tap' | 'press' | 'scroll' | 'hover' | 'upload' | 'drag' | 'waitFor' | 'evaluate' | 'getStatus' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'select' | 'setValue' | 'startElementPicker' | 'cancelElementPicker' | undefined;
-                activeTarget?: {
+                activeActionKind?: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor' | undefined;
+                activeTarget?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
                     label?: string | undefined;
-                } | undefined;
+                };
                 interruptionSettling?: boolean | undefined;
                 uncertain?: boolean | undefined;
                 confidentialityHeld?: boolean | undefined;
@@ -9960,8 +10822,17 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'titleChanged';
-            title: string;
+            kind: 'downloadRequested';
+            downloadRequestId: string;
+            url: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'externalOpenRequested';
+            url: string;
             navigationGeneration?: number | undefined;
         } | {
             eventId: string;
@@ -9984,20 +10855,62 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'permissionRequested';
-            permissionRequestId: string;
-            permissionKind: string;
+            kind: 'navigationCommitted';
+            currentUrl: string;
             navigationGeneration?: number | undefined;
-            origin?: string | undefined;
+            securityOrigin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'downloadRequested';
-            downloadRequestId: string;
-            url: string;
+            kind: 'navigationFailed';
+            errorCode: string;
             navigationGeneration?: number | undefined;
+            failedUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationFinished';
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStarted';
+            pendingUrl: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'navigationStateChanged';
+            loadingState: 'failed' | 'idle' | 'loading' | 'ready';
+            canGoBack: boolean;
+            canGoForward: boolean;
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            pendingUrl?: string | undefined;
+            title?: string | undefined;
+            faviconUrl?: string | undefined;
+            loadingProgress?: number | undefined;
+            securityOrigin?: string | undefined;
+            lastError?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'permissionRequested';
+            permissionRequestId: string;
+            permissionKind: string;
+            navigationGeneration?: number | undefined;
+            origin?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -10012,9 +10925,118 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'externalOpenRequested';
-            url: string;
+            kind: 'targetChanged';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
             navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'titleChanged';
+            title: string;
+            navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewClosed';
+            navigationGeneration?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             eventId: string;
             browserSessionId: string;
@@ -10029,21 +11051,273 @@ export type BrowserControlActionResultById = {
             browserSessionId: string;
             occurredAt: number;
             viewId: string;
-            kind: 'adapterUnavailable';
-            adapterKind: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface';
-            reasonCode: string;
+            kind: 'viewFocused';
             navigationGeneration?: number | undefined;
+        } | {
+            eventId: string;
+            browserSessionId: string;
+            occurredAt: number;
+            viewId: string;
+            kind: 'viewOpened';
+            target: {
+                kind: 'streamedBrowser';
+                targetId: string;
+                streamId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sessionId?: string | undefined;
+                serviceTarget?: undefined | {
+                    kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
+                    declaration: {
+                        workspaceRefId: string;
+                        selection: {
+                            kind: 'manifest';
+                            name: string;
+                        } | {
+                            kind: 'native';
+                            source: {
+                                kind: 'native';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                file: string;
+                                target: string;
+                            } | {
+                                kind: 'pluginNative';
+                                adapter: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                file: string;
+                                target: string;
+                            };
+                        };
+                    };
+                    workspaceId?: string | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'simulatorPreview';
+                deviceId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                sourceId?: string | undefined;
+            };
+            platform: 'android' | 'desktop' | 'ios' | 'web';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            engineKind: 'desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'webIframe';
+            adapterCapabilities: {
+                adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                supportedTargetKinds: ('externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser')[];
+                supportedRenderEngines: ('desktopWebView' | 'electronWebContentsView' | 'nativeWebView' | 'streamedSurface' | 'unavailable' | 'webIframe')[];
+                navigation: {
+                    canNavigate: boolean;
+                    canGoBack: boolean;
+                    canGoForward: boolean;
+                    canReload: boolean;
+                    canStop: boolean;
+                };
+                diagnosticsFidelityByFamily: {
+                    console?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageError?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    network?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    elements?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    resources?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    storage?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    pageInfo?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    performance?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    screenshot?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                    proxyTunnel?: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable' | undefined;
+                };
+                contextKinds: ('browserAnnotation' | 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageReference' | 'browserPageTextSummary' | 'browserRecordingEvidence' | 'browserScreenshot' | 'browserSelectedElement' | 'browserTextSelection')[];
+                inputRouting: 'native' | 'none' | 'pmsControlSideband';
+                supportsDownloads: boolean;
+                supportsUploads: boolean;
+                supportsPopups: boolean;
+                supportsPermissions: boolean;
+                supportsStreamingDisplay: boolean;
+                disabledReasons: string[];
+                automationActions?: undefined | {
+                    snapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    semanticSnapshot: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    locatorQuery: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    navigate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    click: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    tap: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    type: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    press: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    scroll: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    hover: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    upload: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    drag: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    waitFor: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    evaluate: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    elementPicker: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    screenshotReference: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    recording: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    trustedInput: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                    crossOriginFrameAccess: {
+                        available: boolean;
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+                        trustedInput: boolean;
+                        disabledReasons: string[];
+                    };
+                };
+            };
+            navigationGeneration?: number | undefined;
+            currentUrl?: string | undefined;
+            currentUrlExpiresAt?: number | undefined;
+            openerViewId?: string | undefined;
         })[];
     } | {
         v: 1;
         commandId: string;
         status: 'failed';
         error: {
-            code: 'permission_denied' | 'adapter_unavailable' | 'sandbox_unavailable' | 'command_malformed' | 'feature_disabled' | 'policy_unavailable' | 'waiting_for_memory' | 'session_not_found' | 'unsupported_command' | 'view_not_found';
+            code: 'adapter_unavailable' | 'command_malformed' | 'feature_disabled' | 'permission_denied' | 'policy_unavailable' | 'sandbox_unavailable' | 'session_not_found' | 'unsupported_command' | 'view_not_found' | 'waiting_for_memory';
             message: string;
             retryable?: boolean | undefined;
         };
-        adapterKind?: 'externalUrl' | 'simulatorPreview' | 'localPreview' | 'hostedPlugin' | 'chromiumSidecar' | 'streamedBrowserSurface' | undefined;
-        completion?: 'unknown' | 'known' | undefined;
+        adapterKind?: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface' | undefined;
+        completion?: 'known' | 'unknown' | undefined;
     };
 };

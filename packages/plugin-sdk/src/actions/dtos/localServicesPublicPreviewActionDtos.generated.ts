@@ -12,7 +12,7 @@ export type LocalServicesPublicPreviewActionInputById = {
         previewId?: string | undefined;
         targetId?: string | undefined;
         exposureId?: string | undefined;
-        mode?: 'authenticated' | 'secret_link' | 'public' | undefined;
+        mode?: 'authenticated' | 'public' | 'secret_link' | undefined;
         ttlMs?: number | undefined;
     };
     readonly "localServices.publicPreview.status": {
@@ -23,7 +23,7 @@ export type LocalServicesPublicPreviewActionInputById = {
         previewId?: string | undefined;
         targetId?: string | undefined;
         exposureId?: string | undefined;
-        mode?: 'authenticated' | 'secret_link' | 'public' | undefined;
+        mode?: 'authenticated' | 'public' | 'secret_link' | undefined;
         ttlMs?: number | undefined;
     };
     readonly "localServices.publicPreview.revoke": {
@@ -34,7 +34,7 @@ export type LocalServicesPublicPreviewActionInputById = {
         previewId?: string | undefined;
         targetId?: string | undefined;
         exposureId?: string | undefined;
-        mode?: 'authenticated' | 'secret_link' | 'public' | undefined;
+        mode?: 'authenticated' | 'public' | 'secret_link' | undefined;
         ttlMs?: number | undefined;
     };
     readonly "localServices.publicPreview.copyUrl": {
@@ -45,8 +45,10 @@ export type LocalServicesPublicPreviewActionInputById = {
         previewId?: string | undefined;
         targetId?: string | undefined;
         exposureId?: string | undefined;
-        mode?: 'authenticated' | 'secret_link' | 'public' | undefined;
+        mode?: 'authenticated' | 'public' | 'secret_link' | undefined;
         ttlMs?: number | undefined;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type LocalServicesPublicPreviewActionResultById = {
@@ -56,19 +58,19 @@ export type LocalServicesPublicPreviewActionResultById = {
             exposureId: string;
             previewId: string;
             machineId: string;
-            mode: 'authenticated' | 'secret_link' | 'public';
-            state: 'pending' | 'active' | 'revoked' | 'expired' | 'rate_limited';
+            mode: 'authenticated' | 'public' | 'secret_link';
+            state: 'active' | 'expired' | 'pending' | 'rate_limited' | 'revoked';
             publicUrl: string;
             issuedAt: number;
             expiresAt: number;
             auditEventIds: string[];
             rateLimitProfileId: string;
             sessionId?: string | undefined;
-            serviceTarget?: {
-                machineId: string;
+            serviceTarget?: undefined | {
                 kind: 'managed_service';
-                managedServiceId: string;
+                machineId: string;
                 cwd: string;
+                managedServiceId: string;
                 declaration: {
                     workspaceRefId: string;
                     selection: {
@@ -78,7 +80,7 @@ export type LocalServicesPublicPreviewActionResultById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -93,18 +95,18 @@ export type LocalServicesPublicPreviewActionResultById = {
                     };
                 };
                 workspaceId?: string | undefined;
-            } | undefined;
+            };
             revokedAt?: number | undefined;
             policyDiagnostics?: Record<string, unknown> | undefined;
         };
-        snapshot?: {
+        snapshot?: undefined | {
             v: 1;
             machineId: string;
             generatedAt: number;
             refreshState: 'error' | 'idle' | 'refreshing';
             policy: {
                 enabled: boolean;
-                allowedModes: ('authenticated' | 'secret_link' | 'public')[];
+                allowedModes: ('authenticated' | 'public' | 'secret_link')[];
                 dnsTlsRequired: boolean;
                 auditRequired: boolean;
                 rateLimitProfileIds: string[];
@@ -115,19 +117,19 @@ export type LocalServicesPublicPreviewActionResultById = {
                 exposureId: string;
                 previewId: string;
                 machineId: string;
-                mode: 'authenticated' | 'secret_link' | 'public';
-                state: 'pending' | 'active' | 'revoked' | 'expired' | 'rate_limited';
+                mode: 'authenticated' | 'public' | 'secret_link';
+                state: 'active' | 'expired' | 'pending' | 'rate_limited' | 'revoked';
                 publicUrl: string;
                 issuedAt: number;
                 expiresAt: number;
                 auditEventIds: string[];
                 rateLimitProfileId: string;
                 sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
+                serviceTarget?: undefined | {
                     kind: 'managed_service';
-                    managedServiceId: string;
+                    machineId: string;
                     cwd: string;
+                    managedServiceId: string;
                     declaration: {
                         workspaceRefId: string;
                         selection: {
@@ -137,7 +139,7 @@ export type LocalServicesPublicPreviewActionResultById = {
                             kind: 'native';
                             source: {
                                 kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                 file: string;
                                 target: string;
                             } | {
@@ -152,15 +154,15 @@ export type LocalServicesPublicPreviewActionResultById = {
                         };
                     };
                     workspaceId?: string | undefined;
-                } | undefined;
+                };
                 revokedAt?: number | undefined;
                 policyDiagnostics?: Record<string, unknown> | undefined;
             }[];
             diagnostics: {
                 v: 1;
-                code: 'revoked' | 'expired' | 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'not_yet_valid' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'method_not_allowed' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
+                code: 'binding_mismatch' | 'cookie_isolated' | 'cookie_stripped' | 'credentials_stripped' | 'dns_tls_not_ready' | 'expired' | 'host_origin_unavailable' | 'https_required' | 'invalid_preview_resource' | 'invalid_public_base_url' | 'invalid_upgrade_request' | 'method_not_allowed' | 'not_yet_valid' | 'path_mode_cookie_semantics_unsupported' | 'path_mode_degraded' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'preview_loop_detected' | 'preview_not_found' | 'preview_public_base_url_missing' | 'preview_registration_failed' | 'preview_token_missing' | 'preview_token_secret_missing' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'revoked' | 'service_worker_unavailable_in_path_mode' | 'token_mismatch' | 'upstream_header_stripped' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'web_socket_unavailable';
                 severity: 'error' | 'info' | 'warning';
-                scope: 'privatePreview' | 'publicPreview' | 'previewProxy';
+                scope: 'previewProxy' | 'privatePreview' | 'publicPreview';
                 details: Record<string, unknown>;
                 previewId?: string | undefined;
                 publicExposureId?: string | undefined;
@@ -168,7 +170,7 @@ export type LocalServicesPublicPreviewActionResultById = {
             }[];
             sessionId?: string | undefined;
             previewId?: string | undefined;
-        } | undefined;
+        };
     };
     readonly "localServices.publicPreview.status": {
         v: 1;
@@ -177,7 +179,7 @@ export type LocalServicesPublicPreviewActionResultById = {
         refreshState: 'error' | 'idle' | 'refreshing';
         policy: {
             enabled: boolean;
-            allowedModes: ('authenticated' | 'secret_link' | 'public')[];
+            allowedModes: ('authenticated' | 'public' | 'secret_link')[];
             dnsTlsRequired: boolean;
             auditRequired: boolean;
             rateLimitProfileIds: string[];
@@ -188,19 +190,19 @@ export type LocalServicesPublicPreviewActionResultById = {
             exposureId: string;
             previewId: string;
             machineId: string;
-            mode: 'authenticated' | 'secret_link' | 'public';
-            state: 'pending' | 'active' | 'revoked' | 'expired' | 'rate_limited';
+            mode: 'authenticated' | 'public' | 'secret_link';
+            state: 'active' | 'expired' | 'pending' | 'rate_limited' | 'revoked';
             publicUrl: string;
             issuedAt: number;
             expiresAt: number;
             auditEventIds: string[];
             rateLimitProfileId: string;
             sessionId?: string | undefined;
-            serviceTarget?: {
-                machineId: string;
+            serviceTarget?: undefined | {
                 kind: 'managed_service';
-                managedServiceId: string;
+                machineId: string;
                 cwd: string;
+                managedServiceId: string;
                 declaration: {
                     workspaceRefId: string;
                     selection: {
@@ -210,7 +212,7 @@ export type LocalServicesPublicPreviewActionResultById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -225,15 +227,15 @@ export type LocalServicesPublicPreviewActionResultById = {
                     };
                 };
                 workspaceId?: string | undefined;
-            } | undefined;
+            };
             revokedAt?: number | undefined;
             policyDiagnostics?: Record<string, unknown> | undefined;
         }[];
         diagnostics: {
             v: 1;
-            code: 'revoked' | 'expired' | 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'not_yet_valid' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'method_not_allowed' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
+            code: 'binding_mismatch' | 'cookie_isolated' | 'cookie_stripped' | 'credentials_stripped' | 'dns_tls_not_ready' | 'expired' | 'host_origin_unavailable' | 'https_required' | 'invalid_preview_resource' | 'invalid_public_base_url' | 'invalid_upgrade_request' | 'method_not_allowed' | 'not_yet_valid' | 'path_mode_cookie_semantics_unsupported' | 'path_mode_degraded' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'preview_loop_detected' | 'preview_not_found' | 'preview_public_base_url_missing' | 'preview_registration_failed' | 'preview_token_missing' | 'preview_token_secret_missing' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'revoked' | 'service_worker_unavailable_in_path_mode' | 'token_mismatch' | 'upstream_header_stripped' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'web_socket_unavailable';
             severity: 'error' | 'info' | 'warning';
-            scope: 'privatePreview' | 'publicPreview' | 'previewProxy';
+            scope: 'previewProxy' | 'privatePreview' | 'publicPreview';
             details: Record<string, unknown>;
             previewId?: string | undefined;
             publicExposureId?: string | undefined;
@@ -253,7 +255,7 @@ export type LocalServicesPublicPreviewActionResultById = {
             refreshState: 'error' | 'idle' | 'refreshing';
             policy: {
                 enabled: boolean;
-                allowedModes: ('authenticated' | 'secret_link' | 'public')[];
+                allowedModes: ('authenticated' | 'public' | 'secret_link')[];
                 dnsTlsRequired: boolean;
                 auditRequired: boolean;
                 rateLimitProfileIds: string[];
@@ -264,19 +266,19 @@ export type LocalServicesPublicPreviewActionResultById = {
                 exposureId: string;
                 previewId: string;
                 machineId: string;
-                mode: 'authenticated' | 'secret_link' | 'public';
-                state: 'pending' | 'active' | 'revoked' | 'expired' | 'rate_limited';
+                mode: 'authenticated' | 'public' | 'secret_link';
+                state: 'active' | 'expired' | 'pending' | 'rate_limited' | 'revoked';
                 publicUrl: string;
                 issuedAt: number;
                 expiresAt: number;
                 auditEventIds: string[];
                 rateLimitProfileId: string;
                 sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
+                serviceTarget?: undefined | {
                     kind: 'managed_service';
-                    managedServiceId: string;
+                    machineId: string;
                     cwd: string;
+                    managedServiceId: string;
                     declaration: {
                         workspaceRefId: string;
                         selection: {
@@ -286,7 +288,7 @@ export type LocalServicesPublicPreviewActionResultById = {
                             kind: 'native';
                             source: {
                                 kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                 file: string;
                                 target: string;
                             } | {
@@ -301,15 +303,15 @@ export type LocalServicesPublicPreviewActionResultById = {
                         };
                     };
                     workspaceId?: string | undefined;
-                } | undefined;
+                };
                 revokedAt?: number | undefined;
                 policyDiagnostics?: Record<string, unknown> | undefined;
             }[];
             diagnostics: {
                 v: 1;
-                code: 'revoked' | 'expired' | 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'not_yet_valid' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'method_not_allowed' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
+                code: 'binding_mismatch' | 'cookie_isolated' | 'cookie_stripped' | 'credentials_stripped' | 'dns_tls_not_ready' | 'expired' | 'host_origin_unavailable' | 'https_required' | 'invalid_preview_resource' | 'invalid_public_base_url' | 'invalid_upgrade_request' | 'method_not_allowed' | 'not_yet_valid' | 'path_mode_cookie_semantics_unsupported' | 'path_mode_degraded' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'preview_loop_detected' | 'preview_not_found' | 'preview_public_base_url_missing' | 'preview_registration_failed' | 'preview_token_missing' | 'preview_token_secret_missing' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'revoked' | 'service_worker_unavailable_in_path_mode' | 'token_mismatch' | 'upstream_header_stripped' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'web_socket_unavailable';
                 severity: 'error' | 'info' | 'warning';
-                scope: 'privatePreview' | 'publicPreview' | 'previewProxy';
+                scope: 'previewProxy' | 'privatePreview' | 'publicPreview';
                 details: Record<string, unknown>;
                 previewId?: string | undefined;
                 publicExposureId?: string | undefined;
@@ -326,11 +328,11 @@ export type LocalServicesPublicPreviewActionResultById = {
         exposureId: string;
         publicUrl: string;
         sessionId?: string | undefined;
-        serviceTarget?: {
-            machineId: string;
+        serviceTarget?: undefined | {
             kind: 'managed_service';
-            managedServiceId: string;
+            machineId: string;
             cwd: string;
+            managedServiceId: string;
             declaration: {
                 workspaceRefId: string;
                 selection: {
@@ -340,7 +342,7 @@ export type LocalServicesPublicPreviewActionResultById = {
                     kind: 'native';
                     source: {
                         kind: 'native';
-                        tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                         file: string;
                         target: string;
                     } | {
@@ -355,6 +357,6 @@ export type LocalServicesPublicPreviewActionResultById = {
                 };
             };
             workspaceId?: string | undefined;
-        } | undefined;
+        };
     };
 };

@@ -22,9 +22,10 @@ export type WorkflowEventCatalogActionResultById = {
                 };
                 occurrenceId: string;
                 sourceCustody: {
-                    kind: 'managed';
-                    immutableGenerationId: string;
-                    installSource: 'npm' | 'archive' | 'localPath';
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
                 } | {
                     kind: 'bundled_first_party';
                     packagedRuntime: {
@@ -41,13 +42,12 @@ export type WorkflowEventCatalogActionResultById = {
                     kind: 'development';
                     registeredRootId: string;
                 } | {
-                    kind: 'account_release';
-                    pluginId: string;
-                    version: string;
-                    archiveDigestSha256: string;
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'localPath' | 'npm';
                 };
                 title: string;
-                description: string | null;
+                description: null | string;
                 automation: {
                     v: 1;
                     eligible: true;
@@ -59,26 +59,38 @@ export type WorkflowEventCatalogActionResultById = {
                             pluginId: string;
                             localId: string;
                         };
-                        webhookContributionRef?: {
+                        webhookContributionRef?: undefined | {
                             pluginId: string;
                             localId: string;
-                        } | undefined;
-                        observationOnly?: {
+                        };
+                        observationOnly?: undefined | {
                             kind: 'observationOnly';
-                        } | undefined;
-                        setupSurface?: {
+                        };
+                        setupSurface?: undefined | {
                             renderer: string;
                             fallbackRenderers?: string[] | undefined;
-                        } | undefined;
-                        historyGapResetActionRef?: {
+                        };
+                        historyGapResetActionRef?: undefined | {
                             pluginId: string;
                             localId: string;
-                        } | undefined;
-                        connectedAccountPurposeBindings?: {
+                        };
+                        connectedAccountPurposeBindings?: undefined | {
                             path: string;
                             purpose: string;
                             nativeServicePath?: string | undefined;
-                        }[] | undefined;
+                        }[];
+                    };
+                };
+                localizedPresentation?: undefined | {
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
                     };
                 };
                 payloadSchema?: PluginJsonSchemaV2 | undefined;
@@ -91,22 +103,22 @@ export type WorkflowEventCatalogActionResultById = {
                 };
                 occurrenceId: string;
                 title: string;
-                description: string | null;
+                description: null | string;
                 inputSchema: PluginJsonSchemaV2;
-                inputHints: {
+                inputHints: null | {
                     fields: readonly {
                         path: string;
-                        widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                        widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                         title: string;
-                        inputType?: {
-                            pluginId: string;
-                            localId: string;
+                        inputType?: undefined | {
+                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                         } | {
                             hostType: 'usageQuery';
                             field?: 'period' | 'session' | undefined;
                         } | {
-                            hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                        } | undefined;
+                            pluginId: string;
+                            localId: string;
+                        };
                         contextMode?: 'follow' | 'own' | undefined;
                         required?: boolean | undefined;
                         requireExplicitSelection?: boolean | undefined;
@@ -130,14 +142,33 @@ export type WorkflowEventCatalogActionResultById = {
                             labelKey?: string | undefined;
                             description?: string | undefined;
                             disabled?: boolean | undefined;
+                            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                            brand?: undefined | {
+                                state: 'available';
+                                resource: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                width: number;
+                                height: number;
+                                digest: `sha256:${string}`;
+                                monochrome?: boolean | undefined;
+                            } | {
+                                state: 'invalid' | 'missing' | 'retired';
+                            };
+                            source?: undefined | {
+                                kind: string;
+                                locator: string;
+                            };
+                            version?: string | undefined;
                         }[] | undefined;
                     }[];
                     title?: string | undefined;
                     description?: string | undefined;
                     submitLabel?: string | undefined;
-                } | null;
+                };
             };
-            historyGapResetAction?: {
+            historyGapResetAction?: undefined | {
                 id: string;
                 identity: {
                     pluginId: string;
@@ -145,22 +176,22 @@ export type WorkflowEventCatalogActionResultById = {
                 };
                 occurrenceId: string;
                 title: string;
-                description: string | null;
+                description: null | string;
                 inputSchema: PluginJsonSchemaV2;
-                inputHints: {
+                inputHints: null | {
                     fields: readonly {
                         path: string;
-                        widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                        widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                         title: string;
-                        inputType?: {
-                            pluginId: string;
-                            localId: string;
+                        inputType?: undefined | {
+                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                         } | {
                             hostType: 'usageQuery';
                             field?: 'period' | 'session' | undefined;
                         } | {
-                            hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                        } | undefined;
+                            pluginId: string;
+                            localId: string;
+                        };
                         contextMode?: 'follow' | 'own' | undefined;
                         required?: boolean | undefined;
                         requireExplicitSelection?: boolean | undefined;
@@ -184,13 +215,32 @@ export type WorkflowEventCatalogActionResultById = {
                             labelKey?: string | undefined;
                             description?: string | undefined;
                             disabled?: boolean | undefined;
+                            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                            brand?: undefined | {
+                                state: 'available';
+                                resource: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                width: number;
+                                height: number;
+                                digest: `sha256:${string}`;
+                                monochrome?: boolean | undefined;
+                            } | {
+                                state: 'invalid' | 'missing' | 'retired';
+                            };
+                            source?: undefined | {
+                                kind: string;
+                                locator: string;
+                            };
+                            version?: string | undefined;
                         }[] | undefined;
                     }[];
                     title?: string | undefined;
                     description?: string | undefined;
                     submitLabel?: string | undefined;
-                } | null;
-            } | undefined;
+                };
+            };
         }[];
     };
 };

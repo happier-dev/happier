@@ -7,31 +7,47 @@ export type PluginAccountAdministrationActionInputById = {
     readonly "plugins.account.release.select": {
         pluginId: string;
         version: string;
-        daemon?: {
-            serverId: string | null;
-            serverIdentityId: string | null;
-            machineId: string | null;
-        } | undefined;
+        daemon?: undefined | {
+            serverId: null | string;
+            serverIdentityId: null | string;
+            machineId: null | string;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.account.hosting.set": {
         pluginId: string;
         enabled: boolean;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.account.hosting.remove": {
         pluginId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.account.cache.clear": {
         pluginId: string;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type PluginAccountAdministrationActionResultById = {
     readonly "plugins.account.release.select": {
+        kind: 'cancelled';
+    } | {
+        kind: 'conflict';
+        code: 'intent_revision_conflict';
+    } | {
+        kind: 'rejected';
+        code: 'intent_set_rejected';
+    } | {
         kind: 'selected';
         intent: {
             pluginId: string;
-            desiredVersion: string | null;
+            desiredVersion: null | string;
             enabled: boolean;
-            offlineUiHosting: 'enabled' | 'disabled';
+            offlineUiHosting: 'disabled' | 'enabled';
             writableCollections: {
                 pluginId: string;
                 collectionId: string;
@@ -41,16 +57,8 @@ export type PluginAccountAdministrationActionResultById = {
             revision: string;
         };
     } | {
-        kind: 'cancelled';
-    } | {
-        kind: 'conflict';
-        code: 'intent_revision_conflict';
-    } | {
         kind: 'unavailable';
-        code: 'target_release_unavailable' | 'source_release_unavailable' | 'source_release_changed' | 'target_contract_mismatch' | 'candidate_preparation_unavailable' | 'intent_set_unavailable';
-    } | {
-        kind: 'rejected';
-        code: 'intent_set_rejected';
+        code: 'candidate_preparation_unavailable' | 'intent_set_unavailable' | 'source_release_changed' | 'source_release_unavailable' | 'target_contract_mismatch' | 'target_release_unavailable';
     };
     readonly "plugins.account.hosting.set": {
         kind: 'conflict' | 'unavailable' | 'updated';

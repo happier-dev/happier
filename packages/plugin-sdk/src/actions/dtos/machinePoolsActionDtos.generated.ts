@@ -16,7 +16,7 @@ export type MachinePoolsActionInputById = {
             priorityTier: number;
             enabled: boolean;
         }[];
-        description?: string | null | undefined;
+        description?: null | string | undefined;
     };
     readonly "machines.pools.update": {
         poolId: string;
@@ -27,7 +27,7 @@ export type MachinePoolsActionInputById = {
             priorityTier: number;
             enabled: boolean;
         }[];
-        description?: string | null | undefined;
+        description?: null | string | undefined;
     };
     readonly "machines.pools.delete": {
         poolId: string;
@@ -36,28 +36,28 @@ export type MachinePoolsActionInputById = {
     readonly "machines.pools.resolve": {
         poolId: string;
         requestKey: string;
-        purpose?: 'session' | undefined;
-    } | {
-        poolId: string;
-        requestKey: string;
         purpose: 'finite' | 'service-start';
         workspace: {
             serverId: string;
             refId: string;
         };
-        memoryDemand?: {
+        memoryDemand?: undefined | {
             bytes: number;
             basis: {
                 kind: 'declared';
             } | {
                 kind: 'measured';
-                operation?: {
+                operation?: undefined | {
                     serverId: string;
                     machineId: string;
                     operationId: string;
-                } | undefined;
+                };
             };
-        } | undefined;
+        };
+    } | {
+        poolId: string;
+        requestKey: string;
+        purpose?: 'session' | undefined;
     };
 };
 export type MachinePoolsActionResultById = {
@@ -66,7 +66,7 @@ export type MachinePoolsActionResultById = {
             pool: {
                 id: string;
                 name: string;
-                description: string | null;
+                description: null | string;
                 revision: number;
                 createdAt: number;
                 updatedAt: number;
@@ -74,7 +74,7 @@ export type MachinePoolsActionResultById = {
                     machineId: string;
                     priorityTier: number;
                     enabled: boolean;
-                    state: 'unknown' | 'connected' | 'offline' | 'revoked' | 'replaced' | 'temporary';
+                    state: 'connected' | 'offline' | 'replaced' | 'revoked' | 'temporary' | 'unknown';
                 }[];
             };
             availability: {
@@ -90,7 +90,7 @@ export type MachinePoolsActionResultById = {
         pool: {
             id: string;
             name: string;
-            description: string | null;
+            description: null | string;
             revision: number;
             createdAt: number;
             updatedAt: number;
@@ -98,7 +98,7 @@ export type MachinePoolsActionResultById = {
                 machineId: string;
                 priorityTier: number;
                 enabled: boolean;
-                state: 'unknown' | 'connected' | 'offline' | 'revoked' | 'replaced' | 'temporary';
+                state: 'connected' | 'offline' | 'replaced' | 'revoked' | 'temporary' | 'unknown';
             }[];
         };
         availability: {
@@ -113,7 +113,7 @@ export type MachinePoolsActionResultById = {
         pool: {
             id: string;
             name: string;
-            description: string | null;
+            description: null | string;
             revision: number;
             createdAt: number;
             updatedAt: number;
@@ -121,7 +121,7 @@ export type MachinePoolsActionResultById = {
                 machineId: string;
                 priorityTier: number;
                 enabled: boolean;
-                state: 'unknown' | 'connected' | 'offline' | 'revoked' | 'replaced' | 'temporary';
+                state: 'connected' | 'offline' | 'replaced' | 'revoked' | 'temporary' | 'unknown';
             }[];
         };
         availability: {
@@ -136,7 +136,7 @@ export type MachinePoolsActionResultById = {
         pool: {
             id: string;
             name: string;
-            description: string | null;
+            description: null | string;
             revision: number;
             createdAt: number;
             updatedAt: number;
@@ -144,7 +144,7 @@ export type MachinePoolsActionResultById = {
                 machineId: string;
                 priorityTier: number;
                 enabled: boolean;
-                state: 'unknown' | 'connected' | 'offline' | 'revoked' | 'replaced' | 'temporary';
+                state: 'connected' | 'offline' | 'replaced' | 'revoked' | 'temporary' | 'unknown';
             }[];
         };
         availability: {

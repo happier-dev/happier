@@ -8,23 +8,38 @@ export type SavedSecretSharingActionInputById = {
     readonly "secrets.shared.create": {
         resourceId: string;
         displayName: string;
-        kind: 'apiKey' | 'token' | 'password' | 'other';
-        encryptionMode: 'plain' | 'e2ee';
+        kind: 'apiKey' | 'other' | 'password' | 'token';
+        encryptionMode: 'e2ee' | 'plain';
         storedContent: {
+            t: 'encrypted';
+            c: string;
+            storage?: undefined | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'value';
+            };
+        } | {
             t: 'plain';
             v: {
                 v: 1;
                 name: string;
-                kind: 'apiKey' | 'token' | 'password' | 'other';
+                kind: 'apiKey' | 'other' | 'password' | 'token';
                 value: string;
-                createdByPlugin?: {
+                createdByPlugin?: undefined | {
                     pluginId: string;
                     secretId: string;
-                } | undefined;
+                };
             } | {
                 v: 2;
                 name: string;
-                kind: 'apiKey' | 'token' | 'password' | 'other';
+                kind: 'apiKey' | 'other' | 'password' | 'token';
                 source: {
                     kind: 'external';
                     contribution: {
@@ -33,26 +48,26 @@ export type SavedSecretSharingActionInputById = {
                     };
                     account: string;
                     reference: string;
-                    metadata?: {
-                        vault: {
-                            id: string;
-                            name: string;
-                        };
-                        item: {
-                            id: string;
-                            title: string;
-                        };
+                    metadata?: undefined | {
                         field: {
                             id: string;
                             title: string;
                             kind: string;
                         };
-                    } | undefined;
+                        item: {
+                            id: string;
+                            title: string;
+                        };
+                        vault: {
+                            id: string;
+                            name: string;
+                        };
+                    };
                 };
-                createdByPlugin?: {
+                createdByPlugin?: undefined | {
                     pluginId: string;
                     secretId: string;
-                } | undefined;
+                };
             } | {
                 v: 2;
                 name: string;
@@ -70,68 +85,68 @@ export type SavedSecretSharingActionInputById = {
                     userName?: string | undefined;
                     userDisplayName?: string | undefined;
                 };
-                createdByPlugin?: {
+                createdByPlugin?: undefined | {
                     pluginId: string;
                     secretId: string;
-                } | undefined;
+                };
             };
-            storage?: {
-                kind: 'value';
-            } | {
-                kind: 'passkey';
-            } | {
+            storage?: undefined | {
                 kind: 'external';
                 provider: {
                     pluginId: string;
                     localId: string;
                 };
                 providerLabel?: string | undefined;
-            } | undefined;
-        } | {
-            t: 'encrypted';
-            c: string;
-            storage?: {
-                kind: 'value';
             } | {
                 kind: 'passkey';
             } | {
-                kind: 'external';
-                provider: {
-                    pluginId: string;
-                    localId: string;
-                };
-                providerLabel?: string | undefined;
-            } | undefined;
+                kind: 'value';
+            };
         };
         accountGrants?: string[] | undefined;
         teamGrants?: string[] | undefined;
         groupGrants?: string[] | undefined;
-        keyEnvelopes?: {
+        keyEnvelopes?: undefined | {
             recipientAccountId: string;
             encryptedDataKey: string;
             recipientContentPublicKeyFingerprint: string;
-        }[] | undefined;
+        }[];
     };
     readonly "secrets.shared.promote": {
         resourceId: string;
         displayName: string;
-        kind: 'apiKey' | 'token' | 'password' | 'other';
-        encryptionMode: 'plain' | 'e2ee';
+        kind: 'apiKey' | 'other' | 'password' | 'token';
+        encryptionMode: 'e2ee' | 'plain';
         storedContent: {
+            t: 'encrypted';
+            c: string;
+            storage?: undefined | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'value';
+            };
+        } | {
             t: 'plain';
             v: {
                 v: 1;
                 name: string;
-                kind: 'apiKey' | 'token' | 'password' | 'other';
+                kind: 'apiKey' | 'other' | 'password' | 'token';
                 value: string;
-                createdByPlugin?: {
+                createdByPlugin?: undefined | {
                     pluginId: string;
                     secretId: string;
-                } | undefined;
+                };
             } | {
                 v: 2;
                 name: string;
-                kind: 'apiKey' | 'token' | 'password' | 'other';
+                kind: 'apiKey' | 'other' | 'password' | 'token';
                 source: {
                     kind: 'external';
                     contribution: {
@@ -140,26 +155,26 @@ export type SavedSecretSharingActionInputById = {
                     };
                     account: string;
                     reference: string;
-                    metadata?: {
-                        vault: {
-                            id: string;
-                            name: string;
-                        };
-                        item: {
-                            id: string;
-                            title: string;
-                        };
+                    metadata?: undefined | {
                         field: {
                             id: string;
                             title: string;
                             kind: string;
                         };
-                    } | undefined;
+                        item: {
+                            id: string;
+                            title: string;
+                        };
+                        vault: {
+                            id: string;
+                            name: string;
+                        };
+                    };
                 };
-                createdByPlugin?: {
+                createdByPlugin?: undefined | {
                     pluginId: string;
                     secretId: string;
-                } | undefined;
+                };
             } | {
                 v: 2;
                 name: string;
@@ -177,118 +192,109 @@ export type SavedSecretSharingActionInputById = {
                     userName?: string | undefined;
                     userDisplayName?: string | undefined;
                 };
-                createdByPlugin?: {
+                createdByPlugin?: undefined | {
                     pluginId: string;
                     secretId: string;
-                } | undefined;
+                };
             };
-            storage?: {
-                kind: 'value';
-            } | {
-                kind: 'passkey';
-            } | {
+            storage?: undefined | {
                 kind: 'external';
                 provider: {
                     pluginId: string;
                     localId: string;
                 };
                 providerLabel?: string | undefined;
-            } | undefined;
-        } | {
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'value';
+            };
+        };
+        nextSettings: null | {
             t: 'encrypted';
             c: string;
-            storage?: {
-                kind: 'value';
-            } | {
-                kind: 'passkey';
-            } | {
-                kind: 'external';
-                provider: {
-                    pluginId: string;
-                    localId: string;
-                };
-                providerLabel?: string | undefined;
-            } | undefined;
-        };
-        nextSettings: {
+        } | {
             t: 'plain';
             v: {
                 [x: string]: unknown;
             };
-        } | {
-            t: 'encrypted';
-            c: string;
-        } | null;
+        };
         referenceCensus: {
-            accountMode: 'plain' | 'e2ee';
+            accountMode: 'e2ee' | 'plain';
             profiles: {
-                referenceGuardRevision: number | 'absent';
+                referenceGuardRevision: 'absent' | number;
                 rows: {
                     id: string;
                     revision: number;
                 }[];
             };
-            profileTransferRevision?: number | 'absent' | undefined;
-            artifacts?: {
+            profileTransferRevision?: 'absent' | number | undefined;
+            artifacts?: undefined | {
                 headerVersion: number;
                 bodyVersion: number;
                 artifactId: string;
-            }[] | undefined;
-            catalogs?: {
-                mcp: number | 'absent';
-                acp: number | 'absent';
-                providerConnections: number | 'absent';
-                connectedConfigurations: number | 'absent';
-                connectedPurposes: number | 'absent';
-                registrySources?: number | 'absent' | undefined;
-            } | undefined;
-            remoteHosts?: {
-                revision: number | 'absent';
+            }[];
+            catalogs?: undefined | {
+                mcp: 'absent' | number;
+                acp: 'absent' | number;
+                providerConnections: 'absent' | number;
+                connectedConfigurations: 'absent' | number;
+                connectedPurposes: 'absent' | number;
+                registrySources?: 'absent' | number | undefined;
+            };
+            remoteHosts?: undefined | {
+                revision: 'absent' | number;
                 resourceRefs: string[];
-            } | undefined;
-            notificationChannels?: {
-                revision: number | 'absent';
+            };
+            notificationChannels?: undefined | {
+                revision: 'absent' | number;
                 resourceRefs: string[];
-            } | undefined;
+            };
         } | {
             scope: 'catalogs';
-            accountMode: 'plain' | 'e2ee';
+            accountMode: 'e2ee' | 'plain';
             catalogs: {
-                mcp?: number | 'absent' | undefined;
-                acp?: number | 'absent' | undefined;
-                providerConnections?: number | 'absent' | undefined;
-                connectedConfigurations?: number | 'absent' | undefined;
-                connectedPurposes?: number | 'absent' | undefined;
-                registrySources?: number | 'absent' | undefined;
+                mcp?: 'absent' | number | undefined;
+                acp?: 'absent' | number | undefined;
+                providerConnections?: 'absent' | number | undefined;
+                connectedConfigurations?: 'absent' | number | undefined;
+                connectedPurposes?: 'absent' | number | undefined;
+                registrySources?: 'absent' | number | undefined;
             };
-            remoteHosts?: {
-                revision: number | 'absent';
+            remoteHosts?: undefined | {
+                revision: 'absent' | number;
                 resourceRefs: string[];
-            } | undefined;
-            notificationChannels?: {
-                revision: number | 'absent';
+            };
+            notificationChannels?: undefined | {
+                revision: 'absent' | number;
                 resourceRefs: string[];
-            } | undefined;
+            };
         };
         accountGrants?: string[] | undefined;
         teamGrants?: string[] | undefined;
         groupGrants?: string[] | undefined;
-        keyEnvelopes?: {
+        keyEnvelopes?: undefined | {
             recipientAccountId: string;
             encryptedDataKey: string;
             recipientContentPublicKeyFingerprint: string;
-        }[] | undefined;
+        }[];
         expectedSettingsVersion?: number | undefined;
-        profileMutations?: {
+        profileMutations?: undefined | {
             id: string;
-            operation: 'create' | 'clone-legacy' | 'attach-builtin' | 'update' | 'remove' | 'import';
-            expectedRevision: number | 'absent';
-            content: {
+            operation: 'attach-builtin' | 'clone-legacy' | 'create' | 'import' | 'remove' | 'update';
+            expectedRevision: 'absent' | number;
+            content: null | {
+                t: 'encrypted';
+                c: string;
+            } | {
                 t: 'plain';
                 v: {
                     v: 1;
                     id: string;
                     definition: {
+                        kind: 'artifact';
+                        artifactId: string;
+                    } | {
                         kind: 'inline';
                         profile: {
                             v: 2;
@@ -297,53 +303,50 @@ export type SavedSecretSharingActionInputById = {
                             id: string;
                             name: string;
                             description?: string | undefined;
-                            defaultPermissionModeByTargetKey?: Record<PropertyKey, 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
-                            defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'persisted' | 'direct'> | undefined;
+                            defaultPermissionModeByTargetKey?: Record<PropertyKey, 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                            defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'direct' | 'persisted'> | undefined;
                             compatibilityByTargetKey?: Record<PropertyKey, boolean> | undefined;
                             preferredAgentTargetKey?: unknown;
                             preferredModelSelection?: unknown;
-                            placement?: 'automatic' | 'ask' | {
+                            placement?: 'ask' | 'automatic' | undefined | {
                                 fixed: {
                                     serverId: string;
                                     machineId: string;
                                 };
                                 directory?: string | undefined;
-                            } | undefined;
-                            checkout?: 'ask' | 'reuse_workspace' | 'create_worktree' | undefined;
-                            codingPromptBehaviorOverrides?: {
+                            };
+                            checkout?: 'ask' | 'create_worktree' | 'reuse_workspace' | undefined;
+                            codingPromptBehaviorOverrides?: undefined | {
                                 sessionTitleUpdates?: 'agent' | 'disabled' | 'initial' | 'ongoing' | undefined;
                                 responseOptions?: 'agent' | 'disabled' | undefined;
-                            } | undefined;
-                            extraEnvironmentVariables?: {
+                            };
+                            extraEnvironmentVariables?: undefined | {
                                 name: string;
                                 value: string;
                                 isSecret?: boolean | undefined;
-                            }[] | undefined;
-                            envVarRequirements?: {
+                            }[];
+                            envVarRequirements?: undefined | {
                                 name: string;
                                 kind?: 'config' | 'secret' | undefined;
                                 required?: boolean | undefined;
-                            }[] | undefined;
+                            }[];
                         };
-                    } | {
-                        kind: 'artifact';
-                        artifactId: string;
                     } | {
                         kind: 'legacy';
                         profile: {
                             id: string;
                             name: string;
                             description?: string | undefined;
-                            environmentVariables?: {
+                            environmentVariables?: undefined | {
                                 name: string;
                                 value: string;
                                 isSecret?: boolean | undefined;
-                            }[] | undefined;
-                            defaultPermissionMode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-                            defaultPermissionModeByTargetKey?: Record<PropertyKey, 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
-                            defaultPermissionModeByAgent?: Record<string, 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
-                            defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'persisted' | 'direct'> | undefined;
-                            defaultPersistenceModeByAgent?: Record<string, 'persisted' | 'direct'> | undefined;
+                            }[];
+                            defaultPermissionMode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
+                            defaultPermissionModeByTargetKey?: Record<PropertyKey, 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                            defaultPermissionModeByAgent?: Record<string, 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo'> | undefined;
+                            defaultPersistenceModeByTargetKey?: Record<PropertyKey, 'direct' | 'persisted'> | undefined;
+                            defaultPersistenceModeByAgent?: Record<string, 'direct' | 'persisted'> | undefined;
                             defaultModelMode?: string | undefined;
                             defaultBackendTargetKey?: unknown;
                             compatibilityByTargetKey?: Record<PropertyKey, boolean> | undefined;
@@ -351,93 +354,96 @@ export type SavedSecretSharingActionInputById = {
                             authMode?: 'machineLogin' | undefined;
                             requiresMachineLoginTargetKey?: unknown;
                             requiresMachineLogin?: string | undefined;
-                            envVarRequirements?: {
+                            envVarRequirements?: undefined | {
                                 name: string;
                                 kind?: 'config' | 'secret' | undefined;
                                 required?: boolean | undefined;
-                            }[] | undefined;
+                            }[];
                             isBuiltIn?: boolean | undefined;
                             defaultEnabled?: boolean | undefined;
                             createdAt?: number | undefined;
                             updatedAt?: number | undefined;
                             version?: string | undefined;
-                            codingPromptBehaviorV1?: {
+                            codingPromptBehaviorV1?: undefined | {
                                 v?: 1 | undefined;
                                 sessionTitleUpdates?: 'agent' | 'disabled' | 'initial' | 'ongoing' | undefined;
                                 responseOptions?: 'agent' | 'disabled' | undefined;
-                            } | undefined;
+                            };
                         };
                     };
                     enabled: boolean;
                     promptStack: {
                         id: string;
                         ref: {
-                            kind: 'doc' | 'bundle';
+                            kind: 'bundle' | 'doc';
                             artifactId: string;
                             serverId?: string | undefined;
                         };
                         enabled?: boolean | undefined;
-                        placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
+                        placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
                         maxChars?: number | undefined;
                         required?: boolean | undefined;
                         skillMigrationV1?: true | undefined;
                     }[];
-                    secretBindings: Record<string, string | null>;
+                    secretBindings: Record<string, null | string>;
                     skillSeeds?: string[] | undefined;
                 };
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | null;
+            };
             referencedSavedSecretIds?: string[] | undefined;
-            savedSecretRevisions?: {
+            savedSecretRevisions?: undefined | {
                 resourceId: string;
                 expectedRevision: number;
-            }[] | undefined;
-            artifactRevision?: {
+            }[];
+            artifactRevision?: null | undefined | {
                 headerVersion: number;
                 bodyVersion: number;
                 artifactId: string;
-            } | null | undefined;
-            legacyCloneSource?: {
+            };
+            legacyCloneSource?: undefined | {
                 id: string;
                 revision: number;
-                artifactRevision?: {
+                artifactRevision?: undefined | {
                     headerVersion: number;
                     bodyVersion: number;
                     artifactId: string;
-                } | undefined;
-            } | undefined;
-            settingsCleanup?: {
+                };
+            };
+            settingsCleanup?: undefined | {
                 expectedSettingsVersion: number;
-                nextSettings: {
+                nextSettings: null | {
+                    t: 'encrypted';
+                    c: string;
+                } | {
                     t: 'plain';
                     v: {
                         [x: string]: unknown;
                     };
-                } | {
+                };
+            };
+        }[];
+        catalogMutations?: undefined | {
+            mcp?: undefined | {
+                expectedRevision: 'absent' | number;
+                content: null | {
                     t: 'encrypted';
                     c: string;
-                } | null;
-            } | undefined;
-        }[] | undefined;
-        catalogMutations?: {
-            mcp?: {
-                expectedRevision: number | 'absent';
-                content: {
+                } | {
                     t: 'plain';
                     v: {
                         v: 1;
                         servers: {
                             id: string;
                             name: string;
-                            transport: 'stdio' | 'http' | 'sse';
+                            transport: 'http' | 'sse' | 'stdio';
                             env: Record<string, {
                                 t: 'literal';
                                 v: string;
                             } | {
                                 t: 'savedSecret';
                                 secretId: string;
+                            } | {
+                                t: 'sessionAttested';
+                                field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
                             } | {
                                 t: 'template';
                                 template: string;
@@ -448,25 +454,22 @@ export type SavedSecretSharingActionInputById = {
                                     t: 'savedSecret';
                                     secretId: string;
                                 }>;
-                            } | {
-                                t: 'sessionAttested';
-                                field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
                             }>;
                             createdAt: number;
                             updatedAt: number;
                             title?: string | undefined;
                             description?: string | undefined;
-                            stdio?: {
+                            stdio?: undefined | {
                                 command: string;
                                 args: string[];
-                                cwd?: {
-                                    t: 'session';
-                                } | {
+                                cwd?: undefined | {
                                     t: 'path';
                                     path: string;
-                                } | undefined;
-                            } | undefined;
-                            remote?: {
+                                } | {
+                                    t: 'session';
+                                };
+                            };
+                            remote?: undefined | {
                                 url: string;
                                 headers: Record<string, {
                                     t: 'literal';
@@ -475,20 +478,9 @@ export type SavedSecretSharingActionInputById = {
                                     t: 'savedSecret';
                                     secretId: string;
                                 } | {
-                                    t: 'template';
-                                    template: string;
-                                    vars: Record<string, {
-                                        t: 'literal';
-                                        v: string;
-                                    } | {
-                                        t: 'savedSecret';
-                                        secretId: string;
-                                    }>;
-                                } | {
                                     t: 'sessionAttested';
-                                    field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
-                                }>;
-                                urlTemplate?: {
+                                    field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+                                } | {
                                     t: 'template';
                                     template: string;
                                     vars: Record<string, {
@@ -498,12 +490,23 @@ export type SavedSecretSharingActionInputById = {
                                         t: 'savedSecret';
                                         secretId: string;
                                     }>;
-                                } | undefined;
-                                auth?: {
+                                }>;
+                                urlTemplate?: undefined | {
+                                    t: 'template';
+                                    template: string;
+                                    vars: Record<string, {
+                                        t: 'literal';
+                                        v: string;
+                                    } | {
+                                        t: 'savedSecret';
+                                        secretId: string;
+                                    }>;
+                                };
+                                auth?: undefined | {
                                     kind: 'oauth';
-                                } | undefined;
-                            } | undefined;
-                            configOverrides?: {
+                                };
+                            };
+                            configOverrides?: undefined | {
                                 target: {
                                     t: 'machine';
                                     machineId: string;
@@ -512,24 +515,27 @@ export type SavedSecretSharingActionInputById = {
                                     machineId: string;
                                     workspaceRoot: string;
                                 };
-                                stdio?: {
+                                stdio?: undefined | {
                                     command?: string | undefined;
                                     args?: string[] | undefined;
-                                    cwd?: {
-                                        t: 'session';
-                                    } | {
+                                    cwd?: undefined | {
                                         t: 'path';
                                         path: string;
-                                    } | undefined;
-                                } | undefined;
-                                remote?: {
+                                    } | {
+                                        t: 'session';
+                                    };
+                                };
+                                remote?: undefined | {
                                     url?: string | undefined;
-                                    headersPatch?: Record<string, {
+                                    headersPatch?: Record<string, null | {
                                         t: 'literal';
                                         v: string;
                                     } | {
                                         t: 'savedSecret';
                                         secretId: string;
+                                    } | {
+                                        t: 'sessionAttested';
+                                        field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
                                     } | {
                                         t: 'template';
                                         template: string;
@@ -540,17 +546,17 @@ export type SavedSecretSharingActionInputById = {
                                             t: 'savedSecret';
                                             secretId: string;
                                         }>;
-                                    } | {
-                                        t: 'sessionAttested';
-                                        field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
-                                    } | null> | undefined;
-                                } | undefined;
-                                envPatch?: Record<string, {
+                                    }> | undefined;
+                                };
+                                envPatch?: Record<string, null | {
                                     t: 'literal';
                                     v: string;
                                 } | {
                                     t: 'savedSecret';
                                     secretId: string;
+                                } | {
+                                    t: 'sessionAttested';
+                                    field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
                                 } | {
                                     t: 'template';
                                     template: string;
@@ -561,16 +567,13 @@ export type SavedSecretSharingActionInputById = {
                                         t: 'savedSecret';
                                         secretId: string;
                                     }>;
-                                } | {
-                                    t: 'sessionAttested';
-                                    field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
-                                } | null> | undefined;
-                            }[] | undefined;
-                            tools?: {
-                                default: 'ask' | 'allow_read_only' | 'allow_all';
-                                overrides: Readonly<Record<string, 'ask' | 'off' | 'allow'>>;
-                            } | undefined;
-                            toolsSnapshot?: {
+                                }> | undefined;
+                            }[];
+                            tools?: undefined | {
+                                default: 'allow_all' | 'allow_read_only' | 'ask';
+                                overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                            };
+                            toolsSnapshot?: undefined | {
                                 checkedAt: number;
                                 machineId: string;
                                 tools: {
@@ -578,28 +581,35 @@ export type SavedSecretSharingActionInputById = {
                                     tokens: number;
                                     title?: string | undefined;
                                     description?: string | undefined;
-                                    annotations?: {
+                                    annotations?: undefined | {
                                         readOnlyHint?: boolean | undefined;
                                         destructiveHint?: boolean | undefined;
                                         idempotentHint?: boolean | undefined;
                                         openWorldHint?: boolean | undefined;
-                                    } | undefined;
+                                    };
                                 }[];
                                 protocolVersion?: string | undefined;
-                                serverInfo?: {
+                                serverInfo?: undefined | {
                                     name: string;
                                     version?: string | undefined;
-                                } | undefined;
+                                };
                                 instructions?: string | undefined;
-                            } | undefined;
-                            origin?: {
+                            };
+                            origin?: undefined | {
+                                kind: 'machine';
+                                machineId: string;
+                                agentId: string;
+                            } | {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'gitTree';
                                         repo: string;
                                         path: string;
@@ -609,15 +619,18 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
-                                        kind: 'content';
-                                        digest: string;
-                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
-                                    } | {
+                                    };
+                                    importedAt: number;
+                                } | {
+                                    sourceId: string;
+                                    format: 'happier-catalog';
+                                    itemId: string;
+                                    ref: {
                                         digest: string;
                                         pluginId: string;
                                         pluginVersion: string;
@@ -626,10 +639,21 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'packageContent';
                                     };
                                     importedAt: number;
+                                    sourceUrl?: undefined;
                                 };
-                                upstream?: {
-                                    state: 'current' | 'update_available' | 'removed_from_source';
-                                    latest?: {
+                                upstream?: undefined | {
+                                    state: 'current' | 'removed_from_source' | 'update_available';
+                                    latest?: undefined | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
+                                    } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'gitTree';
                                         repo: string;
                                         path: string;
@@ -639,44 +663,32 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
-                                        kind: 'content';
-                                        digest: string;
-                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
-                                    } | {
-                                        digest: string;
-                                        pluginId: string;
-                                        pluginVersion: string;
-                                        occurrenceId: string;
-                                        path: string;
-                                        kind: 'packageContent';
-                                    } | undefined;
-                                } | undefined;
+                                    };
+                                };
                                 upstreamObservedAt?: number | undefined;
-                            } | {
-                                kind: 'machine';
-                                machineId: string;
-                                agentId: string;
-                            } | undefined;
+                                iconUrl?: string | undefined;
+                                iconDarkUrl?: string | undefined;
+                            };
                         }[];
                         bindings: {
                             id: string;
                             target: {
+                                t: 'allMachines';
+                            } | {
                                 t: 'machine';
                                 machineId: string;
+                            } | {
+                                t: 'project';
+                                projectKey: string;
                             } | {
                                 t: 'workspace';
                                 machineId: string;
                                 workspaceRoot: string;
-                            } | {
-                                t: 'allMachines';
-                            } | {
-                                t: 'project';
-                                projectKey: string;
                             };
                             enabled: boolean;
                             createdAt: number;
@@ -685,11 +697,11 @@ export type SavedSecretSharingActionInputById = {
                             agentId?: string | undefined;
                         }[];
                         pluginServers?: Record<string, {
-                            tools?: {
-                                default: 'ask' | 'allow_read_only' | 'allow_all';
-                                overrides: Readonly<Record<string, 'ask' | 'off' | 'allow'>>;
-                            } | undefined;
-                            toolsSnapshot?: {
+                            tools?: undefined | {
+                                default: 'allow_all' | 'allow_read_only' | 'ask';
+                                overrides: Readonly<Record<string, 'allow' | 'ask' | 'off'>>;
+                            };
+                            toolsSnapshot?: undefined | {
                                 checkedAt: number;
                                 machineId: string;
                                 tools: {
@@ -697,36 +709,36 @@ export type SavedSecretSharingActionInputById = {
                                     tokens: number;
                                     title?: string | undefined;
                                     description?: string | undefined;
-                                    annotations?: {
+                                    annotations?: undefined | {
                                         readOnlyHint?: boolean | undefined;
                                         destructiveHint?: boolean | undefined;
                                         idempotentHint?: boolean | undefined;
                                         openWorldHint?: boolean | undefined;
-                                    } | undefined;
+                                    };
                                 }[];
                                 protocolVersion?: string | undefined;
-                                serverInfo?: {
+                                serverInfo?: undefined | {
                                     name: string;
                                     version?: string | undefined;
-                                } | undefined;
+                                };
                                 instructions?: string | undefined;
-                            } | undefined;
+                            };
                         }> | undefined;
                     };
-                } | {
-                    t: 'encrypted';
-                    c: string;
-                } | null;
+                };
                 sourceSettingsVersion?: number | undefined;
                 referencedSavedSecretIds?: string[] | undefined;
-                savedSecretRevisions?: {
+                savedSecretRevisions?: undefined | {
                     resourceId: string;
                     expectedRevision: number;
-                }[] | undefined;
-            } | undefined;
-            acp?: {
-                expectedRevision: number | 'absent';
+                }[];
+            };
+            acp?: undefined | {
+                expectedRevision: 'absent' | number;
                 content: {
+                    t: 'encrypted';
+                    c: string;
+                } | {
                     t: 'plain';
                     v: {
                         v: 1;
@@ -735,6 +747,61 @@ export type SavedSecretSharingActionInputById = {
                             name: string;
                             title: string;
                             launch: {
+                                kind: 'archive';
+                                version: string;
+                                assetsByPlatform: {
+                                    'darwin-arm64'?: undefined | {
+                                        archiveUrl: string;
+                                        executableSubpath: string;
+                                        sha256?: string | undefined;
+                                        kind?: 'archive' | 'executable' | undefined;
+                                        sizeBytes?: number | undefined;
+                                        args?: string[] | undefined;
+                                    };
+                                    'darwin-x64'?: undefined | {
+                                        archiveUrl: string;
+                                        executableSubpath: string;
+                                        sha256?: string | undefined;
+                                        kind?: 'archive' | 'executable' | undefined;
+                                        sizeBytes?: number | undefined;
+                                        args?: string[] | undefined;
+                                    };
+                                    'linux-x64'?: undefined | {
+                                        archiveUrl: string;
+                                        executableSubpath: string;
+                                        sha256?: string | undefined;
+                                        kind?: 'archive' | 'executable' | undefined;
+                                        sizeBytes?: number | undefined;
+                                        args?: string[] | undefined;
+                                    };
+                                    'linux-arm64'?: undefined | {
+                                        archiveUrl: string;
+                                        executableSubpath: string;
+                                        sha256?: string | undefined;
+                                        kind?: 'archive' | 'executable' | undefined;
+                                        sizeBytes?: number | undefined;
+                                        args?: string[] | undefined;
+                                    };
+                                    'win32-x64'?: undefined | {
+                                        archiveUrl: string;
+                                        executableSubpath: string;
+                                        sha256?: string | undefined;
+                                        kind?: 'archive' | 'executable' | undefined;
+                                        sizeBytes?: number | undefined;
+                                        args?: string[] | undefined;
+                                    };
+                                    'win32-arm64'?: undefined | {
+                                        archiveUrl: string;
+                                        executableSubpath: string;
+                                        sha256?: string | undefined;
+                                        kind?: 'archive' | 'executable' | undefined;
+                                        sizeBytes?: number | undefined;
+                                        args?: string[] | undefined;
+                                    };
+                                };
+                                args?: string[] | undefined;
+                                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-arm64' | 'win32-x64', Record<string, string>>> | undefined;
+                            } | {
                                 kind: 'command';
                                 command: string;
                                 args?: string[] | undefined;
@@ -745,61 +812,6 @@ export type SavedSecretSharingActionInputById = {
                                 bin?: string | undefined;
                                 args?: string[] | undefined;
                             } | {
-                                kind: 'archive';
-                                version: string;
-                                assetsByPlatform: {
-                                    'darwin-arm64'?: {
-                                        archiveUrl: string;
-                                        executableSubpath: string;
-                                        sha256?: string | undefined;
-                                        kind?: 'archive' | 'executable' | undefined;
-                                        sizeBytes?: number | undefined;
-                                        args?: string[] | undefined;
-                                    } | undefined;
-                                    'darwin-x64'?: {
-                                        archiveUrl: string;
-                                        executableSubpath: string;
-                                        sha256?: string | undefined;
-                                        kind?: 'archive' | 'executable' | undefined;
-                                        sizeBytes?: number | undefined;
-                                        args?: string[] | undefined;
-                                    } | undefined;
-                                    'linux-x64'?: {
-                                        archiveUrl: string;
-                                        executableSubpath: string;
-                                        sha256?: string | undefined;
-                                        kind?: 'archive' | 'executable' | undefined;
-                                        sizeBytes?: number | undefined;
-                                        args?: string[] | undefined;
-                                    } | undefined;
-                                    'linux-arm64'?: {
-                                        archiveUrl: string;
-                                        executableSubpath: string;
-                                        sha256?: string | undefined;
-                                        kind?: 'archive' | 'executable' | undefined;
-                                        sizeBytes?: number | undefined;
-                                        args?: string[] | undefined;
-                                    } | undefined;
-                                    'win32-x64'?: {
-                                        archiveUrl: string;
-                                        executableSubpath: string;
-                                        sha256?: string | undefined;
-                                        kind?: 'archive' | 'executable' | undefined;
-                                        sizeBytes?: number | undefined;
-                                        args?: string[] | undefined;
-                                    } | undefined;
-                                    'win32-arm64'?: {
-                                        archiveUrl: string;
-                                        executableSubpath: string;
-                                        sha256?: string | undefined;
-                                        kind?: 'archive' | 'executable' | undefined;
-                                        sizeBytes?: number | undefined;
-                                        args?: string[] | undefined;
-                                    } | undefined;
-                                };
-                                args?: string[] | undefined;
-                                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64', Record<string, string>>> | undefined;
-                            } | {
                                 kind: 'uv';
                                 package: string;
                                 version: string;
@@ -809,14 +821,17 @@ export type SavedSecretSharingActionInputById = {
                             createdAt: number;
                             updatedAt: number;
                             description?: string | undefined;
-                            origin?: {
+                            origin?: undefined | {
                                 kind: 'registry';
                                 provenance: {
                                     sourceId: string;
-                                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                                     sourceUrl: string;
                                     itemId: string;
                                     ref: {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'gitTree';
                                         repo: string;
                                         path: string;
@@ -826,15 +841,18 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
-                                        kind: 'content';
-                                        digest: string;
-                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
-                                    } | {
+                                    };
+                                    importedAt: number;
+                                } | {
+                                    sourceId: string;
+                                    format: 'happier-catalog';
+                                    itemId: string;
+                                    ref: {
                                         digest: string;
                                         pluginId: string;
                                         pluginVersion: string;
@@ -843,15 +861,26 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'packageContent';
                                     };
                                     importedAt: number;
+                                    sourceUrl?: undefined;
                                 };
                                 iconUrl?: string | undefined;
                                 publisher?: string | undefined;
                                 license?: string | undefined;
                                 repository?: string | undefined;
                                 website?: string | undefined;
-                                upstream?: {
-                                    state: 'current' | 'update_available' | 'removed_from_source';
-                                    latest?: {
+                                upstream?: undefined | {
+                                    state: 'current' | 'removed_from_source' | 'update_available';
+                                    latest?: undefined | {
+                                        digest: string;
+                                        pluginId: string;
+                                        pluginVersion: string;
+                                        occurrenceId: string;
+                                        path: string;
+                                        kind: 'packageContent';
+                                    } | {
+                                        kind: 'content';
+                                        digest: string;
+                                    } | {
                                         kind: 'gitTree';
                                         repo: string;
                                         path: string;
@@ -861,77 +890,70 @@ export type SavedSecretSharingActionInputById = {
                                         kind: 'version';
                                         version: string;
                                     } | {
-                                        kind: 'content';
-                                        digest: string;
-                                    } | {
                                         kind: 'wellKnown';
                                         indexUrl: string;
                                         name: string;
                                         digest: string;
                                         publishedDigest?: string | undefined;
-                                    } | {
-                                        digest: string;
-                                        pluginId: string;
-                                        pluginVersion: string;
-                                        occurrenceId: string;
-                                        path: string;
-                                        kind: 'packageContent';
-                                    } | undefined;
-                                } | undefined;
-                            } | undefined;
-                            runtime?: {
-                                stderrRules?: {
+                                    };
+                                };
+                            };
+                            runtime?: undefined | {
+                                stderrRules?: undefined | {
                                     authenticationErrorDetail?: string | undefined;
-                                    suppress?: {
+                                    suppress?: undefined | {
                                         includes: string[];
                                         caseSensitive?: boolean | undefined;
-                                    }[] | undefined;
-                                    statusErrors?: {
+                                    }[];
+                                    statusErrors?: undefined | {
                                         includes: string[];
                                         detail: string;
                                         caseSensitive?: boolean | undefined;
-                                    }[] | undefined;
-                                } | undefined;
-                                permissionModeMapping?: {
-                                    default?: string | null | undefined;
-                                    'read-only'?: string | null | undefined;
-                                    'safe-yolo'?: string | null | undefined;
-                                    yolo?: string | null | undefined;
-                                    plan?: string | null | undefined;
-                                } | undefined;
-                            } | undefined;
-                            compatibility?: {
+                                    }[];
+                                };
+                                permissionModeMapping?: undefined | {
+                                    default?: null | string | string[] | undefined;
+                                    'read-only'?: null | string | string[] | undefined;
+                                    'safe-yolo'?: null | string | string[] | undefined;
+                                    yolo?: null | string | string[] | undefined;
+                                    plan?: null | string | string[] | undefined;
+                                };
+                            };
+                            compatibility?: undefined | {
                                 source: 'acp-catalog-v2';
                                 authStatus: {
                                     statusCommand?: string[] | undefined;
-                                    parser?: 'unknown' | 'exitCodeOnly' | 'stdoutNonEmpty' | 'kiroWhoamiJson' | undefined;
+                                    parser?: 'exitCodeOnly' | 'kiroWhoamiJson' | 'stdoutNonEmpty' | 'unknown' | undefined;
                                 };
-                            } | undefined;
+                            };
                             defaultMode?: string | undefined;
                             defaultModel?: string | undefined;
-                            auth?: {
-                                support: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
+                            auth?: undefined | {
+                                support: 'login_terminal' | 'manual_only' | 'status_only' | 'unsupported';
                                 machineLoginKey?: string | undefined;
                                 docsUrl?: string | undefined;
                                 envVars?: string[] | undefined;
-                                loginCommand?: {
+                                loginCommand?: undefined | {
                                     command: string;
                                     args?: string[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                            capabilities?: {
+                                };
+                            };
+                            capabilities?: undefined | {
                                 supportsLoadSession?: boolean | undefined;
-                                supportsModes?: 'unknown' | 'yes' | 'no' | undefined;
-                                supportsModels?: 'unknown' | 'yes' | 'no' | undefined;
-                                supportsConfigOptions?: 'unknown' | 'yes' | 'no' | undefined;
-                                promptImageSupport?: 'unknown' | 'yes' | 'no' | undefined;
-                            } | undefined;
+                                supportsModes?: 'no' | 'unknown' | 'yes' | undefined;
+                                supportsModels?: 'no' | 'unknown' | 'yes' | undefined;
+                                supportsConfigOptions?: 'no' | 'unknown' | 'yes' | undefined;
+                                promptImageSupport?: 'no' | 'unknown' | 'yes' | undefined;
+                            };
                             env?: Record<string, {
                                 t: 'literal';
                                 v: string;
                             } | {
                                 t: 'savedSecret';
                                 secretId: string;
+                            } | {
+                                t: 'sessionAttested';
+                                field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
                             } | {
                                 t: 'template';
                                 template: string;
@@ -942,42 +964,47 @@ export type SavedSecretSharingActionInputById = {
                                     t: 'savedSecret';
                                     secretId: string;
                                 }>;
-                            } | {
-                                t: 'sessionAttested';
-                                field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
                             }> | undefined;
                         }[];
                     };
-                } | {
-                    t: 'encrypted';
-                    c: string;
                 };
                 sourceSettingsVersion?: number | undefined;
                 source?: 'fresh' | 'predecessor' | undefined;
-                settingsCleanup?: {
+                settingsCleanup?: undefined | {
                     expectedSettingsVersion: number;
-                    nextSettings: {
+                    nextSettings: null | {
+                        t: 'encrypted';
+                        c: string;
+                    } | {
                         t: 'plain';
                         v: {
                             [x: string]: unknown;
                         };
-                    } | {
-                        t: 'encrypted';
-                        c: string;
-                    } | null;
-                } | undefined;
+                    };
+                };
                 referencedSavedSecretIds?: string[] | undefined;
-                savedSecretRevisions?: {
+                savedSecretRevisions?: undefined | {
                     resourceId: string;
                     expectedRevision: number;
-                }[] | undefined;
-            } | undefined;
-            providerConnections?: {
-                expectedRevision: number | 'absent';
-                content: {
+                }[];
+            };
+            providerConnections?: undefined | {
+                expectedRevision: 'absent' | number;
+                content: null | {
+                    t: 'encrypted';
+                    c: string;
+                } | {
                     t: 'plain';
                     v: {
                         v: 1;
+                        machineGrants: {
+                            v: 1;
+                            machineId: string;
+                            connectionId: string;
+                            endpointSetFingerprint: string;
+                            connectionSecurityFingerprint: string;
+                            confirmedAt: number;
+                        }[];
                         accountGrants: {
                             v: 1;
                             connectionId: string;
@@ -998,14 +1025,26 @@ export type SavedSecretSharingActionInputById = {
                                     endpointTemplates: {
                                         id: string;
                                         protocol: string;
-                                        baseUrl: string;
                                         capabilities: {
-                                            streaming: 'unknown' | 'unsupported' | 'supported';
-                                            toolRoundTrips: 'unknown' | 'unsupported' | 'supported';
-                                            statefulResponses: 'unknown' | 'unsupported' | 'supported';
-                                            reasoningControls: 'unknown' | 'unsupported' | 'supported';
+                                            streaming: 'supported' | 'unknown' | 'unsupported';
+                                            toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                                            statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                                            reasoningControls: 'supported' | 'unknown' | 'unsupported';
                                         };
+                                        baseUrl?: string | undefined;
+                                        requiresEndpointOverride?: true | undefined;
                                         publicHeaders?: Record<string, string> | undefined;
+                                        addressConstraint?: undefined | {
+                                            origin: string;
+                                            pathSegments: (null | string)[];
+                                        };
+                                        modelIdPattern?: string | undefined;
+                                        requiredPublicHeaders?: string[] | undefined;
+                                        publicHeaderHints?: Record<string, string | {
+                                            key: string;
+                                            fallback: string;
+                                            params?: Record<string, number | string> | undefined;
+                                        }> | undefined;
                                     }[];
                                     catalog: {
                                         source: 'manual';
@@ -1020,45 +1059,50 @@ export type SavedSecretSharingActionInputById = {
                                             reportsModelLoadState?: boolean | undefined;
                                         }[];
                                     };
-                                    credential?: {
+                                    credential?: undefined | {
                                         kind: 'apiKey';
                                         transports: {
                                             id: string;
                                             protocols: string[];
-                                            uses: ('runtime' | 'probe')[];
+                                            uses: ('probe' | 'runtime')[];
                                             destination: {
                                                 kind: 'httpHeader';
                                                 name: string;
-                                                format: 'raw' | 'bearer';
+                                                format: 'bearer' | 'raw';
                                             };
-                                            additionalCredentials?: {
+                                            additionalCredentials?: undefined | {
                                                 slotId: string;
                                                 destination: any | any;
-                                                label?: string | any | undefined;
-                                            }[] | undefined;
+                                                label?: any | string | undefined;
+                                            }[];
                                         }[];
                                         slotId?: 'apiKey' | undefined;
                                         required?: boolean | undefined;
                                         keyUrl?: string | undefined;
-                                    } | undefined;
+                                        authorityDescription?: string | undefined | {
+                                            key: string;
+                                            fallback: string;
+                                            params?: Record<string, number | string> | undefined;
+                                        };
+                                    };
                                 };
                             };
                             role: 'default' | 'named';
                             displayName: string;
-                            displayNameMode: 'custom' | 'automatic';
+                            displayNameMode: 'automatic' | 'custom';
                             revision: number;
                             createdAt: number;
                             updatedAt: number;
-                            deployment?: {
+                            deployment?: undefined | {
                                 kind: 'external';
                             } | {
                                 kind: 'managedLocal';
-                            } | undefined;
-                            endpointOverrides?: {
+                            };
+                            endpointOverrides?: undefined | {
                                 endpointTemplateId: string;
                                 baseUrl?: string | undefined;
                                 publicHeaders?: Record<string, string> | undefined;
-                            }[] | undefined;
+                            }[];
                             endpointOverridesByMachineId?: Record<string, {
                                 endpointTemplateId: string;
                                 baseUrl?: string | undefined;
@@ -1076,45 +1120,56 @@ export type SavedSecretSharingActionInputById = {
                             } | {
                                 kind: 'group';
                                 service: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | {
                                     pluginId: 'happier';
                                     localId: 'mcp-sign-in';
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
                                 };
                                 groupId: string;
                             }> | undefined;
-                            gatewayPlacement?: {
-                                kind: 'sessionMachine';
-                            } | {
+                            gatewayPlacement?: undefined | {
                                 kind: 'machine';
                                 machineId: string;
-                            } | undefined;
-                            claudeHelperModels?: {
+                            } | {
+                                kind: 'sessionMachine';
+                            };
+                            claudeHelperModels?: undefined | {
                                 fast?: string | undefined;
                                 default?: string | undefined;
                                 strongest?: string | undefined;
-                            } | undefined;
+                            };
                             modelSettings?: Record<string, {
-                                temperature?: number | null | undefined;
-                                maxTokens?: number | null | undefined;
+                                temperature?: null | number | undefined;
+                                maxTokens?: null | number | undefined;
                             }> | undefined;
                         }[];
                         connectionTombstones: {
                             v: 1;
                             id: string;
-                            contributionKey: string | null;
+                            contributionKey: null | string;
                             lastDisplayName: string;
                             deletedAt: number;
                         }[];
+                        secretBindingsByConnectionId: Record<string, {
+                            account?: Record<string, string> | undefined;
+                            byMachineId?: Record<string, Record<string, string>> | undefined;
+                        }>;
+                        manualModelsByConnectionId: Record<string, {
+                            id: string;
+                            addedAt: number;
+                            name?: string | undefined;
+                            reasoningEffortLevels?: ('high' | 'low' | 'max' | 'medium' | 'xhigh')[] | undefined;
+                        }[]>;
+                        modelVisibilityByRef: Record<string, 'hidden'>;
                         experimentalBindingConfirmations: {
                             v: 1;
                             connectionId: string;
                             agentTargetKey: string;
-                            modelId: string | null;
+                            modelId: null | string;
                             compatibilityFingerprint: string;
                             confirmedAt: number;
-                            connectedAccountTarget?: {
+                            connectedAccountTarget?: undefined | {
                                 kind: 'account';
                                 account: {
                                     service: {
@@ -1126,48 +1181,26 @@ export type SavedSecretSharingActionInputById = {
                             } | {
                                 kind: 'group';
                                 service: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | {
                                     pluginId: 'happier';
                                     localId: 'mcp-sign-in';
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
                                 };
                                 groupId: string;
-                            } | undefined;
+                            };
                             catalogSourceKey?: string | undefined;
                         }[];
-                        machineGrants: {
-                            v: 1;
-                            machineId: string;
-                            connectionId: string;
-                            endpointSetFingerprint: string;
-                            connectionSecurityFingerprint: string;
-                            confirmedAt: number;
-                        }[];
-                        secretBindingsByConnectionId: Record<string, {
-                            account?: Record<string, string> | undefined;
-                            byMachineId?: Record<string, Record<string, string>> | undefined;
-                        }>;
-                        manualModelsByConnectionId: Record<string, {
-                            id: string;
-                            addedAt: number;
-                            name?: string | undefined;
-                            reasoningEffortLevels?: ('low' | 'medium' | 'high' | 'xhigh' | 'max')[] | undefined;
-                        }[]>;
-                        modelVisibilityByRef: Record<string, 'hidden'>;
                         modelPickerVisibilityByConnectionId?: Record<string, boolean> | undefined;
-                        migration?: {
+                        migration?: undefined | {
                             v: 1;
                             completedSources: ({
-                                sourceProfileId: string;
-                                kind: 'default_environment';
-                            } | {
                                 sourceProfileId: string;
                                 kind: 'connection';
                                 connectionId: string;
                                 sourceRevision?: number | undefined;
-                                modelSelectionOrigin?: 'implicit_default' | 'explicit_process_environment' | undefined;
-                                modelSelection?: {
+                                modelSelectionOrigin?: 'explicit_process_environment' | 'implicit_default' | undefined;
+                                modelSelection?: undefined | {
                                     agentTargetKey: string;
                                     providerConnectionId: null;
                                     modelId: string;
@@ -1175,46 +1208,49 @@ export type SavedSecretSharingActionInputById = {
                                     agentTargetKey: string;
                                     providerConnectionId: string;
                                     modelId: string;
-                                } | undefined;
+                                };
+                            } | {
+                                sourceProfileId: string;
+                                kind: 'default_environment';
                             } | {
                                 sourceProfileId: string;
                                 kind: 'skipped_disabled';
                             })[];
                             pendingCustomProfileIds: string[];
-                            pendingConflicts?: {
+                            pendingConflicts?: undefined | {
                                 v: 1;
                                 sourceProfileId: string;
                                 contributionKey: string;
-                                existingConnectionId: string | null;
-                                kinds: ('credential_binding' | 'manual_model' | 'edited_default_connection')[];
+                                existingConnectionId: null | string;
+                                kinds: ('credential_binding' | 'edited_default_connection' | 'manual_model')[];
                                 candidateFingerprint: string;
                                 detectedAt: number;
-                                modelChoices?: {
-                                    kind: 'legacy' | 'existing';
+                                modelChoices?: undefined | {
+                                    kind: 'existing' | 'legacy';
                                     selection: {
                                         agentTargetKey: string;
                                         modelId: string;
                                     };
                                     label?: string | undefined;
-                                }[] | undefined;
-                            }[] | undefined;
+                                }[];
+                            }[];
                             migratedAt?: number | undefined;
-                        } | undefined;
+                        };
                     };
-                } | {
-                    t: 'encrypted';
-                    c: string;
-                } | null;
+                };
                 referencedSavedSecretIds: string[];
                 savedSecretRevisions: {
                     resourceId: string;
                     expectedRevision: number;
                 }[];
                 sourceSettingsVersion?: number | undefined;
-            } | undefined;
-            connectedConfigurations?: {
-                expectedRevision: number | 'absent';
-                content: {
+            };
+            connectedConfigurations?: undefined | {
+                expectedRevision: 'absent' | number;
+                content: null | {
+                    t: 'encrypted';
+                    c: string;
+                } | {
                     t: 'plain';
                     v: {
                         key: 'configurations';
@@ -1255,16 +1291,16 @@ export type SavedSecretSharingActionInputById = {
                                 } | {
                                     kind: 'group';
                                     service: {
-                                        pluginId: string;
-                                        localId: string;
-                                    } | {
                                         pluginId: 'happier';
                                         localId: 'mcp-sign-in';
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
                                     };
                                     groupId: string;
                                 };
                             }[];
-                            teamResourceSelections?: {
+                            teamResourceSelections?: undefined | {
                                 purpose: {
                                     consumer: {
                                         pluginId: string;
@@ -1276,6 +1312,10 @@ export type SavedSecretSharingActionInputById = {
                                 selection: {
                                     source: 'team_resource';
                                     resourceId: string;
+                                    deliveryMode: 'brokered';
+                                } | {
+                                    source: 'team_resource';
+                                    resourceId: string;
                                     deliveryMode: 'direct';
                                     disclosedMember: {
                                         service: {
@@ -1284,30 +1324,25 @@ export type SavedSecretSharingActionInputById = {
                                         };
                                         accountId: string;
                                     };
-                                } | {
-                                    source: 'team_resource';
-                                    resourceId: string;
-                                    deliveryMode: 'brokered';
-                                    disclosedMember?: undefined;
                                 };
-                            }[] | undefined;
+                            }[];
                         };
                     };
-                } | {
-                    t: 'encrypted';
-                    c: string;
-                } | null;
+                };
                 sourceSettingsVersion?: number | undefined;
                 referencedSavedSecretIds?: string[] | undefined;
-                savedSecretRevisions?: {
+                savedSecretRevisions?: undefined | {
                     resourceId: string;
                     expectedRevision: number;
-                }[] | undefined;
+                }[];
                 settingsMutation?: undefined;
-            } | undefined;
-            connectedPurposes?: {
-                expectedRevision: number | 'absent';
-                content: {
+            };
+            connectedPurposes?: undefined | {
+                expectedRevision: 'absent' | number;
+                content: null | {
+                    t: 'encrypted';
+                    c: string;
+                } | {
                     t: 'plain';
                     v: {
                         key: 'configurations';
@@ -1348,16 +1383,16 @@ export type SavedSecretSharingActionInputById = {
                                 } | {
                                     kind: 'group';
                                     service: {
-                                        pluginId: string;
-                                        localId: string;
-                                    } | {
                                         pluginId: 'happier';
                                         localId: 'mcp-sign-in';
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
                                     };
                                     groupId: string;
                                 };
                             }[];
-                            teamResourceSelections?: {
+                            teamResourceSelections?: undefined | {
                                 purpose: {
                                     consumer: {
                                         pluginId: string;
@@ -1369,6 +1404,10 @@ export type SavedSecretSharingActionInputById = {
                                 selection: {
                                     source: 'team_resource';
                                     resourceId: string;
+                                    deliveryMode: 'brokered';
+                                } | {
+                                    source: 'team_resource';
+                                    resourceId: string;
                                     deliveryMode: 'direct';
                                     disclosedMember: {
                                         service: {
@@ -1377,30 +1416,25 @@ export type SavedSecretSharingActionInputById = {
                                         };
                                         accountId: string;
                                     };
-                                } | {
-                                    source: 'team_resource';
-                                    resourceId: string;
-                                    deliveryMode: 'brokered';
-                                    disclosedMember?: undefined;
                                 };
-                            }[] | undefined;
+                            }[];
                         };
                     };
-                } | {
-                    t: 'encrypted';
-                    c: string;
-                } | null;
+                };
                 sourceSettingsVersion?: number | undefined;
                 referencedSavedSecretIds?: string[] | undefined;
-                savedSecretRevisions?: {
+                savedSecretRevisions?: undefined | {
                     resourceId: string;
                     expectedRevision: number;
-                }[] | undefined;
+                }[];
                 settingsMutation?: undefined;
-            } | undefined;
-            registrySources?: {
-                expectedRevision: number | 'absent';
-                content: {
+            };
+            registrySources?: undefined | {
+                expectedRevision: 'absent' | number;
+                content: null | {
+                    t: 'encrypted';
+                    c: string;
+                } | {
                     t: 'plain';
                     v: {
                         key: 'coding';
@@ -1412,36 +1446,44 @@ export type SavedSecretSharingActionInputById = {
                             entries: {
                                 id: string;
                                 ref: {
-                                    kind: 'doc' | 'bundle';
+                                    kind: 'bundle' | 'doc';
                                     artifactId: string;
                                     serverId?: string | undefined;
                                 };
                                 enabled?: boolean | undefined;
-                                placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
+                                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
                                 maxChars?: number | undefined;
                                 required?: boolean | undefined;
                                 skillMigrationV1?: true | undefined;
                             }[];
                         };
                     } | {
-                        key: 'voice';
+                        key: 'contexts';
                         value: {
                             v: 1;
-                            scope: {
-                                kind: 'coding' | 'voice';
-                            };
-                            entries: {
+                            selectionsByKey: Record<string, {
+                                machineId?: null | string | undefined;
+                                workspacePath?: null | string | undefined;
+                            }>;
+                        };
+                    } | {
+                        key: 'external-links';
+                        value: {
+                            v: 1;
+                            links: {
                                 id: string;
-                                ref: {
-                                    kind: 'doc' | 'bundle';
-                                    artifactId: string;
-                                    serverId?: string | undefined;
-                                };
-                                enabled?: boolean | undefined;
-                                placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
-                                maxChars?: number | undefined;
-                                required?: boolean | undefined;
-                                skillMigrationV1?: true | undefined;
+                                artifactId: string;
+                                assetTypeId: string;
+                                scope: 'project' | 'user';
+                                machineId: string;
+                                externalRef: Record<string, unknown>;
+                                serverIdentityId?: string | undefined;
+                                workspacePath?: null | string | undefined;
+                                syncMode?: unknown;
+                                baseDigest?: null | string | undefined;
+                                lastLibraryDigest?: null | string | undefined;
+                                lastExternalDigest?: null | string | undefined;
+                                lastSyncAtMs?: number | undefined;
                             }[];
                         };
                     } | {
@@ -1451,12 +1493,13 @@ export type SavedSecretSharingActionInputById = {
                             folders: {
                                 id: string;
                                 name: string;
-                                parentId?: string | null | undefined;
+                                parentId?: null | string | undefined;
                             }[];
                             artifactHeadersById?: Record<string, {
-                                folderId?: string | null | undefined;
+                                folderId?: null | string | undefined;
                                 tags?: string[] | undefined;
                             }> | undefined;
+                            deletedLegacyFolderIds?: string[] | undefined;
                         };
                     } | {
                         key: 'invocations';
@@ -1471,29 +1514,9 @@ export type SavedSecretSharingActionInputById = {
                                     kind: 'doc';
                                     serverId?: string | undefined;
                                 };
-                                behavior?: 'insert' | 'insert_on_send' | 'insert_and_send' | undefined;
+                                behavior?: 'insert' | 'insert_and_send' | 'insert_on_send' | undefined;
                                 allowArgs?: boolean | undefined;
                                 availableIn?: 'global' | 'session_only' | undefined;
-                            }[];
-                        };
-                    } | {
-                        key: 'external-links';
-                        value: {
-                            v: 1;
-                            links: {
-                                id: string;
-                                artifactId: string;
-                                assetTypeId: string;
-                                scope: 'project' | 'user';
-                                machineId: string;
-                                externalRef: Record<string, unknown>;
-                                serverIdentityId?: string | undefined;
-                                workspacePath?: string | null | undefined;
-                                syncMode?: unknown;
-                                baseDigest?: string | null | undefined;
-                                lastLibraryDigest?: string | null | undefined;
-                                lastExternalDigest?: string | null | undefined;
-                                lastSyncAtMs?: number | undefined;
                             }[];
                         };
                     } | {
@@ -1503,52 +1526,43 @@ export type SavedSecretSharingActionInputById = {
                             sources: {
                                 id: string;
                                 title: string;
-                                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
-                                kinds: ('agent' | 'skill' | 'mcpServer' | 'plugin' | 'app' | 'browserExtension')[];
+                                format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                                kinds: ('agent' | 'app' | 'browserExtension' | 'mcpServer' | 'plugin' | 'skill')[];
                                 url: string;
                                 enabled: boolean;
                                 addedAt: number;
                                 path?: string | undefined;
                                 ref?: string | undefined;
-                                token?: {
+                                token?: undefined | {
                                     secretRef: string;
-                                    header?: {
+                                    header?: undefined | {
                                         name: string;
-                                        scheme?: 'token' | 'Bearer' | undefined;
-                                    } | undefined;
-                                } | undefined;
+                                        scheme?: 'Bearer' | 'token' | undefined;
+                                    };
+                                };
                                 npmRegistryProfileId?: string | undefined;
                             }[];
                             disabledSourceIds: string[];
-                        };
-                    } | {
-                        key: 'contexts';
-                        value: {
-                            v: 1;
-                            selectionsByKey: Record<string, {
-                                machineId?: string | null | undefined;
-                                workspacePath?: string | null | undefined;
-                            }>;
                         };
                     } | {
                         key: 'role-overrides';
                         value: {
                             overrides: Record<string, {
                                 roleId: string;
-                                engine?: {
+                                engine?: undefined | {
                                     agentTargetKey: string;
                                     modelId?: string | undefined;
                                     effort?: string | undefined;
-                                } | undefined;
-                                runsAs?: {
-                                    kind: 'session';
-                                } | {
+                                };
+                                runsAs?: undefined | {
                                     kind: 'background_run';
-                                    intent: 'plan' | 'agent' | 'review' | 'delegate' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
-                                } | undefined;
+                                    intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                                } | {
+                                    kind: 'session';
+                                };
                                 profileId?: string | undefined;
                                 workspaceWrites?: 'allow' | 'deny' | undefined;
-                                secondOpinion?: 'off' | 'encouraged' | undefined;
+                                secondOpinion?: 'encouraged' | 'off' | undefined;
                                 canDelegateToOtherRoles?: boolean | undefined;
                                 instructionsOverride?: string | undefined;
                             }>;
@@ -1561,17 +1575,17 @@ export type SavedSecretSharingActionInputById = {
                             rules: {
                                 id: string;
                                 target: {
+                                    t: 'allMachines';
+                                } | {
                                     t: 'machine';
                                     machineId: string;
+                                } | {
+                                    t: 'project';
+                                    projectKey: string;
                                 } | {
                                     t: 'workspace';
                                     machineId: string;
                                     workspaceRoot: string;
-                                } | {
-                                    t: 'allMachines';
-                                } | {
-                                    t: 'project';
-                                    projectKey: string;
                                 };
                                 enabled: boolean;
                                 createdAt: number;
@@ -1587,39 +1601,72 @@ export type SavedSecretSharingActionInputById = {
                             v: 1;
                             lastUsedAt: Record<string, number>;
                         };
+                    } | {
+                        key: 'voice';
+                        value: {
+                            v: 1;
+                            scope: {
+                                kind: 'coding' | 'voice';
+                            };
+                            entries: {
+                                id: string;
+                                ref: {
+                                    kind: 'bundle' | 'doc';
+                                    artifactId: string;
+                                    serverId?: string | undefined;
+                                };
+                                enabled?: boolean | undefined;
+                                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
+                                maxChars?: number | undefined;
+                                required?: boolean | undefined;
+                                skillMigrationV1?: true | undefined;
+                            }[];
+                        };
                     };
-                } | {
-                    t: 'encrypted';
-                    c: string;
-                } | null;
+                };
                 sourceSettingsVersion?: number | undefined;
                 referencedSavedSecretIds?: string[] | undefined;
-                savedSecretRevisions?: {
+                savedSecretRevisions?: undefined | {
                     resourceId: string;
                     expectedRevision: number;
-                }[] | undefined;
-            } | undefined;
-        } | undefined;
-        additionalSavedSecretResources?: {
+                }[];
+            };
+        };
+        additionalSavedSecretResources?: undefined | {
             resourceId: string;
             displayName: string;
-            kind: 'apiKey' | 'token' | 'password' | 'other';
-            encryptionMode: 'plain' | 'e2ee';
+            kind: 'apiKey' | 'other' | 'password' | 'token';
+            encryptionMode: 'e2ee' | 'plain';
             storedContent: {
+                t: 'encrypted';
+                c: string;
+                storage?: undefined | {
+                    kind: 'external';
+                    provider: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    providerLabel?: string | undefined;
+                } | {
+                    kind: 'passkey';
+                } | {
+                    kind: 'value';
+                };
+            } | {
                 t: 'plain';
                 v: {
                     v: 1;
                     name: string;
-                    kind: 'apiKey' | 'token' | 'password' | 'other';
+                    kind: 'apiKey' | 'other' | 'password' | 'token';
                     value: string;
-                    createdByPlugin?: {
+                    createdByPlugin?: undefined | {
                         pluginId: string;
                         secretId: string;
-                    } | undefined;
+                    };
                 } | {
                     v: 2;
                     name: string;
-                    kind: 'apiKey' | 'token' | 'password' | 'other';
+                    kind: 'apiKey' | 'other' | 'password' | 'token';
                     source: {
                         kind: 'external';
                         contribution: {
@@ -1628,26 +1675,26 @@ export type SavedSecretSharingActionInputById = {
                         };
                         account: string;
                         reference: string;
-                        metadata?: {
-                            vault: {
-                                id: string;
-                                name: string;
-                            };
-                            item: {
-                                id: string;
-                                title: string;
-                            };
+                        metadata?: undefined | {
                             field: {
                                 id: string;
                                 title: string;
                                 kind: string;
                             };
-                        } | undefined;
+                            item: {
+                                id: string;
+                                title: string;
+                            };
+                            vault: {
+                                id: string;
+                                name: string;
+                            };
+                        };
                     };
-                    createdByPlugin?: {
+                    createdByPlugin?: undefined | {
                         pluginId: string;
                         secretId: string;
-                    } | undefined;
+                    };
                 } | {
                     v: 2;
                     name: string;
@@ -1665,88 +1712,76 @@ export type SavedSecretSharingActionInputById = {
                         userName?: string | undefined;
                         userDisplayName?: string | undefined;
                     };
-                    createdByPlugin?: {
+                    createdByPlugin?: undefined | {
                         pluginId: string;
                         secretId: string;
-                    } | undefined;
+                    };
                 };
-                storage?: {
-                    kind: 'value';
-                } | {
-                    kind: 'passkey';
-                } | {
+                storage?: undefined | {
                     kind: 'external';
                     provider: {
                         pluginId: string;
                         localId: string;
                     };
                     providerLabel?: string | undefined;
-                } | undefined;
-            } | {
-                t: 'encrypted';
-                c: string;
-                storage?: {
-                    kind: 'value';
                 } | {
                     kind: 'passkey';
                 } | {
-                    kind: 'external';
-                    provider: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    providerLabel?: string | undefined;
-                } | undefined;
+                    kind: 'value';
+                };
             };
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
             groupGrants?: string[] | undefined;
-            keyEnvelopes?: {
+            keyEnvelopes?: undefined | {
                 recipientAccountId: string;
                 encryptedDataKey: string;
                 recipientContentPublicKeyFingerprint: string;
-            }[] | undefined;
-        }[] | undefined;
-        personalSecretPromotions?: {
+            }[];
+        }[];
+        personalSecretPromotions?: undefined | {
             personalSecretId: string;
             resourceId: string;
-        }[] | undefined;
-        remoteHostMutation?: {
-            expectedRevision: number | 'absent';
+        }[];
+        remoteHostMutation?: undefined | {
+            expectedRevision: 'absent' | number;
             content: {
+                t: 'encrypted';
+                c: string;
+            } | {
                 t: 'plain';
                 v: {
                     v: 1;
                     hosts: {
                         ssh: {
                             target: string;
-                            authMode: 'password' | 'agent' | 'keyfile';
-                            passwordSecretRef?: string | null | undefined;
-                            identityPrivateKeySecretRef?: string | null | undefined;
-                            port?: number | null | undefined;
+                            authMode: 'agent' | 'keyfile' | 'password';
+                            passwordSecretRef?: null | string | undefined;
+                            identityPrivateKeySecretRef?: null | string | undefined;
+                            port?: null | number | undefined;
                         };
                         id: string;
                         name: string;
                         createdAt: number;
                         updatedAt: number;
-                        lastUsedAt: number | null;
-                        linkedMachineId?: string | null | undefined;
-                        linkedRelayProfileId?: string | null | undefined;
+                        lastUsedAt: null | number;
+                        linkedMachineId?: null | string | undefined;
+                        linkedRelayProfileId?: null | string | undefined;
                     }[];
                 };
-            } | {
-                t: 'encrypted';
-                c: string;
             };
             sourceSettingsVersion?: number | undefined;
-            referencedSavedSecretRevisions?: {
+            referencedSavedSecretRevisions?: undefined | {
                 resourceId: string;
                 revision: number;
-            }[] | undefined;
-        } | undefined;
-        notificationChannelMutation?: {
-            expectedRevision: number | 'absent';
-            content: {
+            }[];
+        };
+        notificationChannelMutation?: undefined | {
+            expectedRevision: 'absent' | number;
+            content: null | {
+                t: 'encrypted';
+                c: string;
+            } | {
                 t: 'plain';
                 v: {
                     v: 1;
@@ -1761,7 +1796,7 @@ export type SavedSecretSharingActionInputById = {
                     } | {
                         v: 1;
                         topics: unknown;
-                        signingSecretRef: string | null;
+                        signingSecretRef: null | string;
                         id: string;
                         kind: 'webhook';
                         url: string;
@@ -1770,18 +1805,15 @@ export type SavedSecretSharingActionInputById = {
                         requestIncludeMessageText?: boolean | undefined;
                     })[];
                 };
-            } | {
-                t: 'encrypted';
-                c: string;
-            } | null;
+            };
             sourceSettingsVersion?: number | undefined;
-            savedSecretRevisions?: {
+            savedSecretRevisions?: undefined | {
                 resourceRef: string;
                 revision: number;
-            }[] | undefined;
+            }[];
             settingsMutation?: undefined;
-        } | undefined;
-        connectedAccountCredentialMutation?: {
+        };
+        connectedAccountCredentialMutation?: undefined | {
             expectedCredentialRevision: null;
             ref: {
                 service: {
@@ -1792,52 +1824,54 @@ export type SavedSecretSharingActionInputById = {
             };
             authenticationModeId: string;
             content: {
-                t: 'plain';
-                v: unknown;
-            } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             metadata: {
-                providerIdentity?: {
-                    accountId?: string | null | undefined;
-                    email?: string | null | undefined;
-                    organizationId?: string | null | undefined;
-                } | undefined;
+                providerIdentity?: undefined | {
+                    accountId?: null | string | undefined;
+                    email?: null | string | undefined;
+                    organizationId?: null | string | undefined;
+                };
                 displayName?: string | undefined;
                 scopes?: string[] | undefined;
-                authenticationProvenance?: {
+                authenticationProvenance?: undefined | {
                     authenticatedAt: number;
                     machine: {
                         serverId: string;
                         machineId: string;
                     };
-                } | undefined;
+                };
             };
-            initialConfiguration?: {
+            initialConfiguration?: undefined | {
                 expectedConfigurationRevision: null;
                 replacementContentEnvelope: {
-                    t: 'plain';
-                    v: unknown;
-                } | {
                     t: 'encrypted';
                     c: string;
+                    k?: undefined;
+                } | {
+                    t: 'plain';
+                    v: unknown;
                 };
-            } | undefined;
+            };
             directExportContract?: 'happier.team-credential-manual-connected-account-direct.v1' | null | undefined;
             savedSecretResourceIds?: string[] | undefined;
-            savedSecretRevisions?: {
+            savedSecretRevisions?: undefined | {
                 resourceId: string;
                 expectedRevision: number;
-            }[] | undefined;
+            }[];
             contributionContractVersion?: string | undefined;
-            reconnect?: {
+            reconnect?: undefined | {
                 allowProviderIdentityChange?: boolean | undefined;
-            } | undefined;
+            };
             refreshLeaseOwnerId?: string | undefined;
         } | {
             expectedCredentialRevision: string;
-            expectedConfigurationRevision: string | null;
+            expectedConfigurationRevision: null | string;
             ref: {
                 service: {
                     pluginId: string;
@@ -1847,40 +1881,41 @@ export type SavedSecretSharingActionInputById = {
             };
             authenticationModeId: string;
             content: {
-                t: 'plain';
-                v: unknown;
-            } | {
                 t: 'encrypted';
                 c: string;
+                k?: undefined;
+            } | {
+                t: 'plain';
+                v: unknown;
             };
             metadata: {
-                providerIdentity?: {
-                    accountId?: string | null | undefined;
-                    email?: string | null | undefined;
-                    organizationId?: string | null | undefined;
-                } | undefined;
+                providerIdentity?: undefined | {
+                    accountId?: null | string | undefined;
+                    email?: null | string | undefined;
+                    organizationId?: null | string | undefined;
+                };
                 displayName?: string | undefined;
                 scopes?: string[] | undefined;
-                authenticationProvenance?: {
+                authenticationProvenance?: undefined | {
                     authenticatedAt: number;
                     machine: {
                         serverId: string;
                         machineId: string;
                     };
-                } | undefined;
+                };
             };
             directExportContract?: 'happier.team-credential-manual-connected-account-direct.v1' | null | undefined;
             savedSecretResourceIds?: string[] | undefined;
-            savedSecretRevisions?: {
+            savedSecretRevisions?: undefined | {
                 resourceId: string;
                 expectedRevision: number;
-            }[] | undefined;
+            }[];
             contributionContractVersion?: string | undefined;
-            reconnect?: {
+            reconnect?: undefined | {
                 allowProviderIdentityChange?: boolean | undefined;
-            } | undefined;
+            };
             refreshLeaseOwnerId?: string | undefined;
-        } | undefined;
+        };
     };
     readonly "secrets.shared.grants.set": {
         resourceId: string;
@@ -1888,32 +1923,47 @@ export type SavedSecretSharingActionInputById = {
         accountGrants: string[];
         teamGrants: string[];
         groupGrants: string[];
-        keyEnvelopes?: {
+        keyEnvelopes?: undefined | {
             recipientAccountId: string;
             encryptedDataKey: string;
             recipientContentPublicKeyFingerprint: string;
-        }[] | undefined;
+        }[];
     };
     readonly "secrets.shared.update": {
         resourceId: string;
         expectedRevision: number;
         displayName: string;
-        kind: 'apiKey' | 'token' | 'password' | 'other';
+        kind: 'apiKey' | 'other' | 'password' | 'token';
         storedContent: {
+            t: 'encrypted';
+            c: string;
+            storage?: undefined | {
+                kind: 'external';
+                provider: {
+                    pluginId: string;
+                    localId: string;
+                };
+                providerLabel?: string | undefined;
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'value';
+            };
+        } | {
             t: 'plain';
             v: {
                 v: 1;
                 name: string;
-                kind: 'apiKey' | 'token' | 'password' | 'other';
+                kind: 'apiKey' | 'other' | 'password' | 'token';
                 value: string;
-                createdByPlugin?: {
+                createdByPlugin?: undefined | {
                     pluginId: string;
                     secretId: string;
-                } | undefined;
+                };
             } | {
                 v: 2;
                 name: string;
-                kind: 'apiKey' | 'token' | 'password' | 'other';
+                kind: 'apiKey' | 'other' | 'password' | 'token';
                 source: {
                     kind: 'external';
                     contribution: {
@@ -1922,26 +1972,26 @@ export type SavedSecretSharingActionInputById = {
                     };
                     account: string;
                     reference: string;
-                    metadata?: {
-                        vault: {
-                            id: string;
-                            name: string;
-                        };
-                        item: {
-                            id: string;
-                            title: string;
-                        };
+                    metadata?: undefined | {
                         field: {
                             id: string;
                             title: string;
                             kind: string;
                         };
-                    } | undefined;
+                        item: {
+                            id: string;
+                            title: string;
+                        };
+                        vault: {
+                            id: string;
+                            name: string;
+                        };
+                    };
                 };
-                createdByPlugin?: {
+                createdByPlugin?: undefined | {
                     pluginId: string;
                     secretId: string;
-                } | undefined;
+                };
             } | {
                 v: 2;
                 name: string;
@@ -1959,95 +2009,80 @@ export type SavedSecretSharingActionInputById = {
                     userName?: string | undefined;
                     userDisplayName?: string | undefined;
                 };
-                createdByPlugin?: {
+                createdByPlugin?: undefined | {
                     pluginId: string;
                     secretId: string;
-                } | undefined;
+                };
             };
-            storage?: {
-                kind: 'value';
-            } | {
-                kind: 'passkey';
-            } | {
+            storage?: undefined | {
                 kind: 'external';
                 provider: {
                     pluginId: string;
                     localId: string;
                 };
                 providerLabel?: string | undefined;
-            } | undefined;
-        } | {
-            t: 'encrypted';
-            c: string;
-            storage?: {
-                kind: 'value';
             } | {
                 kind: 'passkey';
             } | {
-                kind: 'external';
-                provider: {
-                    pluginId: string;
-                    localId: string;
-                };
-                providerLabel?: string | undefined;
-            } | undefined;
+                kind: 'value';
+            };
         };
-        toMode?: 'plain' | 'e2ee' | undefined;
-        keyEnvelopes?: {
+        toMode?: 'e2ee' | 'plain' | undefined;
+        keyEnvelopes?: undefined | {
             recipientAccountId: string;
             encryptedDataKey: string;
             recipientContentPublicKeyFingerprint: string;
-        }[] | undefined;
+        }[];
     };
     readonly "secrets.shared.delete": {
         resourceId: string;
         expectedRevision: number;
         expectedSettingsVersion: number;
         referenceCensus: {
-            accountMode: 'plain' | 'e2ee';
+            accountMode: 'e2ee' | 'plain';
             profiles: {
-                referenceGuardRevision: number | 'absent';
+                referenceGuardRevision: 'absent' | number;
                 rows: {
                     id: string;
                     revision: number;
                 }[];
             };
-            profileTransferRevision?: number | 'absent' | undefined;
-            artifacts?: {
+            profileTransferRevision?: 'absent' | number | undefined;
+            artifacts?: undefined | {
                 headerVersion: number;
                 bodyVersion: number;
                 artifactId: string;
-            }[] | undefined;
-            catalogs?: {
-                mcp: number | 'absent';
-                acp: number | 'absent';
-                providerConnections: number | 'absent';
-                connectedConfigurations: number | 'absent';
-                connectedPurposes: number | 'absent';
-                registrySources?: number | 'absent' | undefined;
-            } | undefined;
-            remoteHosts?: {
-                revision: number | 'absent';
+            }[];
+            catalogs?: undefined | {
+                mcp: 'absent' | number;
+                acp: 'absent' | number;
+                providerConnections: 'absent' | number;
+                connectedConfigurations: 'absent' | number;
+                connectedPurposes: 'absent' | number;
+                registrySources?: 'absent' | number | undefined;
+            };
+            remoteHosts?: undefined | {
+                revision: 'absent' | number;
                 resourceRefs: string[];
-            } | undefined;
-            notificationChannels?: {
-                revision: number | 'absent';
+            };
+            notificationChannels?: undefined | {
+                revision: 'absent' | number;
                 resourceRefs: string[];
-            } | undefined;
+            };
         };
-        managedResourceDispositions?: {
+        managedResourceDispositions?: undefined | {
             managedId: string;
             expectedIntentRevision: number;
-            expectedAllocation: 'unsubmitted' | 'may-exist' | 'bound' | 'confirmed-absent';
+            expectedAllocation: 'bound' | 'confirmed-absent' | 'may-exist' | 'unsubmitted';
             responsibility: 'manual';
-            expectedResource?: {
+            expectedResource?: undefined | {
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
                 value: unknown;
-                devcontainerObservation?: {
+                devcontainerObservation?: undefined | {
                     nativeResourceId: string;
                     user: string;
                     workspaceFolder: string;
@@ -2059,62 +2094,74 @@ export type SavedSecretSharingActionInputById = {
                         kind: 'child';
                         childPath: string;
                     };
-                } | undefined;
-            } | undefined;
-            expectedNativeOperationRef?: {
+                };
+            };
+            expectedNativeOperationRef?: undefined | {
                 value: unknown;
                 contributionRef: {
                     pluginId: string;
                     localId: string;
                 };
                 schemaVersion: number;
-            } | undefined;
-            expectedRecovery?: {
+            };
+            expectedRecovery?: undefined | {
                 reference: string;
                 reason: string;
                 consoleUrl?: string | undefined;
-            } | undefined;
-        }[] | undefined;
+            };
+        }[];
     };
 };
 export type SavedSecretSharingActionResultById = {
     readonly "secrets.shared.list": {
         resources: ({
+            materialStatus: 'resource_corrupt';
+            relationship: 'owner';
+            repair: {
+                kind: 'delete_resource';
+                resourceId: string;
+                expectedRevision: number;
+            };
+        } | {
+            materialStatus: 'resource_corrupt';
+            relationship: 'recipient';
+            repair: null;
+        } | {
             ref: string;
             source: 'personal' | 'shared_resource';
             relationship: 'owner' | 'recipient';
-            name: string | null;
-            kind: 'apiKey' | 'token' | 'password' | 'other' | null;
-            encryptionMode: 'plain' | 'e2ee' | null;
-            owner: {
-                name: string | null;
-                firstName: string | null;
-                lastName: string | null;
-                username: string | null;
-                avatarUrl: string | null;
+            name: null | string;
+            kind: 'apiKey' | 'other' | 'password' | 'token' | null;
+            encryptionMode: 'e2ee' | 'plain' | null;
+            owner: null | {
+                name: null | string;
+                firstName: null | string;
+                lastName: null | string;
+                username: null | string;
+                avatarUrl: null | string;
                 kind: 'account';
                 accountId: string;
-            } | null;
+            };
             accessSources: ({
                 kind: 'account';
-            } | {
-                kind: 'team';
-                teamId: string;
-                name: string;
             } | {
                 kind: 'group';
                 teamId: string;
                 teamName: string;
                 groupId: string;
                 name: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+                name: string;
             })[];
-            audience: {
+            audience: null | {
                 accounts: {
-                    name: string | null;
-                    firstName: string | null;
-                    lastName: string | null;
-                    username: string | null;
-                    avatarUrl: string | null;
+                    name: null | string;
+                    firstName: null | string;
+                    lastName: null | string;
+                    username: null | string;
+                    avatarUrl: null | string;
                     kind: 'account';
                     accountId: string;
                 }[];
@@ -2130,10 +2177,10 @@ export type SavedSecretSharingActionResultById = {
                     groupId: string;
                     name: string;
                 }[];
-            } | null;
-            ownerAccountId: string | null;
-            revision: number | null;
-            materialStatus: 'ready' | 'preparing_encrypted_access' | 'recipient_mode_unsupported' | 'temporarily_unavailable' | 'access_removed' | 'deleted' | 'update_required';
+            };
+            ownerAccountId: null | string;
+            revision: null | number;
+            materialStatus: 'access_removed' | 'deleted' | 'preparing_encrypted_access' | 'ready' | 'recipient_mode_unsupported' | 'temporarily_unavailable' | 'update_required';
             capabilities: {
                 use: boolean;
                 rename: boolean;
@@ -2141,31 +2188,19 @@ export type SavedSecretSharingActionResultById = {
                 manageAccess: boolean;
                 delete: boolean;
             };
-            storage?: {
-                kind: 'value';
-            } | {
-                kind: 'passkey';
-            } | {
+            storage?: undefined | {
                 kind: 'external';
                 provider: {
                     pluginId: string;
                     localId: string;
                 };
                 providerLabel?: string | undefined;
-            } | undefined;
-            deploymentReferenceState?: 'unavailable' | 'referenced' | 'unreferenced' | undefined;
-        } | {
-            materialStatus: 'resource_corrupt';
-            relationship: 'owner';
-            repair: {
-                kind: 'delete_resource';
-                resourceId: string;
-                expectedRevision: number;
+            } | {
+                kind: 'passkey';
+            } | {
+                kind: 'value';
             };
-        } | {
-            materialStatus: 'resource_corrupt';
-            relationship: 'recipient';
-            repair: null;
+            deploymentReferenceState?: 'referenced' | 'unavailable' | 'unreferenced' | undefined;
         })[];
     };
     readonly "secrets.shared.create": {
@@ -2177,18 +2212,18 @@ export type SavedSecretSharingActionResultById = {
         settingsVersion: number;
         remoteHostRevision?: number | undefined;
         notificationChannelRevision?: number | undefined;
-        catalogRevisions?: {
-            mcp?: number | 'absent' | undefined;
-            acp?: number | 'absent' | undefined;
-            providerConnections?: number | 'absent' | undefined;
-            connectedConfigurations?: number | 'absent' | undefined;
-            connectedPurposes?: number | 'absent' | undefined;
-            registrySources?: number | 'absent' | undefined;
-        } | undefined;
-        connectedAccountCredential?: {
-            configurationRevision: string | null;
+        catalogRevisions?: undefined | {
+            mcp?: 'absent' | number | undefined;
+            acp?: 'absent' | number | undefined;
+            providerConnections?: 'absent' | number | undefined;
+            connectedConfigurations?: 'absent' | number | undefined;
+            connectedPurposes?: 'absent' | number | undefined;
+            registrySources?: 'absent' | number | undefined;
+        };
+        connectedAccountCredential?: undefined | {
+            configurationRevision: null | string;
             credentialRevision: string;
-        } | undefined;
+        };
     };
     readonly "secrets.shared.grants.set": {
         resourceId: string;

@@ -13,14 +13,14 @@ export type ArtifactAccessActionInputById = {
             kind: 'account';
             accountId: string;
         } | {
-            kind: 'team';
-            teamId: string;
-        } | {
             kind: 'group';
             teamId: string;
             groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
         };
-        accessLevel: 'view' | 'edit' | 'admin';
+        accessLevel: 'admin' | 'edit' | 'view';
     };
     readonly "artifact.access.grants.remove": {
         artifactId: string;
@@ -28,12 +28,12 @@ export type ArtifactAccessActionInputById = {
             kind: 'account';
             accountId: string;
         } | {
-            kind: 'team';
-            teamId: string;
-        } | {
             kind: 'group';
             teamId: string;
             groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
         };
     };
 };
@@ -41,31 +41,31 @@ export type ArtifactAccessActionResultById = {
     readonly "artifact.access.grants.list": {
         artifactId: string;
         ownerAccountId: string;
-        access: 'view' | 'edit' | 'admin' | 'owner';
+        access: 'admin' | 'edit' | 'owner' | 'view';
         grants: {
             principal: {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
-            acceptedVersions?: {
+            acceptedVersions?: undefined | {
                 version: string;
                 copies: number;
                 reportedAt: number;
-            }[] | undefined;
+            }[];
         }[];
     };
     readonly "artifact.access.grants.set": {
@@ -76,31 +76,31 @@ export type ArtifactAccessActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
-            acceptedVersions?: {
+            acceptedVersions?: undefined | {
                 version: string;
                 copies: number;
                 reportedAt: number;
-            }[] | undefined;
+            }[];
         }[];
-        access: 'view' | 'edit' | 'admin' | 'owner' | null;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
         changed: boolean;
-        preparation?: {
+        preparation?: undefined | {
             status: 'pending';
-        } | undefined;
+        };
     };
     readonly "artifact.access.grants.remove": {
         artifactId: string;
@@ -110,30 +110,30 @@ export type ArtifactAccessActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            accessLevel: 'view' | 'edit' | 'admin';
+            accessLevel: 'admin' | 'edit' | 'view';
             createdByAccountId: string;
             createdAt: number;
             display: {
-                name: string | null;
-                username?: string | null | undefined;
+                name: null | string;
+                username?: null | string | undefined;
             };
-            acceptedVersions?: {
+            acceptedVersions?: undefined | {
                 version: string;
                 copies: number;
                 reportedAt: number;
-            }[] | undefined;
+            }[];
         }[];
-        access: 'view' | 'edit' | 'admin' | 'owner' | null;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
         changed: boolean;
-        preparation?: {
+        preparation?: undefined | {
             status: 'pending';
-        } | undefined;
+        };
     };
 };

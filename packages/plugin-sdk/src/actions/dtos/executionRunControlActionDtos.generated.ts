@@ -6,7 +6,7 @@ import type { JsonValue } from '../../identity.js';
 export type ExecutionRunControlActionInputById = {
     readonly "execution.run.start": {
         [x: string]: unknown;
-        intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+        intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
         backendTarget: unknown;
         retentionPolicy: 'ephemeral' | 'resumable';
         runClass: 'bounded' | 'long_lived';
@@ -16,34 +16,36 @@ export type ExecutionRunControlActionInputById = {
         roleId?: string | undefined;
         launchProfileId?: string | undefined;
         instructions?: string | undefined;
-        initialInput?: {
+        initialInput?: undefined | {
             kind: 'deferred_session_pending';
-        } | undefined;
-        display?: {
+        };
+        display?: undefined | {
             [x: string]: unknown;
             title?: string | undefined;
             participantLabel?: string | undefined;
             groupId?: string | undefined;
-        } | undefined;
-        launchOrigin?: {
+        };
+        launchOrigin?: undefined | {
             kind: 'discussion';
             serverId: string;
             discussionId: string;
             messageIds: string[];
             draftCorrelationId?: string | undefined;
         } | {
+            kind: 'external';
+            source?: 'action' | 'cli' | 'mcp' | undefined;
+        } | {
             kind: 'session';
             sessionId: string;
             draftCorrelationId?: string | undefined;
-        } | {
-            kind: 'external';
-            source?: 'cli' | 'mcp' | 'action' | undefined;
-        } | undefined;
+        };
+        approvalProfileId?: null | string | undefined;
         profileId?: string | undefined;
-        profileSourceCustody?: {
-            kind: 'managed';
-            immutableGenerationId: string;
-            installSource: 'npm' | 'archive' | 'localPath';
+        profileSourceCustody?: undefined | {
+            kind: 'account_release';
+            pluginId: string;
+            version: string;
+            archiveDigestSha256: string;
         } | {
             kind: 'bundled_first_party';
             packagedRuntime: {
@@ -60,23 +62,22 @@ export type ExecutionRunControlActionInputById = {
             kind: 'development';
             registeredRootId: string;
         } | {
-            kind: 'account_release';
-            pluginId: string;
-            version: string;
-            archiveDigestSha256: string;
-        } | undefined;
-        secretReferenceOverlay?: {
+            kind: 'managed';
+            immutableGenerationId: string;
+            installSource: 'archive' | 'localPath' | 'npm';
+        };
+        secretReferenceOverlay?: undefined | {
             v: 1;
             bindings: Record<string, {
                 ref: string;
                 revision?: number | undefined;
             }>;
-        } | undefined;
+        };
         initialContext?: string | undefined;
         initialContextMode?: 'bootstrap' | 'first_turn' | undefined;
         bootstrapMode?: 'none' | 'ready_handshake' | undefined;
         resumeHandle?: unknown;
-        replay?: {
+        replay?: undefined | {
             [x: string]: unknown;
             kind: 'voice_session.v1';
             previousSessionId: string;
@@ -85,157 +86,48 @@ export type ExecutionRunControlActionInputById = {
             recentMessagesCount?: number | undefined;
             maxSeedChars?: number | undefined;
             summaryRunner?: unknown;
-        } | undefined;
+        };
         intentInput?: unknown;
-        structuredInput?: {
+        structuredInput?: undefined | {
             [x: string]: unknown;
             v?: 1 | undefined;
-            mentions?: {
+            mentions?: undefined | {
                 [x: string]: unknown;
                 kind: string;
                 ref: string;
                 token: string;
                 label?: string | undefined;
-            }[] | undefined;
-            vendorPluginMentions?: {
+            }[];
+            vendorPluginMentions?: undefined | {
                 [x: string]: unknown;
                 vendorPluginRef: string;
                 backendId?: string | undefined;
                 agentId?: string | undefined;
                 label?: string | undefined;
-            }[] | undefined;
-            skillMentions?: {
+            }[];
+            skillMentions?: undefined | {
                 [x: string]: unknown;
                 name: string;
                 id?: string | undefined;
                 idSource?: 'generated' | undefined;
-                origin?: 'vendor' | 'happier' | undefined;
+                origin?: 'happier' | 'vendor' | undefined;
                 path?: string | undefined;
                 label?: string | undefined;
                 projectionRef?: string | undefined;
                 backendId?: string | undefined;
                 agentId?: string | undefined;
-            }[] | undefined;
-            imageInputs?: {
+            }[];
+            imageInputs?: undefined | {
                 [x: string]: unknown;
                 id: string;
-                kind: 'localImage' | 'image';
+                kind: 'image' | 'localImage';
                 path?: string | undefined;
                 url?: string | undefined;
                 mimeType?: string | undefined;
                 label?: string | undefined;
-            }[] | undefined;
-            browserContext?: {
+            }[];
+            browserContext?: undefined | {
                 contexts: ({
-                    v: 1;
-                    contextId: string;
-                    sourceViewId: string;
-                    sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                    fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                    capturedAtMs: number;
-                    navigationGeneration: number;
-                    lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                    redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                    kind: 'browserPageReference';
-                    disabledReason?: string | undefined;
-                    targetId?: string | undefined;
-                    targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                    url?: string | undefined;
-                    title?: string | undefined;
-                    faviconUrl?: string | undefined;
-                    origin?: string | undefined;
-                } | {
-                    v: 1;
-                    contextId: string;
-                    sourceViewId: string;
-                    sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                    fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                    capturedAtMs: number;
-                    navigationGeneration: number;
-                    lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                    redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                    kind: 'browserScreenshot';
-                    media: {
-                        mediaId: string;
-                        mediaKind: 'image';
-                        width: number;
-                        height: number;
-                        sizeBytes: number;
-                        file?: {
-                            sessionId: string;
-                            storage: 'session' | 'daemon';
-                            path: string;
-                            sha256: string;
-                            mimeType: 'image/png';
-                        } | undefined;
-                    };
-                    disabledReason?: string | undefined;
-                    viewport?: {
-                        width: number;
-                        height: number;
-                    } | undefined;
-                } | {
-                    v: 1;
-                    contextId: string;
-                    sourceViewId: string;
-                    sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                    fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                    capturedAtMs: number;
-                    navigationGeneration: number;
-                    lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                    redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                    kind: 'browserTextSelection';
-                    text: string;
-                    disabledReason?: string | undefined;
-                    truncated?: boolean | undefined;
-                } | {
-                    v: 1;
-                    contextId: string;
-                    sourceViewId: string;
-                    sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                    fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                    capturedAtMs: number;
-                    navigationGeneration: number;
-                    lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                    redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                    kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-                    summary: string;
-                    disabledReason?: string | undefined;
-                    truncated?: boolean | undefined;
-                } | {
-                    v: 1;
-                    contextId: string;
-                    sourceViewId: string;
-                    sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                    fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                    capturedAtMs: number;
-                    navigationGeneration: number;
-                    lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                    redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                    kind: 'browserSelectedElement';
-                    selectorPath: string;
-                    disabledReason?: string | undefined;
-                    accessibleName?: string | undefined;
-                    componentName?: string | undefined;
-                    sourceLocation?: {
-                        file: string;
-                        line?: number | undefined;
-                        column?: number | undefined;
-                    } | undefined;
-                    rect?: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    } | undefined;
-                } | {
                     annotationId: string;
                     browserSessionId: string;
                     imageRef: {
@@ -244,13 +136,13 @@ export type ExecutionRunControlActionInputById = {
                         width: number;
                         height: number;
                         sizeBytes: number;
-                        file?: {
+                        file?: undefined | {
                             sessionId: string;
-                            storage: 'session' | 'daemon';
+                            storage: 'daemon' | 'session';
                             path: string;
                             sha256: string;
                             mimeType: 'image/png';
-                        } | undefined;
+                        };
                     };
                     marks: {
                         v: 1;
@@ -269,67 +161,8 @@ export type ExecutionRunControlActionInputById = {
                                 x: number;
                                 y: number;
                             };
-                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                            size: 's' | 'm' | 'l';
-                            id: string;
-                        } | {
-                            kind: 'rectangle';
-                            rect: {
-                                x: number;
-                                y: number;
-                                width: number;
-                                height: number;
-                            };
-                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                            size: 's' | 'm' | 'l';
-                            id: string;
-                        } | {
-                            kind: 'ellipse';
-                            rect: {
-                                x: number;
-                                y: number;
-                                width: number;
-                                height: number;
-                            };
-                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                            size: 's' | 'm' | 'l';
-                            id: string;
-                        } | {
-                            kind: 'freehand';
-                            points: {
-                                x: number;
-                                y: number;
-                            }[];
-                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                            size: 's' | 'm' | 'l';
-                            id: string;
-                        } | {
-                            kind: 'highlighter';
-                            points: {
-                                x: number;
-                                y: number;
-                            }[];
-                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                            size: 's' | 'm' | 'l';
-                            id: string;
-                        } | {
-                            kind: 'text';
-                            at: {
-                                x: number;
-                                y: number;
-                            };
-                            text: string;
-                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                            size: 's' | 'm' | 'l';
-                            id: string;
-                        } | {
-                            kind: 'step';
-                            at: {
-                                x: number;
-                                y: number;
-                            };
-                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                            size: 's' | 'm' | 'l';
+                            color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                            size: 'l' | 'm' | 's';
                             id: string;
                         } | {
                             kind: 'blur';
@@ -339,7 +172,7 @@ export type ExecutionRunControlActionInputById = {
                                 width: number;
                                 height: number;
                             };
-                            size: 's' | 'm' | 'l';
+                            size: 'l' | 'm' | 's';
                             id: string;
                         } | {
                             kind: 'element';
@@ -350,37 +183,96 @@ export type ExecutionRunControlActionInputById = {
                                 height: number;
                             };
                             label: string;
-                            color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                            color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                            id: string;
+                        } | {
+                            kind: 'ellipse';
+                            rect: {
+                                x: number;
+                                y: number;
+                                width: number;
+                                height: number;
+                            };
+                            color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                            size: 'l' | 'm' | 's';
+                            id: string;
+                        } | {
+                            kind: 'freehand';
+                            points: {
+                                x: number;
+                                y: number;
+                            }[];
+                            color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                            size: 'l' | 'm' | 's';
+                            id: string;
+                        } | {
+                            kind: 'highlighter';
+                            points: {
+                                x: number;
+                                y: number;
+                            }[];
+                            color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                            size: 'l' | 'm' | 's';
+                            id: string;
+                        } | {
+                            kind: 'rectangle';
+                            rect: {
+                                x: number;
+                                y: number;
+                                width: number;
+                                height: number;
+                            };
+                            color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                            size: 'l' | 'm' | 's';
+                            id: string;
+                        } | {
+                            kind: 'step';
+                            at: {
+                                x: number;
+                                y: number;
+                            };
+                            color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                            size: 'l' | 'm' | 's';
+                            id: string;
+                        } | {
+                            kind: 'text';
+                            at: {
+                                x: number;
+                                y: number;
+                            };
+                            text: string;
+                            color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                            size: 'l' | 'm' | 's';
                             id: string;
                         })[];
-                        crop?: {
+                        crop?: undefined | {
                             x: number;
                             y: number;
                             width: number;
                             height: number;
-                        } | undefined;
+                        };
                     };
                     elements: {
                         markId: string;
                         selectorPath: string;
                         accessibleName?: string | undefined;
                         componentName?: string | undefined;
-                        sourceLocation?: {
+                        sourceLocation?: undefined | {
                             file: string;
                             line?: number | undefined;
                             column?: number | undefined;
-                        } | undefined;
+                        };
                     }[];
                     kind: 'browserAnnotation';
                     v: 1;
                     contextId: string;
                     sourceViewId: string;
-                    sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                    fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+                    sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                    fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
                     capturedAtMs: number;
                     navigationGeneration: number;
-                    lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                    redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
+                    lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                    redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
                     pageUrl?: string | undefined;
                     pageTitle?: string | undefined;
                     disabledReason?: string | undefined;
@@ -388,12 +280,51 @@ export type ExecutionRunControlActionInputById = {
                     v: 1;
                     contextId: string;
                     sourceViewId: string;
-                    sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                    fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+                    sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                    fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
                     capturedAtMs: number;
                     navigationGeneration: number;
-                    lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                    redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
+                    lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                    redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                    kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+                    summary: string;
+                    disabledReason?: string | undefined;
+                    truncated?: boolean | undefined;
+                } | {
+                    v: 1;
+                    contextId: string;
+                    sourceViewId: string;
+                    sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                    fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                    capturedAtMs: number;
+                    navigationGeneration: number;
+                    lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                    redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                    kind: 'browserPageReference';
+                    disabledReason?: string | undefined;
+                    targetId?: string | undefined;
+                    targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    url?: string | undefined;
+                    title?: string | undefined;
+                    faviconUrl?: string | undefined;
+                    origin?: string | undefined;
+                } | {
+                    v: 1;
+                    contextId: string;
+                    sourceViewId: string;
+                    sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                    fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                    capturedAtMs: number;
+                    navigationGeneration: number;
+                    lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                    redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
                     kind: 'browserRecordingEvidence';
                     recordingId: string;
                     artifactId: string;
@@ -410,6 +341,76 @@ export type ExecutionRunControlActionInputById = {
                     };
                     disabledReason?: string | undefined;
                     actionChapterRefs?: string[] | undefined;
+                } | {
+                    v: 1;
+                    contextId: string;
+                    sourceViewId: string;
+                    sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                    fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                    capturedAtMs: number;
+                    navigationGeneration: number;
+                    lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                    redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                    kind: 'browserScreenshot';
+                    media: {
+                        mediaId: string;
+                        mediaKind: 'image';
+                        width: number;
+                        height: number;
+                        sizeBytes: number;
+                        file?: undefined | {
+                            sessionId: string;
+                            storage: 'daemon' | 'session';
+                            path: string;
+                            sha256: string;
+                            mimeType: 'image/png';
+                        };
+                    };
+                    disabledReason?: string | undefined;
+                    viewport?: undefined | {
+                        width: number;
+                        height: number;
+                    };
+                } | {
+                    v: 1;
+                    contextId: string;
+                    sourceViewId: string;
+                    sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                    fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                    capturedAtMs: number;
+                    navigationGeneration: number;
+                    lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                    redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                    kind: 'browserSelectedElement';
+                    selectorPath: string;
+                    disabledReason?: string | undefined;
+                    accessibleName?: string | undefined;
+                    componentName?: string | undefined;
+                    sourceLocation?: undefined | {
+                        file: string;
+                        line?: number | undefined;
+                        column?: number | undefined;
+                    };
+                    rect?: undefined | {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                } | {
+                    v: 1;
+                    contextId: string;
+                    sourceViewId: string;
+                    sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                    fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                    capturedAtMs: number;
+                    navigationGeneration: number;
+                    lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                    redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                    kind: 'browserTextSelection';
+                    text: string;
+                    disabledReason?: string | undefined;
+                    truncated?: boolean | undefined;
                 })[];
                 attachments: {
                     v: 1;
@@ -418,9 +419,9 @@ export type ExecutionRunControlActionInputById = {
                     sourceViewId: string;
                     capturedNavigationGeneration: number;
                     currentNavigationGeneration: number;
-                    state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+                    state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
                     requiresReconfirmBeforeSend?: boolean | undefined;
-                    structuredBlock?: {
+                    structuredBlock?: undefined | {
                         annotationId: string;
                         browserSessionId: string;
                         imageRef: {
@@ -429,13 +430,13 @@ export type ExecutionRunControlActionInputById = {
                             width: number;
                             height: number;
                             sizeBytes: number;
-                            file?: {
+                            file?: undefined | {
                                 sessionId: string;
-                                storage: 'session' | 'daemon';
+                                storage: 'daemon' | 'session';
                                 path: string;
                                 sha256: string;
                                 mimeType: 'image/png';
-                            } | undefined;
+                            };
                         };
                         marks: {
                             v: 1;
@@ -454,67 +455,8 @@ export type ExecutionRunControlActionInputById = {
                                     x: number;
                                     y: number;
                                 };
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'rectangle';
-                                rect: {
-                                    x: number;
-                                    y: number;
-                                    width: number;
-                                    height: number;
-                                };
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'ellipse';
-                                rect: {
-                                    x: number;
-                                    y: number;
-                                    width: number;
-                                    height: number;
-                                };
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'freehand';
-                                points: {
-                                    x: number;
-                                    y: number;
-                                }[];
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'highlighter';
-                                points: {
-                                    x: number;
-                                    y: number;
-                                }[];
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'text';
-                                at: {
-                                    x: number;
-                                    y: number;
-                                };
-                                text: string;
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'step';
-                                at: {
-                                    x: number;
-                                    y: number;
-                                };
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
                                 id: string;
                             } | {
                                 kind: 'blur';
@@ -524,7 +466,7 @@ export type ExecutionRunControlActionInputById = {
                                     width: number;
                                     height: number;
                                 };
-                                size: 's' | 'm' | 'l';
+                                size: 'l' | 'm' | 's';
                                 id: string;
                             } | {
                                 kind: 'element';
@@ -535,26 +477,85 @@ export type ExecutionRunControlActionInputById = {
                                     height: number;
                                 };
                                 label: string;
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                id: string;
+                            } | {
+                                kind: 'ellipse';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'freehand';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'highlighter';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'rectangle';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'step';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'text';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                text: string;
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
                                 id: string;
                             })[];
-                            crop?: {
+                            crop?: undefined | {
                                 x: number;
                                 y: number;
                                 width: number;
                                 height: number;
-                            } | undefined;
+                            };
                         };
                         elements: {
                             markId: string;
                             selectorPath: string;
                             accessibleName?: string | undefined;
                             componentName?: string | undefined;
-                            sourceLocation?: {
+                            sourceLocation?: undefined | {
                                 file: string;
                                 line?: number | undefined;
                                 column?: number | undefined;
-                            } | undefined;
+                            };
                         }[];
                         v: 2;
                         kind: 'browser.annotation.v2';
@@ -562,10 +563,10 @@ export type ExecutionRunControlActionInputById = {
                         contextIds: string[];
                         pageUrl?: string | undefined;
                         pageTitle?: string | undefined;
-                    } | undefined;
+                    };
                 }[];
-            } | undefined;
-            composerAttachments?: {
+            };
+            composerAttachments?: undefined | {
                 v: 1;
                 instanceId: string;
                 attachment: {
@@ -578,58 +579,81 @@ export type ExecutionRunControlActionInputById = {
                     label: string;
                     typeLabel: string;
                     description?: string | undefined;
-                    icon?: 'file' | 'review' | 'error' | 'check' | 'external' | 'action' | 'unavailable' | 'neutral' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'workflow' | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | undefined;
+                    icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                    tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    source?: undefined | {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
+                    };
                 };
-                content?: {
+                forgeEvidence?: undefined | {
+                    v: 1;
+                    items: readonly {
+                        source: {
+                            kind: 'alert' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                            label: string;
+                            url?: string;
+                        };
+                        author: {
+                            kind: 'bot' | 'person' | 'process' | 'unknown';
+                            label?: string;
+                        };
+                        text: string;
+                    }[];
+                };
+                content?: undefined | {
                     kind: 'sessionMedia';
                     mediaId: string;
-                } | undefined;
-            }[] | undefined;
-            executionRunCompletion?: {
+                };
+            }[];
+            executionRunCompletion?: undefined | {
                 [x: string]: unknown;
                 v: 1;
                 runId: string;
-                status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
+                status: 'cancelled' | 'failed' | 'succeeded' | 'timeout';
                 finishedAtMs: number;
                 canInspect: boolean;
                 summary?: string | undefined;
-            } | undefined;
-            discussionSelectionSourceV1?: {
+            };
+            discussionSelectionSourceV1?: undefined | {
                 kind: 'discussion';
                 serverId: string;
                 discussionId: string;
                 messageIds: string[];
-            } | undefined;
-        } | undefined;
+            };
+        };
         localInputId?: string | undefined;
-        resultContract?: {
-            kind: 'text';
+        resultContract?: undefined | {
+            kind: 'decision';
+            decisions: string[];
         } | {
             kind: 'json';
             schema: unknown;
         } | {
-            kind: 'decision';
-            decisions: string[];
-        } | undefined;
+            kind: 'text';
+        };
         cwd?: string | undefined;
-        capabilitySelection?: {
-            mcp?: {
+        capabilitySelection?: undefined | {
+            mcp?: undefined | {
                 v?: 1 | undefined;
                 managedServersEnabled?: boolean | undefined;
                 happierToolsEnabled?: boolean | undefined;
                 forceIncludeServerIds?: string[] | undefined;
                 forceExcludeServerIds?: string[] | undefined;
-            } | undefined;
-            skills?: {
+            };
+            skills?: undefined | {
                 v?: 1 | undefined;
                 forceIncludeSkillIds?: string[] | undefined;
                 forceExcludeSkillIds?: string[] | undefined;
                 excludeNativeSkillNames?: string[] | undefined;
-            } | undefined;
-        } | undefined;
+            };
+        };
         modelId?: string | undefined;
-        modelSelection?: {
+        modelSelection?: null | undefined | {
             agentTargetKey: string;
             providerConnectionId: null;
             modelId: string;
@@ -637,10 +661,10 @@ export type ExecutionRunControlActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
-        } | null | undefined;
+        };
         childSelection?: 'agentDefault' | undefined;
         accountSettings?: undefined;
-        teamCredentialModel?: {
+        teamCredentialModel?: undefined | {
             kind: 'team_credential_provider_model';
             resourceId: string;
             teamId: string;
@@ -648,7 +672,7 @@ export type ExecutionRunControlActionInputById = {
             agentTargetKey: string;
             modelId: string;
             deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-            nativeDelivery?: {
+            nativeDelivery?: undefined | {
                 managedId: string;
                 controllerInstallationId: string;
                 guestInstallationId: string;
@@ -656,76 +680,83 @@ export type ExecutionRunControlActionInputById = {
                 placeholderRef: string;
                 sourceRevision: string;
                 providerTicket: string;
-            } | undefined;
-        } | undefined;
-        teamCredentialSessionBindingConsent?: {
+            };
+        };
+        teamCredentialSessionBindingConsent?: undefined | {
             v: 1;
             sessionId: string;
             teamId: string;
             resourceId: string;
             expectedResourceRevision: number;
-        } | undefined;
+        };
         chatModelId?: string | undefined;
         commitModelId?: string | undefined;
-        sessionConfigOptionOverrides?: {
+        sessionConfigOptionOverrides?: undefined | {
             [x: string]: unknown;
             v: 1;
             updatedAt: number;
             overrides: Record<string, {
                 [x: string]: unknown;
                 updatedAt: number;
-                value: string | number | boolean | null;
+                value: boolean | null | number | string;
             }>;
-        } | undefined;
+        };
         connectedServicesDefaultServiceIds?: string[] | undefined;
         notifyParentOnCompletion?: boolean | undefined;
         allowedTools?: string[] | undefined;
         unlistedTools?: 'ask' | 'deny' | undefined;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
         waitForCompletion?: boolean | undefined;
         waitTimeoutSeconds?: number | undefined;
-        configOptions?: Record<string, string | number | boolean | null> | undefined;
-        connectedServices?: string | string[] | {
+        configOptions?: Record<string, boolean | null | number | string> | undefined;
+        connectedServices?: string | string[] | undefined | {
             v: 1;
             bindingsByServiceId: Record<string, {
-                source: 'native';
+                source: 'connected';
+                profileId: string;
+                selection?: 'profile' | undefined;
             } | {
                 source: 'connected';
                 selection: 'group';
                 groupId: string;
                 profileId?: string | undefined;
+                appliedProfileId?: string | undefined;
             } | {
-                source: 'connected';
-                profileId: string;
-                selection?: 'profile' | undefined;
+                source: 'native';
             }>;
         } | {
             v: 1;
             bindingsByServiceId: Record<string, {
-                source: 'native';
+                source: 'connected';
+                profileId: string;
+                selection?: 'profile' | undefined;
             } | {
                 source: 'connected';
                 selection: 'group';
                 groupId: string;
                 profileId?: string | undefined;
+                appliedProfileId?: string | undefined;
             } | {
-                source: 'connected';
-                profileId: string;
-                selection?: 'profile' | undefined;
+                source: 'native';
             }>;
         } | {
             v: 2;
             bindingsByServiceId?: Record<string, {
-                source: 'native';
+                source: 'connected';
+                profileId: string;
+                selection?: 'profile' | undefined;
             } | {
                 source: 'connected';
                 selection: 'group';
                 groupId: string;
                 profileId?: string | undefined;
+                appliedProfileId?: string | undefined;
             } | {
-                source: 'connected';
-                profileId: string;
-                selection?: 'profile' | undefined;
+                source: 'native';
+            } | {
+                source: 'team_resource';
+                resourceId: string;
+                deliveryMode: 'brokered';
             } | {
                 source: 'team_resource';
                 resourceId: string;
@@ -737,72 +768,67 @@ export type ExecutionRunControlActionInputById = {
                     };
                     accountId: string;
                 };
-            } | {
-                source: 'team_resource';
-                resourceId: string;
-                deliveryMode: 'brokered';
-                disclosedMember?: undefined;
             }> | undefined;
-        } | undefined;
+        };
     };
     readonly "execution.run.list": {
         [x: string]: unknown;
         backendTarget: unknown;
         backendId?: string | undefined;
-        status?: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running' | undefined;
+        status?: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout' | undefined;
         limit?: number | undefined;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
     };
     readonly "execution.run.get": {
         [x: string]: unknown;
         runId: string;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
         includeStructured?: boolean | undefined;
         includeLatestToolResult?: boolean | undefined;
         waitForInputId?: string | undefined;
-        waitForOutput?: {
+        waitForOutput?: undefined | {
+            comparisonId: string;
+            kind: 'scm_diff_summary';
+            output: 'commitPlan' | 'summary' | 'walkthrough';
+            resultId?: string | undefined;
+            afterRevision?: number | undefined;
+        } | {
             kind: 'review_walkthrough';
             comparisonId: string;
             resultId?: string | undefined;
             afterRevision?: number | undefined;
-        } | {
-            comparisonId: string;
-            kind: 'scm_diff_summary';
-            output: 'summary' | 'walkthrough' | 'commitPlan';
-            resultId?: string | undefined;
-            afterRevision?: number | undefined;
-        } | undefined;
+        };
     };
     readonly "execution.run.send": {
         sessionId: null;
         runId: string;
         message: string;
         localInputId?: string | undefined;
-        resultContract?: {
-            kind: 'text';
+        resultContract?: undefined | {
+            kind: 'decision';
+            decisions: string[];
         } | {
             kind: 'json';
             schema: unknown;
         } | {
-            kind: 'decision';
-            decisions: string[];
-        } | undefined;
+            kind: 'text';
+        };
         resume?: boolean | undefined;
-        delivery?: 'prompt' | 'steer_if_supported' | 'interrupt' | undefined;
+        delivery?: 'interrupt' | 'prompt' | 'steer_if_supported' | undefined;
     };
     readonly "execution.run.ensure": {
         [x: string]: unknown;
         runId: string;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
         resume?: boolean | undefined;
     };
     readonly "execution.run.ensure_or_start": {
         [x: string]: unknown;
-        sessionId?: string | null | undefined;
-        runId?: string | null | undefined;
-        start?: {
+        sessionId?: null | string | undefined;
+        runId?: null | string | undefined;
+        start?: undefined | {
             [x: string]: unknown;
-            intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+            intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
             backendTarget: unknown;
             permissionMode: string;
             retentionPolicy: 'ephemeral' | 'resumable';
@@ -812,34 +838,36 @@ export type ExecutionRunControlActionInputById = {
             roleId?: string | undefined;
             launchProfileId?: string | undefined;
             instructions?: string | undefined;
-            initialInput?: {
+            initialInput?: undefined | {
                 kind: 'deferred_session_pending';
-            } | undefined;
-            display?: {
+            };
+            display?: undefined | {
                 [x: string]: unknown;
                 title?: string | undefined;
                 participantLabel?: string | undefined;
                 groupId?: string | undefined;
-            } | undefined;
-            launchOrigin?: {
+            };
+            launchOrigin?: undefined | {
                 kind: 'discussion';
                 serverId: string;
                 discussionId: string;
                 messageIds: string[];
                 draftCorrelationId?: string | undefined;
             } | {
+                kind: 'external';
+                source?: 'action' | 'cli' | 'mcp' | undefined;
+            } | {
                 kind: 'session';
                 sessionId: string;
                 draftCorrelationId?: string | undefined;
-            } | {
-                kind: 'external';
-                source?: 'cli' | 'mcp' | 'action' | undefined;
-            } | undefined;
+            };
+            approvalProfileId?: null | string | undefined;
             profileId?: string | undefined;
-            profileSourceCustody?: {
-                kind: 'managed';
-                immutableGenerationId: string;
-                installSource: 'npm' | 'archive' | 'localPath';
+            profileSourceCustody?: undefined | {
+                kind: 'account_release';
+                pluginId: string;
+                version: string;
+                archiveDigestSha256: string;
             } | {
                 kind: 'bundled_first_party';
                 packagedRuntime: {
@@ -856,23 +884,22 @@ export type ExecutionRunControlActionInputById = {
                 kind: 'development';
                 registeredRootId: string;
             } | {
-                kind: 'account_release';
-                pluginId: string;
-                version: string;
-                archiveDigestSha256: string;
-            } | undefined;
-            secretReferenceOverlay?: {
+                kind: 'managed';
+                immutableGenerationId: string;
+                installSource: 'archive' | 'localPath' | 'npm';
+            };
+            secretReferenceOverlay?: undefined | {
                 v: 1;
                 bindings: Record<string, {
                     ref: string;
                     revision?: number | undefined;
                 }>;
-            } | undefined;
+            };
             initialContext?: string | undefined;
             initialContextMode?: 'bootstrap' | 'first_turn' | undefined;
             bootstrapMode?: 'none' | 'ready_handshake' | undefined;
             resumeHandle?: unknown;
-            replay?: {
+            replay?: undefined | {
                 [x: string]: unknown;
                 kind: 'voice_session.v1';
                 previousSessionId: string;
@@ -881,157 +908,48 @@ export type ExecutionRunControlActionInputById = {
                 recentMessagesCount?: number | undefined;
                 maxSeedChars?: number | undefined;
                 summaryRunner?: unknown;
-            } | undefined;
+            };
             intentInput?: unknown;
-            structuredInput?: {
+            structuredInput?: undefined | {
                 [x: string]: unknown;
                 v?: 1 | undefined;
-                mentions?: {
+                mentions?: undefined | {
                     [x: string]: unknown;
                     kind: string;
                     ref: string;
                     token: string;
                     label?: string | undefined;
-                }[] | undefined;
-                vendorPluginMentions?: {
+                }[];
+                vendorPluginMentions?: undefined | {
                     [x: string]: unknown;
                     vendorPluginRef: string;
                     backendId?: string | undefined;
                     agentId?: string | undefined;
                     label?: string | undefined;
-                }[] | undefined;
-                skillMentions?: {
+                }[];
+                skillMentions?: undefined | {
                     [x: string]: unknown;
                     name: string;
                     id?: string | undefined;
                     idSource?: 'generated' | undefined;
-                    origin?: 'vendor' | 'happier' | undefined;
+                    origin?: 'happier' | 'vendor' | undefined;
                     path?: string | undefined;
                     label?: string | undefined;
                     projectionRef?: string | undefined;
                     backendId?: string | undefined;
                     agentId?: string | undefined;
-                }[] | undefined;
-                imageInputs?: {
+                }[];
+                imageInputs?: undefined | {
                     [x: string]: unknown;
                     id: string;
-                    kind: 'localImage' | 'image';
+                    kind: 'image' | 'localImage';
                     path?: string | undefined;
                     url?: string | undefined;
                     mimeType?: string | undefined;
                     label?: string | undefined;
-                }[] | undefined;
-                browserContext?: {
+                }[];
+                browserContext?: undefined | {
                     contexts: ({
-                        v: 1;
-                        contextId: string;
-                        sourceViewId: string;
-                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                        fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                        capturedAtMs: number;
-                        navigationGeneration: number;
-                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                        redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                        kind: 'browserPageReference';
-                        disabledReason?: string | undefined;
-                        targetId?: string | undefined;
-                        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-                        display?: {
-                            title: string;
-                            addressLabel?: string | undefined;
-                            folderLabel?: string | undefined;
-                            iconToken?: string | undefined;
-                            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                        } | undefined;
-                        url?: string | undefined;
-                        title?: string | undefined;
-                        faviconUrl?: string | undefined;
-                        origin?: string | undefined;
-                    } | {
-                        v: 1;
-                        contextId: string;
-                        sourceViewId: string;
-                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                        fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                        capturedAtMs: number;
-                        navigationGeneration: number;
-                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                        redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                        kind: 'browserScreenshot';
-                        media: {
-                            mediaId: string;
-                            mediaKind: 'image';
-                            width: number;
-                            height: number;
-                            sizeBytes: number;
-                            file?: {
-                                sessionId: string;
-                                storage: 'session' | 'daemon';
-                                path: string;
-                                sha256: string;
-                                mimeType: 'image/png';
-                            } | undefined;
-                        };
-                        disabledReason?: string | undefined;
-                        viewport?: {
-                            width: number;
-                            height: number;
-                        } | undefined;
-                    } | {
-                        v: 1;
-                        contextId: string;
-                        sourceViewId: string;
-                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                        fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                        capturedAtMs: number;
-                        navigationGeneration: number;
-                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                        redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                        kind: 'browserTextSelection';
-                        text: string;
-                        disabledReason?: string | undefined;
-                        truncated?: boolean | undefined;
-                    } | {
-                        v: 1;
-                        contextId: string;
-                        sourceViewId: string;
-                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                        fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                        capturedAtMs: number;
-                        navigationGeneration: number;
-                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                        redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-                        summary: string;
-                        disabledReason?: string | undefined;
-                        truncated?: boolean | undefined;
-                    } | {
-                        v: 1;
-                        contextId: string;
-                        sourceViewId: string;
-                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                        fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-                        capturedAtMs: number;
-                        navigationGeneration: number;
-                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                        redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
-                        kind: 'browserSelectedElement';
-                        selectorPath: string;
-                        disabledReason?: string | undefined;
-                        accessibleName?: string | undefined;
-                        componentName?: string | undefined;
-                        sourceLocation?: {
-                            file: string;
-                            line?: number | undefined;
-                            column?: number | undefined;
-                        } | undefined;
-                        rect?: {
-                            x: number;
-                            y: number;
-                            width: number;
-                            height: number;
-                        } | undefined;
-                    } | {
                         annotationId: string;
                         browserSessionId: string;
                         imageRef: {
@@ -1040,13 +958,13 @@ export type ExecutionRunControlActionInputById = {
                             width: number;
                             height: number;
                             sizeBytes: number;
-                            file?: {
+                            file?: undefined | {
                                 sessionId: string;
-                                storage: 'session' | 'daemon';
+                                storage: 'daemon' | 'session';
                                 path: string;
                                 sha256: string;
                                 mimeType: 'image/png';
-                            } | undefined;
+                            };
                         };
                         marks: {
                             v: 1;
@@ -1065,67 +983,8 @@ export type ExecutionRunControlActionInputById = {
                                     x: number;
                                     y: number;
                                 };
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'rectangle';
-                                rect: {
-                                    x: number;
-                                    y: number;
-                                    width: number;
-                                    height: number;
-                                };
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'ellipse';
-                                rect: {
-                                    x: number;
-                                    y: number;
-                                    width: number;
-                                    height: number;
-                                };
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'freehand';
-                                points: {
-                                    x: number;
-                                    y: number;
-                                }[];
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'highlighter';
-                                points: {
-                                    x: number;
-                                    y: number;
-                                }[];
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'text';
-                                at: {
-                                    x: number;
-                                    y: number;
-                                };
-                                text: string;
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
-                                id: string;
-                            } | {
-                                kind: 'step';
-                                at: {
-                                    x: number;
-                                    y: number;
-                                };
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                size: 's' | 'm' | 'l';
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
                                 id: string;
                             } | {
                                 kind: 'blur';
@@ -1135,7 +994,7 @@ export type ExecutionRunControlActionInputById = {
                                     width: number;
                                     height: number;
                                 };
-                                size: 's' | 'm' | 'l';
+                                size: 'l' | 'm' | 's';
                                 id: string;
                             } | {
                                 kind: 'element';
@@ -1146,37 +1005,96 @@ export type ExecutionRunControlActionInputById = {
                                     height: number;
                                 };
                                 label: string;
-                                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                id: string;
+                            } | {
+                                kind: 'ellipse';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'freehand';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'highlighter';
+                                points: {
+                                    x: number;
+                                    y: number;
+                                }[];
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'rectangle';
+                                rect: {
+                                    x: number;
+                                    y: number;
+                                    width: number;
+                                    height: number;
+                                };
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'step';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
+                                id: string;
+                            } | {
+                                kind: 'text';
+                                at: {
+                                    x: number;
+                                    y: number;
+                                };
+                                text: string;
+                                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                size: 'l' | 'm' | 's';
                                 id: string;
                             })[];
-                            crop?: {
+                            crop?: undefined | {
                                 x: number;
                                 y: number;
                                 width: number;
                                 height: number;
-                            } | undefined;
+                            };
                         };
                         elements: {
                             markId: string;
                             selectorPath: string;
                             accessibleName?: string | undefined;
                             componentName?: string | undefined;
-                            sourceLocation?: {
+                            sourceLocation?: undefined | {
                                 file: string;
                                 line?: number | undefined;
                                 column?: number | undefined;
-                            } | undefined;
+                            };
                         }[];
                         kind: 'browserAnnotation';
                         v: 1;
                         contextId: string;
                         sourceViewId: string;
-                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                        fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+                        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
                         capturedAtMs: number;
                         navigationGeneration: number;
-                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                        redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
+                        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
                         pageUrl?: string | undefined;
                         pageTitle?: string | undefined;
                         disabledReason?: string | undefined;
@@ -1184,12 +1102,51 @@ export type ExecutionRunControlActionInputById = {
                         v: 1;
                         contextId: string;
                         sourceViewId: string;
-                        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-                        fidelity: 'cdp' | 'previewProxy' | 'injectedPage' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+                        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
                         capturedAtMs: number;
                         navigationGeneration: number;
-                        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-                        redactionLevel: 'none' | 'metadataOnly' | 'summaryOnly' | 'blocked';
+                        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+                        summary: string;
+                        disabledReason?: string | undefined;
+                        truncated?: boolean | undefined;
+                    } | {
+                        v: 1;
+                        contextId: string;
+                        sourceViewId: string;
+                        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                        capturedAtMs: number;
+                        navigationGeneration: number;
+                        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                        kind: 'browserPageReference';
+                        disabledReason?: string | undefined;
+                        targetId?: string | undefined;
+                        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+                        display?: undefined | {
+                            title: string;
+                            addressLabel?: string | undefined;
+                            folderLabel?: string | undefined;
+                            iconToken?: string | undefined;
+                            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                        };
+                        url?: string | undefined;
+                        title?: string | undefined;
+                        faviconUrl?: string | undefined;
+                        origin?: string | undefined;
+                    } | {
+                        v: 1;
+                        contextId: string;
+                        sourceViewId: string;
+                        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                        capturedAtMs: number;
+                        navigationGeneration: number;
+                        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
                         kind: 'browserRecordingEvidence';
                         recordingId: string;
                         artifactId: string;
@@ -1206,6 +1163,76 @@ export type ExecutionRunControlActionInputById = {
                         };
                         disabledReason?: string | undefined;
                         actionChapterRefs?: string[] | undefined;
+                    } | {
+                        v: 1;
+                        contextId: string;
+                        sourceViewId: string;
+                        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                        capturedAtMs: number;
+                        navigationGeneration: number;
+                        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                        kind: 'browserScreenshot';
+                        media: {
+                            mediaId: string;
+                            mediaKind: 'image';
+                            width: number;
+                            height: number;
+                            sizeBytes: number;
+                            file?: undefined | {
+                                sessionId: string;
+                                storage: 'daemon' | 'session';
+                                path: string;
+                                sha256: string;
+                                mimeType: 'image/png';
+                            };
+                        };
+                        disabledReason?: string | undefined;
+                        viewport?: undefined | {
+                            width: number;
+                            height: number;
+                        };
+                    } | {
+                        v: 1;
+                        contextId: string;
+                        sourceViewId: string;
+                        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                        capturedAtMs: number;
+                        navigationGeneration: number;
+                        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                        kind: 'browserSelectedElement';
+                        selectorPath: string;
+                        disabledReason?: string | undefined;
+                        accessibleName?: string | undefined;
+                        componentName?: string | undefined;
+                        sourceLocation?: undefined | {
+                            file: string;
+                            line?: number | undefined;
+                            column?: number | undefined;
+                        };
+                        rect?: undefined | {
+                            x: number;
+                            y: number;
+                            width: number;
+                            height: number;
+                        };
+                    } | {
+                        v: 1;
+                        contextId: string;
+                        sourceViewId: string;
+                        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+                        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+                        capturedAtMs: number;
+                        navigationGeneration: number;
+                        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+                        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+                        kind: 'browserTextSelection';
+                        text: string;
+                        disabledReason?: string | undefined;
+                        truncated?: boolean | undefined;
                     })[];
                     attachments: {
                         v: 1;
@@ -1214,9 +1241,9 @@ export type ExecutionRunControlActionInputById = {
                         sourceViewId: string;
                         capturedNavigationGeneration: number;
                         currentNavigationGeneration: number;
-                        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+                        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
                         requiresReconfirmBeforeSend?: boolean | undefined;
-                        structuredBlock?: {
+                        structuredBlock?: undefined | {
                             annotationId: string;
                             browserSessionId: string;
                             imageRef: {
@@ -1225,13 +1252,13 @@ export type ExecutionRunControlActionInputById = {
                                 width: number;
                                 height: number;
                                 sizeBytes: number;
-                                file?: {
+                                file?: undefined | {
                                     sessionId: string;
-                                    storage: 'session' | 'daemon';
+                                    storage: 'daemon' | 'session';
                                     path: string;
                                     sha256: string;
                                     mimeType: 'image/png';
-                                } | undefined;
+                                };
                             };
                             marks: {
                                 v: 1;
@@ -1250,67 +1277,8 @@ export type ExecutionRunControlActionInputById = {
                                         x: number;
                                         y: number;
                                     };
-                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                    size: 's' | 'm' | 'l';
-                                    id: string;
-                                } | {
-                                    kind: 'rectangle';
-                                    rect: {
-                                        x: number;
-                                        y: number;
-                                        width: number;
-                                        height: number;
-                                    };
-                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                    size: 's' | 'm' | 'l';
-                                    id: string;
-                                } | {
-                                    kind: 'ellipse';
-                                    rect: {
-                                        x: number;
-                                        y: number;
-                                        width: number;
-                                        height: number;
-                                    };
-                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                    size: 's' | 'm' | 'l';
-                                    id: string;
-                                } | {
-                                    kind: 'freehand';
-                                    points: {
-                                        x: number;
-                                        y: number;
-                                    }[];
-                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                    size: 's' | 'm' | 'l';
-                                    id: string;
-                                } | {
-                                    kind: 'highlighter';
-                                    points: {
-                                        x: number;
-                                        y: number;
-                                    }[];
-                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                    size: 's' | 'm' | 'l';
-                                    id: string;
-                                } | {
-                                    kind: 'text';
-                                    at: {
-                                        x: number;
-                                        y: number;
-                                    };
-                                    text: string;
-                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                    size: 's' | 'm' | 'l';
-                                    id: string;
-                                } | {
-                                    kind: 'step';
-                                    at: {
-                                        x: number;
-                                        y: number;
-                                    };
-                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                                    size: 's' | 'm' | 'l';
+                                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                    size: 'l' | 'm' | 's';
                                     id: string;
                                 } | {
                                     kind: 'blur';
@@ -1320,7 +1288,7 @@ export type ExecutionRunControlActionInputById = {
                                         width: number;
                                         height: number;
                                     };
-                                    size: 's' | 'm' | 'l';
+                                    size: 'l' | 'm' | 's';
                                     id: string;
                                 } | {
                                     kind: 'element';
@@ -1331,26 +1299,85 @@ export type ExecutionRunControlActionInputById = {
                                         height: number;
                                     };
                                     label: string;
-                                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                    id: string;
+                                } | {
+                                    kind: 'ellipse';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                    size: 'l' | 'm' | 's';
+                                    id: string;
+                                } | {
+                                    kind: 'freehand';
+                                    points: {
+                                        x: number;
+                                        y: number;
+                                    }[];
+                                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                    size: 'l' | 'm' | 's';
+                                    id: string;
+                                } | {
+                                    kind: 'highlighter';
+                                    points: {
+                                        x: number;
+                                        y: number;
+                                    }[];
+                                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                    size: 'l' | 'm' | 's';
+                                    id: string;
+                                } | {
+                                    kind: 'rectangle';
+                                    rect: {
+                                        x: number;
+                                        y: number;
+                                        width: number;
+                                        height: number;
+                                    };
+                                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                    size: 'l' | 'm' | 's';
+                                    id: string;
+                                } | {
+                                    kind: 'step';
+                                    at: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                    size: 'l' | 'm' | 's';
+                                    id: string;
+                                } | {
+                                    kind: 'text';
+                                    at: {
+                                        x: number;
+                                        y: number;
+                                    };
+                                    text: string;
+                                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                                    size: 'l' | 'm' | 's';
                                     id: string;
                                 })[];
-                                crop?: {
+                                crop?: undefined | {
                                     x: number;
                                     y: number;
                                     width: number;
                                     height: number;
-                                } | undefined;
+                                };
                             };
                             elements: {
                                 markId: string;
                                 selectorPath: string;
                                 accessibleName?: string | undefined;
                                 componentName?: string | undefined;
-                                sourceLocation?: {
+                                sourceLocation?: undefined | {
                                     file: string;
                                     line?: number | undefined;
                                     column?: number | undefined;
-                                } | undefined;
+                                };
                             }[];
                             v: 2;
                             kind: 'browser.annotation.v2';
@@ -1358,10 +1385,10 @@ export type ExecutionRunControlActionInputById = {
                             contextIds: string[];
                             pageUrl?: string | undefined;
                             pageTitle?: string | undefined;
-                        } | undefined;
+                        };
                     }[];
-                } | undefined;
-                composerAttachments?: {
+                };
+                composerAttachments?: undefined | {
                     v: 1;
                     instanceId: string;
                     attachment: {
@@ -1374,58 +1401,81 @@ export type ExecutionRunControlActionInputById = {
                         label: string;
                         typeLabel: string;
                         description?: string | undefined;
-                        icon?: 'file' | 'review' | 'error' | 'check' | 'external' | 'action' | 'unavailable' | 'neutral' | 'info' | 'warning' | 'browser' | 'copy' | 'globe' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'denied' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'workflow' | undefined;
-                        tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | undefined;
+                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                        tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                        source?: undefined | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
                     };
-                    content?: {
+                    forgeEvidence?: undefined | {
+                        v: 1;
+                        items: readonly {
+                            source: {
+                                kind: 'alert' | 'entry' | 'hostedCi' | 'localTerminal' | 'pullRequest' | 'releaseNotes';
+                                label: string;
+                                url?: string;
+                            };
+                            author: {
+                                kind: 'bot' | 'person' | 'process' | 'unknown';
+                                label?: string;
+                            };
+                            text: string;
+                        }[];
+                    };
+                    content?: undefined | {
                         kind: 'sessionMedia';
                         mediaId: string;
-                    } | undefined;
-                }[] | undefined;
-                executionRunCompletion?: {
+                    };
+                }[];
+                executionRunCompletion?: undefined | {
                     [x: string]: unknown;
                     v: 1;
                     runId: string;
-                    status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
+                    status: 'cancelled' | 'failed' | 'succeeded' | 'timeout';
                     finishedAtMs: number;
                     canInspect: boolean;
                     summary?: string | undefined;
-                } | undefined;
-                discussionSelectionSourceV1?: {
+                };
+                discussionSelectionSourceV1?: undefined | {
                     kind: 'discussion';
                     serverId: string;
                     discussionId: string;
                     messageIds: string[];
-                } | undefined;
-            } | undefined;
+                };
+            };
             localInputId?: string | undefined;
-            resultContract?: {
-                kind: 'text';
+            resultContract?: undefined | {
+                kind: 'decision';
+                decisions: string[];
             } | {
                 kind: 'json';
                 schema: unknown;
             } | {
-                kind: 'decision';
-                decisions: string[];
-            } | undefined;
+                kind: 'text';
+            };
             cwd?: string | undefined;
-            capabilitySelection?: {
-                mcp?: {
+            capabilitySelection?: undefined | {
+                mcp?: undefined | {
                     v?: 1 | undefined;
                     managedServersEnabled?: boolean | undefined;
                     happierToolsEnabled?: boolean | undefined;
                     forceIncludeServerIds?: string[] | undefined;
                     forceExcludeServerIds?: string[] | undefined;
-                } | undefined;
-                skills?: {
+                };
+                skills?: undefined | {
                     v?: 1 | undefined;
                     forceIncludeSkillIds?: string[] | undefined;
                     forceExcludeSkillIds?: string[] | undefined;
                     excludeNativeSkillNames?: string[] | undefined;
-                } | undefined;
-            } | undefined;
+                };
+            };
             modelId?: string | undefined;
-            modelSelection?: {
+            modelSelection?: null | undefined | {
                 agentTargetKey: string;
                 providerConnectionId: null;
                 modelId: string;
@@ -1433,10 +1483,10 @@ export type ExecutionRunControlActionInputById = {
                 agentTargetKey: string;
                 providerConnectionId: string;
                 modelId: string;
-            } | null | undefined;
+            };
             childSelection?: 'agentDefault' | undefined;
             accountSettings?: undefined;
-            teamCredentialModel?: {
+            teamCredentialModel?: undefined | {
                 kind: 'team_credential_provider_model';
                 resourceId: string;
                 teamId: string;
@@ -1444,7 +1494,7 @@ export type ExecutionRunControlActionInputById = {
                 agentTargetKey: string;
                 modelId: string;
                 deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                nativeDelivery?: {
+                nativeDelivery?: undefined | {
                     managedId: string;
                     controllerInstallationId: string;
                     guestInstallationId: string;
@@ -1452,68 +1502,75 @@ export type ExecutionRunControlActionInputById = {
                     placeholderRef: string;
                     sourceRevision: string;
                     providerTicket: string;
-                } | undefined;
-            } | undefined;
-            teamCredentialSessionBindingConsent?: {
+                };
+            };
+            teamCredentialSessionBindingConsent?: undefined | {
                 v: 1;
                 sessionId: string;
                 teamId: string;
                 resourceId: string;
                 expectedResourceRevision: number;
-            } | undefined;
+            };
             chatModelId?: string | undefined;
             commitModelId?: string | undefined;
-            sessionConfigOptionOverrides?: {
+            sessionConfigOptionOverrides?: undefined | {
                 [x: string]: unknown;
                 v: 1;
                 updatedAt: number;
                 overrides: Record<string, {
                     [x: string]: unknown;
                     updatedAt: number;
-                    value: string | number | boolean | null;
+                    value: boolean | null | number | string;
                 }>;
-            } | undefined;
-            connectedServices?: {
+            };
+            connectedServices?: null | undefined | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
                 }>;
             } | {
                 v: 1;
                 bindingsByServiceId: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
                 }>;
             } | {
                 v: 2;
                 bindingsByServiceId?: Record<string, {
-                    source: 'native';
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
                 } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
-                    source: 'connected';
-                    profileId: string;
-                    selection?: 'profile' | undefined;
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
                 } | {
                     source: 'team_resource';
                     resourceId: string;
@@ -1525,25 +1582,20 @@ export type ExecutionRunControlActionInputById = {
                         };
                         accountId: string;
                     };
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'brokered';
-                    disclosedMember?: undefined;
                 }> | undefined;
-            } | null | undefined;
+            };
             connectedServicesDefaultServiceIds?: string[] | undefined;
             notifyParentOnCompletion?: boolean | undefined;
             allowedTools?: string[] | undefined;
             unlistedTools?: 'ask' | 'deny' | undefined;
-        } | undefined;
+        };
         resume?: boolean | undefined;
     };
     readonly "execution.run.stream.start": {
         [x: string]: unknown;
         runId: string;
         message: string;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
         displayMessage?: string | undefined;
         resume?: boolean | undefined;
     };
@@ -1554,55 +1606,55 @@ export type ExecutionRunControlActionInputById = {
         cursor: number;
         maxEvents?: number | undefined;
         waitForEvents?: boolean | undefined;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
     };
     readonly "execution.run.stream.cancel": {
         [x: string]: unknown;
         runId: string;
         streamId: string;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
     };
     readonly "execution.run.stop": {
         [x: string]: unknown;
         runId: string;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
     };
     readonly "execution.run.cancel_turn": {
         runId: string;
         occurrenceId: string;
         turnId: string;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
     };
     readonly "execution.run.action": {
         [x: string]: unknown;
         runId: string;
         actionId: string;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
         input?: unknown;
     };
     readonly "execution.run.permission.respond": {
         runId: string;
         requestId: string;
-        approved: boolean;
+        answers: unknown;
     } | {
         runId: string;
         requestId: string;
-        answers: unknown;
+        approved: boolean;
     };
     readonly "execution.run.wait": {
         [x: string]: unknown;
         runId: string;
-        sessionId?: string | null | undefined;
+        sessionId?: null | string | undefined;
         timeoutSeconds?: number | undefined;
-        condition?: 'terminal' | 'needs_attention' | 'terminal_or_needs_attention' | 'change' | undefined;
-        after?: {
+        condition?: 'change' | 'needs_attention' | 'terminal' | 'terminal_or_needs_attention' | undefined;
+        after?: undefined | {
             [x: string]: unknown;
             run: {
                 [x: string]: unknown;
                 runId: string;
                 callId: string;
                 sidechainId: string;
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
                 backendTarget: {
                     kind: 'builtInAgent';
                     agentId: string;
@@ -1614,36 +1666,36 @@ export type ExecutionRunControlActionInputById = {
                 retentionPolicy: 'ephemeral' | 'resumable';
                 runClass: 'bounded' | 'long_lived';
                 ioMode: 'request_response' | 'streaming';
-                status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
+                status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                 startedAtMs: number;
                 originWorkflowRunId?: string | undefined;
-                display?: {
+                display?: undefined | {
                     [x: string]: unknown;
                     title?: string | undefined;
                     participantLabel?: string | undefined;
                     groupId?: string | undefined;
-                } | undefined;
-                launchOrigin?: {
+                };
+                launchOrigin?: undefined | {
                     kind: 'discussion';
                     serverId: string;
                     discussionId: string;
                     messageIds: string[];
                     draftCorrelationId?: string | undefined;
                 } | {
+                    kind: 'external';
+                    source?: 'action' | 'cli' | 'mcp' | undefined;
+                } | {
                     kind: 'session';
                     sessionId: string;
                     draftCorrelationId?: string | undefined;
-                } | {
-                    kind: 'external';
-                    source?: 'cli' | 'mcp' | 'action' | undefined;
-                } | undefined;
-                requestedConfiguration?: {
+                };
+                requestedConfiguration?: undefined | {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
-                } | undefined;
-                resolvedSelection?: {
-                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                    modelSelection?: {
+                };
+                resolvedSelection?: undefined | {
+                    source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                    modelSelection?: undefined | {
                         agentTargetKey: string;
                         providerConnectionId: null;
                         modelId: string;
@@ -1651,8 +1703,8 @@ export type ExecutionRunControlActionInputById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    } | undefined;
-                    teamCredentialModel?: {
+                    };
+                    teamCredentialModel?: undefined | {
                         kind: 'team_credential_provider_model';
                         resourceId: string;
                         teamId: string;
@@ -1660,7 +1712,7 @@ export type ExecutionRunControlActionInputById = {
                         agentTargetKey: string;
                         modelId: string;
                         deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                        nativeDelivery?: {
+                        nativeDelivery?: undefined | {
                             managedId: string;
                             controllerInstallationId: string;
                             guestInstallationId: string;
@@ -1668,22 +1720,27 @@ export type ExecutionRunControlActionInputById = {
                             placeholderRef: string;
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     modelId?: string | undefined;
-                    connectedServices?: {
+                    connectedServices?: null | undefined | {
                         v: 2;
                         bindingsByServiceId?: Record<string, {
-                            source: 'native';
+                            source: 'connected';
+                            profileId: string;
+                            selection?: 'profile' | undefined;
                         } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
-                            source: 'connected';
-                            profileId: string;
-                            selection?: 'profile' | undefined;
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
                         } | {
                             source: 'team_resource';
                             resourceId: string;
@@ -1695,60 +1752,70 @@ export type ExecutionRunControlActionInputById = {
                                 };
                                 accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
                         }> | undefined;
-                    } | null | undefined;
-                } | undefined;
+                    };
+                };
+                approvalProfileId?: null | string | undefined;
                 turnInFlight?: boolean | undefined;
-                inputTurns?: {
+                inputTurns?: undefined | {
                     occurrenceId: string;
-                    current?: {
+                    current?: undefined | {
                         turnId: string;
                         inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
                             value: string;
                         } | {
                             kind: 'json';
                             value: unknown;
                         } | {
-                            kind: 'decision';
+                            kind: 'text';
                             value: string;
-                        } | undefined;
-                    } | undefined;
-                    last?: {
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: unknown;
+                            uxDiagnostic?: unknown;
+                        };
+                    };
+                    last?: undefined | {
                         turnId: string;
                         inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
                             value: string;
                         } | {
                             kind: 'json';
                             value: unknown;
                         } | {
-                            kind: 'decision';
+                            kind: 'text';
                             value: string;
-                        } | undefined;
-                    } | undefined;
-                } | undefined;
-                interaction?: {
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: unknown;
+                            uxDiagnostic?: unknown;
+                        };
+                    };
+                };
+                interaction?: undefined | {
                     kind: 'retained_agent_session.v1';
                     capabilities: {
-                        open: ('resume' | 'create' | 'fork')[];
-                        delivery: ('newTurn' | 'steer' | 'followUp')[];
+                        open: ('create' | 'fork' | 'resume')[];
+                        delivery: ('followUp' | 'newTurn' | 'steer')[];
                         cancel: boolean;
                         configuration?: boolean | undefined;
                         workspaceWrites?: 'deny' | undefined;
-                        compaction?: {
+                        compaction?: undefined | {
                             events: true;
                             manual?: true | undefined;
-                            idle?: {
+                            idle?: undefined | {
                                 mode: 'host';
                                 defaultEnabled: boolean;
                                 defaultMinContextTokens?: number | undefined;
@@ -1757,115 +1824,115 @@ export type ExecutionRunControlActionInputById = {
                                 defaultEnabled: boolean;
                                 defaultMinContextTokens?: number | undefined;
                                 nativeHonorsMinimum?: true | undefined;
-                            } | undefined;
-                        } | undefined;
+                            };
+                        };
                         conversationRollback?: true | undefined;
-                        goals?: {
+                        goals?: undefined | {
                             source: string;
-                            active?: {
+                            active?: undefined | {
                                 get?: true | undefined;
                                 clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                            inactive?: {
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                            inactive?: undefined | {
                                 get?: true | undefined;
                                 clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                        } | undefined;
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                        };
                         usageReporting?: true | undefined;
-                        catalog?: {
+                        catalog?: undefined | {
                             active?: ('skills' | 'vendorPlugins')[] | undefined;
                             inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                        } | undefined;
-                        usageLimitRecovery?: {
+                        };
+                        usageLimitRecovery?: undefined | {
                             active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
                             inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                        } | undefined;
-                        continuationVerification?: {
-                            intents: ('resume' | 'fork')[];
-                            requirement: 'required' | 'advisory';
-                        } | undefined;
-                        workStateSources?: {
+                        };
+                        continuationVerification?: undefined | {
+                            intents: ('fork' | 'resume')[];
+                            requirement: 'advisory' | 'required';
+                        };
+                        workStateSources?: undefined | {
                             id: string;
-                            itemKinds: ('task' | 'goal' | 'todo')[];
-                        }[] | undefined;
+                            itemKinds: ('goal' | 'task' | 'todo')[];
+                        }[];
                         runtimeActivitySnapshots?: true | undefined;
-                        startupInstructions?: {
+                        startupInstructions?: undefined | {
                             versions: [
                                 1
                             ];
                             revisionChanges?: 'resume' | undefined;
-                        } | undefined;
-                        executionRunContext?: {
+                        };
+                        executionRunContext?: undefined | {
                             versions: [
                                 1
                             ];
-                        } | undefined;
+                        };
                     };
-                } | undefined;
-                attention?: {
+                };
+                attention?: undefined | {
                     kind: 'permission_required';
                     requestIds: string[];
-                    requests?: {
+                    requests?: undefined | {
                         requestId: string;
                         createdAt: number;
-                    }[] | undefined;
-                } | undefined;
-                lifecycle?: {
+                    }[];
+                };
+                lifecycle?: undefined | {
                     v: 1;
-                    state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                } | undefined;
+                    state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+                };
                 availableActionIds?: string[] | undefined;
                 resumeHandle?: unknown;
-                transcript?: {
+                transcript?: undefined | {
                     [x: string]: unknown;
                     persistenceMode: 'ephemeral' | 'persistent';
                     epoch: number;
-                } | undefined;
-                voicePolicy?: {
-                    assistantLanguage: string | null;
+                };
+                voicePolicy?: undefined | {
+                    assistantLanguage: null | string;
                     welcome: {
                         enabled: boolean;
                         mode: 'immediate' | 'on_first_turn';
                         text?: string | undefined;
                     };
-                } | undefined;
+                };
                 finishedAtMs?: number | undefined;
-                error?: {
+                error?: undefined | {
                     [x: string]: unknown;
                     code: string;
                     message?: string | undefined;
                     runtimeIssueV1?: unknown;
                     uxDiagnostic?: unknown;
-                } | undefined;
+                };
             };
             latestToolResult?: unknown;
-            structuredMeta?: {
+            structuredMeta?: undefined | {
                 [x: string]: unknown;
                 kind: string;
                 payload: unknown;
-            } | undefined;
-            reviewFindings?: {
+            };
+            reviewFindings?: undefined | {
                 [x: string]: unknown;
                 runRef: {
                     [x: string]: unknown;
                     runId: string;
                     callId: string;
                     backendId: string;
-                    backendTarget?: {
+                    backendTarget?: undefined | {
                         kind: 'builtInAgent';
                         agentId: string;
                     } | {
                         kind: 'configuredAcpBackend';
                         backendId: string;
-                    } | undefined;
+                    };
                     retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
                 };
                 summary: string;
@@ -1874,8 +1941,8 @@ export type ExecutionRunControlActionInputById = {
                     [x: string]: unknown;
                     id: string;
                     title: string;
-                    severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                    category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
+                    severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                    category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                     summary: string;
                     filePath?: string | undefined;
                     startLine?: number | undefined;
@@ -1885,38 +1952,38 @@ export type ExecutionRunControlActionInputById = {
                     confidence?: number | undefined;
                     suggestion?: string | undefined;
                     patch?: string | undefined;
-                    comment?: {
+                    comment?: undefined | {
                         id: string;
-                        state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                        state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                         serverRevision: number;
                         sessionId?: string | undefined;
                         runId?: string | undefined;
                         projectId?: string | undefined;
-                        workspace?: {
+                        workspace?: undefined | {
                             machineId: string;
                             path: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     attributionConfidence?: string | undefined;
                 }[];
                 generatedAtMs: number;
                 comparisonId?: string | undefined;
                 fileCount?: number | undefined;
-                reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-                questions?: {
+                reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                questions?: undefined | {
                     [x: string]: unknown;
                     id: string;
                     text: string;
-                    status: 'open' | 'answered' | 'superseded';
+                    status: 'answered' | 'open' | 'superseded';
                     findingIds?: string[] | undefined;
-                }[] | undefined;
-                assumptions?: {
+                }[];
+                assumptions?: undefined | {
                     [x: string]: unknown;
                     id: string;
                     text: string;
                     findingIds?: string[] | undefined;
-                }[] | undefined;
-                proposedComments?: {
+                }[];
+                proposedComments?: undefined | {
                     body: string;
                     anchor: {
                         kind: 'file';
@@ -1934,21 +2001,21 @@ export type ExecutionRunControlActionInputById = {
                         side?: 'after' | 'before' | undefined;
                     };
                     findingId?: string | undefined;
-                    severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
+                    severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                     taxonomyIds?: string[] | undefined;
                     tags?: string[] | undefined;
-                }[] | undefined;
-                triage?: {
+                }[];
+                triage?: undefined | {
                     [x: string]: unknown;
                     findings: {
                         [x: string]: unknown;
                         id: string;
-                        status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
+                        status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
                         commentId?: string | undefined;
                         comment?: string | undefined;
                     }[];
-                } | undefined;
-                publication?: {
+                };
+                publication?: undefined | {
                     [x: string]: unknown;
                     findings: {
                         [x: string]: unknown;
@@ -1957,14 +2024,14 @@ export type ExecutionRunControlActionInputById = {
                         publishedAtMs?: number | undefined;
                         publishedMessageRef?: string | undefined;
                     }[];
-                } | undefined;
-                limits?: {
+                };
+                limits?: undefined | {
                     [x: string]: unknown;
                     findingsTruncated?: boolean | undefined;
                     patchesTruncated?: boolean | undefined;
-                } | undefined;
-            } | undefined;
-        } | undefined;
+                };
+            };
+        };
     };
 };
 export type ExecutionRunControlActionResultById = {
@@ -1973,13 +2040,13 @@ export type ExecutionRunControlActionResultById = {
         runId: string;
         callId: string;
         sidechainId: string;
-        requestedConfiguration?: {
+        requestedConfiguration?: undefined | {
             modelId?: string | undefined;
             reasoningEffort?: string | undefined;
-        } | undefined;
-        resolvedSelection?: {
-            source: 'inherited' | 'explicit' | 'independent' | 'retained';
-            modelSelection?: {
+        };
+        resolvedSelection?: undefined | {
+            source: 'explicit' | 'independent' | 'inherited' | 'retained';
+            modelSelection?: undefined | {
                 agentTargetKey: string;
                 providerConnectionId: null;
                 modelId: string;
@@ -1987,8 +2054,8 @@ export type ExecutionRunControlActionResultById = {
                 agentTargetKey: string;
                 providerConnectionId: string;
                 modelId: string;
-            } | undefined;
-            teamCredentialModel?: {
+            };
+            teamCredentialModel?: undefined | {
                 kind: 'team_credential_provider_model';
                 resourceId: string;
                 teamId: string;
@@ -1996,7 +2063,7 @@ export type ExecutionRunControlActionResultById = {
                 agentTargetKey: string;
                 modelId: string;
                 deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                nativeDelivery?: {
+                nativeDelivery?: undefined | {
                     managedId: string;
                     controllerInstallationId: string;
                     guestInstallationId: string;
@@ -2004,22 +2071,27 @@ export type ExecutionRunControlActionResultById = {
                     placeholderRef: string;
                     sourceRevision: string;
                     providerTicket: string;
-                } | undefined;
-            } | undefined;
+                };
+            };
             modelId?: string | undefined;
-            connectedServices?: {
+            connectedServices?: null | undefined | {
                 v: 2;
                 bindingsByServiceId: Record<string, {
-                    source: 'native';
-                } | {
                     source: 'connected';
                     selection: 'group';
                     groupId: string;
                     profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
                 } | {
                     source: 'connected';
                     selection: 'profile';
                     profileId: string;
+                } | {
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
                 } | {
                     source: 'team_resource';
                     resourceId: string;
@@ -2031,17 +2103,23 @@ export type ExecutionRunControlActionResultById = {
                         };
                         accountId: string;
                     };
-                } | {
-                    source: 'team_resource';
-                    resourceId: string;
-                    deliveryMode: 'brokered';
-                    disclosedMember?: undefined;
                 }>;
-            } | null | undefined;
-        } | undefined;
-        wait?: {
+            };
+        };
+        wait?: undefined | {
+            ok: false;
+            code: 'cancelled';
+        } | {
+            ok: false;
+            code: 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'permission_denied' | 'run_depth_exceeded';
+        } | {
             ok: true;
-            status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
+            disposition: 'observation_timeout';
+            runId: string;
+            timeoutMs: number;
+            observedAtMs: number;
+            deadlineAtMs: number;
+            status: 'cancelled' | 'failed' | 'succeeded' | 'timeout';
             result: {
                 [x: string]: unknown;
                 run: {
@@ -2049,7 +2127,7 @@ export type ExecutionRunControlActionResultById = {
                     runId: string;
                     callId: string;
                     sidechainId: string;
-                    intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
                     backendTarget: {
                         kind: 'builtInAgent';
                         agentId: string;
@@ -2061,36 +2139,36 @@ export type ExecutionRunControlActionResultById = {
                     retentionPolicy: 'ephemeral' | 'resumable';
                     runClass: 'bounded' | 'long_lived';
                     ioMode: 'request_response' | 'streaming';
-                    status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
+                    status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                     startedAtMs: number;
                     originWorkflowRunId?: string | undefined;
-                    display?: {
+                    display?: undefined | {
                         [x: string]: unknown;
                         title?: string | undefined;
                         participantLabel?: string | undefined;
                         groupId?: string | undefined;
-                    } | undefined;
-                    launchOrigin?: {
+                    };
+                    launchOrigin?: undefined | {
                         kind: 'discussion';
                         serverId: string;
                         discussionId: string;
                         messageIds: string[];
                         draftCorrelationId?: string | undefined;
                     } | {
+                        kind: 'external';
+                        source?: 'action' | 'cli' | 'mcp' | undefined;
+                    } | {
                         kind: 'session';
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
-                    } | {
-                        kind: 'external';
-                        source?: 'cli' | 'mcp' | 'action' | undefined;
-                    } | undefined;
-                    requestedConfiguration?: {
+                    };
+                    requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
                         reasoningEffort?: string | undefined;
-                    } | undefined;
-                    resolvedSelection?: {
-                        source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                        modelSelection?: {
+                    };
+                    resolvedSelection?: undefined | {
+                        source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                        modelSelection?: undefined | {
                             agentTargetKey: string;
                             providerConnectionId: null;
                             modelId: string;
@@ -2098,8 +2176,8 @@ export type ExecutionRunControlActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        } | undefined;
-                        teamCredentialModel?: {
+                        };
+                        teamCredentialModel?: undefined | {
                             kind: 'team_credential_provider_model';
                             resourceId: string;
                             teamId: string;
@@ -2107,7 +2185,7 @@ export type ExecutionRunControlActionResultById = {
                             agentTargetKey: string;
                             modelId: string;
                             deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                            nativeDelivery?: {
+                            nativeDelivery?: undefined | {
                                 managedId: string;
                                 controllerInstallationId: string;
                                 guestInstallationId: string;
@@ -2115,22 +2193,27 @@ export type ExecutionRunControlActionResultById = {
                                 placeholderRef: string;
                                 sourceRevision: string;
                                 providerTicket: string;
-                            } | undefined;
-                        } | undefined;
+                            };
+                        };
                         modelId?: string | undefined;
-                        connectedServices?: {
+                        connectedServices?: null | undefined | {
                             v: 2;
                             bindingsByServiceId: Record<string, {
-                                source: 'native';
-                            } | {
                                 source: 'connected';
                                 selection: 'group';
                                 groupId: string;
                                 profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
                             } | {
                                 source: 'connected';
                                 selection: 'profile';
                                 profileId: string;
+                            } | {
+                                source: 'native';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
                             } | {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -2142,135 +2225,383 @@ export type ExecutionRunControlActionResultById = {
                                     };
                                     accountId: string;
                                 };
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'brokered';
-                                disclosedMember?: undefined;
                             }>;
-                        } | null | undefined;
-                    } | undefined;
+                        };
+                    };
+                    approvalProfileId?: null | string | undefined;
                     turnInFlight?: boolean | undefined;
-                    inputTurns?: {
+                    inputTurns?: undefined | {
                         occurrenceId: string;
-                        current?: {
+                        current?: undefined | {
                             turnId: string;
                             inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
+                            state: 'active' | 'cancelled' | 'completed' | 'failed';
+                            result?: undefined | {
+                                kind: 'decision';
                                 value: string;
                             } | {
                                 kind: 'json';
                                 value: JsonValue;
                             } | {
-                                kind: 'decision';
+                                kind: 'text';
                                 value: string;
-                            } | undefined;
-                        } | undefined;
-                        last?: {
+                            };
+                            error?: undefined | {
+                                [x: string]: unknown;
+                                code: string;
+                                message?: string | undefined;
+                                runtimeIssueV1?: Readonly<{
+                                    v: 1;
+                                    scope: 'primary_session';
+                                    status: 'failed';
+                                    code: string;
+                                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                    occurredAt: number;
+                                    sessionSeq?: number | undefined;
+                                    agentId?: string | undefined;
+                                    agentTurnId?: string | undefined;
+                                    sanitizedPreview?: string | undefined;
+                                    usageLimit?: undefined | {
+                                        v: 1;
+                                        resetAtMs: null | number;
+                                        retryAfterMs: null | number;
+                                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                        providerLimitId?: string | undefined;
+                                        planType?: null | string | undefined;
+                                        utilization?: null | number | undefined;
+                                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                        quotaSnapshotRef?: undefined | {
+                                            serviceId: string;
+                                            profileId?: string | undefined;
+                                            groupId?: string | undefined;
+                                            fetchedAtMs?: number | undefined;
+                                        };
+                                        effectiveMeterId?: string | undefined;
+                                        effectiveRemainingPct?: number | undefined;
+                                        allWindows?: undefined | {
+                                            meterId: string;
+                                            scope?: string | undefined;
+                                            remainingPct?: number | undefined;
+                                            resetAtMs?: number | undefined;
+                                            status?: string | undefined;
+                                        }[];
+                                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                        overage?: null | undefined | {
+                                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                            resetAtMs: null | number;
+                                            disabledReason?: null | string | undefined;
+                                        };
+                                        action?: null | undefined | {
+                                            kind: 'none';
+                                        } | {
+                                            kind: 'open_url';
+                                            url: string;
+                                            labelKey?: string | undefined;
+                                        } | {
+                                            kind: 'settings';
+                                        };
+                                        connectedService?: null | undefined | {
+                                            serviceId: string;
+                                            profileId: null | string;
+                                            groupId: null | string;
+                                            groupExhausted?: boolean | undefined;
+                                        };
+                                    };
+                                    teamCredential?: undefined | {
+                                        v: 1;
+                                        resourceId: string;
+                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        usageLimit?: undefined | {
+                                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                            remaining: string;
+                                            resetsAtUtc: string;
+                                        };
+                                    };
+                                    temporaryThrottle?: undefined | {
+                                        v: 1;
+                                        retryAfterMs: null | number;
+                                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                    };
+                                    failureCause?: undefined | {
+                                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        code?: string | undefined;
+                                        retryable?: boolean | undefined;
+                                        requestId?: string | undefined;
+                                        preparationCause?: undefined | {
+                                            code: string;
+                                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                            requestId?: string | undefined;
+                                        };
+                                        connectedServicesDefault?: undefined | {
+                                            v: 1;
+                                            source: 'account_default';
+                                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                            phase: 'purpose_binding';
+                                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                        };
+                                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        httpStatus?: number | undefined;
+                                        providerErrorMessage?: string | undefined;
+                                    };
+                                    agentProcessExitAfterSwitch?: undefined | {
+                                        exitCode: null | number;
+                                        signal: null | string;
+                                        lastStderrLine: null | string;
+                                        vendorResumeId: null | string;
+                                        materializationRoot: null | string;
+                                        effectiveStateMode: 'isolated' | 'shared' | null;
+                                    };
+                                }> | undefined;
+                                uxDiagnostic?: undefined | {
+                                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                    retryable: boolean;
+                                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                    serviceId?: string | undefined;
+                                    agentId?: string | undefined;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    diagnostics?: undefined | ({
+                                        [x: string]: boolean | null | number | string;
+                                    } & {
+                                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                    });
+                                };
+                            };
+                        };
+                        last?: undefined | {
                             turnId: string;
                             inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
+                            state: 'active' | 'cancelled' | 'completed' | 'failed';
+                            result?: undefined | {
+                                kind: 'decision';
                                 value: string;
                             } | {
                                 kind: 'json';
                                 value: JsonValue;
                             } | {
-                                kind: 'decision';
+                                kind: 'text';
                                 value: string;
-                            } | undefined;
-                        } | undefined;
-                    } | undefined;
-                    interaction?: {
+                            };
+                            error?: undefined | {
+                                [x: string]: unknown;
+                                code: string;
+                                message?: string | undefined;
+                                runtimeIssueV1?: Readonly<{
+                                    v: 1;
+                                    scope: 'primary_session';
+                                    status: 'failed';
+                                    code: string;
+                                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                    occurredAt: number;
+                                    sessionSeq?: number | undefined;
+                                    agentId?: string | undefined;
+                                    agentTurnId?: string | undefined;
+                                    sanitizedPreview?: string | undefined;
+                                    usageLimit?: undefined | {
+                                        v: 1;
+                                        resetAtMs: null | number;
+                                        retryAfterMs: null | number;
+                                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                        providerLimitId?: string | undefined;
+                                        planType?: null | string | undefined;
+                                        utilization?: null | number | undefined;
+                                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                        quotaSnapshotRef?: undefined | {
+                                            serviceId: string;
+                                            profileId?: string | undefined;
+                                            groupId?: string | undefined;
+                                            fetchedAtMs?: number | undefined;
+                                        };
+                                        effectiveMeterId?: string | undefined;
+                                        effectiveRemainingPct?: number | undefined;
+                                        allWindows?: undefined | {
+                                            meterId: string;
+                                            scope?: string | undefined;
+                                            remainingPct?: number | undefined;
+                                            resetAtMs?: number | undefined;
+                                            status?: string | undefined;
+                                        }[];
+                                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                        overage?: null | undefined | {
+                                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                            resetAtMs: null | number;
+                                            disabledReason?: null | string | undefined;
+                                        };
+                                        action?: null | undefined | {
+                                            kind: 'none';
+                                        } | {
+                                            kind: 'open_url';
+                                            url: string;
+                                            labelKey?: string | undefined;
+                                        } | {
+                                            kind: 'settings';
+                                        };
+                                        connectedService?: null | undefined | {
+                                            serviceId: string;
+                                            profileId: null | string;
+                                            groupId: null | string;
+                                            groupExhausted?: boolean | undefined;
+                                        };
+                                    };
+                                    teamCredential?: undefined | {
+                                        v: 1;
+                                        resourceId: string;
+                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        usageLimit?: undefined | {
+                                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                            remaining: string;
+                                            resetsAtUtc: string;
+                                        };
+                                    };
+                                    temporaryThrottle?: undefined | {
+                                        v: 1;
+                                        retryAfterMs: null | number;
+                                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                    };
+                                    failureCause?: undefined | {
+                                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        code?: string | undefined;
+                                        retryable?: boolean | undefined;
+                                        requestId?: string | undefined;
+                                        preparationCause?: undefined | {
+                                            code: string;
+                                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                            requestId?: string | undefined;
+                                        };
+                                        connectedServicesDefault?: undefined | {
+                                            v: 1;
+                                            source: 'account_default';
+                                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                            phase: 'purpose_binding';
+                                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                        };
+                                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        httpStatus?: number | undefined;
+                                        providerErrorMessage?: string | undefined;
+                                    };
+                                    agentProcessExitAfterSwitch?: undefined | {
+                                        exitCode: null | number;
+                                        signal: null | string;
+                                        lastStderrLine: null | string;
+                                        vendorResumeId: null | string;
+                                        materializationRoot: null | string;
+                                        effectiveStateMode: 'isolated' | 'shared' | null;
+                                    };
+                                }> | undefined;
+                                uxDiagnostic?: undefined | {
+                                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                    retryable: boolean;
+                                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                    serviceId?: string | undefined;
+                                    agentId?: string | undefined;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    diagnostics?: undefined | ({
+                                        [x: string]: boolean | null | number | string;
+                                    } & {
+                                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                    });
+                                };
+                            };
+                        };
+                    };
+                    interaction?: undefined | {
                         kind: 'retained_agent_session.v1';
                         capabilities: {
-                            open: ('resume' | 'create' | 'fork')[];
-                            delivery: ('newTurn' | 'steer' | 'followUp')[];
+                            open: ('create' | 'fork' | 'resume')[];
+                            delivery: ('followUp' | 'newTurn' | 'steer')[];
                             cancel: boolean;
                             configuration?: boolean | undefined;
                             workspaceWrites?: 'deny' | undefined;
-                            compaction?: {
+                            compaction?: undefined | {
                                 events: true;
                                 manual?: true | undefined;
-                                idle?: {
+                                idle?: undefined | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | {
                                     mode: 'native';
                                     defaultEnabled: boolean;
                                     defaultMinContextTokens?: number | undefined;
                                     nativeHonorsMinimum?: true | undefined;
-                                } | {
-                                    mode: 'host';
-                                    defaultEnabled: boolean;
-                                    defaultMinContextTokens?: number | undefined;
-                                } | undefined;
-                            } | undefined;
+                                };
+                            };
                             conversationRollback?: true | undefined;
-                            goals?: {
+                            goals?: undefined | {
                                 source: string;
-                                active?: {
+                                active?: undefined | {
                                     get?: true | undefined;
                                     clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                                inactive?: {
+                                    set?: undefined | {
+                                        fields: ('objective' | 'status' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                    };
+                                };
+                                inactive?: undefined | {
                                     get?: true | undefined;
                                     clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                            } | undefined;
+                                    set?: undefined | {
+                                        fields: ('objective' | 'status' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                    };
+                                };
+                            };
                             usageReporting?: true | undefined;
-                            catalog?: {
+                            catalog?: undefined | {
                                 active?: ('skills' | 'vendorPlugins')[] | undefined;
                                 inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                            } | undefined;
-                            usageLimitRecovery?: {
+                            };
+                            usageLimitRecovery?: undefined | {
                                 active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
                                 inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                            } | undefined;
-                            continuationVerification?: {
-                                intents: ('resume' | 'fork')[];
-                                requirement: 'required' | 'advisory';
-                            } | undefined;
-                            workStateSources?: {
+                            };
+                            continuationVerification?: undefined | {
+                                intents: ('fork' | 'resume')[];
+                                requirement: 'advisory' | 'required';
+                            };
+                            workStateSources?: undefined | {
                                 id: string;
-                                itemKinds: ('task' | 'goal' | 'todo')[];
-                            }[] | undefined;
+                                itemKinds: ('goal' | 'task' | 'todo')[];
+                            }[];
                             runtimeActivitySnapshots?: true | undefined;
-                            startupInstructions?: {
+                            startupInstructions?: undefined | {
                                 versions: [
                                     1
                                 ];
                                 revisionChanges?: 'resume' | undefined;
-                            } | undefined;
-                            executionRunContext?: {
+                            };
+                            executionRunContext?: undefined | {
                                 versions: [
                                     1
                                 ];
-                            } | undefined;
+                            };
                         };
-                    } | undefined;
-                    attention?: {
+                    };
+                    attention?: undefined | {
                         kind: 'permission_required';
                         requestIds: string[];
-                        requests?: {
+                        requests?: undefined | {
                             requestId: string;
                             createdAt: number;
-                        }[] | undefined;
-                    } | undefined;
-                    lifecycle?: {
+                        }[];
+                    };
+                    lifecycle?: undefined | {
                         v: 1;
-                        state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                    } | undefined;
+                        state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+                    };
                     availableActionIds?: string[] | undefined;
-                    resumeHandle?: {
+                    resumeHandle?: undefined | {
                         [x: string]: unknown;
                         kind: 'provider_session.v1';
                         backendTarget: {
@@ -2291,22 +2622,22 @@ export type ExecutionRunControlActionResultById = {
                         };
                         chatProviderSessionId: string;
                         commitProviderSessionId: string;
-                    } | undefined;
-                    transcript?: {
+                    };
+                    transcript?: undefined | {
                         [x: string]: unknown;
                         persistenceMode: 'ephemeral' | 'persistent';
                         epoch: number;
-                    } | undefined;
-                    voicePolicy?: {
-                        assistantLanguage: string | null;
+                    };
+                    voicePolicy?: undefined | {
+                        assistantLanguage: null | string;
                         welcome: {
                             enabled: boolean;
                             mode: 'immediate' | 'on_first_turn';
                             text?: string | undefined;
                         };
-                    } | undefined;
+                    };
                     finishedAtMs?: number | undefined;
-                    error?: {
+                    error?: undefined | {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
@@ -2315,130 +2646,144 @@ export type ExecutionRunControlActionResultById = {
                             scope: 'primary_session';
                             status: 'failed';
                             code: string;
-                            source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
+                            source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
                             occurredAt: number;
                             sessionSeq?: number | undefined;
                             agentId?: string | undefined;
                             agentTurnId?: string | undefined;
                             sanitizedPreview?: string | undefined;
-                            usageLimit?: {
+                            usageLimit?: undefined | {
                                 v: 1;
-                                resetAtMs: number | null;
-                                retryAfterMs: number | null;
-                                quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                                recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
+                                resetAtMs: null | number;
+                                retryAfterMs: null | number;
+                                quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
                                 providerLimitId?: string | undefined;
-                                planType?: string | null | undefined;
-                                utilization?: number | null | undefined;
-                                limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                                quotaSnapshotRef?: {
+                                planType?: null | string | undefined;
+                                utilization?: null | number | undefined;
+                                limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                quotaSnapshotRef?: undefined | {
                                     serviceId: string;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
                                     fetchedAtMs?: number | undefined;
-                                } | undefined;
+                                };
                                 effectiveMeterId?: string | undefined;
                                 effectiveRemainingPct?: number | undefined;
-                                allWindows?: {
+                                allWindows?: undefined | {
                                     meterId: string;
                                     scope?: string | undefined;
                                     remainingPct?: number | undefined;
                                     resetAtMs?: number | undefined;
                                     status?: string | undefined;
-                                }[] | undefined;
-                                recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                                overage?: {
-                                    status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                                    resetAtMs: number | null;
-                                    disabledReason?: string | null | undefined;
-                                } | null | undefined;
-                                action?: {
+                                }[];
+                                recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                overage?: null | undefined | {
+                                    status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                    resetAtMs: null | number;
+                                    disabledReason?: null | string | undefined;
+                                };
+                                action?: null | undefined | {
+                                    kind: 'none';
+                                } | {
                                     kind: 'open_url';
                                     url: string;
                                     labelKey?: string | undefined;
                                 } | {
                                     kind: 'settings';
-                                } | {
-                                    kind: 'none';
-                                } | null | undefined;
-                                connectedService?: {
+                                };
+                                connectedService?: null | undefined | {
                                     serviceId: string;
-                                    profileId: string | null;
-                                    groupId: string | null;
+                                    profileId: null | string;
+                                    groupId: null | string;
                                     groupExhausted?: boolean | undefined;
-                                } | null | undefined;
-                            } | undefined;
-                            teamCredential?: {
+                                };
+                            };
+                            teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                                usageLimit?: {
-                                    metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                usageLimit?: undefined | {
+                                    metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
                                     resetsAtUtc: string;
-                                } | undefined;
-                            } | undefined;
-                            temporaryThrottle?: {
+                                };
+                            };
+                            temporaryThrottle?: undefined | {
                                 v: 1;
-                                retryAfterMs: number | null;
-                                recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                            } | undefined;
-                            failureCause?: {
-                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                                failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                                retryAfterMs: null | number;
+                                recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                                 code?: string | undefined;
-                                preparationCause?: {
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
                                     code: string;
-                                    stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                                } | undefined;
-                                reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                                providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
-                            } | undefined;
-                            agentProcessExitAfterSwitch?: {
-                                exitCode: number | null;
-                                signal: string | null;
-                                lastStderrLine: string | null;
-                                vendorResumeId: string | null;
-                                materializationRoot: string | null;
-                                effectiveStateMode: 'shared' | 'isolated' | null;
-                            } | undefined;
+                            };
+                            agentProcessExitAfterSwitch?: undefined | {
+                                exitCode: null | number;
+                                signal: null | string;
+                                lastStderrLine: null | string;
+                                vendorResumeId: null | string;
+                                materializationRoot: null | string;
+                                effectiveStateMode: 'isolated' | 'shared' | null;
+                            };
                         }> | undefined;
-                        uxDiagnostic?: {
-                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        uxDiagnostic?: undefined | {
+                            code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
                             retryable: boolean;
-                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
                             serviceId?: string | undefined;
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            diagnostics?: undefined | ({
+                                [x: string]: boolean | null | number | string;
+                            } & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            });
+                        };
+                    };
                 };
                 latestToolResult?: unknown;
-                structuredMeta?: {
+                structuredMeta?: undefined | {
                     [x: string]: unknown;
                     kind: string;
                     payload: unknown;
-                } | undefined;
-                reviewFindings?: {
+                };
+                reviewFindings?: undefined | {
                     [x: string]: unknown;
                     runRef: {
                         [x: string]: unknown;
                         runId: string;
                         callId: string;
                         backendId: string;
-                        backendTarget?: {
+                        backendTarget?: undefined | {
                             kind: 'builtInAgent';
                             agentId: string;
                         } | {
                             kind: 'configuredAcpBackend';
                             backendId: string;
-                        } | undefined;
+                        };
                         retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
                     };
                     summary: string;
@@ -2447,8 +2792,8 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         id: string;
                         title: string;
-                        severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                        category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
+                        severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                        category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                         summary: string;
                         filePath?: string | undefined;
                         startLine?: number | undefined;
@@ -2458,25 +2803,25 @@ export type ExecutionRunControlActionResultById = {
                         confidence?: number | undefined;
                         suggestion?: string | undefined;
                         patch?: string | undefined;
-                        comment?: {
+                        comment?: undefined | {
                             id: string;
-                            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                             serverRevision: number;
                             sessionId?: string | undefined;
                             runId?: string | undefined;
                             projectId?: string | undefined;
-                            workspace?: {
+                            workspace?: undefined | {
                                 machineId: string;
                                 path: string;
-                            } | undefined;
-                        } | undefined;
+                            };
+                        };
                         attributionConfidence?: string | undefined;
                     }[];
                     questions: {
                         [x: string]: unknown;
                         id: string;
                         text: string;
-                        status: 'open' | 'answered' | 'superseded';
+                        status: 'answered' | 'open' | 'superseded';
                         findingIds?: string[] | undefined;
                     }[];
                     assumptions: {
@@ -2488,16 +2833,10 @@ export type ExecutionRunControlActionResultById = {
                     generatedAtMs: number;
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
-                    reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-                    proposedComments?: {
+                    reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    proposedComments?: undefined | {
                         body: string;
                         anchor: {
-                            kind: 'range';
-                            filePath: string;
-                            startLine: number;
-                            endLine: number;
-                            side?: 'after' | 'before' | undefined;
-                        } | {
                             kind: 'file';
                             filePath: string;
                         } | {
@@ -2505,23 +2844,29 @@ export type ExecutionRunControlActionResultById = {
                             filePath: string;
                             line: number;
                             side?: 'after' | 'before' | undefined;
+                        } | {
+                            kind: 'range';
+                            filePath: string;
+                            startLine: number;
+                            endLine: number;
+                            side?: 'after' | 'before' | undefined;
                         };
                         findingId?: string | undefined;
-                        severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
+                        severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
-                    }[] | undefined;
-                    triage?: {
+                    }[];
+                    triage?: undefined | {
                         [x: string]: unknown;
                         findings: {
                             [x: string]: unknown;
                             id: string;
-                            status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
+                            status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
                             commentId?: string | undefined;
                             comment?: string | undefined;
                         }[];
-                    } | undefined;
-                    publication?: {
+                    };
+                    publication?: undefined | {
                         [x: string]: unknown;
                         findings: {
                             [x: string]: unknown;
@@ -2530,13 +2875,1546 @@ export type ExecutionRunControlActionResultById = {
                             publishedAtMs?: number | undefined;
                             publishedMessageRef?: string | undefined;
                         }[];
-                    } | undefined;
-                    limits?: {
+                    };
+                    limits?: undefined | {
                         [x: string]: unknown;
                         findingsTruncated?: boolean | undefined;
                         patchesTruncated?: boolean | undefined;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
+            };
+        } | {
+            ok: true;
+            status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+            disposition: 'snapshot';
+            result: {
+                [x: string]: unknown;
+                run: {
+                    [x: string]: unknown;
+                    runId: string;
+                    callId: string;
+                    sidechainId: string;
+                    intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                    backendTarget: {
+                        kind: 'builtInAgent';
+                        agentId: string;
+                    } | {
+                        kind: 'configuredAcpBackend';
+                        backendId: string;
+                    };
+                    permissionMode: string;
+                    retentionPolicy: 'ephemeral' | 'resumable';
+                    runClass: 'bounded' | 'long_lived';
+                    ioMode: 'request_response' | 'streaming';
+                    status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                    startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
+                    display?: undefined | {
+                        [x: string]: unknown;
+                        title?: string | undefined;
+                        participantLabel?: string | undefined;
+                        groupId?: string | undefined;
+                    };
+                    launchOrigin?: undefined | {
+                        kind: 'discussion';
+                        serverId: string;
+                        discussionId: string;
+                        messageIds: string[];
+                        draftCorrelationId?: string | undefined;
+                    } | {
+                        kind: 'external';
+                        source?: 'action' | 'cli' | 'mcp' | undefined;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                        draftCorrelationId?: string | undefined;
+                    };
+                    requestedConfiguration?: undefined | {
+                        modelId?: string | undefined;
+                        reasoningEffort?: string | undefined;
+                    };
+                    resolvedSelection?: undefined | {
+                        source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                        modelSelection?: undefined | {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        teamCredentialModel?: undefined | {
+                            kind: 'team_credential_provider_model';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            agentTargetKey: string;
+                            modelId: string;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        };
+                        modelId?: string | undefined;
+                        connectedServices?: null | undefined | {
+                            v: 2;
+                            bindingsByServiceId: Record<string, {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'profile';
+                                profileId: string;
+                            } | {
+                                source: 'native';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            }>;
+                        };
+                    };
+                    approvalProfileId?: null | string | undefined;
+                    turnInFlight?: boolean | undefined;
+                    inputTurns?: undefined | {
+                        occurrenceId: string;
+                        current?: undefined | {
+                            turnId: string;
+                            inputIds: string[];
+                            state: 'active' | 'cancelled' | 'completed' | 'failed';
+                            result?: undefined | {
+                                kind: 'decision';
+                                value: string;
+                            } | {
+                                kind: 'json';
+                                value: JsonValue;
+                            } | {
+                                kind: 'text';
+                                value: string;
+                            };
+                            error?: undefined | {
+                                [x: string]: unknown;
+                                code: string;
+                                message?: string | undefined;
+                                runtimeIssueV1?: Readonly<{
+                                    v: 1;
+                                    scope: 'primary_session';
+                                    status: 'failed';
+                                    code: string;
+                                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                    occurredAt: number;
+                                    sessionSeq?: number | undefined;
+                                    agentId?: string | undefined;
+                                    agentTurnId?: string | undefined;
+                                    sanitizedPreview?: string | undefined;
+                                    usageLimit?: undefined | {
+                                        v: 1;
+                                        resetAtMs: null | number;
+                                        retryAfterMs: null | number;
+                                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                        providerLimitId?: string | undefined;
+                                        planType?: null | string | undefined;
+                                        utilization?: null | number | undefined;
+                                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                        quotaSnapshotRef?: undefined | {
+                                            serviceId: string;
+                                            profileId?: string | undefined;
+                                            groupId?: string | undefined;
+                                            fetchedAtMs?: number | undefined;
+                                        };
+                                        effectiveMeterId?: string | undefined;
+                                        effectiveRemainingPct?: number | undefined;
+                                        allWindows?: undefined | {
+                                            meterId: string;
+                                            scope?: string | undefined;
+                                            remainingPct?: number | undefined;
+                                            resetAtMs?: number | undefined;
+                                            status?: string | undefined;
+                                        }[];
+                                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                        overage?: null | undefined | {
+                                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                            resetAtMs: null | number;
+                                            disabledReason?: null | string | undefined;
+                                        };
+                                        action?: null | undefined | {
+                                            kind: 'none';
+                                        } | {
+                                            kind: 'open_url';
+                                            url: string;
+                                            labelKey?: string | undefined;
+                                        } | {
+                                            kind: 'settings';
+                                        };
+                                        connectedService?: null | undefined | {
+                                            serviceId: string;
+                                            profileId: null | string;
+                                            groupId: null | string;
+                                            groupExhausted?: boolean | undefined;
+                                        };
+                                    };
+                                    teamCredential?: undefined | {
+                                        v: 1;
+                                        resourceId: string;
+                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        usageLimit?: undefined | {
+                                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                            remaining: string;
+                                            resetsAtUtc: string;
+                                        };
+                                    };
+                                    temporaryThrottle?: undefined | {
+                                        v: 1;
+                                        retryAfterMs: null | number;
+                                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                    };
+                                    failureCause?: undefined | {
+                                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        code?: string | undefined;
+                                        retryable?: boolean | undefined;
+                                        requestId?: string | undefined;
+                                        preparationCause?: undefined | {
+                                            code: string;
+                                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                            requestId?: string | undefined;
+                                        };
+                                        connectedServicesDefault?: undefined | {
+                                            v: 1;
+                                            source: 'account_default';
+                                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                            phase: 'purpose_binding';
+                                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                        };
+                                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        httpStatus?: number | undefined;
+                                        providerErrorMessage?: string | undefined;
+                                    };
+                                    agentProcessExitAfterSwitch?: undefined | {
+                                        exitCode: null | number;
+                                        signal: null | string;
+                                        lastStderrLine: null | string;
+                                        vendorResumeId: null | string;
+                                        materializationRoot: null | string;
+                                        effectiveStateMode: 'isolated' | 'shared' | null;
+                                    };
+                                }> | undefined;
+                                uxDiagnostic?: undefined | {
+                                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                    retryable: boolean;
+                                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                    serviceId?: string | undefined;
+                                    agentId?: string | undefined;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    diagnostics?: undefined | ({
+                                        [x: string]: boolean | null | number | string;
+                                    } & {
+                                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                    });
+                                };
+                            };
+                        };
+                        last?: undefined | {
+                            turnId: string;
+                            inputIds: string[];
+                            state: 'active' | 'cancelled' | 'completed' | 'failed';
+                            result?: undefined | {
+                                kind: 'decision';
+                                value: string;
+                            } | {
+                                kind: 'json';
+                                value: JsonValue;
+                            } | {
+                                kind: 'text';
+                                value: string;
+                            };
+                            error?: undefined | {
+                                [x: string]: unknown;
+                                code: string;
+                                message?: string | undefined;
+                                runtimeIssueV1?: Readonly<{
+                                    v: 1;
+                                    scope: 'primary_session';
+                                    status: 'failed';
+                                    code: string;
+                                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                    occurredAt: number;
+                                    sessionSeq?: number | undefined;
+                                    agentId?: string | undefined;
+                                    agentTurnId?: string | undefined;
+                                    sanitizedPreview?: string | undefined;
+                                    usageLimit?: undefined | {
+                                        v: 1;
+                                        resetAtMs: null | number;
+                                        retryAfterMs: null | number;
+                                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                        providerLimitId?: string | undefined;
+                                        planType?: null | string | undefined;
+                                        utilization?: null | number | undefined;
+                                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                        quotaSnapshotRef?: undefined | {
+                                            serviceId: string;
+                                            profileId?: string | undefined;
+                                            groupId?: string | undefined;
+                                            fetchedAtMs?: number | undefined;
+                                        };
+                                        effectiveMeterId?: string | undefined;
+                                        effectiveRemainingPct?: number | undefined;
+                                        allWindows?: undefined | {
+                                            meterId: string;
+                                            scope?: string | undefined;
+                                            remainingPct?: number | undefined;
+                                            resetAtMs?: number | undefined;
+                                            status?: string | undefined;
+                                        }[];
+                                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                        overage?: null | undefined | {
+                                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                            resetAtMs: null | number;
+                                            disabledReason?: null | string | undefined;
+                                        };
+                                        action?: null | undefined | {
+                                            kind: 'none';
+                                        } | {
+                                            kind: 'open_url';
+                                            url: string;
+                                            labelKey?: string | undefined;
+                                        } | {
+                                            kind: 'settings';
+                                        };
+                                        connectedService?: null | undefined | {
+                                            serviceId: string;
+                                            profileId: null | string;
+                                            groupId: null | string;
+                                            groupExhausted?: boolean | undefined;
+                                        };
+                                    };
+                                    teamCredential?: undefined | {
+                                        v: 1;
+                                        resourceId: string;
+                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        usageLimit?: undefined | {
+                                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                            remaining: string;
+                                            resetsAtUtc: string;
+                                        };
+                                    };
+                                    temporaryThrottle?: undefined | {
+                                        v: 1;
+                                        retryAfterMs: null | number;
+                                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                    };
+                                    failureCause?: undefined | {
+                                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        code?: string | undefined;
+                                        retryable?: boolean | undefined;
+                                        requestId?: string | undefined;
+                                        preparationCause?: undefined | {
+                                            code: string;
+                                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                            requestId?: string | undefined;
+                                        };
+                                        connectedServicesDefault?: undefined | {
+                                            v: 1;
+                                            source: 'account_default';
+                                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                            phase: 'purpose_binding';
+                                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                        };
+                                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        httpStatus?: number | undefined;
+                                        providerErrorMessage?: string | undefined;
+                                    };
+                                    agentProcessExitAfterSwitch?: undefined | {
+                                        exitCode: null | number;
+                                        signal: null | string;
+                                        lastStderrLine: null | string;
+                                        vendorResumeId: null | string;
+                                        materializationRoot: null | string;
+                                        effectiveStateMode: 'isolated' | 'shared' | null;
+                                    };
+                                }> | undefined;
+                                uxDiagnostic?: undefined | {
+                                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                    retryable: boolean;
+                                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                    serviceId?: string | undefined;
+                                    agentId?: string | undefined;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    diagnostics?: undefined | ({
+                                        [x: string]: boolean | null | number | string;
+                                    } & {
+                                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                    });
+                                };
+                            };
+                        };
+                    };
+                    interaction?: undefined | {
+                        kind: 'retained_agent_session.v1';
+                        capabilities: {
+                            open: ('create' | 'fork' | 'resume')[];
+                            delivery: ('followUp' | 'newTurn' | 'steer')[];
+                            cancel: boolean;
+                            configuration?: boolean | undefined;
+                            workspaceWrites?: 'deny' | undefined;
+                            compaction?: undefined | {
+                                events: true;
+                                manual?: true | undefined;
+                                idle?: undefined | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                };
+                            };
+                            conversationRollback?: true | undefined;
+                            goals?: undefined | {
+                                source: string;
+                                active?: undefined | {
+                                    get?: true | undefined;
+                                    clear?: true | undefined;
+                                    set?: undefined | {
+                                        fields: ('objective' | 'status' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                    };
+                                };
+                                inactive?: undefined | {
+                                    get?: true | undefined;
+                                    clear?: true | undefined;
+                                    set?: undefined | {
+                                        fields: ('objective' | 'status' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                    };
+                                };
+                            };
+                            usageReporting?: true | undefined;
+                            catalog?: undefined | {
+                                active?: ('skills' | 'vendorPlugins')[] | undefined;
+                                inactive?: ('skills' | 'vendorPlugins')[] | undefined;
+                            };
+                            usageLimitRecovery?: undefined | {
+                                active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                                inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                            };
+                            continuationVerification?: undefined | {
+                                intents: ('fork' | 'resume')[];
+                                requirement: 'advisory' | 'required';
+                            };
+                            workStateSources?: undefined | {
+                                id: string;
+                                itemKinds: ('goal' | 'task' | 'todo')[];
+                            }[];
+                            runtimeActivitySnapshots?: true | undefined;
+                            startupInstructions?: undefined | {
+                                versions: [
+                                    1
+                                ];
+                                revisionChanges?: 'resume' | undefined;
+                            };
+                            executionRunContext?: undefined | {
+                                versions: [
+                                    1
+                                ];
+                            };
+                        };
+                    };
+                    attention?: undefined | {
+                        kind: 'permission_required';
+                        requestIds: string[];
+                        requests?: undefined | {
+                            requestId: string;
+                            createdAt: number;
+                        }[];
+                    };
+                    lifecycle?: undefined | {
+                        v: 1;
+                        state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+                    };
+                    availableActionIds?: string[] | undefined;
+                    resumeHandle?: undefined | {
+                        [x: string]: unknown;
+                        kind: 'provider_session.v1';
+                        backendTarget: {
+                            kind: 'backend';
+                            backendId: string;
+                            configuredBackendId?: string | undefined;
+                            sourceKind?: 'built_in' | 'configured' | undefined;
+                        };
+                        providerSessionId: string;
+                    } | {
+                        [x: string]: unknown;
+                        kind: 'voice_agent_sessions.v1';
+                        backendTarget: {
+                            kind: 'backend';
+                            backendId: string;
+                            configuredBackendId?: string | undefined;
+                            sourceKind?: 'built_in' | 'configured' | undefined;
+                        };
+                        chatProviderSessionId: string;
+                        commitProviderSessionId: string;
+                    };
+                    transcript?: undefined | {
+                        [x: string]: unknown;
+                        persistenceMode: 'ephemeral' | 'persistent';
+                        epoch: number;
+                    };
+                    voicePolicy?: undefined | {
+                        assistantLanguage: null | string;
+                        welcome: {
+                            enabled: boolean;
+                            mode: 'immediate' | 'on_first_turn';
+                            text?: string | undefined;
+                        };
+                    };
+                    finishedAtMs?: number | undefined;
+                    error?: undefined | {
+                        [x: string]: unknown;
+                        code: string;
+                        message?: string | undefined;
+                        runtimeIssueV1?: Readonly<{
+                            v: 1;
+                            scope: 'primary_session';
+                            status: 'failed';
+                            code: string;
+                            source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                            occurredAt: number;
+                            sessionSeq?: number | undefined;
+                            agentId?: string | undefined;
+                            agentTurnId?: string | undefined;
+                            sanitizedPreview?: string | undefined;
+                            usageLimit?: undefined | {
+                                v: 1;
+                                resetAtMs: null | number;
+                                retryAfterMs: null | number;
+                                quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                providerLimitId?: string | undefined;
+                                planType?: null | string | undefined;
+                                utilization?: null | number | undefined;
+                                limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                quotaSnapshotRef?: undefined | {
+                                    serviceId: string;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    fetchedAtMs?: number | undefined;
+                                };
+                                effectiveMeterId?: string | undefined;
+                                effectiveRemainingPct?: number | undefined;
+                                allWindows?: undefined | {
+                                    meterId: string;
+                                    scope?: string | undefined;
+                                    remainingPct?: number | undefined;
+                                    resetAtMs?: number | undefined;
+                                    status?: string | undefined;
+                                }[];
+                                recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                overage?: null | undefined | {
+                                    status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                    resetAtMs: null | number;
+                                    disabledReason?: null | string | undefined;
+                                };
+                                action?: null | undefined | {
+                                    kind: 'none';
+                                } | {
+                                    kind: 'open_url';
+                                    url: string;
+                                    labelKey?: string | undefined;
+                                } | {
+                                    kind: 'settings';
+                                };
+                                connectedService?: null | undefined | {
+                                    serviceId: string;
+                                    profileId: null | string;
+                                    groupId: null | string;
+                                    groupExhausted?: boolean | undefined;
+                                };
+                            };
+                            teamCredential?: undefined | {
+                                v: 1;
+                                resourceId: string;
+                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                usageLimit?: undefined | {
+                                    metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                    remaining: string;
+                                    resetsAtUtc: string;
+                                };
+                            };
+                            temporaryThrottle?: undefined | {
+                                v: 1;
+                                retryAfterMs: null | number;
+                                recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                code?: string | undefined;
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
+                                    code: string;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                httpStatus?: number | undefined;
+                                providerErrorMessage?: string | undefined;
+                            };
+                            agentProcessExitAfterSwitch?: undefined | {
+                                exitCode: null | number;
+                                signal: null | string;
+                                lastStderrLine: null | string;
+                                vendorResumeId: null | string;
+                                materializationRoot: null | string;
+                                effectiveStateMode: 'isolated' | 'shared' | null;
+                            };
+                        }> | undefined;
+                        uxDiagnostic?: undefined | {
+                            code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                            retryable: boolean;
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: undefined | ({
+                                [x: string]: boolean | null | number | string;
+                            } & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            });
+                        };
+                    };
+                };
+                latestToolResult?: unknown;
+                structuredMeta?: undefined | {
+                    [x: string]: unknown;
+                    kind: string;
+                    payload: unknown;
+                };
+                reviewFindings?: undefined | {
+                    [x: string]: unknown;
+                    runRef: {
+                        [x: string]: unknown;
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        backendTarget?: undefined | {
+                            kind: 'builtInAgent';
+                            agentId: string;
+                        } | {
+                            kind: 'configuredAcpBackend';
+                            backendId: string;
+                        };
+                        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
+                    };
+                    summary: string;
+                    overviewMarkdown: string;
+                    findings: {
+                        [x: string]: unknown;
+                        id: string;
+                        title: string;
+                        severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                        category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                        summary: string;
+                        filePath?: string | undefined;
+                        startLine?: number | undefined;
+                        endLine?: number | undefined;
+                        whyItMatters?: string | undefined;
+                        evidence?: string | undefined;
+                        confidence?: number | undefined;
+                        suggestion?: string | undefined;
+                        patch?: string | undefined;
+                        comment?: undefined | {
+                            id: string;
+                            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
+                            serverRevision: number;
+                            sessionId?: string | undefined;
+                            runId?: string | undefined;
+                            projectId?: string | undefined;
+                            workspace?: undefined | {
+                                machineId: string;
+                                path: string;
+                            };
+                        };
+                        attributionConfidence?: string | undefined;
+                    }[];
+                    questions: {
+                        [x: string]: unknown;
+                        id: string;
+                        text: string;
+                        status: 'answered' | 'open' | 'superseded';
+                        findingIds?: string[] | undefined;
+                    }[];
+                    assumptions: {
+                        [x: string]: unknown;
+                        id: string;
+                        text: string;
+                        findingIds?: string[] | undefined;
+                    }[];
+                    generatedAtMs: number;
+                    comparisonId?: string | undefined;
+                    fileCount?: number | undefined;
+                    reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    proposedComments?: undefined | {
+                        body: string;
+                        anchor: {
+                            kind: 'file';
+                            filePath: string;
+                        } | {
+                            kind: 'line';
+                            filePath: string;
+                            line: number;
+                            side?: 'after' | 'before' | undefined;
+                        } | {
+                            kind: 'range';
+                            filePath: string;
+                            startLine: number;
+                            endLine: number;
+                            side?: 'after' | 'before' | undefined;
+                        };
+                        findingId?: string | undefined;
+                        severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        taxonomyIds?: string[] | undefined;
+                        tags?: string[] | undefined;
+                    }[];
+                    triage?: undefined | {
+                        [x: string]: unknown;
+                        findings: {
+                            [x: string]: unknown;
+                            id: string;
+                            status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
+                            commentId?: string | undefined;
+                            comment?: string | undefined;
+                        }[];
+                    };
+                    publication?: undefined | {
+                        [x: string]: unknown;
+                        findings: {
+                            [x: string]: unknown;
+                            id: string;
+                            published: boolean;
+                            publishedAtMs?: number | undefined;
+                            publishedMessageRef?: string | undefined;
+                        }[];
+                    };
+                    limits?: undefined | {
+                        [x: string]: unknown;
+                        findingsTruncated?: boolean | undefined;
+                        patchesTruncated?: boolean | undefined;
+                    };
+                };
+            };
+        } | {
+            ok: true;
+            status: 'cancelled' | 'failed' | 'succeeded' | 'timeout';
+            result: {
+                [x: string]: unknown;
+                run: {
+                    [x: string]: unknown;
+                    runId: string;
+                    callId: string;
+                    sidechainId: string;
+                    intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                    backendTarget: {
+                        kind: 'builtInAgent';
+                        agentId: string;
+                    } | {
+                        kind: 'configuredAcpBackend';
+                        backendId: string;
+                    };
+                    permissionMode: string;
+                    retentionPolicy: 'ephemeral' | 'resumable';
+                    runClass: 'bounded' | 'long_lived';
+                    ioMode: 'request_response' | 'streaming';
+                    status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                    startedAtMs: number;
+                    originWorkflowRunId?: string | undefined;
+                    display?: undefined | {
+                        [x: string]: unknown;
+                        title?: string | undefined;
+                        participantLabel?: string | undefined;
+                        groupId?: string | undefined;
+                    };
+                    launchOrigin?: undefined | {
+                        kind: 'discussion';
+                        serverId: string;
+                        discussionId: string;
+                        messageIds: string[];
+                        draftCorrelationId?: string | undefined;
+                    } | {
+                        kind: 'external';
+                        source?: 'action' | 'cli' | 'mcp' | undefined;
+                    } | {
+                        kind: 'session';
+                        sessionId: string;
+                        draftCorrelationId?: string | undefined;
+                    };
+                    requestedConfiguration?: undefined | {
+                        modelId?: string | undefined;
+                        reasoningEffort?: string | undefined;
+                    };
+                    resolvedSelection?: undefined | {
+                        source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                        modelSelection?: undefined | {
+                            agentTargetKey: string;
+                            providerConnectionId: null;
+                            modelId: string;
+                        } | {
+                            agentTargetKey: string;
+                            providerConnectionId: string;
+                            modelId: string;
+                        };
+                        teamCredentialModel?: undefined | {
+                            kind: 'team_credential_provider_model';
+                            resourceId: string;
+                            teamId: string;
+                            expectedResourceRevision: number;
+                            agentTargetKey: string;
+                            modelId: string;
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            nativeDelivery?: undefined | {
+                                managedId: string;
+                                controllerInstallationId: string;
+                                guestInstallationId: string;
+                                bindingKey: string;
+                                placeholderRef: string;
+                                sourceRevision: string;
+                                providerTicket: string;
+                            };
+                        };
+                        modelId?: string | undefined;
+                        connectedServices?: null | undefined | {
+                            v: 2;
+                            bindingsByServiceId: Record<string, {
+                                source: 'connected';
+                                selection: 'group';
+                                groupId: string;
+                                profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
+                            } | {
+                                source: 'connected';
+                                selection: 'profile';
+                                profileId: string;
+                            } | {
+                                source: 'native';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'direct';
+                                disclosedMember: {
+                                    service: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    accountId: string;
+                                };
+                            }>;
+                        };
+                    };
+                    approvalProfileId?: null | string | undefined;
+                    turnInFlight?: boolean | undefined;
+                    inputTurns?: undefined | {
+                        occurrenceId: string;
+                        current?: undefined | {
+                            turnId: string;
+                            inputIds: string[];
+                            state: 'active' | 'cancelled' | 'completed' | 'failed';
+                            result?: undefined | {
+                                kind: 'decision';
+                                value: string;
+                            } | {
+                                kind: 'json';
+                                value: JsonValue;
+                            } | {
+                                kind: 'text';
+                                value: string;
+                            };
+                            error?: undefined | {
+                                [x: string]: unknown;
+                                code: string;
+                                message?: string | undefined;
+                                runtimeIssueV1?: Readonly<{
+                                    v: 1;
+                                    scope: 'primary_session';
+                                    status: 'failed';
+                                    code: string;
+                                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                    occurredAt: number;
+                                    sessionSeq?: number | undefined;
+                                    agentId?: string | undefined;
+                                    agentTurnId?: string | undefined;
+                                    sanitizedPreview?: string | undefined;
+                                    usageLimit?: undefined | {
+                                        v: 1;
+                                        resetAtMs: null | number;
+                                        retryAfterMs: null | number;
+                                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                        providerLimitId?: string | undefined;
+                                        planType?: null | string | undefined;
+                                        utilization?: null | number | undefined;
+                                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                        quotaSnapshotRef?: undefined | {
+                                            serviceId: string;
+                                            profileId?: string | undefined;
+                                            groupId?: string | undefined;
+                                            fetchedAtMs?: number | undefined;
+                                        };
+                                        effectiveMeterId?: string | undefined;
+                                        effectiveRemainingPct?: number | undefined;
+                                        allWindows?: undefined | {
+                                            meterId: string;
+                                            scope?: string | undefined;
+                                            remainingPct?: number | undefined;
+                                            resetAtMs?: number | undefined;
+                                            status?: string | undefined;
+                                        }[];
+                                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                        overage?: null | undefined | {
+                                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                            resetAtMs: null | number;
+                                            disabledReason?: null | string | undefined;
+                                        };
+                                        action?: null | undefined | {
+                                            kind: 'none';
+                                        } | {
+                                            kind: 'open_url';
+                                            url: string;
+                                            labelKey?: string | undefined;
+                                        } | {
+                                            kind: 'settings';
+                                        };
+                                        connectedService?: null | undefined | {
+                                            serviceId: string;
+                                            profileId: null | string;
+                                            groupId: null | string;
+                                            groupExhausted?: boolean | undefined;
+                                        };
+                                    };
+                                    teamCredential?: undefined | {
+                                        v: 1;
+                                        resourceId: string;
+                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        usageLimit?: undefined | {
+                                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                            remaining: string;
+                                            resetsAtUtc: string;
+                                        };
+                                    };
+                                    temporaryThrottle?: undefined | {
+                                        v: 1;
+                                        retryAfterMs: null | number;
+                                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                    };
+                                    failureCause?: undefined | {
+                                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        code?: string | undefined;
+                                        retryable?: boolean | undefined;
+                                        requestId?: string | undefined;
+                                        preparationCause?: undefined | {
+                                            code: string;
+                                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                            requestId?: string | undefined;
+                                        };
+                                        connectedServicesDefault?: undefined | {
+                                            v: 1;
+                                            source: 'account_default';
+                                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                            phase: 'purpose_binding';
+                                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                        };
+                                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        httpStatus?: number | undefined;
+                                        providerErrorMessage?: string | undefined;
+                                    };
+                                    agentProcessExitAfterSwitch?: undefined | {
+                                        exitCode: null | number;
+                                        signal: null | string;
+                                        lastStderrLine: null | string;
+                                        vendorResumeId: null | string;
+                                        materializationRoot: null | string;
+                                        effectiveStateMode: 'isolated' | 'shared' | null;
+                                    };
+                                }> | undefined;
+                                uxDiagnostic?: undefined | {
+                                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                    retryable: boolean;
+                                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                    serviceId?: string | undefined;
+                                    agentId?: string | undefined;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    diagnostics?: undefined | ({
+                                        [x: string]: boolean | null | number | string;
+                                    } & {
+                                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                    });
+                                };
+                            };
+                        };
+                        last?: undefined | {
+                            turnId: string;
+                            inputIds: string[];
+                            state: 'active' | 'cancelled' | 'completed' | 'failed';
+                            result?: undefined | {
+                                kind: 'decision';
+                                value: string;
+                            } | {
+                                kind: 'json';
+                                value: JsonValue;
+                            } | {
+                                kind: 'text';
+                                value: string;
+                            };
+                            error?: undefined | {
+                                [x: string]: unknown;
+                                code: string;
+                                message?: string | undefined;
+                                runtimeIssueV1?: Readonly<{
+                                    v: 1;
+                                    scope: 'primary_session';
+                                    status: 'failed';
+                                    code: string;
+                                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                    occurredAt: number;
+                                    sessionSeq?: number | undefined;
+                                    agentId?: string | undefined;
+                                    agentTurnId?: string | undefined;
+                                    sanitizedPreview?: string | undefined;
+                                    usageLimit?: undefined | {
+                                        v: 1;
+                                        resetAtMs: null | number;
+                                        retryAfterMs: null | number;
+                                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                        providerLimitId?: string | undefined;
+                                        planType?: null | string | undefined;
+                                        utilization?: null | number | undefined;
+                                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                        quotaSnapshotRef?: undefined | {
+                                            serviceId: string;
+                                            profileId?: string | undefined;
+                                            groupId?: string | undefined;
+                                            fetchedAtMs?: number | undefined;
+                                        };
+                                        effectiveMeterId?: string | undefined;
+                                        effectiveRemainingPct?: number | undefined;
+                                        allWindows?: undefined | {
+                                            meterId: string;
+                                            scope?: string | undefined;
+                                            remainingPct?: number | undefined;
+                                            resetAtMs?: number | undefined;
+                                            status?: string | undefined;
+                                        }[];
+                                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                        overage?: null | undefined | {
+                                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                            resetAtMs: null | number;
+                                            disabledReason?: null | string | undefined;
+                                        };
+                                        action?: null | undefined | {
+                                            kind: 'none';
+                                        } | {
+                                            kind: 'open_url';
+                                            url: string;
+                                            labelKey?: string | undefined;
+                                        } | {
+                                            kind: 'settings';
+                                        };
+                                        connectedService?: null | undefined | {
+                                            serviceId: string;
+                                            profileId: null | string;
+                                            groupId: null | string;
+                                            groupExhausted?: boolean | undefined;
+                                        };
+                                    };
+                                    teamCredential?: undefined | {
+                                        v: 1;
+                                        resourceId: string;
+                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        usageLimit?: undefined | {
+                                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                            remaining: string;
+                                            resetsAtUtc: string;
+                                        };
+                                    };
+                                    temporaryThrottle?: undefined | {
+                                        v: 1;
+                                        retryAfterMs: null | number;
+                                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                    };
+                                    failureCause?: undefined | {
+                                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        code?: string | undefined;
+                                        retryable?: boolean | undefined;
+                                        requestId?: string | undefined;
+                                        preparationCause?: undefined | {
+                                            code: string;
+                                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                            requestId?: string | undefined;
+                                        };
+                                        connectedServicesDefault?: undefined | {
+                                            v: 1;
+                                            source: 'account_default';
+                                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                            phase: 'purpose_binding';
+                                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                        };
+                                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        httpStatus?: number | undefined;
+                                        providerErrorMessage?: string | undefined;
+                                    };
+                                    agentProcessExitAfterSwitch?: undefined | {
+                                        exitCode: null | number;
+                                        signal: null | string;
+                                        lastStderrLine: null | string;
+                                        vendorResumeId: null | string;
+                                        materializationRoot: null | string;
+                                        effectiveStateMode: 'isolated' | 'shared' | null;
+                                    };
+                                }> | undefined;
+                                uxDiagnostic?: undefined | {
+                                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                    retryable: boolean;
+                                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                    serviceId?: string | undefined;
+                                    agentId?: string | undefined;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    diagnostics?: undefined | ({
+                                        [x: string]: boolean | null | number | string;
+                                    } & {
+                                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                    });
+                                };
+                            };
+                        };
+                    };
+                    interaction?: undefined | {
+                        kind: 'retained_agent_session.v1';
+                        capabilities: {
+                            open: ('create' | 'fork' | 'resume')[];
+                            delivery: ('followUp' | 'newTurn' | 'steer')[];
+                            cancel: boolean;
+                            configuration?: boolean | undefined;
+                            workspaceWrites?: 'deny' | undefined;
+                            compaction?: undefined | {
+                                events: true;
+                                manual?: true | undefined;
+                                idle?: undefined | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | {
+                                    mode: 'native';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                    nativeHonorsMinimum?: true | undefined;
+                                };
+                            };
+                            conversationRollback?: true | undefined;
+                            goals?: undefined | {
+                                source: string;
+                                active?: undefined | {
+                                    get?: true | undefined;
+                                    clear?: true | undefined;
+                                    set?: undefined | {
+                                        fields: ('objective' | 'status' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                    };
+                                };
+                                inactive?: undefined | {
+                                    get?: true | undefined;
+                                    clear?: true | undefined;
+                                    set?: undefined | {
+                                        fields: ('objective' | 'status' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                    };
+                                };
+                            };
+                            usageReporting?: true | undefined;
+                            catalog?: undefined | {
+                                active?: ('skills' | 'vendorPlugins')[] | undefined;
+                                inactive?: ('skills' | 'vendorPlugins')[] | undefined;
+                            };
+                            usageLimitRecovery?: undefined | {
+                                active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                                inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                            };
+                            continuationVerification?: undefined | {
+                                intents: ('fork' | 'resume')[];
+                                requirement: 'advisory' | 'required';
+                            };
+                            workStateSources?: undefined | {
+                                id: string;
+                                itemKinds: ('goal' | 'task' | 'todo')[];
+                            }[];
+                            runtimeActivitySnapshots?: true | undefined;
+                            startupInstructions?: undefined | {
+                                versions: [
+                                    1
+                                ];
+                                revisionChanges?: 'resume' | undefined;
+                            };
+                            executionRunContext?: undefined | {
+                                versions: [
+                                    1
+                                ];
+                            };
+                        };
+                    };
+                    attention?: undefined | {
+                        kind: 'permission_required';
+                        requestIds: string[];
+                        requests?: undefined | {
+                            requestId: string;
+                            createdAt: number;
+                        }[];
+                    };
+                    lifecycle?: undefined | {
+                        v: 1;
+                        state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+                    };
+                    availableActionIds?: string[] | undefined;
+                    resumeHandle?: undefined | {
+                        [x: string]: unknown;
+                        kind: 'provider_session.v1';
+                        backendTarget: {
+                            kind: 'backend';
+                            backendId: string;
+                            configuredBackendId?: string | undefined;
+                            sourceKind?: 'built_in' | 'configured' | undefined;
+                        };
+                        providerSessionId: string;
+                    } | {
+                        [x: string]: unknown;
+                        kind: 'voice_agent_sessions.v1';
+                        backendTarget: {
+                            kind: 'backend';
+                            backendId: string;
+                            configuredBackendId?: string | undefined;
+                            sourceKind?: 'built_in' | 'configured' | undefined;
+                        };
+                        chatProviderSessionId: string;
+                        commitProviderSessionId: string;
+                    };
+                    transcript?: undefined | {
+                        [x: string]: unknown;
+                        persistenceMode: 'ephemeral' | 'persistent';
+                        epoch: number;
+                    };
+                    voicePolicy?: undefined | {
+                        assistantLanguage: null | string;
+                        welcome: {
+                            enabled: boolean;
+                            mode: 'immediate' | 'on_first_turn';
+                            text?: string | undefined;
+                        };
+                    };
+                    finishedAtMs?: number | undefined;
+                    error?: undefined | {
+                        [x: string]: unknown;
+                        code: string;
+                        message?: string | undefined;
+                        runtimeIssueV1?: Readonly<{
+                            v: 1;
+                            scope: 'primary_session';
+                            status: 'failed';
+                            code: string;
+                            source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                            occurredAt: number;
+                            sessionSeq?: number | undefined;
+                            agentId?: string | undefined;
+                            agentTurnId?: string | undefined;
+                            sanitizedPreview?: string | undefined;
+                            usageLimit?: undefined | {
+                                v: 1;
+                                resetAtMs: null | number;
+                                retryAfterMs: null | number;
+                                quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                providerLimitId?: string | undefined;
+                                planType?: null | string | undefined;
+                                utilization?: null | number | undefined;
+                                limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                quotaSnapshotRef?: undefined | {
+                                    serviceId: string;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    fetchedAtMs?: number | undefined;
+                                };
+                                effectiveMeterId?: string | undefined;
+                                effectiveRemainingPct?: number | undefined;
+                                allWindows?: undefined | {
+                                    meterId: string;
+                                    scope?: string | undefined;
+                                    remainingPct?: number | undefined;
+                                    resetAtMs?: number | undefined;
+                                    status?: string | undefined;
+                                }[];
+                                recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                overage?: null | undefined | {
+                                    status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                    resetAtMs: null | number;
+                                    disabledReason?: null | string | undefined;
+                                };
+                                action?: null | undefined | {
+                                    kind: 'none';
+                                } | {
+                                    kind: 'open_url';
+                                    url: string;
+                                    labelKey?: string | undefined;
+                                } | {
+                                    kind: 'settings';
+                                };
+                                connectedService?: null | undefined | {
+                                    serviceId: string;
+                                    profileId: null | string;
+                                    groupId: null | string;
+                                    groupExhausted?: boolean | undefined;
+                                };
+                            };
+                            teamCredential?: undefined | {
+                                v: 1;
+                                resourceId: string;
+                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                usageLimit?: undefined | {
+                                    metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                    remaining: string;
+                                    resetsAtUtc: string;
+                                };
+                            };
+                            temporaryThrottle?: undefined | {
+                                v: 1;
+                                retryAfterMs: null | number;
+                                recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                code?: string | undefined;
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
+                                    code: string;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                httpStatus?: number | undefined;
+                                providerErrorMessage?: string | undefined;
+                            };
+                            agentProcessExitAfterSwitch?: undefined | {
+                                exitCode: null | number;
+                                signal: null | string;
+                                lastStderrLine: null | string;
+                                vendorResumeId: null | string;
+                                materializationRoot: null | string;
+                                effectiveStateMode: 'isolated' | 'shared' | null;
+                            };
+                        }> | undefined;
+                        uxDiagnostic?: undefined | {
+                            code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                            retryable: boolean;
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: undefined | ({
+                                [x: string]: boolean | null | number | string;
+                            } & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            });
+                        };
+                    };
+                };
+                latestToolResult?: unknown;
+                structuredMeta?: undefined | {
+                    [x: string]: unknown;
+                    kind: string;
+                    payload: unknown;
+                };
+                reviewFindings?: undefined | {
+                    [x: string]: unknown;
+                    runRef: {
+                        [x: string]: unknown;
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        backendTarget?: undefined | {
+                            kind: 'builtInAgent';
+                            agentId: string;
+                        } | {
+                            kind: 'configuredAcpBackend';
+                            backendId: string;
+                        };
+                        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
+                    };
+                    summary: string;
+                    overviewMarkdown: string;
+                    findings: {
+                        [x: string]: unknown;
+                        id: string;
+                        title: string;
+                        severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                        category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                        summary: string;
+                        filePath?: string | undefined;
+                        startLine?: number | undefined;
+                        endLine?: number | undefined;
+                        whyItMatters?: string | undefined;
+                        evidence?: string | undefined;
+                        confidence?: number | undefined;
+                        suggestion?: string | undefined;
+                        patch?: string | undefined;
+                        comment?: undefined | {
+                            id: string;
+                            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
+                            serverRevision: number;
+                            sessionId?: string | undefined;
+                            runId?: string | undefined;
+                            projectId?: string | undefined;
+                            workspace?: undefined | {
+                                machineId: string;
+                                path: string;
+                            };
+                        };
+                        attributionConfidence?: string | undefined;
+                    }[];
+                    questions: {
+                        [x: string]: unknown;
+                        id: string;
+                        text: string;
+                        status: 'answered' | 'open' | 'superseded';
+                        findingIds?: string[] | undefined;
+                    }[];
+                    assumptions: {
+                        [x: string]: unknown;
+                        id: string;
+                        text: string;
+                        findingIds?: string[] | undefined;
+                    }[];
+                    generatedAtMs: number;
+                    comparisonId?: string | undefined;
+                    fileCount?: number | undefined;
+                    reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    proposedComments?: undefined | {
+                        body: string;
+                        anchor: {
+                            kind: 'file';
+                            filePath: string;
+                        } | {
+                            kind: 'line';
+                            filePath: string;
+                            line: number;
+                            side?: 'after' | 'before' | undefined;
+                        } | {
+                            kind: 'range';
+                            filePath: string;
+                            startLine: number;
+                            endLine: number;
+                            side?: 'after' | 'before' | undefined;
+                        };
+                        findingId?: string | undefined;
+                        severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                        taxonomyIds?: string[] | undefined;
+                        tags?: string[] | undefined;
+                    }[];
+                    triage?: undefined | {
+                        [x: string]: unknown;
+                        findings: {
+                            [x: string]: unknown;
+                            id: string;
+                            status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
+                            commentId?: string | undefined;
+                            comment?: string | undefined;
+                        }[];
+                    };
+                    publication?: undefined | {
+                        [x: string]: unknown;
+                        findings: {
+                            [x: string]: unknown;
+                            id: string;
+                            published: boolean;
+                            publishedAtMs?: number | undefined;
+                            publishedMessageRef?: string | undefined;
+                        }[];
+                    };
+                    limits?: undefined | {
+                        [x: string]: unknown;
+                        findingsTruncated?: boolean | undefined;
+                        patchesTruncated?: boolean | undefined;
+                    };
+                };
             };
         } | {
             ok: true;
@@ -2549,7 +4427,7 @@ export type ExecutionRunControlActionResultById = {
                     runId: string;
                     callId: string;
                     sidechainId: string;
-                    intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
                     backendTarget: {
                         kind: 'builtInAgent';
                         agentId: string;
@@ -2561,36 +4439,36 @@ export type ExecutionRunControlActionResultById = {
                     retentionPolicy: 'ephemeral' | 'resumable';
                     runClass: 'bounded' | 'long_lived';
                     ioMode: 'request_response' | 'streaming';
-                    status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
+                    status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                     startedAtMs: number;
                     originWorkflowRunId?: string | undefined;
-                    display?: {
+                    display?: undefined | {
                         [x: string]: unknown;
                         title?: string | undefined;
                         participantLabel?: string | undefined;
                         groupId?: string | undefined;
-                    } | undefined;
-                    launchOrigin?: {
+                    };
+                    launchOrigin?: undefined | {
                         kind: 'discussion';
                         serverId: string;
                         discussionId: string;
                         messageIds: string[];
                         draftCorrelationId?: string | undefined;
                     } | {
+                        kind: 'external';
+                        source?: 'action' | 'cli' | 'mcp' | undefined;
+                    } | {
                         kind: 'session';
                         sessionId: string;
                         draftCorrelationId?: string | undefined;
-                    } | {
-                        kind: 'external';
-                        source?: 'cli' | 'mcp' | 'action' | undefined;
-                    } | undefined;
-                    requestedConfiguration?: {
+                    };
+                    requestedConfiguration?: undefined | {
                         modelId?: string | undefined;
                         reasoningEffort?: string | undefined;
-                    } | undefined;
-                    resolvedSelection?: {
-                        source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                        modelSelection?: {
+                    };
+                    resolvedSelection?: undefined | {
+                        source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                        modelSelection?: undefined | {
                             agentTargetKey: string;
                             providerConnectionId: null;
                             modelId: string;
@@ -2598,8 +4476,8 @@ export type ExecutionRunControlActionResultById = {
                             agentTargetKey: string;
                             providerConnectionId: string;
                             modelId: string;
-                        } | undefined;
-                        teamCredentialModel?: {
+                        };
+                        teamCredentialModel?: undefined | {
                             kind: 'team_credential_provider_model';
                             resourceId: string;
                             teamId: string;
@@ -2607,7 +4485,7 @@ export type ExecutionRunControlActionResultById = {
                             agentTargetKey: string;
                             modelId: string;
                             deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                            nativeDelivery?: {
+                            nativeDelivery?: undefined | {
                                 managedId: string;
                                 controllerInstallationId: string;
                                 guestInstallationId: string;
@@ -2615,22 +4493,27 @@ export type ExecutionRunControlActionResultById = {
                                 placeholderRef: string;
                                 sourceRevision: string;
                                 providerTicket: string;
-                            } | undefined;
-                        } | undefined;
+                            };
+                        };
                         modelId?: string | undefined;
-                        connectedServices?: {
+                        connectedServices?: null | undefined | {
                             v: 2;
                             bindingsByServiceId: Record<string, {
-                                source: 'native';
-                            } | {
                                 source: 'connected';
                                 selection: 'group';
                                 groupId: string;
                                 profileId?: string | undefined;
+                                appliedProfileId?: string | undefined;
                             } | {
                                 source: 'connected';
                                 selection: 'profile';
                                 profileId: string;
+                            } | {
+                                source: 'native';
+                            } | {
+                                source: 'team_resource';
+                                resourceId: string;
+                                deliveryMode: 'brokered';
                             } | {
                                 source: 'team_resource';
                                 resourceId: string;
@@ -2642,135 +4525,383 @@ export type ExecutionRunControlActionResultById = {
                                     };
                                     accountId: string;
                                 };
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'brokered';
-                                disclosedMember?: undefined;
                             }>;
-                        } | null | undefined;
-                    } | undefined;
+                        };
+                    };
+                    approvalProfileId?: null | string | undefined;
                     turnInFlight?: boolean | undefined;
-                    inputTurns?: {
+                    inputTurns?: undefined | {
                         occurrenceId: string;
-                        current?: {
+                        current?: undefined | {
                             turnId: string;
                             inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
+                            state: 'active' | 'cancelled' | 'completed' | 'failed';
+                            result?: undefined | {
+                                kind: 'decision';
                                 value: string;
                             } | {
                                 kind: 'json';
                                 value: JsonValue;
                             } | {
-                                kind: 'decision';
+                                kind: 'text';
                                 value: string;
-                            } | undefined;
-                        } | undefined;
-                        last?: {
+                            };
+                            error?: undefined | {
+                                [x: string]: unknown;
+                                code: string;
+                                message?: string | undefined;
+                                runtimeIssueV1?: Readonly<{
+                                    v: 1;
+                                    scope: 'primary_session';
+                                    status: 'failed';
+                                    code: string;
+                                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                    occurredAt: number;
+                                    sessionSeq?: number | undefined;
+                                    agentId?: string | undefined;
+                                    agentTurnId?: string | undefined;
+                                    sanitizedPreview?: string | undefined;
+                                    usageLimit?: undefined | {
+                                        v: 1;
+                                        resetAtMs: null | number;
+                                        retryAfterMs: null | number;
+                                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                        providerLimitId?: string | undefined;
+                                        planType?: null | string | undefined;
+                                        utilization?: null | number | undefined;
+                                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                        quotaSnapshotRef?: undefined | {
+                                            serviceId: string;
+                                            profileId?: string | undefined;
+                                            groupId?: string | undefined;
+                                            fetchedAtMs?: number | undefined;
+                                        };
+                                        effectiveMeterId?: string | undefined;
+                                        effectiveRemainingPct?: number | undefined;
+                                        allWindows?: undefined | {
+                                            meterId: string;
+                                            scope?: string | undefined;
+                                            remainingPct?: number | undefined;
+                                            resetAtMs?: number | undefined;
+                                            status?: string | undefined;
+                                        }[];
+                                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                        overage?: null | undefined | {
+                                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                            resetAtMs: null | number;
+                                            disabledReason?: null | string | undefined;
+                                        };
+                                        action?: null | undefined | {
+                                            kind: 'none';
+                                        } | {
+                                            kind: 'open_url';
+                                            url: string;
+                                            labelKey?: string | undefined;
+                                        } | {
+                                            kind: 'settings';
+                                        };
+                                        connectedService?: null | undefined | {
+                                            serviceId: string;
+                                            profileId: null | string;
+                                            groupId: null | string;
+                                            groupExhausted?: boolean | undefined;
+                                        };
+                                    };
+                                    teamCredential?: undefined | {
+                                        v: 1;
+                                        resourceId: string;
+                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        usageLimit?: undefined | {
+                                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                            remaining: string;
+                                            resetsAtUtc: string;
+                                        };
+                                    };
+                                    temporaryThrottle?: undefined | {
+                                        v: 1;
+                                        retryAfterMs: null | number;
+                                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                    };
+                                    failureCause?: undefined | {
+                                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        code?: string | undefined;
+                                        retryable?: boolean | undefined;
+                                        requestId?: string | undefined;
+                                        preparationCause?: undefined | {
+                                            code: string;
+                                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                            requestId?: string | undefined;
+                                        };
+                                        connectedServicesDefault?: undefined | {
+                                            v: 1;
+                                            source: 'account_default';
+                                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                            phase: 'purpose_binding';
+                                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                        };
+                                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        httpStatus?: number | undefined;
+                                        providerErrorMessage?: string | undefined;
+                                    };
+                                    agentProcessExitAfterSwitch?: undefined | {
+                                        exitCode: null | number;
+                                        signal: null | string;
+                                        lastStderrLine: null | string;
+                                        vendorResumeId: null | string;
+                                        materializationRoot: null | string;
+                                        effectiveStateMode: 'isolated' | 'shared' | null;
+                                    };
+                                }> | undefined;
+                                uxDiagnostic?: undefined | {
+                                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                    retryable: boolean;
+                                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                    serviceId?: string | undefined;
+                                    agentId?: string | undefined;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    diagnostics?: undefined | ({
+                                        [x: string]: boolean | null | number | string;
+                                    } & {
+                                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                    });
+                                };
+                            };
+                        };
+                        last?: undefined | {
                             turnId: string;
                             inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
+                            state: 'active' | 'cancelled' | 'completed' | 'failed';
+                            result?: undefined | {
+                                kind: 'decision';
                                 value: string;
                             } | {
                                 kind: 'json';
                                 value: JsonValue;
                             } | {
-                                kind: 'decision';
+                                kind: 'text';
                                 value: string;
-                            } | undefined;
-                        } | undefined;
-                    } | undefined;
-                    interaction?: {
+                            };
+                            error?: undefined | {
+                                [x: string]: unknown;
+                                code: string;
+                                message?: string | undefined;
+                                runtimeIssueV1?: Readonly<{
+                                    v: 1;
+                                    scope: 'primary_session';
+                                    status: 'failed';
+                                    code: string;
+                                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                    occurredAt: number;
+                                    sessionSeq?: number | undefined;
+                                    agentId?: string | undefined;
+                                    agentTurnId?: string | undefined;
+                                    sanitizedPreview?: string | undefined;
+                                    usageLimit?: undefined | {
+                                        v: 1;
+                                        resetAtMs: null | number;
+                                        retryAfterMs: null | number;
+                                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                        providerLimitId?: string | undefined;
+                                        planType?: null | string | undefined;
+                                        utilization?: null | number | undefined;
+                                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                        quotaSnapshotRef?: undefined | {
+                                            serviceId: string;
+                                            profileId?: string | undefined;
+                                            groupId?: string | undefined;
+                                            fetchedAtMs?: number | undefined;
+                                        };
+                                        effectiveMeterId?: string | undefined;
+                                        effectiveRemainingPct?: number | undefined;
+                                        allWindows?: undefined | {
+                                            meterId: string;
+                                            scope?: string | undefined;
+                                            remainingPct?: number | undefined;
+                                            resetAtMs?: number | undefined;
+                                            status?: string | undefined;
+                                        }[];
+                                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                        overage?: null | undefined | {
+                                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                            resetAtMs: null | number;
+                                            disabledReason?: null | string | undefined;
+                                        };
+                                        action?: null | undefined | {
+                                            kind: 'none';
+                                        } | {
+                                            kind: 'open_url';
+                                            url: string;
+                                            labelKey?: string | undefined;
+                                        } | {
+                                            kind: 'settings';
+                                        };
+                                        connectedService?: null | undefined | {
+                                            serviceId: string;
+                                            profileId: null | string;
+                                            groupId: null | string;
+                                            groupExhausted?: boolean | undefined;
+                                        };
+                                    };
+                                    teamCredential?: undefined | {
+                                        v: 1;
+                                        resourceId: string;
+                                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                        usageLimit?: undefined | {
+                                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                            remaining: string;
+                                            resetsAtUtc: string;
+                                        };
+                                    };
+                                    temporaryThrottle?: undefined | {
+                                        v: 1;
+                                        retryAfterMs: null | number;
+                                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                    };
+                                    failureCause?: undefined | {
+                                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                        code?: string | undefined;
+                                        retryable?: boolean | undefined;
+                                        requestId?: string | undefined;
+                                        preparationCause?: undefined | {
+                                            code: string;
+                                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                            requestId?: string | undefined;
+                                        };
+                                        connectedServicesDefault?: undefined | {
+                                            v: 1;
+                                            source: 'account_default';
+                                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                            phase: 'purpose_binding';
+                                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                        };
+                                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                        httpStatus?: number | undefined;
+                                        providerErrorMessage?: string | undefined;
+                                    };
+                                    agentProcessExitAfterSwitch?: undefined | {
+                                        exitCode: null | number;
+                                        signal: null | string;
+                                        lastStderrLine: null | string;
+                                        vendorResumeId: null | string;
+                                        materializationRoot: null | string;
+                                        effectiveStateMode: 'isolated' | 'shared' | null;
+                                    };
+                                }> | undefined;
+                                uxDiagnostic?: undefined | {
+                                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                    retryable: boolean;
+                                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                    serviceId?: string | undefined;
+                                    agentId?: string | undefined;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    diagnostics?: undefined | ({
+                                        [x: string]: boolean | null | number | string;
+                                    } & {
+                                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                    });
+                                };
+                            };
+                        };
+                    };
+                    interaction?: undefined | {
                         kind: 'retained_agent_session.v1';
                         capabilities: {
-                            open: ('resume' | 'create' | 'fork')[];
-                            delivery: ('newTurn' | 'steer' | 'followUp')[];
+                            open: ('create' | 'fork' | 'resume')[];
+                            delivery: ('followUp' | 'newTurn' | 'steer')[];
                             cancel: boolean;
                             configuration?: boolean | undefined;
                             workspaceWrites?: 'deny' | undefined;
-                            compaction?: {
+                            compaction?: undefined | {
                                 events: true;
                                 manual?: true | undefined;
-                                idle?: {
+                                idle?: undefined | {
+                                    mode: 'host';
+                                    defaultEnabled: boolean;
+                                    defaultMinContextTokens?: number | undefined;
+                                } | {
                                     mode: 'native';
                                     defaultEnabled: boolean;
                                     defaultMinContextTokens?: number | undefined;
                                     nativeHonorsMinimum?: true | undefined;
-                                } | {
-                                    mode: 'host';
-                                    defaultEnabled: boolean;
-                                    defaultMinContextTokens?: number | undefined;
-                                } | undefined;
-                            } | undefined;
+                                };
+                            };
                             conversationRollback?: true | undefined;
-                            goals?: {
+                            goals?: undefined | {
                                 source: string;
-                                active?: {
+                                active?: undefined | {
                                     get?: true | undefined;
                                     clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                                inactive?: {
+                                    set?: undefined | {
+                                        fields: ('objective' | 'status' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                    };
+                                };
+                                inactive?: undefined | {
                                     get?: true | undefined;
                                     clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                            } | undefined;
+                                    set?: undefined | {
+                                        fields: ('objective' | 'status' | 'tokenBudget')[];
+                                        writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                    };
+                                };
+                            };
                             usageReporting?: true | undefined;
-                            catalog?: {
+                            catalog?: undefined | {
                                 active?: ('skills' | 'vendorPlugins')[] | undefined;
                                 inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                            } | undefined;
-                            usageLimitRecovery?: {
+                            };
+                            usageLimitRecovery?: undefined | {
                                 active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
                                 inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                            } | undefined;
-                            continuationVerification?: {
-                                intents: ('resume' | 'fork')[];
-                                requirement: 'required' | 'advisory';
-                            } | undefined;
-                            workStateSources?: {
+                            };
+                            continuationVerification?: undefined | {
+                                intents: ('fork' | 'resume')[];
+                                requirement: 'advisory' | 'required';
+                            };
+                            workStateSources?: undefined | {
                                 id: string;
-                                itemKinds: ('task' | 'goal' | 'todo')[];
-                            }[] | undefined;
+                                itemKinds: ('goal' | 'task' | 'todo')[];
+                            }[];
                             runtimeActivitySnapshots?: true | undefined;
-                            startupInstructions?: {
+                            startupInstructions?: undefined | {
                                 versions: [
                                     1
                                 ];
                                 revisionChanges?: 'resume' | undefined;
-                            } | undefined;
-                            executionRunContext?: {
+                            };
+                            executionRunContext?: undefined | {
                                 versions: [
                                     1
                                 ];
-                            } | undefined;
+                            };
                         };
-                    } | undefined;
-                    attention?: {
+                    };
+                    attention?: undefined | {
                         kind: 'permission_required';
                         requestIds: string[];
-                        requests?: {
+                        requests?: undefined | {
                             requestId: string;
                             createdAt: number;
-                        }[] | undefined;
-                    } | undefined;
-                    lifecycle?: {
+                        }[];
+                    };
+                    lifecycle?: undefined | {
                         v: 1;
-                        state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                    } | undefined;
+                        state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+                    };
                     availableActionIds?: string[] | undefined;
-                    resumeHandle?: {
+                    resumeHandle?: undefined | {
                         [x: string]: unknown;
                         kind: 'provider_session.v1';
                         backendTarget: {
@@ -2791,22 +4922,22 @@ export type ExecutionRunControlActionResultById = {
                         };
                         chatProviderSessionId: string;
                         commitProviderSessionId: string;
-                    } | undefined;
-                    transcript?: {
+                    };
+                    transcript?: undefined | {
                         [x: string]: unknown;
                         persistenceMode: 'ephemeral' | 'persistent';
                         epoch: number;
-                    } | undefined;
-                    voicePolicy?: {
-                        assistantLanguage: string | null;
+                    };
+                    voicePolicy?: undefined | {
+                        assistantLanguage: null | string;
                         welcome: {
                             enabled: boolean;
                             mode: 'immediate' | 'on_first_turn';
                             text?: string | undefined;
                         };
-                    } | undefined;
+                    };
                     finishedAtMs?: number | undefined;
-                    error?: {
+                    error?: undefined | {
                         [x: string]: unknown;
                         code: string;
                         message?: string | undefined;
@@ -2815,1134 +4946,144 @@ export type ExecutionRunControlActionResultById = {
                             scope: 'primary_session';
                             status: 'failed';
                             code: string;
-                            source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
+                            source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
                             occurredAt: number;
                             sessionSeq?: number | undefined;
                             agentId?: string | undefined;
                             agentTurnId?: string | undefined;
                             sanitizedPreview?: string | undefined;
-                            usageLimit?: {
+                            usageLimit?: undefined | {
                                 v: 1;
-                                resetAtMs: number | null;
-                                retryAfterMs: number | null;
-                                quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                                recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
+                                resetAtMs: null | number;
+                                retryAfterMs: null | number;
+                                quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
                                 providerLimitId?: string | undefined;
-                                planType?: string | null | undefined;
-                                utilization?: number | null | undefined;
-                                limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                                quotaSnapshotRef?: {
+                                planType?: null | string | undefined;
+                                utilization?: null | number | undefined;
+                                limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                quotaSnapshotRef?: undefined | {
                                     serviceId: string;
                                     profileId?: string | undefined;
                                     groupId?: string | undefined;
                                     fetchedAtMs?: number | undefined;
-                                } | undefined;
-                                effectiveMeterId?: string | undefined;
-                                effectiveRemainingPct?: number | undefined;
-                                allWindows?: {
-                                    meterId: string;
-                                    scope?: string | undefined;
-                                    remainingPct?: number | undefined;
-                                    resetAtMs?: number | undefined;
-                                    status?: string | undefined;
-                                }[] | undefined;
-                                recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                                overage?: {
-                                    status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                                    resetAtMs: number | null;
-                                    disabledReason?: string | null | undefined;
-                                } | null | undefined;
-                                action?: {
-                                    kind: 'open_url';
-                                    url: string;
-                                    labelKey?: string | undefined;
-                                } | {
-                                    kind: 'settings';
-                                } | {
-                                    kind: 'none';
-                                } | null | undefined;
-                                connectedService?: {
-                                    serviceId: string;
-                                    profileId: string | null;
-                                    groupId: string | null;
-                                    groupExhausted?: boolean | undefined;
-                                } | null | undefined;
-                            } | undefined;
-                            teamCredential?: {
-                                v: 1;
-                                resourceId: string;
-                                reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                                usageLimit?: {
-                                    metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
-                                    remaining: string;
-                                    resetsAtUtc: string;
-                                } | undefined;
-                            } | undefined;
-                            temporaryThrottle?: {
-                                v: 1;
-                                retryAfterMs: number | null;
-                                recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                            } | undefined;
-                            failureCause?: {
-                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                                failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
-                                code?: string | undefined;
-                                preparationCause?: {
-                                    code: string;
-                                    stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                                } | undefined;
-                                reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                                providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
-                                httpStatus?: number | undefined;
-                                providerErrorMessage?: string | undefined;
-                            } | undefined;
-                            agentProcessExitAfterSwitch?: {
-                                exitCode: number | null;
-                                signal: string | null;
-                                lastStderrLine: string | null;
-                                vendorResumeId: string | null;
-                                materializationRoot: string | null;
-                                effectiveStateMode: 'shared' | 'isolated' | null;
-                            } | undefined;
-                        }> | undefined;
-                        uxDiagnostic?: {
-                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
-                            retryable: boolean;
-                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
-                            serviceId?: string | undefined;
-                            agentId?: string | undefined;
-                            profileId?: string | undefined;
-                            groupId?: string | undefined;
-                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                        } | undefined;
-                    } | undefined;
-                };
-                latestToolResult?: unknown;
-                structuredMeta?: {
-                    [x: string]: unknown;
-                    kind: string;
-                    payload: unknown;
-                } | undefined;
-                reviewFindings?: {
-                    [x: string]: unknown;
-                    runRef: {
-                        [x: string]: unknown;
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        backendTarget?: {
-                            kind: 'builtInAgent';
-                            agentId: string;
-                        } | {
-                            kind: 'configuredAcpBackend';
-                            backendId: string;
-                        } | undefined;
-                        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
-                    };
-                    summary: string;
-                    overviewMarkdown: string;
-                    findings: {
-                        [x: string]: unknown;
-                        id: string;
-                        title: string;
-                        severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                        category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
-                        summary: string;
-                        filePath?: string | undefined;
-                        startLine?: number | undefined;
-                        endLine?: number | undefined;
-                        whyItMatters?: string | undefined;
-                        evidence?: string | undefined;
-                        confidence?: number | undefined;
-                        suggestion?: string | undefined;
-                        patch?: string | undefined;
-                        comment?: {
-                            id: string;
-                            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
-                            serverRevision: number;
-                            sessionId?: string | undefined;
-                            runId?: string | undefined;
-                            projectId?: string | undefined;
-                            workspace?: {
-                                machineId: string;
-                                path: string;
-                            } | undefined;
-                        } | undefined;
-                        attributionConfidence?: string | undefined;
-                    }[];
-                    questions: {
-                        [x: string]: unknown;
-                        id: string;
-                        text: string;
-                        status: 'open' | 'answered' | 'superseded';
-                        findingIds?: string[] | undefined;
-                    }[];
-                    assumptions: {
-                        [x: string]: unknown;
-                        id: string;
-                        text: string;
-                        findingIds?: string[] | undefined;
-                    }[];
-                    generatedAtMs: number;
-                    comparisonId?: string | undefined;
-                    fileCount?: number | undefined;
-                    reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-                    proposedComments?: {
-                        body: string;
-                        anchor: {
-                            kind: 'range';
-                            filePath: string;
-                            startLine: number;
-                            endLine: number;
-                            side?: 'after' | 'before' | undefined;
-                        } | {
-                            kind: 'file';
-                            filePath: string;
-                        } | {
-                            kind: 'line';
-                            filePath: string;
-                            line: number;
-                            side?: 'after' | 'before' | undefined;
-                        };
-                        findingId?: string | undefined;
-                        severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
-                        taxonomyIds?: string[] | undefined;
-                        tags?: string[] | undefined;
-                    }[] | undefined;
-                    triage?: {
-                        [x: string]: unknown;
-                        findings: {
-                            [x: string]: unknown;
-                            id: string;
-                            status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
-                            commentId?: string | undefined;
-                            comment?: string | undefined;
-                        }[];
-                    } | undefined;
-                    publication?: {
-                        [x: string]: unknown;
-                        findings: {
-                            [x: string]: unknown;
-                            id: string;
-                            published: boolean;
-                            publishedAtMs?: number | undefined;
-                            publishedMessageRef?: string | undefined;
-                        }[];
-                    } | undefined;
-                    limits?: {
-                        [x: string]: unknown;
-                        findingsTruncated?: boolean | undefined;
-                        patchesTruncated?: boolean | undefined;
-                    } | undefined;
-                } | undefined;
-            };
-        } | {
-            ok: true;
-            status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
-            disposition: 'snapshot';
-            result: {
-                [x: string]: unknown;
-                run: {
-                    [x: string]: unknown;
-                    runId: string;
-                    callId: string;
-                    sidechainId: string;
-                    intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
-                    backendTarget: {
-                        kind: 'builtInAgent';
-                        agentId: string;
-                    } | {
-                        kind: 'configuredAcpBackend';
-                        backendId: string;
-                    };
-                    permissionMode: string;
-                    retentionPolicy: 'ephemeral' | 'resumable';
-                    runClass: 'bounded' | 'long_lived';
-                    ioMode: 'request_response' | 'streaming';
-                    status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
-                    startedAtMs: number;
-                    originWorkflowRunId?: string | undefined;
-                    display?: {
-                        [x: string]: unknown;
-                        title?: string | undefined;
-                        participantLabel?: string | undefined;
-                        groupId?: string | undefined;
-                    } | undefined;
-                    launchOrigin?: {
-                        kind: 'discussion';
-                        serverId: string;
-                        discussionId: string;
-                        messageIds: string[];
-                        draftCorrelationId?: string | undefined;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                        draftCorrelationId?: string | undefined;
-                    } | {
-                        kind: 'external';
-                        source?: 'cli' | 'mcp' | 'action' | undefined;
-                    } | undefined;
-                    requestedConfiguration?: {
-                        modelId?: string | undefined;
-                        reasoningEffort?: string | undefined;
-                    } | undefined;
-                    resolvedSelection?: {
-                        source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                        modelSelection?: {
-                            agentTargetKey: string;
-                            providerConnectionId: null;
-                            modelId: string;
-                        } | {
-                            agentTargetKey: string;
-                            providerConnectionId: string;
-                            modelId: string;
-                        } | undefined;
-                        teamCredentialModel?: {
-                            kind: 'team_credential_provider_model';
-                            resourceId: string;
-                            teamId: string;
-                            expectedResourceRevision: number;
-                            agentTargetKey: string;
-                            modelId: string;
-                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                            nativeDelivery?: {
-                                managedId: string;
-                                controllerInstallationId: string;
-                                guestInstallationId: string;
-                                bindingKey: string;
-                                placeholderRef: string;
-                                sourceRevision: string;
-                                providerTicket: string;
-                            } | undefined;
-                        } | undefined;
-                        modelId?: string | undefined;
-                        connectedServices?: {
-                            v: 2;
-                            bindingsByServiceId: Record<string, {
-                                source: 'native';
-                            } | {
-                                source: 'connected';
-                                selection: 'group';
-                                groupId: string;
-                                profileId?: string | undefined;
-                            } | {
-                                source: 'connected';
-                                selection: 'profile';
-                                profileId: string;
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'direct';
-                                disclosedMember: {
-                                    service: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    accountId: string;
                                 };
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'brokered';
-                                disclosedMember?: undefined;
-                            }>;
-                        } | null | undefined;
-                    } | undefined;
-                    turnInFlight?: boolean | undefined;
-                    inputTurns?: {
-                        occurrenceId: string;
-                        current?: {
-                            turnId: string;
-                            inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
-                                value: string;
-                            } | {
-                                kind: 'json';
-                                value: JsonValue;
-                            } | {
-                                kind: 'decision';
-                                value: string;
-                            } | undefined;
-                        } | undefined;
-                        last?: {
-                            turnId: string;
-                            inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
-                                value: string;
-                            } | {
-                                kind: 'json';
-                                value: JsonValue;
-                            } | {
-                                kind: 'decision';
-                                value: string;
-                            } | undefined;
-                        } | undefined;
-                    } | undefined;
-                    interaction?: {
-                        kind: 'retained_agent_session.v1';
-                        capabilities: {
-                            open: ('resume' | 'create' | 'fork')[];
-                            delivery: ('newTurn' | 'steer' | 'followUp')[];
-                            cancel: boolean;
-                            configuration?: boolean | undefined;
-                            workspaceWrites?: 'deny' | undefined;
-                            compaction?: {
-                                events: true;
-                                manual?: true | undefined;
-                                idle?: {
-                                    mode: 'native';
-                                    defaultEnabled: boolean;
-                                    defaultMinContextTokens?: number | undefined;
-                                    nativeHonorsMinimum?: true | undefined;
-                                } | {
-                                    mode: 'host';
-                                    defaultEnabled: boolean;
-                                    defaultMinContextTokens?: number | undefined;
-                                } | undefined;
-                            } | undefined;
-                            conversationRollback?: true | undefined;
-                            goals?: {
-                                source: string;
-                                active?: {
-                                    get?: true | undefined;
-                                    clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                                inactive?: {
-                                    get?: true | undefined;
-                                    clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                            } | undefined;
-                            usageReporting?: true | undefined;
-                            catalog?: {
-                                active?: ('skills' | 'vendorPlugins')[] | undefined;
-                                inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                            } | undefined;
-                            usageLimitRecovery?: {
-                                active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                                inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                            } | undefined;
-                            continuationVerification?: {
-                                intents: ('resume' | 'fork')[];
-                                requirement: 'required' | 'advisory';
-                            } | undefined;
-                            workStateSources?: {
-                                id: string;
-                                itemKinds: ('task' | 'goal' | 'todo')[];
-                            }[] | undefined;
-                            runtimeActivitySnapshots?: true | undefined;
-                            startupInstructions?: {
-                                versions: [
-                                    1
-                                ];
-                                revisionChanges?: 'resume' | undefined;
-                            } | undefined;
-                            executionRunContext?: {
-                                versions: [
-                                    1
-                                ];
-                            } | undefined;
-                        };
-                    } | undefined;
-                    attention?: {
-                        kind: 'permission_required';
-                        requestIds: string[];
-                        requests?: {
-                            requestId: string;
-                            createdAt: number;
-                        }[] | undefined;
-                    } | undefined;
-                    lifecycle?: {
-                        v: 1;
-                        state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                    } | undefined;
-                    availableActionIds?: string[] | undefined;
-                    resumeHandle?: {
-                        [x: string]: unknown;
-                        kind: 'provider_session.v1';
-                        backendTarget: {
-                            kind: 'backend';
-                            backendId: string;
-                            configuredBackendId?: string | undefined;
-                            sourceKind?: 'built_in' | 'configured' | undefined;
-                        };
-                        providerSessionId: string;
-                    } | {
-                        [x: string]: unknown;
-                        kind: 'voice_agent_sessions.v1';
-                        backendTarget: {
-                            kind: 'backend';
-                            backendId: string;
-                            configuredBackendId?: string | undefined;
-                            sourceKind?: 'built_in' | 'configured' | undefined;
-                        };
-                        chatProviderSessionId: string;
-                        commitProviderSessionId: string;
-                    } | undefined;
-                    transcript?: {
-                        [x: string]: unknown;
-                        persistenceMode: 'ephemeral' | 'persistent';
-                        epoch: number;
-                    } | undefined;
-                    voicePolicy?: {
-                        assistantLanguage: string | null;
-                        welcome: {
-                            enabled: boolean;
-                            mode: 'immediate' | 'on_first_turn';
-                            text?: string | undefined;
-                        };
-                    } | undefined;
-                    finishedAtMs?: number | undefined;
-                    error?: {
-                        [x: string]: unknown;
-                        code: string;
-                        message?: string | undefined;
-                        runtimeIssueV1?: Readonly<{
-                            v: 1;
-                            scope: 'primary_session';
-                            status: 'failed';
-                            code: string;
-                            source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
-                            occurredAt: number;
-                            sessionSeq?: number | undefined;
-                            agentId?: string | undefined;
-                            agentTurnId?: string | undefined;
-                            sanitizedPreview?: string | undefined;
-                            usageLimit?: {
-                                v: 1;
-                                resetAtMs: number | null;
-                                retryAfterMs: number | null;
-                                quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                                recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
-                                providerLimitId?: string | undefined;
-                                planType?: string | null | undefined;
-                                utilization?: number | null | undefined;
-                                limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                                quotaSnapshotRef?: {
-                                    serviceId: string;
-                                    profileId?: string | undefined;
-                                    groupId?: string | undefined;
-                                    fetchedAtMs?: number | undefined;
-                                } | undefined;
                                 effectiveMeterId?: string | undefined;
                                 effectiveRemainingPct?: number | undefined;
-                                allWindows?: {
+                                allWindows?: undefined | {
                                     meterId: string;
                                     scope?: string | undefined;
                                     remainingPct?: number | undefined;
                                     resetAtMs?: number | undefined;
                                     status?: string | undefined;
-                                }[] | undefined;
-                                recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                                overage?: {
-                                    status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                                    resetAtMs: number | null;
-                                    disabledReason?: string | null | undefined;
-                                } | null | undefined;
-                                action?: {
-                                    kind: 'open_url';
-                                    url: string;
-                                    labelKey?: string | undefined;
-                                } | {
-                                    kind: 'settings';
-                                } | {
-                                    kind: 'none';
-                                } | null | undefined;
-                                connectedService?: {
-                                    serviceId: string;
-                                    profileId: string | null;
-                                    groupId: string | null;
-                                    groupExhausted?: boolean | undefined;
-                                } | null | undefined;
-                            } | undefined;
-                            teamCredential?: {
-                                v: 1;
-                                resourceId: string;
-                                reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                                usageLimit?: {
-                                    metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
-                                    remaining: string;
-                                    resetsAtUtc: string;
-                                } | undefined;
-                            } | undefined;
-                            temporaryThrottle?: {
-                                v: 1;
-                                retryAfterMs: number | null;
-                                recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                            } | undefined;
-                            failureCause?: {
-                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                                failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
-                                code?: string | undefined;
-                                preparationCause?: {
-                                    code: string;
-                                    stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                                } | undefined;
-                                reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                                providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
-                                httpStatus?: number | undefined;
-                                providerErrorMessage?: string | undefined;
-                            } | undefined;
-                            agentProcessExitAfterSwitch?: {
-                                exitCode: number | null;
-                                signal: string | null;
-                                lastStderrLine: string | null;
-                                vendorResumeId: string | null;
-                                materializationRoot: string | null;
-                                effectiveStateMode: 'shared' | 'isolated' | null;
-                            } | undefined;
-                        }> | undefined;
-                        uxDiagnostic?: {
-                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
-                            retryable: boolean;
-                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
-                            serviceId?: string | undefined;
-                            agentId?: string | undefined;
-                            profileId?: string | undefined;
-                            groupId?: string | undefined;
-                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                        } | undefined;
-                    } | undefined;
-                };
-                latestToolResult?: unknown;
-                structuredMeta?: {
-                    [x: string]: unknown;
-                    kind: string;
-                    payload: unknown;
-                } | undefined;
-                reviewFindings?: {
-                    [x: string]: unknown;
-                    runRef: {
-                        [x: string]: unknown;
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        backendTarget?: {
-                            kind: 'builtInAgent';
-                            agentId: string;
-                        } | {
-                            kind: 'configuredAcpBackend';
-                            backendId: string;
-                        } | undefined;
-                        retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
-                    };
-                    summary: string;
-                    overviewMarkdown: string;
-                    findings: {
-                        [x: string]: unknown;
-                        id: string;
-                        title: string;
-                        severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                        category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
-                        summary: string;
-                        filePath?: string | undefined;
-                        startLine?: number | undefined;
-                        endLine?: number | undefined;
-                        whyItMatters?: string | undefined;
-                        evidence?: string | undefined;
-                        confidence?: number | undefined;
-                        suggestion?: string | undefined;
-                        patch?: string | undefined;
-                        comment?: {
-                            id: string;
-                            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
-                            serverRevision: number;
-                            sessionId?: string | undefined;
-                            runId?: string | undefined;
-                            projectId?: string | undefined;
-                            workspace?: {
-                                machineId: string;
-                                path: string;
-                            } | undefined;
-                        } | undefined;
-                        attributionConfidence?: string | undefined;
-                    }[];
-                    questions: {
-                        [x: string]: unknown;
-                        id: string;
-                        text: string;
-                        status: 'open' | 'answered' | 'superseded';
-                        findingIds?: string[] | undefined;
-                    }[];
-                    assumptions: {
-                        [x: string]: unknown;
-                        id: string;
-                        text: string;
-                        findingIds?: string[] | undefined;
-                    }[];
-                    generatedAtMs: number;
-                    comparisonId?: string | undefined;
-                    fileCount?: number | undefined;
-                    reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-                    proposedComments?: {
-                        body: string;
-                        anchor: {
-                            kind: 'range';
-                            filePath: string;
-                            startLine: number;
-                            endLine: number;
-                            side?: 'after' | 'before' | undefined;
-                        } | {
-                            kind: 'file';
-                            filePath: string;
-                        } | {
-                            kind: 'line';
-                            filePath: string;
-                            line: number;
-                            side?: 'after' | 'before' | undefined;
-                        };
-                        findingId?: string | undefined;
-                        severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
-                        taxonomyIds?: string[] | undefined;
-                        tags?: string[] | undefined;
-                    }[] | undefined;
-                    triage?: {
-                        [x: string]: unknown;
-                        findings: {
-                            [x: string]: unknown;
-                            id: string;
-                            status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
-                            commentId?: string | undefined;
-                            comment?: string | undefined;
-                        }[];
-                    } | undefined;
-                    publication?: {
-                        [x: string]: unknown;
-                        findings: {
-                            [x: string]: unknown;
-                            id: string;
-                            published: boolean;
-                            publishedAtMs?: number | undefined;
-                            publishedMessageRef?: string | undefined;
-                        }[];
-                    } | undefined;
-                    limits?: {
-                        [x: string]: unknown;
-                        findingsTruncated?: boolean | undefined;
-                        patchesTruncated?: boolean | undefined;
-                    } | undefined;
-                } | undefined;
-            };
-        } | {
-            ok: true;
-            disposition: 'observation_timeout';
-            runId: string;
-            timeoutMs: number;
-            observedAtMs: number;
-            deadlineAtMs: number;
-            status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
-            result: {
-                [x: string]: unknown;
-                run: {
-                    [x: string]: unknown;
-                    runId: string;
-                    callId: string;
-                    sidechainId: string;
-                    intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
-                    backendTarget: {
-                        kind: 'builtInAgent';
-                        agentId: string;
-                    } | {
-                        kind: 'configuredAcpBackend';
-                        backendId: string;
-                    };
-                    permissionMode: string;
-                    retentionPolicy: 'ephemeral' | 'resumable';
-                    runClass: 'bounded' | 'long_lived';
-                    ioMode: 'request_response' | 'streaming';
-                    status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
-                    startedAtMs: number;
-                    originWorkflowRunId?: string | undefined;
-                    display?: {
-                        [x: string]: unknown;
-                        title?: string | undefined;
-                        participantLabel?: string | undefined;
-                        groupId?: string | undefined;
-                    } | undefined;
-                    launchOrigin?: {
-                        kind: 'discussion';
-                        serverId: string;
-                        discussionId: string;
-                        messageIds: string[];
-                        draftCorrelationId?: string | undefined;
-                    } | {
-                        kind: 'session';
-                        sessionId: string;
-                        draftCorrelationId?: string | undefined;
-                    } | {
-                        kind: 'external';
-                        source?: 'cli' | 'mcp' | 'action' | undefined;
-                    } | undefined;
-                    requestedConfiguration?: {
-                        modelId?: string | undefined;
-                        reasoningEffort?: string | undefined;
-                    } | undefined;
-                    resolvedSelection?: {
-                        source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                        modelSelection?: {
-                            agentTargetKey: string;
-                            providerConnectionId: null;
-                            modelId: string;
-                        } | {
-                            agentTargetKey: string;
-                            providerConnectionId: string;
-                            modelId: string;
-                        } | undefined;
-                        teamCredentialModel?: {
-                            kind: 'team_credential_provider_model';
-                            resourceId: string;
-                            teamId: string;
-                            expectedResourceRevision: number;
-                            agentTargetKey: string;
-                            modelId: string;
-                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                            nativeDelivery?: {
-                                managedId: string;
-                                controllerInstallationId: string;
-                                guestInstallationId: string;
-                                bindingKey: string;
-                                placeholderRef: string;
-                                sourceRevision: string;
-                                providerTicket: string;
-                            } | undefined;
-                        } | undefined;
-                        modelId?: string | undefined;
-                        connectedServices?: {
-                            v: 2;
-                            bindingsByServiceId: Record<string, {
-                                source: 'native';
-                            } | {
-                                source: 'connected';
-                                selection: 'group';
-                                groupId: string;
-                                profileId?: string | undefined;
-                            } | {
-                                source: 'connected';
-                                selection: 'profile';
-                                profileId: string;
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'direct';
-                                disclosedMember: {
-                                    service: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    accountId: string;
+                                }[];
+                                recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                overage?: null | undefined | {
+                                    status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                    resetAtMs: null | number;
+                                    disabledReason?: null | string | undefined;
                                 };
-                            } | {
-                                source: 'team_resource';
-                                resourceId: string;
-                                deliveryMode: 'brokered';
-                                disclosedMember?: undefined;
-                            }>;
-                        } | null | undefined;
-                    } | undefined;
-                    turnInFlight?: boolean | undefined;
-                    inputTurns?: {
-                        occurrenceId: string;
-                        current?: {
-                            turnId: string;
-                            inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
-                                value: string;
-                            } | {
-                                kind: 'json';
-                                value: JsonValue;
-                            } | {
-                                kind: 'decision';
-                                value: string;
-                            } | undefined;
-                        } | undefined;
-                        last?: {
-                            turnId: string;
-                            inputIds: string[];
-                            state: 'failed' | 'cancelled' | 'active' | 'completed';
-                            result?: {
-                                kind: 'text';
-                                value: string;
-                            } | {
-                                kind: 'json';
-                                value: JsonValue;
-                            } | {
-                                kind: 'decision';
-                                value: string;
-                            } | undefined;
-                        } | undefined;
-                    } | undefined;
-                    interaction?: {
-                        kind: 'retained_agent_session.v1';
-                        capabilities: {
-                            open: ('resume' | 'create' | 'fork')[];
-                            delivery: ('newTurn' | 'steer' | 'followUp')[];
-                            cancel: boolean;
-                            configuration?: boolean | undefined;
-                            workspaceWrites?: 'deny' | undefined;
-                            compaction?: {
-                                events: true;
-                                manual?: true | undefined;
-                                idle?: {
-                                    mode: 'native';
-                                    defaultEnabled: boolean;
-                                    defaultMinContextTokens?: number | undefined;
-                                    nativeHonorsMinimum?: true | undefined;
+                                action?: null | undefined | {
+                                    kind: 'none';
                                 } | {
-                                    mode: 'host';
-                                    defaultEnabled: boolean;
-                                    defaultMinContextTokens?: number | undefined;
-                                } | undefined;
-                            } | undefined;
-                            conversationRollback?: true | undefined;
-                            goals?: {
-                                source: string;
-                                active?: {
-                                    get?: true | undefined;
-                                    clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                                inactive?: {
-                                    get?: true | undefined;
-                                    clear?: true | undefined;
-                                    set?: {
-                                        fields: ('status' | 'objective' | 'tokenBudget')[];
-                                        writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                    } | undefined;
-                                } | undefined;
-                            } | undefined;
-                            usageReporting?: true | undefined;
-                            catalog?: {
-                                active?: ('skills' | 'vendorPlugins')[] | undefined;
-                                inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                            } | undefined;
-                            usageLimitRecovery?: {
-                                active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                                inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                            } | undefined;
-                            continuationVerification?: {
-                                intents: ('resume' | 'fork')[];
-                                requirement: 'required' | 'advisory';
-                            } | undefined;
-                            workStateSources?: {
-                                id: string;
-                                itemKinds: ('task' | 'goal' | 'todo')[];
-                            }[] | undefined;
-                            runtimeActivitySnapshots?: true | undefined;
-                            startupInstructions?: {
-                                versions: [
-                                    1
-                                ];
-                                revisionChanges?: 'resume' | undefined;
-                            } | undefined;
-                            executionRunContext?: {
-                                versions: [
-                                    1
-                                ];
-                            } | undefined;
-                        };
-                    } | undefined;
-                    attention?: {
-                        kind: 'permission_required';
-                        requestIds: string[];
-                        requests?: {
-                            requestId: string;
-                            createdAt: number;
-                        }[] | undefined;
-                    } | undefined;
-                    lifecycle?: {
-                        v: 1;
-                        state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                    } | undefined;
-                    availableActionIds?: string[] | undefined;
-                    resumeHandle?: {
-                        [x: string]: unknown;
-                        kind: 'provider_session.v1';
-                        backendTarget: {
-                            kind: 'backend';
-                            backendId: string;
-                            configuredBackendId?: string | undefined;
-                            sourceKind?: 'built_in' | 'configured' | undefined;
-                        };
-                        providerSessionId: string;
-                    } | {
-                        [x: string]: unknown;
-                        kind: 'voice_agent_sessions.v1';
-                        backendTarget: {
-                            kind: 'backend';
-                            backendId: string;
-                            configuredBackendId?: string | undefined;
-                            sourceKind?: 'built_in' | 'configured' | undefined;
-                        };
-                        chatProviderSessionId: string;
-                        commitProviderSessionId: string;
-                    } | undefined;
-                    transcript?: {
-                        [x: string]: unknown;
-                        persistenceMode: 'ephemeral' | 'persistent';
-                        epoch: number;
-                    } | undefined;
-                    voicePolicy?: {
-                        assistantLanguage: string | null;
-                        welcome: {
-                            enabled: boolean;
-                            mode: 'immediate' | 'on_first_turn';
-                            text?: string | undefined;
-                        };
-                    } | undefined;
-                    finishedAtMs?: number | undefined;
-                    error?: {
-                        [x: string]: unknown;
-                        code: string;
-                        message?: string | undefined;
-                        runtimeIssueV1?: Readonly<{
-                            v: 1;
-                            scope: 'primary_session';
-                            status: 'failed';
-                            code: string;
-                            source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
-                            occurredAt: number;
-                            sessionSeq?: number | undefined;
-                            agentId?: string | undefined;
-                            agentTurnId?: string | undefined;
-                            sanitizedPreview?: string | undefined;
-                            usageLimit?: {
-                                v: 1;
-                                resetAtMs: number | null;
-                                retryAfterMs: number | null;
-                                quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                                recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
-                                providerLimitId?: string | undefined;
-                                planType?: string | null | undefined;
-                                utilization?: number | null | undefined;
-                                limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                                quotaSnapshotRef?: {
-                                    serviceId: string;
-                                    profileId?: string | undefined;
-                                    groupId?: string | undefined;
-                                    fetchedAtMs?: number | undefined;
-                                } | undefined;
-                                effectiveMeterId?: string | undefined;
-                                effectiveRemainingPct?: number | undefined;
-                                allWindows?: {
-                                    meterId: string;
-                                    scope?: string | undefined;
-                                    remainingPct?: number | undefined;
-                                    resetAtMs?: number | undefined;
-                                    status?: string | undefined;
-                                }[] | undefined;
-                                recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                                overage?: {
-                                    status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                                    resetAtMs: number | null;
-                                    disabledReason?: string | null | undefined;
-                                } | null | undefined;
-                                action?: {
                                     kind: 'open_url';
                                     url: string;
                                     labelKey?: string | undefined;
                                 } | {
                                     kind: 'settings';
-                                } | {
-                                    kind: 'none';
-                                } | null | undefined;
-                                connectedService?: {
+                                };
+                                connectedService?: null | undefined | {
                                     serviceId: string;
-                                    profileId: string | null;
-                                    groupId: string | null;
+                                    profileId: null | string;
+                                    groupId: null | string;
                                     groupExhausted?: boolean | undefined;
-                                } | null | undefined;
-                            } | undefined;
-                            teamCredential?: {
+                                };
+                            };
+                            teamCredential?: undefined | {
                                 v: 1;
                                 resourceId: string;
-                                reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                                usageLimit?: {
-                                    metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                usageLimit?: undefined | {
+                                    metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                     remaining: string;
                                     resetsAtUtc: string;
-                                } | undefined;
-                            } | undefined;
-                            temporaryThrottle?: {
+                                };
+                            };
+                            temporaryThrottle?: undefined | {
                                 v: 1;
-                                retryAfterMs: number | null;
-                                recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                            } | undefined;
-                            failureCause?: {
-                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                                failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                                retryAfterMs: null | number;
+                                recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                                 code?: string | undefined;
-                                preparationCause?: {
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
                                     code: string;
-                                    stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                                } | undefined;
-                                reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                                providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
                                 httpStatus?: number | undefined;
                                 providerErrorMessage?: string | undefined;
-                            } | undefined;
-                            agentProcessExitAfterSwitch?: {
-                                exitCode: number | null;
-                                signal: string | null;
-                                lastStderrLine: string | null;
-                                vendorResumeId: string | null;
-                                materializationRoot: string | null;
-                                effectiveStateMode: 'shared' | 'isolated' | null;
-                            } | undefined;
+                            };
+                            agentProcessExitAfterSwitch?: undefined | {
+                                exitCode: null | number;
+                                signal: null | string;
+                                lastStderrLine: null | string;
+                                vendorResumeId: null | string;
+                                materializationRoot: null | string;
+                                effectiveStateMode: 'isolated' | 'shared' | null;
+                            };
                         }> | undefined;
-                        uxDiagnostic?: {
-                            code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                            failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                            source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                        uxDiagnostic?: undefined | {
+                            code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
                             retryable: boolean;
-                            suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
                             serviceId?: string | undefined;
                             agentId?: string | undefined;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
-                            diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            diagnostics?: undefined | ({
+                                [x: string]: boolean | null | number | string;
+                            } & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            });
+                        };
+                    };
                 };
                 latestToolResult?: unknown;
-                structuredMeta?: {
+                structuredMeta?: undefined | {
                     [x: string]: unknown;
                     kind: string;
                     payload: unknown;
-                } | undefined;
-                reviewFindings?: {
+                };
+                reviewFindings?: undefined | {
                     [x: string]: unknown;
                     runRef: {
                         [x: string]: unknown;
                         runId: string;
                         callId: string;
                         backendId: string;
-                        backendTarget?: {
+                        backendTarget?: undefined | {
                             kind: 'builtInAgent';
                             agentId: string;
                         } | {
                             kind: 'configuredAcpBackend';
                             backendId: string;
-                        } | undefined;
+                        };
                         retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
                     };
                     summary: string;
@@ -3951,8 +5092,8 @@ export type ExecutionRunControlActionResultById = {
                         [x: string]: unknown;
                         id: string;
                         title: string;
-                        severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                        category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
+                        severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                        category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                         summary: string;
                         filePath?: string | undefined;
                         startLine?: number | undefined;
@@ -3962,25 +5103,25 @@ export type ExecutionRunControlActionResultById = {
                         confidence?: number | undefined;
                         suggestion?: string | undefined;
                         patch?: string | undefined;
-                        comment?: {
+                        comment?: undefined | {
                             id: string;
-                            state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                            state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                             serverRevision: number;
                             sessionId?: string | undefined;
                             runId?: string | undefined;
                             projectId?: string | undefined;
-                            workspace?: {
+                            workspace?: undefined | {
                                 machineId: string;
                                 path: string;
-                            } | undefined;
-                        } | undefined;
+                            };
+                        };
                         attributionConfidence?: string | undefined;
                     }[];
                     questions: {
                         [x: string]: unknown;
                         id: string;
                         text: string;
-                        status: 'open' | 'answered' | 'superseded';
+                        status: 'answered' | 'open' | 'superseded';
                         findingIds?: string[] | undefined;
                     }[];
                     assumptions: {
@@ -3992,16 +5133,10 @@ export type ExecutionRunControlActionResultById = {
                     generatedAtMs: number;
                     comparisonId?: string | undefined;
                     fileCount?: number | undefined;
-                    reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-                    proposedComments?: {
+                    reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                    proposedComments?: undefined | {
                         body: string;
                         anchor: {
-                            kind: 'range';
-                            filePath: string;
-                            startLine: number;
-                            endLine: number;
-                            side?: 'after' | 'before' | undefined;
-                        } | {
                             kind: 'file';
                             filePath: string;
                         } | {
@@ -4009,23 +5144,29 @@ export type ExecutionRunControlActionResultById = {
                             filePath: string;
                             line: number;
                             side?: 'after' | 'before' | undefined;
+                        } | {
+                            kind: 'range';
+                            filePath: string;
+                            startLine: number;
+                            endLine: number;
+                            side?: 'after' | 'before' | undefined;
                         };
                         findingId?: string | undefined;
-                        severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
+                        severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                         taxonomyIds?: string[] | undefined;
                         tags?: string[] | undefined;
-                    }[] | undefined;
-                    triage?: {
+                    }[];
+                    triage?: undefined | {
                         [x: string]: unknown;
                         findings: {
                             [x: string]: unknown;
                             id: string;
-                            status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
+                            status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
                             commentId?: string | undefined;
                             comment?: string | undefined;
                         }[];
-                    } | undefined;
-                    publication?: {
+                    };
+                    publication?: undefined | {
                         [x: string]: unknown;
                         findings: {
                             [x: string]: unknown;
@@ -4034,13 +5175,13 @@ export type ExecutionRunControlActionResultById = {
                             publishedAtMs?: number | undefined;
                             publishedMessageRef?: string | undefined;
                         }[];
-                    } | undefined;
-                    limits?: {
+                    };
+                    limits?: undefined | {
                         [x: string]: unknown;
                         findingsTruncated?: boolean | undefined;
                         patchesTruncated?: boolean | undefined;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
         } | {
             ok: true;
@@ -4050,17 +5191,11 @@ export type ExecutionRunControlActionResultById = {
             timeoutMs: number;
             observedAtMs: number;
             deadlineAtMs: number;
-        } | {
-            ok: false;
-            code: 'cancelled';
-        } | {
-            ok: false;
-            code: 'execution_run_not_found' | 'permission_denied' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded';
-        } | undefined;
-        preparedInstructionsFor?: {
+        };
+        preparedInstructionsFor?: undefined | {
             serverId: string;
             sessionId: string;
-        } | undefined;
+        };
     };
     readonly "execution.run.list": {
         [x: string]: unknown;
@@ -4069,7 +5204,7 @@ export type ExecutionRunControlActionResultById = {
             runId: string;
             callId: string;
             sidechainId: string;
-            intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+            intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
             backendTarget: {
                 kind: 'builtInAgent';
                 agentId: string;
@@ -4081,36 +5216,36 @@ export type ExecutionRunControlActionResultById = {
             retentionPolicy: 'ephemeral' | 'resumable';
             runClass: 'bounded' | 'long_lived';
             ioMode: 'request_response' | 'streaming';
-            status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
+            status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
             startedAtMs: number;
             originWorkflowRunId?: string | undefined;
-            display?: {
+            display?: undefined | {
                 [x: string]: unknown;
                 title?: string | undefined;
                 participantLabel?: string | undefined;
                 groupId?: string | undefined;
-            } | undefined;
-            launchOrigin?: {
+            };
+            launchOrigin?: undefined | {
                 kind: 'discussion';
                 serverId: string;
                 discussionId: string;
                 messageIds: string[];
                 draftCorrelationId?: string | undefined;
             } | {
+                kind: 'external';
+                source?: 'action' | 'cli' | 'mcp' | undefined;
+            } | {
                 kind: 'session';
                 sessionId: string;
                 draftCorrelationId?: string | undefined;
-            } | {
-                kind: 'external';
-                source?: 'cli' | 'mcp' | 'action' | undefined;
-            } | undefined;
-            requestedConfiguration?: {
+            };
+            requestedConfiguration?: undefined | {
                 modelId?: string | undefined;
                 reasoningEffort?: string | undefined;
-            } | undefined;
-            resolvedSelection?: {
-                source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                modelSelection?: {
+            };
+            resolvedSelection?: undefined | {
+                source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -4118,8 +5253,8 @@ export type ExecutionRunControlActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                teamCredentialModel?: {
+                };
+                teamCredentialModel?: undefined | {
                     kind: 'team_credential_provider_model';
                     resourceId: string;
                     teamId: string;
@@ -4127,7 +5262,7 @@ export type ExecutionRunControlActionResultById = {
                     agentTargetKey: string;
                     modelId: string;
                     deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                    nativeDelivery?: {
+                    nativeDelivery?: undefined | {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -4135,22 +5270,27 @@ export type ExecutionRunControlActionResultById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
                 modelId?: string | undefined;
-                connectedServices?: {
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -4162,135 +5302,383 @@ export type ExecutionRunControlActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
+                };
+            };
+            approvalProfileId?: null | string | undefined;
             turnInFlight?: boolean | undefined;
-            inputTurns?: {
+            inputTurns?: undefined | {
                 occurrenceId: string;
-                current?: {
+                current?: undefined | {
                     turnId: string;
                     inputIds: string[];
-                    state: 'failed' | 'cancelled' | 'active' | 'completed';
-                    result?: {
-                        kind: 'text';
+                    state: 'active' | 'cancelled' | 'completed' | 'failed';
+                    result?: undefined | {
+                        kind: 'decision';
                         value: string;
                     } | {
                         kind: 'json';
                         value: JsonValue;
                     } | {
-                        kind: 'decision';
+                        kind: 'text';
                         value: string;
-                    } | undefined;
-                } | undefined;
-                last?: {
+                    };
+                    error?: undefined | {
+                        [x: string]: unknown;
+                        code: string;
+                        message?: string | undefined;
+                        runtimeIssueV1?: Readonly<{
+                            v: 1;
+                            scope: 'primary_session';
+                            status: 'failed';
+                            code: string;
+                            source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                            occurredAt: number;
+                            sessionSeq?: number | undefined;
+                            agentId?: string | undefined;
+                            agentTurnId?: string | undefined;
+                            sanitizedPreview?: string | undefined;
+                            usageLimit?: undefined | {
+                                v: 1;
+                                resetAtMs: null | number;
+                                retryAfterMs: null | number;
+                                quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                providerLimitId?: string | undefined;
+                                planType?: null | string | undefined;
+                                utilization?: null | number | undefined;
+                                limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                quotaSnapshotRef?: undefined | {
+                                    serviceId: string;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    fetchedAtMs?: number | undefined;
+                                };
+                                effectiveMeterId?: string | undefined;
+                                effectiveRemainingPct?: number | undefined;
+                                allWindows?: undefined | {
+                                    meterId: string;
+                                    scope?: string | undefined;
+                                    remainingPct?: number | undefined;
+                                    resetAtMs?: number | undefined;
+                                    status?: string | undefined;
+                                }[];
+                                recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                overage?: null | undefined | {
+                                    status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                    resetAtMs: null | number;
+                                    disabledReason?: null | string | undefined;
+                                };
+                                action?: null | undefined | {
+                                    kind: 'none';
+                                } | {
+                                    kind: 'open_url';
+                                    url: string;
+                                    labelKey?: string | undefined;
+                                } | {
+                                    kind: 'settings';
+                                };
+                                connectedService?: null | undefined | {
+                                    serviceId: string;
+                                    profileId: null | string;
+                                    groupId: null | string;
+                                    groupExhausted?: boolean | undefined;
+                                };
+                            };
+                            teamCredential?: undefined | {
+                                v: 1;
+                                resourceId: string;
+                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                usageLimit?: undefined | {
+                                    metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                    remaining: string;
+                                    resetsAtUtc: string;
+                                };
+                            };
+                            temporaryThrottle?: undefined | {
+                                v: 1;
+                                retryAfterMs: null | number;
+                                recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                code?: string | undefined;
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
+                                    code: string;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                httpStatus?: number | undefined;
+                                providerErrorMessage?: string | undefined;
+                            };
+                            agentProcessExitAfterSwitch?: undefined | {
+                                exitCode: null | number;
+                                signal: null | string;
+                                lastStderrLine: null | string;
+                                vendorResumeId: null | string;
+                                materializationRoot: null | string;
+                                effectiveStateMode: 'isolated' | 'shared' | null;
+                            };
+                        }> | undefined;
+                        uxDiagnostic?: undefined | {
+                            code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                            retryable: boolean;
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: undefined | ({
+                                [x: string]: boolean | null | number | string;
+                            } & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            });
+                        };
+                    };
+                };
+                last?: undefined | {
                     turnId: string;
                     inputIds: string[];
-                    state: 'failed' | 'cancelled' | 'active' | 'completed';
-                    result?: {
-                        kind: 'text';
+                    state: 'active' | 'cancelled' | 'completed' | 'failed';
+                    result?: undefined | {
+                        kind: 'decision';
                         value: string;
                     } | {
                         kind: 'json';
                         value: JsonValue;
                     } | {
-                        kind: 'decision';
+                        kind: 'text';
                         value: string;
-                    } | undefined;
-                } | undefined;
-            } | undefined;
-            interaction?: {
+                    };
+                    error?: undefined | {
+                        [x: string]: unknown;
+                        code: string;
+                        message?: string | undefined;
+                        runtimeIssueV1?: Readonly<{
+                            v: 1;
+                            scope: 'primary_session';
+                            status: 'failed';
+                            code: string;
+                            source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                            occurredAt: number;
+                            sessionSeq?: number | undefined;
+                            agentId?: string | undefined;
+                            agentTurnId?: string | undefined;
+                            sanitizedPreview?: string | undefined;
+                            usageLimit?: undefined | {
+                                v: 1;
+                                resetAtMs: null | number;
+                                retryAfterMs: null | number;
+                                quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                providerLimitId?: string | undefined;
+                                planType?: null | string | undefined;
+                                utilization?: null | number | undefined;
+                                limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                quotaSnapshotRef?: undefined | {
+                                    serviceId: string;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    fetchedAtMs?: number | undefined;
+                                };
+                                effectiveMeterId?: string | undefined;
+                                effectiveRemainingPct?: number | undefined;
+                                allWindows?: undefined | {
+                                    meterId: string;
+                                    scope?: string | undefined;
+                                    remainingPct?: number | undefined;
+                                    resetAtMs?: number | undefined;
+                                    status?: string | undefined;
+                                }[];
+                                recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                overage?: null | undefined | {
+                                    status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                    resetAtMs: null | number;
+                                    disabledReason?: null | string | undefined;
+                                };
+                                action?: null | undefined | {
+                                    kind: 'none';
+                                } | {
+                                    kind: 'open_url';
+                                    url: string;
+                                    labelKey?: string | undefined;
+                                } | {
+                                    kind: 'settings';
+                                };
+                                connectedService?: null | undefined | {
+                                    serviceId: string;
+                                    profileId: null | string;
+                                    groupId: null | string;
+                                    groupExhausted?: boolean | undefined;
+                                };
+                            };
+                            teamCredential?: undefined | {
+                                v: 1;
+                                resourceId: string;
+                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                usageLimit?: undefined | {
+                                    metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                    remaining: string;
+                                    resetsAtUtc: string;
+                                };
+                            };
+                            temporaryThrottle?: undefined | {
+                                v: 1;
+                                retryAfterMs: null | number;
+                                recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                code?: string | undefined;
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
+                                    code: string;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                httpStatus?: number | undefined;
+                                providerErrorMessage?: string | undefined;
+                            };
+                            agentProcessExitAfterSwitch?: undefined | {
+                                exitCode: null | number;
+                                signal: null | string;
+                                lastStderrLine: null | string;
+                                vendorResumeId: null | string;
+                                materializationRoot: null | string;
+                                effectiveStateMode: 'isolated' | 'shared' | null;
+                            };
+                        }> | undefined;
+                        uxDiagnostic?: undefined | {
+                            code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                            retryable: boolean;
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: undefined | ({
+                                [x: string]: boolean | null | number | string;
+                            } & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            });
+                        };
+                    };
+                };
+            };
+            interaction?: undefined | {
                 kind: 'retained_agent_session.v1';
                 capabilities: {
-                    open: ('resume' | 'create' | 'fork')[];
-                    delivery: ('newTurn' | 'steer' | 'followUp')[];
+                    open: ('create' | 'fork' | 'resume')[];
+                    delivery: ('followUp' | 'newTurn' | 'steer')[];
                     cancel: boolean;
                     configuration?: boolean | undefined;
                     workspaceWrites?: 'deny' | undefined;
-                    compaction?: {
+                    compaction?: undefined | {
                         events: true;
                         manual?: true | undefined;
-                        idle?: {
+                        idle?: undefined | {
+                            mode: 'host';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                        } | {
                             mode: 'native';
                             defaultEnabled: boolean;
                             defaultMinContextTokens?: number | undefined;
                             nativeHonorsMinimum?: true | undefined;
-                        } | {
-                            mode: 'host';
-                            defaultEnabled: boolean;
-                            defaultMinContextTokens?: number | undefined;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     conversationRollback?: true | undefined;
-                    goals?: {
+                    goals?: undefined | {
                         source: string;
-                        active?: {
+                        active?: undefined | {
                             get?: true | undefined;
                             clear?: true | undefined;
-                            set?: {
-                                fields: ('status' | 'objective' | 'tokenBudget')[];
-                                writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                            } | undefined;
-                        } | undefined;
-                        inactive?: {
+                            set?: undefined | {
+                                fields: ('objective' | 'status' | 'tokenBudget')[];
+                                writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                            };
+                        };
+                        inactive?: undefined | {
                             get?: true | undefined;
                             clear?: true | undefined;
-                            set?: {
-                                fields: ('status' | 'objective' | 'tokenBudget')[];
-                                writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                            } | undefined;
-                        } | undefined;
-                    } | undefined;
+                            set?: undefined | {
+                                fields: ('objective' | 'status' | 'tokenBudget')[];
+                                writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                            };
+                        };
+                    };
                     usageReporting?: true | undefined;
-                    catalog?: {
+                    catalog?: undefined | {
                         active?: ('skills' | 'vendorPlugins')[] | undefined;
                         inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                    } | undefined;
-                    usageLimitRecovery?: {
+                    };
+                    usageLimitRecovery?: undefined | {
                         active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
                         inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                    } | undefined;
-                    continuationVerification?: {
-                        intents: ('resume' | 'fork')[];
-                        requirement: 'required' | 'advisory';
-                    } | undefined;
-                    workStateSources?: {
+                    };
+                    continuationVerification?: undefined | {
+                        intents: ('fork' | 'resume')[];
+                        requirement: 'advisory' | 'required';
+                    };
+                    workStateSources?: undefined | {
                         id: string;
-                        itemKinds: ('task' | 'goal' | 'todo')[];
-                    }[] | undefined;
+                        itemKinds: ('goal' | 'task' | 'todo')[];
+                    }[];
                     runtimeActivitySnapshots?: true | undefined;
-                    startupInstructions?: {
+                    startupInstructions?: undefined | {
                         versions: [
                             1
                         ];
                         revisionChanges?: 'resume' | undefined;
-                    } | undefined;
-                    executionRunContext?: {
+                    };
+                    executionRunContext?: undefined | {
                         versions: [
                             1
                         ];
-                    } | undefined;
+                    };
                 };
-            } | undefined;
-            attention?: {
+            };
+            attention?: undefined | {
                 kind: 'permission_required';
                 requestIds: string[];
-                requests?: {
+                requests?: undefined | {
                     requestId: string;
                     createdAt: number;
-                }[] | undefined;
-            } | undefined;
-            lifecycle?: {
+                }[];
+            };
+            lifecycle?: undefined | {
                 v: 1;
-                state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-            } | undefined;
+                state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+            };
             availableActionIds?: string[] | undefined;
-            resumeHandle?: {
+            resumeHandle?: undefined | {
                 [x: string]: unknown;
                 kind: 'provider_session.v1';
                 backendTarget: {
@@ -4311,22 +5699,22 @@ export type ExecutionRunControlActionResultById = {
                 };
                 chatProviderSessionId: string;
                 commitProviderSessionId: string;
-            } | undefined;
-            transcript?: {
+            };
+            transcript?: undefined | {
                 [x: string]: unknown;
                 persistenceMode: 'ephemeral' | 'persistent';
                 epoch: number;
-            } | undefined;
-            voicePolicy?: {
-                assistantLanguage: string | null;
+            };
+            voicePolicy?: undefined | {
+                assistantLanguage: null | string;
                 welcome: {
                     enabled: boolean;
                     mode: 'immediate' | 'on_first_turn';
                     text?: string | undefined;
                 };
-            } | undefined;
+            };
             finishedAtMs?: number | undefined;
-            error?: {
+            error?: undefined | {
                 [x: string]: unknown;
                 code: string;
                 message?: string | undefined;
@@ -4335,109 +5723,123 @@ export type ExecutionRunControlActionResultById = {
                     scope: 'primary_session';
                     status: 'failed';
                     code: string;
-                    source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
+                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
                     occurredAt: number;
                     sessionSeq?: number | undefined;
                     agentId?: string | undefined;
                     agentTurnId?: string | undefined;
                     sanitizedPreview?: string | undefined;
-                    usageLimit?: {
+                    usageLimit?: undefined | {
                         v: 1;
-                        resetAtMs: number | null;
-                        retryAfterMs: number | null;
-                        quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                        recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
+                        resetAtMs: null | number;
+                        retryAfterMs: null | number;
+                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
                         providerLimitId?: string | undefined;
-                        planType?: string | null | undefined;
-                        utilization?: number | null | undefined;
-                        limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                        quotaSnapshotRef?: {
+                        planType?: null | string | undefined;
+                        utilization?: null | number | undefined;
+                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                        quotaSnapshotRef?: undefined | {
                             serviceId: string;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
                             fetchedAtMs?: number | undefined;
-                        } | undefined;
+                        };
                         effectiveMeterId?: string | undefined;
                         effectiveRemainingPct?: number | undefined;
-                        allWindows?: {
+                        allWindows?: undefined | {
                             meterId: string;
                             scope?: string | undefined;
                             remainingPct?: number | undefined;
                             resetAtMs?: number | undefined;
                             status?: string | undefined;
-                        }[] | undefined;
-                        recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                        overage?: {
-                            status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                            resetAtMs: number | null;
-                            disabledReason?: string | null | undefined;
-                        } | null | undefined;
-                        action?: {
+                        }[];
+                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                        overage?: null | undefined | {
+                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                            resetAtMs: null | number;
+                            disabledReason?: null | string | undefined;
+                        };
+                        action?: null | undefined | {
+                            kind: 'none';
+                        } | {
                             kind: 'open_url';
                             url: string;
                             labelKey?: string | undefined;
                         } | {
                             kind: 'settings';
-                        } | {
-                            kind: 'none';
-                        } | null | undefined;
-                        connectedService?: {
+                        };
+                        connectedService?: null | undefined | {
                             serviceId: string;
-                            profileId: string | null;
-                            groupId: string | null;
+                            profileId: null | string;
+                            groupId: null | string;
                             groupExhausted?: boolean | undefined;
-                        } | null | undefined;
-                    } | undefined;
-                    teamCredential?: {
+                        };
+                    };
+                    teamCredential?: undefined | {
                         v: 1;
                         resourceId: string;
-                        reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                        usageLimit?: {
-                            metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                        usageLimit?: undefined | {
+                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                             remaining: string;
                             resetsAtUtc: string;
-                        } | undefined;
-                    } | undefined;
-                    temporaryThrottle?: {
+                        };
+                    };
+                    temporaryThrottle?: undefined | {
                         v: 1;
-                        retryAfterMs: number | null;
-                        recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                    } | undefined;
-                    failureCause?: {
-                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                        failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                        retryAfterMs: null | number;
+                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                    };
+                    failureCause?: undefined | {
+                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                         code?: string | undefined;
-                        preparationCause?: {
+                        retryable?: boolean | undefined;
+                        requestId?: string | undefined;
+                        preparationCause?: undefined | {
                             code: string;
-                            stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                        } | undefined;
-                        reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                        providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                            requestId?: string | undefined;
+                        };
+                        connectedServicesDefault?: undefined | {
+                            v: 1;
+                            source: 'account_default';
+                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                            phase: 'purpose_binding';
+                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                        };
+                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
                         httpStatus?: number | undefined;
                         providerErrorMessage?: string | undefined;
-                    } | undefined;
-                    agentProcessExitAfterSwitch?: {
-                        exitCode: number | null;
-                        signal: string | null;
-                        lastStderrLine: string | null;
-                        vendorResumeId: string | null;
-                        materializationRoot: string | null;
-                        effectiveStateMode: 'shared' | 'isolated' | null;
-                    } | undefined;
+                    };
+                    agentProcessExitAfterSwitch?: undefined | {
+                        exitCode: null | number;
+                        signal: null | string;
+                        lastStderrLine: null | string;
+                        vendorResumeId: null | string;
+                        materializationRoot: null | string;
+                        effectiveStateMode: 'isolated' | 'shared' | null;
+                    };
                 }> | undefined;
-                uxDiagnostic?: {
-                    code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                    failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                    source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                uxDiagnostic?: undefined | {
+                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
                     retryable: boolean;
-                    suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
                     serviceId?: string | undefined;
                     agentId?: string | undefined;
                     profileId?: string | undefined;
                     groupId?: string | undefined;
-                    diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                } | undefined;
-            } | undefined;
+                    diagnostics?: undefined | ({
+                        [x: string]: boolean | null | number | string;
+                    } & {
+                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                    });
+                };
+            };
         }[];
     };
     readonly "execution.run.get": {
@@ -4447,7 +5849,7 @@ export type ExecutionRunControlActionResultById = {
             runId: string;
             callId: string;
             sidechainId: string;
-            intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+            intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
             backendTarget: {
                 kind: 'builtInAgent';
                 agentId: string;
@@ -4459,36 +5861,36 @@ export type ExecutionRunControlActionResultById = {
             retentionPolicy: 'ephemeral' | 'resumable';
             runClass: 'bounded' | 'long_lived';
             ioMode: 'request_response' | 'streaming';
-            status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
+            status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
             startedAtMs: number;
             originWorkflowRunId?: string | undefined;
-            display?: {
+            display?: undefined | {
                 [x: string]: unknown;
                 title?: string | undefined;
                 participantLabel?: string | undefined;
                 groupId?: string | undefined;
-            } | undefined;
-            launchOrigin?: {
+            };
+            launchOrigin?: undefined | {
                 kind: 'discussion';
                 serverId: string;
                 discussionId: string;
                 messageIds: string[];
                 draftCorrelationId?: string | undefined;
             } | {
+                kind: 'external';
+                source?: 'action' | 'cli' | 'mcp' | undefined;
+            } | {
                 kind: 'session';
                 sessionId: string;
                 draftCorrelationId?: string | undefined;
-            } | {
-                kind: 'external';
-                source?: 'cli' | 'mcp' | 'action' | undefined;
-            } | undefined;
-            requestedConfiguration?: {
+            };
+            requestedConfiguration?: undefined | {
                 modelId?: string | undefined;
                 reasoningEffort?: string | undefined;
-            } | undefined;
-            resolvedSelection?: {
-                source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                modelSelection?: {
+            };
+            resolvedSelection?: undefined | {
+                source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -4496,8 +5898,8 @@ export type ExecutionRunControlActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                teamCredentialModel?: {
+                };
+                teamCredentialModel?: undefined | {
                     kind: 'team_credential_provider_model';
                     resourceId: string;
                     teamId: string;
@@ -4505,7 +5907,7 @@ export type ExecutionRunControlActionResultById = {
                     agentTargetKey: string;
                     modelId: string;
                     deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                    nativeDelivery?: {
+                    nativeDelivery?: undefined | {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -4513,22 +5915,27 @@ export type ExecutionRunControlActionResultById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
                 modelId?: string | undefined;
-                connectedServices?: {
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -4540,135 +5947,383 @@ export type ExecutionRunControlActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
+                };
+            };
+            approvalProfileId?: null | string | undefined;
             turnInFlight?: boolean | undefined;
-            inputTurns?: {
+            inputTurns?: undefined | {
                 occurrenceId: string;
-                current?: {
+                current?: undefined | {
                     turnId: string;
                     inputIds: string[];
-                    state: 'failed' | 'cancelled' | 'active' | 'completed';
-                    result?: {
-                        kind: 'text';
+                    state: 'active' | 'cancelled' | 'completed' | 'failed';
+                    result?: undefined | {
+                        kind: 'decision';
                         value: string;
                     } | {
                         kind: 'json';
                         value: JsonValue;
                     } | {
-                        kind: 'decision';
+                        kind: 'text';
                         value: string;
-                    } | undefined;
-                } | undefined;
-                last?: {
+                    };
+                    error?: undefined | {
+                        [x: string]: unknown;
+                        code: string;
+                        message?: string | undefined;
+                        runtimeIssueV1?: Readonly<{
+                            v: 1;
+                            scope: 'primary_session';
+                            status: 'failed';
+                            code: string;
+                            source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                            occurredAt: number;
+                            sessionSeq?: number | undefined;
+                            agentId?: string | undefined;
+                            agentTurnId?: string | undefined;
+                            sanitizedPreview?: string | undefined;
+                            usageLimit?: undefined | {
+                                v: 1;
+                                resetAtMs: null | number;
+                                retryAfterMs: null | number;
+                                quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                providerLimitId?: string | undefined;
+                                planType?: null | string | undefined;
+                                utilization?: null | number | undefined;
+                                limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                quotaSnapshotRef?: undefined | {
+                                    serviceId: string;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    fetchedAtMs?: number | undefined;
+                                };
+                                effectiveMeterId?: string | undefined;
+                                effectiveRemainingPct?: number | undefined;
+                                allWindows?: undefined | {
+                                    meterId: string;
+                                    scope?: string | undefined;
+                                    remainingPct?: number | undefined;
+                                    resetAtMs?: number | undefined;
+                                    status?: string | undefined;
+                                }[];
+                                recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                overage?: null | undefined | {
+                                    status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                    resetAtMs: null | number;
+                                    disabledReason?: null | string | undefined;
+                                };
+                                action?: null | undefined | {
+                                    kind: 'none';
+                                } | {
+                                    kind: 'open_url';
+                                    url: string;
+                                    labelKey?: string | undefined;
+                                } | {
+                                    kind: 'settings';
+                                };
+                                connectedService?: null | undefined | {
+                                    serviceId: string;
+                                    profileId: null | string;
+                                    groupId: null | string;
+                                    groupExhausted?: boolean | undefined;
+                                };
+                            };
+                            teamCredential?: undefined | {
+                                v: 1;
+                                resourceId: string;
+                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                usageLimit?: undefined | {
+                                    metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                    remaining: string;
+                                    resetsAtUtc: string;
+                                };
+                            };
+                            temporaryThrottle?: undefined | {
+                                v: 1;
+                                retryAfterMs: null | number;
+                                recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                code?: string | undefined;
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
+                                    code: string;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                httpStatus?: number | undefined;
+                                providerErrorMessage?: string | undefined;
+                            };
+                            agentProcessExitAfterSwitch?: undefined | {
+                                exitCode: null | number;
+                                signal: null | string;
+                                lastStderrLine: null | string;
+                                vendorResumeId: null | string;
+                                materializationRoot: null | string;
+                                effectiveStateMode: 'isolated' | 'shared' | null;
+                            };
+                        }> | undefined;
+                        uxDiagnostic?: undefined | {
+                            code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                            retryable: boolean;
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: undefined | ({
+                                [x: string]: boolean | null | number | string;
+                            } & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            });
+                        };
+                    };
+                };
+                last?: undefined | {
                     turnId: string;
                     inputIds: string[];
-                    state: 'failed' | 'cancelled' | 'active' | 'completed';
-                    result?: {
-                        kind: 'text';
+                    state: 'active' | 'cancelled' | 'completed' | 'failed';
+                    result?: undefined | {
+                        kind: 'decision';
                         value: string;
                     } | {
                         kind: 'json';
                         value: JsonValue;
                     } | {
-                        kind: 'decision';
+                        kind: 'text';
                         value: string;
-                    } | undefined;
-                } | undefined;
-            } | undefined;
-            interaction?: {
+                    };
+                    error?: undefined | {
+                        [x: string]: unknown;
+                        code: string;
+                        message?: string | undefined;
+                        runtimeIssueV1?: Readonly<{
+                            v: 1;
+                            scope: 'primary_session';
+                            status: 'failed';
+                            code: string;
+                            source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                            occurredAt: number;
+                            sessionSeq?: number | undefined;
+                            agentId?: string | undefined;
+                            agentTurnId?: string | undefined;
+                            sanitizedPreview?: string | undefined;
+                            usageLimit?: undefined | {
+                                v: 1;
+                                resetAtMs: null | number;
+                                retryAfterMs: null | number;
+                                quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                providerLimitId?: string | undefined;
+                                planType?: null | string | undefined;
+                                utilization?: null | number | undefined;
+                                limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                quotaSnapshotRef?: undefined | {
+                                    serviceId: string;
+                                    profileId?: string | undefined;
+                                    groupId?: string | undefined;
+                                    fetchedAtMs?: number | undefined;
+                                };
+                                effectiveMeterId?: string | undefined;
+                                effectiveRemainingPct?: number | undefined;
+                                allWindows?: undefined | {
+                                    meterId: string;
+                                    scope?: string | undefined;
+                                    remainingPct?: number | undefined;
+                                    resetAtMs?: number | undefined;
+                                    status?: string | undefined;
+                                }[];
+                                recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                overage?: null | undefined | {
+                                    status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                    resetAtMs: null | number;
+                                    disabledReason?: null | string | undefined;
+                                };
+                                action?: null | undefined | {
+                                    kind: 'none';
+                                } | {
+                                    kind: 'open_url';
+                                    url: string;
+                                    labelKey?: string | undefined;
+                                } | {
+                                    kind: 'settings';
+                                };
+                                connectedService?: null | undefined | {
+                                    serviceId: string;
+                                    profileId: null | string;
+                                    groupId: null | string;
+                                    groupExhausted?: boolean | undefined;
+                                };
+                            };
+                            teamCredential?: undefined | {
+                                v: 1;
+                                resourceId: string;
+                                reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                usageLimit?: undefined | {
+                                    metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                    remaining: string;
+                                    resetsAtUtc: string;
+                                };
+                            };
+                            temporaryThrottle?: undefined | {
+                                v: 1;
+                                retryAfterMs: null | number;
+                                recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                            };
+                            failureCause?: undefined | {
+                                phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                code?: string | undefined;
+                                retryable?: boolean | undefined;
+                                requestId?: string | undefined;
+                                preparationCause?: undefined | {
+                                    code: string;
+                                    stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                    requestId?: string | undefined;
+                                };
+                                connectedServicesDefault?: undefined | {
+                                    v: 1;
+                                    source: 'account_default';
+                                    reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                    phase: 'purpose_binding';
+                                    catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                };
+                                reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                httpStatus?: number | undefined;
+                                providerErrorMessage?: string | undefined;
+                            };
+                            agentProcessExitAfterSwitch?: undefined | {
+                                exitCode: null | number;
+                                signal: null | string;
+                                lastStderrLine: null | string;
+                                vendorResumeId: null | string;
+                                materializationRoot: null | string;
+                                effectiveStateMode: 'isolated' | 'shared' | null;
+                            };
+                        }> | undefined;
+                        uxDiagnostic?: undefined | {
+                            code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                            failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                            source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                            retryable: boolean;
+                            suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                            serviceId?: string | undefined;
+                            agentId?: string | undefined;
+                            profileId?: string | undefined;
+                            groupId?: string | undefined;
+                            diagnostics?: undefined | ({
+                                [x: string]: boolean | null | number | string;
+                            } & {
+                                reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                            });
+                        };
+                    };
+                };
+            };
+            interaction?: undefined | {
                 kind: 'retained_agent_session.v1';
                 capabilities: {
-                    open: ('resume' | 'create' | 'fork')[];
-                    delivery: ('newTurn' | 'steer' | 'followUp')[];
+                    open: ('create' | 'fork' | 'resume')[];
+                    delivery: ('followUp' | 'newTurn' | 'steer')[];
                     cancel: boolean;
                     configuration?: boolean | undefined;
                     workspaceWrites?: 'deny' | undefined;
-                    compaction?: {
+                    compaction?: undefined | {
                         events: true;
                         manual?: true | undefined;
-                        idle?: {
+                        idle?: undefined | {
+                            mode: 'host';
+                            defaultEnabled: boolean;
+                            defaultMinContextTokens?: number | undefined;
+                        } | {
                             mode: 'native';
                             defaultEnabled: boolean;
                             defaultMinContextTokens?: number | undefined;
                             nativeHonorsMinimum?: true | undefined;
-                        } | {
-                            mode: 'host';
-                            defaultEnabled: boolean;
-                            defaultMinContextTokens?: number | undefined;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     conversationRollback?: true | undefined;
-                    goals?: {
+                    goals?: undefined | {
                         source: string;
-                        active?: {
+                        active?: undefined | {
                             get?: true | undefined;
                             clear?: true | undefined;
-                            set?: {
-                                fields: ('status' | 'objective' | 'tokenBudget')[];
-                                writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                            } | undefined;
-                        } | undefined;
-                        inactive?: {
+                            set?: undefined | {
+                                fields: ('objective' | 'status' | 'tokenBudget')[];
+                                writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                            };
+                        };
+                        inactive?: undefined | {
                             get?: true | undefined;
                             clear?: true | undefined;
-                            set?: {
-                                fields: ('status' | 'objective' | 'tokenBudget')[];
-                                writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                            } | undefined;
-                        } | undefined;
-                    } | undefined;
+                            set?: undefined | {
+                                fields: ('objective' | 'status' | 'tokenBudget')[];
+                                writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                            };
+                        };
+                    };
                     usageReporting?: true | undefined;
-                    catalog?: {
+                    catalog?: undefined | {
                         active?: ('skills' | 'vendorPlugins')[] | undefined;
                         inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                    } | undefined;
-                    usageLimitRecovery?: {
+                    };
+                    usageLimitRecovery?: undefined | {
                         active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
                         inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                    } | undefined;
-                    continuationVerification?: {
-                        intents: ('resume' | 'fork')[];
-                        requirement: 'required' | 'advisory';
-                    } | undefined;
-                    workStateSources?: {
+                    };
+                    continuationVerification?: undefined | {
+                        intents: ('fork' | 'resume')[];
+                        requirement: 'advisory' | 'required';
+                    };
+                    workStateSources?: undefined | {
                         id: string;
-                        itemKinds: ('task' | 'goal' | 'todo')[];
-                    }[] | undefined;
+                        itemKinds: ('goal' | 'task' | 'todo')[];
+                    }[];
                     runtimeActivitySnapshots?: true | undefined;
-                    startupInstructions?: {
+                    startupInstructions?: undefined | {
                         versions: [
                             1
                         ];
                         revisionChanges?: 'resume' | undefined;
-                    } | undefined;
-                    executionRunContext?: {
+                    };
+                    executionRunContext?: undefined | {
                         versions: [
                             1
                         ];
-                    } | undefined;
+                    };
                 };
-            } | undefined;
-            attention?: {
+            };
+            attention?: undefined | {
                 kind: 'permission_required';
                 requestIds: string[];
-                requests?: {
+                requests?: undefined | {
                     requestId: string;
                     createdAt: number;
-                }[] | undefined;
-            } | undefined;
-            lifecycle?: {
+                }[];
+            };
+            lifecycle?: undefined | {
                 v: 1;
-                state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-            } | undefined;
+                state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+            };
             availableActionIds?: string[] | undefined;
-            resumeHandle?: {
+            resumeHandle?: undefined | {
                 [x: string]: unknown;
                 kind: 'provider_session.v1';
                 backendTarget: {
@@ -4689,22 +6344,22 @@ export type ExecutionRunControlActionResultById = {
                 };
                 chatProviderSessionId: string;
                 commitProviderSessionId: string;
-            } | undefined;
-            transcript?: {
+            };
+            transcript?: undefined | {
                 [x: string]: unknown;
                 persistenceMode: 'ephemeral' | 'persistent';
                 epoch: number;
-            } | undefined;
-            voicePolicy?: {
-                assistantLanguage: string | null;
+            };
+            voicePolicy?: undefined | {
+                assistantLanguage: null | string;
                 welcome: {
                     enabled: boolean;
                     mode: 'immediate' | 'on_first_turn';
                     text?: string | undefined;
                 };
-            } | undefined;
+            };
             finishedAtMs?: number | undefined;
-            error?: {
+            error?: undefined | {
                 [x: string]: unknown;
                 code: string;
                 message?: string | undefined;
@@ -4713,130 +6368,144 @@ export type ExecutionRunControlActionResultById = {
                     scope: 'primary_session';
                     status: 'failed';
                     code: string;
-                    source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
+                    source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
                     occurredAt: number;
                     sessionSeq?: number | undefined;
                     agentId?: string | undefined;
                     agentTurnId?: string | undefined;
                     sanitizedPreview?: string | undefined;
-                    usageLimit?: {
+                    usageLimit?: undefined | {
                         v: 1;
-                        resetAtMs: number | null;
-                        retryAfterMs: number | null;
-                        quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                        recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
+                        resetAtMs: null | number;
+                        retryAfterMs: null | number;
+                        quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                        recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
                         providerLimitId?: string | undefined;
-                        planType?: string | null | undefined;
-                        utilization?: number | null | undefined;
-                        limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                        quotaSnapshotRef?: {
+                        planType?: null | string | undefined;
+                        utilization?: null | number | undefined;
+                        limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                        quotaSnapshotRef?: undefined | {
                             serviceId: string;
                             profileId?: string | undefined;
                             groupId?: string | undefined;
                             fetchedAtMs?: number | undefined;
-                        } | undefined;
+                        };
                         effectiveMeterId?: string | undefined;
                         effectiveRemainingPct?: number | undefined;
-                        allWindows?: {
+                        allWindows?: undefined | {
                             meterId: string;
                             scope?: string | undefined;
                             remainingPct?: number | undefined;
                             resetAtMs?: number | undefined;
                             status?: string | undefined;
-                        }[] | undefined;
-                        recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                        overage?: {
-                            status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                            resetAtMs: number | null;
-                            disabledReason?: string | null | undefined;
-                        } | null | undefined;
-                        action?: {
+                        }[];
+                        recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                        overage?: null | undefined | {
+                            status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                            resetAtMs: null | number;
+                            disabledReason?: null | string | undefined;
+                        };
+                        action?: null | undefined | {
+                            kind: 'none';
+                        } | {
                             kind: 'open_url';
                             url: string;
                             labelKey?: string | undefined;
                         } | {
                             kind: 'settings';
-                        } | {
-                            kind: 'none';
-                        } | null | undefined;
-                        connectedService?: {
+                        };
+                        connectedService?: null | undefined | {
                             serviceId: string;
-                            profileId: string | null;
-                            groupId: string | null;
+                            profileId: null | string;
+                            groupId: null | string;
                             groupExhausted?: boolean | undefined;
-                        } | null | undefined;
-                    } | undefined;
-                    teamCredential?: {
+                        };
+                    };
+                    teamCredential?: undefined | {
                         v: 1;
                         resourceId: string;
-                        reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                        usageLimit?: {
-                            metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                        reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                        usageLimit?: undefined | {
+                            metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                             remaining: string;
                             resetsAtUtc: string;
-                        } | undefined;
-                    } | undefined;
-                    temporaryThrottle?: {
+                        };
+                    };
+                    temporaryThrottle?: undefined | {
                         v: 1;
-                        retryAfterMs: number | null;
-                        recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                    } | undefined;
-                    failureCause?: {
-                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                        failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                        retryAfterMs: null | number;
+                        recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                    };
+                    failureCause?: undefined | {
+                        phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                        failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                         code?: string | undefined;
-                        preparationCause?: {
+                        retryable?: boolean | undefined;
+                        requestId?: string | undefined;
+                        preparationCause?: undefined | {
                             code: string;
-                            stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                        } | undefined;
-                        reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                        providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                            stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                            requestId?: string | undefined;
+                        };
+                        connectedServicesDefault?: undefined | {
+                            v: 1;
+                            source: 'account_default';
+                            reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                            phase: 'purpose_binding';
+                            catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                        };
+                        reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                        providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
                         httpStatus?: number | undefined;
                         providerErrorMessage?: string | undefined;
-                    } | undefined;
-                    agentProcessExitAfterSwitch?: {
-                        exitCode: number | null;
-                        signal: string | null;
-                        lastStderrLine: string | null;
-                        vendorResumeId: string | null;
-                        materializationRoot: string | null;
-                        effectiveStateMode: 'shared' | 'isolated' | null;
-                    } | undefined;
+                    };
+                    agentProcessExitAfterSwitch?: undefined | {
+                        exitCode: null | number;
+                        signal: null | string;
+                        lastStderrLine: null | string;
+                        vendorResumeId: null | string;
+                        materializationRoot: null | string;
+                        effectiveStateMode: 'isolated' | 'shared' | null;
+                    };
                 }> | undefined;
-                uxDiagnostic?: {
-                    code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                    failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                    source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                uxDiagnostic?: undefined | {
+                    code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                    failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                    source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
                     retryable: boolean;
-                    suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                    suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
                     serviceId?: string | undefined;
                     agentId?: string | undefined;
                     profileId?: string | undefined;
                     groupId?: string | undefined;
-                    diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                } | undefined;
-            } | undefined;
+                    diagnostics?: undefined | ({
+                        [x: string]: boolean | null | number | string;
+                    } & {
+                        reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                    });
+                };
+            };
         };
         latestToolResult?: unknown;
-        structuredMeta?: {
+        structuredMeta?: undefined | {
             [x: string]: unknown;
             kind: string;
             payload: unknown;
-        } | undefined;
-        reviewFindings?: {
+        };
+        reviewFindings?: undefined | {
             [x: string]: unknown;
             runRef: {
                 [x: string]: unknown;
                 runId: string;
                 callId: string;
                 backendId: string;
-                backendTarget?: {
+                backendTarget?: undefined | {
                     kind: 'builtInAgent';
                     agentId: string;
                 } | {
                     kind: 'configuredAcpBackend';
                     backendId: string;
-                } | undefined;
+                };
                 retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
             };
             summary: string;
@@ -4845,8 +6514,8 @@ export type ExecutionRunControlActionResultById = {
                 [x: string]: unknown;
                 id: string;
                 title: string;
-                severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                 summary: string;
                 filePath?: string | undefined;
                 startLine?: number | undefined;
@@ -4856,25 +6525,25 @@ export type ExecutionRunControlActionResultById = {
                 confidence?: number | undefined;
                 suggestion?: string | undefined;
                 patch?: string | undefined;
-                comment?: {
+                comment?: undefined | {
                     id: string;
-                    state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                    state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                     serverRevision: number;
                     sessionId?: string | undefined;
                     runId?: string | undefined;
                     projectId?: string | undefined;
-                    workspace?: {
+                    workspace?: undefined | {
                         machineId: string;
                         path: string;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
                 attributionConfidence?: string | undefined;
             }[];
             questions: {
                 [x: string]: unknown;
                 id: string;
                 text: string;
-                status: 'open' | 'answered' | 'superseded';
+                status: 'answered' | 'open' | 'superseded';
                 findingIds?: string[] | undefined;
             }[];
             assumptions: {
@@ -4886,16 +6555,10 @@ export type ExecutionRunControlActionResultById = {
             generatedAtMs: number;
             comparisonId?: string | undefined;
             fileCount?: number | undefined;
-            reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-            proposedComments?: {
+            reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+            proposedComments?: undefined | {
                 body: string;
                 anchor: {
-                    kind: 'range';
-                    filePath: string;
-                    startLine: number;
-                    endLine: number;
-                    side?: 'after' | 'before' | undefined;
-                } | {
                     kind: 'file';
                     filePath: string;
                 } | {
@@ -4903,23 +6566,29 @@ export type ExecutionRunControlActionResultById = {
                     filePath: string;
                     line: number;
                     side?: 'after' | 'before' | undefined;
+                } | {
+                    kind: 'range';
+                    filePath: string;
+                    startLine: number;
+                    endLine: number;
+                    side?: 'after' | 'before' | undefined;
                 };
                 findingId?: string | undefined;
-                severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
+                severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                 taxonomyIds?: string[] | undefined;
                 tags?: string[] | undefined;
-            }[] | undefined;
-            triage?: {
+            }[];
+            triage?: undefined | {
                 [x: string]: unknown;
                 findings: {
                     [x: string]: unknown;
                     id: string;
-                    status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
+                    status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
                     commentId?: string | undefined;
                     comment?: string | undefined;
                 }[];
-            } | undefined;
-            publication?: {
+            };
+            publication?: undefined | {
                 [x: string]: unknown;
                 findings: {
                     [x: string]: unknown;
@@ -4928,13 +6597,13 @@ export type ExecutionRunControlActionResultById = {
                     publishedAtMs?: number | undefined;
                     publishedMessageRef?: string | undefined;
                 }[];
-            } | undefined;
-            limits?: {
+            };
+            limits?: undefined | {
                 [x: string]: unknown;
                 findingsTruncated?: boolean | undefined;
                 patchesTruncated?: boolean | undefined;
-            } | undefined;
-        } | undefined;
+            };
+        };
     };
     readonly "execution.run.send": {
         [x: string]: unknown;
@@ -4951,6 +6620,9 @@ export type ExecutionRunControlActionResultById = {
         streamId: string;
         events: ({
             [x: string]: unknown;
+            t: 'cancelled';
+        } | {
+            [x: string]: unknown;
             t: 'delta';
             textDelta: string;
         } | {
@@ -4960,10 +6632,6 @@ export type ExecutionRunControlActionResultById = {
             actions?: Readonly<{
                 t: string;
                 args: unknown;
-                confirmation?: {
-                    actionRequestId: string;
-                    inputDigest: string;
-                } | undefined;
             }>[] | undefined;
         } | {
             [x: string]: unknown;
@@ -4971,18 +6639,8 @@ export type ExecutionRunControlActionResultById = {
             error: string;
             errorCode?: string | undefined;
         } | {
-            [x: string]: unknown;
-            t: 'cancelled';
-        } | {
             t: 'voice_output';
             output: {
-                v: 1;
-                turnId: string;
-                seq: number;
-                kind: 'speech_segment';
-                segmentId: string;
-                text: string;
-            } | {
                 v: 1;
                 turnId: string;
                 seq: number;
@@ -4998,30 +6656,33 @@ export type ExecutionRunControlActionResultById = {
                 action: Readonly<{
                     t: string;
                     args: unknown;
-                    confirmation?: {
-                        actionRequestId: string;
-                        inputDigest: string;
-                    } | undefined;
                 }>;
             } | {
                 v: 1;
                 turnId: string;
                 seq: number;
-                kind: 'turn_final';
+                kind: 'speech_segment';
+                segmentId: string;
                 text: string;
             } | {
                 v: 1;
                 turnId: string;
                 seq: number;
                 kind: 'turn_cancelled';
+            } | {
+                v: 1;
+                turnId: string;
+                seq: number;
+                kind: 'turn_final';
+                text: string;
             };
         })[];
         nextCursor: number;
         done: boolean;
-        preparedInstructionsFor?: {
+        preparedInstructionsFor?: undefined | {
             serverId: string;
             sessionId: string;
-        } | undefined;
+        };
     };
     readonly "execution.run.stream.cancel": {
         [x: string]: unknown;
@@ -5032,23 +6693,34 @@ export type ExecutionRunControlActionResultById = {
         ok: true;
     };
     readonly "execution.run.cancel_turn": {
+        ok: false;
+        error: string;
+        errorCode: 'execution_run_cancel_failed' | 'execution_run_cancel_unsupported' | 'execution_run_not_current' | 'execution_run_not_found' | 'execution_run_turn_not_active';
+    } | {
         ok: true;
-        status: 'requested' | 'already_requested';
+        status: 'already_requested' | 'requested';
         runId: string;
         occurrenceId: string;
         turnId: string;
-    } | {
-        ok: false;
-        error: string;
-        errorCode: 'execution_run_not_found' | 'execution_run_not_current' | 'execution_run_turn_not_active' | 'execution_run_cancel_unsupported' | 'execution_run_cancel_failed';
     };
     readonly "execution.run.action": JsonValue;
     readonly "execution.run.permission.respond": {
         ok: true;
     };
     readonly "execution.run.wait": {
+        ok: false;
+        code: 'cancelled';
+    } | {
+        ok: false;
+        code: 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'permission_denied' | 'run_depth_exceeded';
+    } | {
         ok: true;
-        status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
+        disposition: 'observation_timeout';
+        runId: string;
+        timeoutMs: number;
+        observedAtMs: number;
+        deadlineAtMs: number;
+        status: 'cancelled' | 'failed' | 'succeeded' | 'timeout';
         result: {
             [x: string]: unknown;
             run: {
@@ -5056,7 +6728,7 @@ export type ExecutionRunControlActionResultById = {
                 runId: string;
                 callId: string;
                 sidechainId: string;
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
                 backendTarget: {
                     kind: 'builtInAgent';
                     agentId: string;
@@ -5068,36 +6740,36 @@ export type ExecutionRunControlActionResultById = {
                 retentionPolicy: 'ephemeral' | 'resumable';
                 runClass: 'bounded' | 'long_lived';
                 ioMode: 'request_response' | 'streaming';
-                status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
+                status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                 startedAtMs: number;
                 originWorkflowRunId?: string | undefined;
-                display?: {
+                display?: undefined | {
                     [x: string]: unknown;
                     title?: string | undefined;
                     participantLabel?: string | undefined;
                     groupId?: string | undefined;
-                } | undefined;
-                launchOrigin?: {
+                };
+                launchOrigin?: undefined | {
                     kind: 'discussion';
                     serverId: string;
                     discussionId: string;
                     messageIds: string[];
                     draftCorrelationId?: string | undefined;
                 } | {
+                    kind: 'external';
+                    source?: 'action' | 'cli' | 'mcp' | undefined;
+                } | {
                     kind: 'session';
                     sessionId: string;
                     draftCorrelationId?: string | undefined;
-                } | {
-                    kind: 'external';
-                    source?: 'cli' | 'mcp' | 'action' | undefined;
-                } | undefined;
-                requestedConfiguration?: {
+                };
+                requestedConfiguration?: undefined | {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
-                } | undefined;
-                resolvedSelection?: {
-                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                    modelSelection?: {
+                };
+                resolvedSelection?: undefined | {
+                    source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                    modelSelection?: undefined | {
                         agentTargetKey: string;
                         providerConnectionId: null;
                         modelId: string;
@@ -5105,8 +6777,8 @@ export type ExecutionRunControlActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    } | undefined;
-                    teamCredentialModel?: {
+                    };
+                    teamCredentialModel?: undefined | {
                         kind: 'team_credential_provider_model';
                         resourceId: string;
                         teamId: string;
@@ -5114,7 +6786,7 @@ export type ExecutionRunControlActionResultById = {
                         agentTargetKey: string;
                         modelId: string;
                         deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                        nativeDelivery?: {
+                        nativeDelivery?: undefined | {
                             managedId: string;
                             controllerInstallationId: string;
                             guestInstallationId: string;
@@ -5122,22 +6794,27 @@ export type ExecutionRunControlActionResultById = {
                             placeholderRef: string;
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     modelId?: string | undefined;
-                    connectedServices?: {
+                    connectedServices?: null | undefined | {
                         v: 2;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
-                        } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
                             source: 'connected';
                             selection: 'profile';
                             profileId: string;
+                        } | {
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
                         } | {
                             source: 'team_resource';
                             resourceId: string;
@@ -5149,135 +6826,383 @@ export type ExecutionRunControlActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
                         }>;
-                    } | null | undefined;
-                } | undefined;
+                    };
+                };
+                approvalProfileId?: null | string | undefined;
                 turnInFlight?: boolean | undefined;
-                inputTurns?: {
+                inputTurns?: undefined | {
                     occurrenceId: string;
-                    current?: {
+                    current?: undefined | {
                         turnId: string;
                         inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
                             value: string;
                         } | {
                             kind: 'json';
                             value: JsonValue;
                         } | {
-                            kind: 'decision';
+                            kind: 'text';
                             value: string;
-                        } | undefined;
-                    } | undefined;
-                    last?: {
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: Readonly<{
+                                v: 1;
+                                scope: 'primary_session';
+                                status: 'failed';
+                                code: string;
+                                source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                occurredAt: number;
+                                sessionSeq?: number | undefined;
+                                agentId?: string | undefined;
+                                agentTurnId?: string | undefined;
+                                sanitizedPreview?: string | undefined;
+                                usageLimit?: undefined | {
+                                    v: 1;
+                                    resetAtMs: null | number;
+                                    retryAfterMs: null | number;
+                                    quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                    recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                    providerLimitId?: string | undefined;
+                                    planType?: null | string | undefined;
+                                    utilization?: null | number | undefined;
+                                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                    quotaSnapshotRef?: undefined | {
+                                        serviceId: string;
+                                        profileId?: string | undefined;
+                                        groupId?: string | undefined;
+                                        fetchedAtMs?: number | undefined;
+                                    };
+                                    effectiveMeterId?: string | undefined;
+                                    effectiveRemainingPct?: number | undefined;
+                                    allWindows?: undefined | {
+                                        meterId: string;
+                                        scope?: string | undefined;
+                                        remainingPct?: number | undefined;
+                                        resetAtMs?: number | undefined;
+                                        status?: string | undefined;
+                                    }[];
+                                    recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                    overage?: null | undefined | {
+                                        status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                        resetAtMs: null | number;
+                                        disabledReason?: null | string | undefined;
+                                    };
+                                    action?: null | undefined | {
+                                        kind: 'none';
+                                    } | {
+                                        kind: 'open_url';
+                                        url: string;
+                                        labelKey?: string | undefined;
+                                    } | {
+                                        kind: 'settings';
+                                    };
+                                    connectedService?: null | undefined | {
+                                        serviceId: string;
+                                        profileId: null | string;
+                                        groupId: null | string;
+                                        groupExhausted?: boolean | undefined;
+                                    };
+                                };
+                                teamCredential?: undefined | {
+                                    v: 1;
+                                    resourceId: string;
+                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    usageLimit?: undefined | {
+                                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                        remaining: string;
+                                        resetsAtUtc: string;
+                                    };
+                                };
+                                temporaryThrottle?: undefined | {
+                                    v: 1;
+                                    retryAfterMs: null | number;
+                                    recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                };
+                                failureCause?: undefined | {
+                                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    code?: string | undefined;
+                                    retryable?: boolean | undefined;
+                                    requestId?: string | undefined;
+                                    preparationCause?: undefined | {
+                                        code: string;
+                                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                        requestId?: string | undefined;
+                                    };
+                                    connectedServicesDefault?: undefined | {
+                                        v: 1;
+                                        source: 'account_default';
+                                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                        phase: 'purpose_binding';
+                                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                    };
+                                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    httpStatus?: number | undefined;
+                                    providerErrorMessage?: string | undefined;
+                                };
+                                agentProcessExitAfterSwitch?: undefined | {
+                                    exitCode: null | number;
+                                    signal: null | string;
+                                    lastStderrLine: null | string;
+                                    vendorResumeId: null | string;
+                                    materializationRoot: null | string;
+                                    effectiveStateMode: 'isolated' | 'shared' | null;
+                                };
+                            }> | undefined;
+                            uxDiagnostic?: undefined | {
+                                code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: undefined | ({
+                                    [x: string]: boolean | null | number | string;
+                                } & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                });
+                            };
+                        };
+                    };
+                    last?: undefined | {
                         turnId: string;
                         inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
                             value: string;
                         } | {
                             kind: 'json';
                             value: JsonValue;
                         } | {
-                            kind: 'decision';
+                            kind: 'text';
                             value: string;
-                        } | undefined;
-                    } | undefined;
-                } | undefined;
-                interaction?: {
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: Readonly<{
+                                v: 1;
+                                scope: 'primary_session';
+                                status: 'failed';
+                                code: string;
+                                source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                occurredAt: number;
+                                sessionSeq?: number | undefined;
+                                agentId?: string | undefined;
+                                agentTurnId?: string | undefined;
+                                sanitizedPreview?: string | undefined;
+                                usageLimit?: undefined | {
+                                    v: 1;
+                                    resetAtMs: null | number;
+                                    retryAfterMs: null | number;
+                                    quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                    recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                    providerLimitId?: string | undefined;
+                                    planType?: null | string | undefined;
+                                    utilization?: null | number | undefined;
+                                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                    quotaSnapshotRef?: undefined | {
+                                        serviceId: string;
+                                        profileId?: string | undefined;
+                                        groupId?: string | undefined;
+                                        fetchedAtMs?: number | undefined;
+                                    };
+                                    effectiveMeterId?: string | undefined;
+                                    effectiveRemainingPct?: number | undefined;
+                                    allWindows?: undefined | {
+                                        meterId: string;
+                                        scope?: string | undefined;
+                                        remainingPct?: number | undefined;
+                                        resetAtMs?: number | undefined;
+                                        status?: string | undefined;
+                                    }[];
+                                    recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                    overage?: null | undefined | {
+                                        status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                        resetAtMs: null | number;
+                                        disabledReason?: null | string | undefined;
+                                    };
+                                    action?: null | undefined | {
+                                        kind: 'none';
+                                    } | {
+                                        kind: 'open_url';
+                                        url: string;
+                                        labelKey?: string | undefined;
+                                    } | {
+                                        kind: 'settings';
+                                    };
+                                    connectedService?: null | undefined | {
+                                        serviceId: string;
+                                        profileId: null | string;
+                                        groupId: null | string;
+                                        groupExhausted?: boolean | undefined;
+                                    };
+                                };
+                                teamCredential?: undefined | {
+                                    v: 1;
+                                    resourceId: string;
+                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    usageLimit?: undefined | {
+                                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                        remaining: string;
+                                        resetsAtUtc: string;
+                                    };
+                                };
+                                temporaryThrottle?: undefined | {
+                                    v: 1;
+                                    retryAfterMs: null | number;
+                                    recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                };
+                                failureCause?: undefined | {
+                                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    code?: string | undefined;
+                                    retryable?: boolean | undefined;
+                                    requestId?: string | undefined;
+                                    preparationCause?: undefined | {
+                                        code: string;
+                                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                        requestId?: string | undefined;
+                                    };
+                                    connectedServicesDefault?: undefined | {
+                                        v: 1;
+                                        source: 'account_default';
+                                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                        phase: 'purpose_binding';
+                                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                    };
+                                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    httpStatus?: number | undefined;
+                                    providerErrorMessage?: string | undefined;
+                                };
+                                agentProcessExitAfterSwitch?: undefined | {
+                                    exitCode: null | number;
+                                    signal: null | string;
+                                    lastStderrLine: null | string;
+                                    vendorResumeId: null | string;
+                                    materializationRoot: null | string;
+                                    effectiveStateMode: 'isolated' | 'shared' | null;
+                                };
+                            }> | undefined;
+                            uxDiagnostic?: undefined | {
+                                code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: undefined | ({
+                                    [x: string]: boolean | null | number | string;
+                                } & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                });
+                            };
+                        };
+                    };
+                };
+                interaction?: undefined | {
                     kind: 'retained_agent_session.v1';
                     capabilities: {
-                        open: ('resume' | 'create' | 'fork')[];
-                        delivery: ('newTurn' | 'steer' | 'followUp')[];
+                        open: ('create' | 'fork' | 'resume')[];
+                        delivery: ('followUp' | 'newTurn' | 'steer')[];
                         cancel: boolean;
                         configuration?: boolean | undefined;
                         workspaceWrites?: 'deny' | undefined;
-                        compaction?: {
+                        compaction?: undefined | {
                             events: true;
                             manual?: true | undefined;
-                            idle?: {
+                            idle?: undefined | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | {
                                 mode: 'native';
                                 defaultEnabled: boolean;
                                 defaultMinContextTokens?: number | undefined;
                                 nativeHonorsMinimum?: true | undefined;
-                            } | {
-                                mode: 'host';
-                                defaultEnabled: boolean;
-                                defaultMinContextTokens?: number | undefined;
-                            } | undefined;
-                        } | undefined;
+                            };
+                        };
                         conversationRollback?: true | undefined;
-                        goals?: {
+                        goals?: undefined | {
                             source: string;
-                            active?: {
+                            active?: undefined | {
                                 get?: true | undefined;
                                 clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                            inactive?: {
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                            inactive?: undefined | {
                                 get?: true | undefined;
                                 clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                        } | undefined;
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                        };
                         usageReporting?: true | undefined;
-                        catalog?: {
+                        catalog?: undefined | {
                             active?: ('skills' | 'vendorPlugins')[] | undefined;
                             inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                        } | undefined;
-                        usageLimitRecovery?: {
+                        };
+                        usageLimitRecovery?: undefined | {
                             active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
                             inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                        } | undefined;
-                        continuationVerification?: {
-                            intents: ('resume' | 'fork')[];
-                            requirement: 'required' | 'advisory';
-                        } | undefined;
-                        workStateSources?: {
+                        };
+                        continuationVerification?: undefined | {
+                            intents: ('fork' | 'resume')[];
+                            requirement: 'advisory' | 'required';
+                        };
+                        workStateSources?: undefined | {
                             id: string;
-                            itemKinds: ('task' | 'goal' | 'todo')[];
-                        }[] | undefined;
+                            itemKinds: ('goal' | 'task' | 'todo')[];
+                        }[];
                         runtimeActivitySnapshots?: true | undefined;
-                        startupInstructions?: {
+                        startupInstructions?: undefined | {
                             versions: [
                                 1
                             ];
                             revisionChanges?: 'resume' | undefined;
-                        } | undefined;
-                        executionRunContext?: {
+                        };
+                        executionRunContext?: undefined | {
                             versions: [
                                 1
                             ];
-                        } | undefined;
+                        };
                     };
-                } | undefined;
-                attention?: {
+                };
+                attention?: undefined | {
                     kind: 'permission_required';
                     requestIds: string[];
-                    requests?: {
+                    requests?: undefined | {
                         requestId: string;
                         createdAt: number;
-                    }[] | undefined;
-                } | undefined;
-                lifecycle?: {
+                    }[];
+                };
+                lifecycle?: undefined | {
                     v: 1;
-                    state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                } | undefined;
+                    state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+                };
                 availableActionIds?: string[] | undefined;
-                resumeHandle?: {
+                resumeHandle?: undefined | {
                     [x: string]: unknown;
                     kind: 'provider_session.v1';
                     backendTarget: {
@@ -5298,22 +7223,22 @@ export type ExecutionRunControlActionResultById = {
                     };
                     chatProviderSessionId: string;
                     commitProviderSessionId: string;
-                } | undefined;
-                transcript?: {
+                };
+                transcript?: undefined | {
                     [x: string]: unknown;
                     persistenceMode: 'ephemeral' | 'persistent';
                     epoch: number;
-                } | undefined;
-                voicePolicy?: {
-                    assistantLanguage: string | null;
+                };
+                voicePolicy?: undefined | {
+                    assistantLanguage: null | string;
                     welcome: {
                         enabled: boolean;
                         mode: 'immediate' | 'on_first_turn';
                         text?: string | undefined;
                     };
-                } | undefined;
+                };
                 finishedAtMs?: number | undefined;
-                error?: {
+                error?: undefined | {
                     [x: string]: unknown;
                     code: string;
                     message?: string | undefined;
@@ -5322,130 +7247,144 @@ export type ExecutionRunControlActionResultById = {
                         scope: 'primary_session';
                         status: 'failed';
                         code: string;
-                        source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
+                        source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
                         occurredAt: number;
                         sessionSeq?: number | undefined;
                         agentId?: string | undefined;
                         agentTurnId?: string | undefined;
                         sanitizedPreview?: string | undefined;
-                        usageLimit?: {
+                        usageLimit?: undefined | {
                             v: 1;
-                            resetAtMs: number | null;
-                            retryAfterMs: number | null;
-                            quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                            recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
+                            resetAtMs: null | number;
+                            retryAfterMs: null | number;
+                            quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                            recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
                             providerLimitId?: string | undefined;
-                            planType?: string | null | undefined;
-                            utilization?: number | null | undefined;
-                            limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                            quotaSnapshotRef?: {
+                            planType?: null | string | undefined;
+                            utilization?: null | number | undefined;
+                            limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                            quotaSnapshotRef?: undefined | {
                                 serviceId: string;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
                                 fetchedAtMs?: number | undefined;
-                            } | undefined;
+                            };
                             effectiveMeterId?: string | undefined;
                             effectiveRemainingPct?: number | undefined;
-                            allWindows?: {
+                            allWindows?: undefined | {
                                 meterId: string;
                                 scope?: string | undefined;
                                 remainingPct?: number | undefined;
                                 resetAtMs?: number | undefined;
                                 status?: string | undefined;
-                            }[] | undefined;
-                            recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                            overage?: {
-                                status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                                resetAtMs: number | null;
-                                disabledReason?: string | null | undefined;
-                            } | null | undefined;
-                            action?: {
+                            }[];
+                            recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                            overage?: null | undefined | {
+                                status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                resetAtMs: null | number;
+                                disabledReason?: null | string | undefined;
+                            };
+                            action?: null | undefined | {
+                                kind: 'none';
+                            } | {
                                 kind: 'open_url';
                                 url: string;
                                 labelKey?: string | undefined;
                             } | {
                                 kind: 'settings';
-                            } | {
-                                kind: 'none';
-                            } | null | undefined;
-                            connectedService?: {
+                            };
+                            connectedService?: null | undefined | {
                                 serviceId: string;
-                                profileId: string | null;
-                                groupId: string | null;
+                                profileId: null | string;
+                                groupId: null | string;
                                 groupExhausted?: boolean | undefined;
-                            } | null | undefined;
-                        } | undefined;
-                        teamCredential?: {
+                            };
+                        };
+                        teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                            usageLimit?: {
-                                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            usageLimit?: undefined | {
+                                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
                                 resetsAtUtc: string;
-                            } | undefined;
-                        } | undefined;
-                        temporaryThrottle?: {
+                            };
+                        };
+                        temporaryThrottle?: undefined | {
                             v: 1;
-                            retryAfterMs: number | null;
-                            recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                        } | undefined;
-                        failureCause?: {
-                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                            retryAfterMs: null | number;
+                            recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                        };
+                        failureCause?: undefined | {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                             code?: string | undefined;
-                            preparationCause?: {
+                            retryable?: boolean | undefined;
+                            requestId?: string | undefined;
+                            preparationCause?: undefined | {
                                 code: string;
-                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                            } | undefined;
-                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                                stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                requestId?: string | undefined;
+                            };
+                            connectedServicesDefault?: undefined | {
+                                v: 1;
+                                source: 'account_default';
+                                reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                phase: 'purpose_binding';
+                                catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                            };
+                            reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
-                        } | undefined;
-                        agentProcessExitAfterSwitch?: {
-                            exitCode: number | null;
-                            signal: string | null;
-                            lastStderrLine: string | null;
-                            vendorResumeId: string | null;
-                            materializationRoot: string | null;
-                            effectiveStateMode: 'shared' | 'isolated' | null;
-                        } | undefined;
+                        };
+                        agentProcessExitAfterSwitch?: undefined | {
+                            exitCode: null | number;
+                            signal: null | string;
+                            lastStderrLine: null | string;
+                            vendorResumeId: null | string;
+                            materializationRoot: null | string;
+                            effectiveStateMode: 'isolated' | 'shared' | null;
+                        };
                     }> | undefined;
-                    uxDiagnostic?: {
-                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                    uxDiagnostic?: undefined | {
+                        code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                        failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                        source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
                         retryable: boolean;
-                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
                         serviceId?: string | undefined;
                         agentId?: string | undefined;
                         profileId?: string | undefined;
                         groupId?: string | undefined;
-                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                    } | undefined;
-                } | undefined;
+                        diagnostics?: undefined | ({
+                            [x: string]: boolean | null | number | string;
+                        } & {
+                            reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                        });
+                    };
+                };
             };
             latestToolResult?: unknown;
-            structuredMeta?: {
+            structuredMeta?: undefined | {
                 [x: string]: unknown;
                 kind: string;
                 payload: unknown;
-            } | undefined;
-            reviewFindings?: {
+            };
+            reviewFindings?: undefined | {
                 [x: string]: unknown;
                 runRef: {
                     [x: string]: unknown;
                     runId: string;
                     callId: string;
                     backendId: string;
-                    backendTarget?: {
+                    backendTarget?: undefined | {
                         kind: 'builtInAgent';
                         agentId: string;
                     } | {
                         kind: 'configuredAcpBackend';
                         backendId: string;
-                    } | undefined;
+                    };
                     retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
                 };
                 summary: string;
@@ -5454,8 +7393,8 @@ export type ExecutionRunControlActionResultById = {
                     [x: string]: unknown;
                     id: string;
                     title: string;
-                    severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                    category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
+                    severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                    category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                     summary: string;
                     filePath?: string | undefined;
                     startLine?: number | undefined;
@@ -5465,25 +7404,25 @@ export type ExecutionRunControlActionResultById = {
                     confidence?: number | undefined;
                     suggestion?: string | undefined;
                     patch?: string | undefined;
-                    comment?: {
+                    comment?: undefined | {
                         id: string;
-                        state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                        state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                         serverRevision: number;
                         sessionId?: string | undefined;
                         runId?: string | undefined;
                         projectId?: string | undefined;
-                        workspace?: {
+                        workspace?: undefined | {
                             machineId: string;
                             path: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     attributionConfidence?: string | undefined;
                 }[];
                 questions: {
                     [x: string]: unknown;
                     id: string;
                     text: string;
-                    status: 'open' | 'answered' | 'superseded';
+                    status: 'answered' | 'open' | 'superseded';
                     findingIds?: string[] | undefined;
                 }[];
                 assumptions: {
@@ -5495,16 +7434,10 @@ export type ExecutionRunControlActionResultById = {
                 generatedAtMs: number;
                 comparisonId?: string | undefined;
                 fileCount?: number | undefined;
-                reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-                proposedComments?: {
+                reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                proposedComments?: undefined | {
                     body: string;
                     anchor: {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        side?: 'after' | 'before' | undefined;
-                    } | {
                         kind: 'file';
                         filePath: string;
                     } | {
@@ -5512,23 +7445,29 @@ export type ExecutionRunControlActionResultById = {
                         filePath: string;
                         line: number;
                         side?: 'after' | 'before' | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        side?: 'after' | 'before' | undefined;
                     };
                     findingId?: string | undefined;
-                    severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
+                    severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                     taxonomyIds?: string[] | undefined;
                     tags?: string[] | undefined;
-                }[] | undefined;
-                triage?: {
+                }[];
+                triage?: undefined | {
                     [x: string]: unknown;
                     findings: {
                         [x: string]: unknown;
                         id: string;
-                        status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
+                        status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
                         commentId?: string | undefined;
                         comment?: string | undefined;
                     }[];
-                } | undefined;
-                publication?: {
+                };
+                publication?: undefined | {
                     [x: string]: unknown;
                     findings: {
                         [x: string]: unknown;
@@ -5537,13 +7476,1546 @@ export type ExecutionRunControlActionResultById = {
                         publishedAtMs?: number | undefined;
                         publishedMessageRef?: string | undefined;
                     }[];
-                } | undefined;
-                limits?: {
+                };
+                limits?: undefined | {
                     [x: string]: unknown;
                     findingsTruncated?: boolean | undefined;
                     patchesTruncated?: boolean | undefined;
-                } | undefined;
-            } | undefined;
+                };
+            };
+        };
+    } | {
+        ok: true;
+        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+        disposition: 'snapshot';
+        result: {
+            [x: string]: unknown;
+            run: {
+                [x: string]: unknown;
+                runId: string;
+                callId: string;
+                sidechainId: string;
+                intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                backendTarget: {
+                    kind: 'builtInAgent';
+                    agentId: string;
+                } | {
+                    kind: 'configuredAcpBackend';
+                    backendId: string;
+                };
+                permissionMode: string;
+                retentionPolicy: 'ephemeral' | 'resumable';
+                runClass: 'bounded' | 'long_lived';
+                ioMode: 'request_response' | 'streaming';
+                status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
+                display?: undefined | {
+                    [x: string]: unknown;
+                    title?: string | undefined;
+                    participantLabel?: string | undefined;
+                    groupId?: string | undefined;
+                };
+                launchOrigin?: undefined | {
+                    kind: 'discussion';
+                    serverId: string;
+                    discussionId: string;
+                    messageIds: string[];
+                    draftCorrelationId?: string | undefined;
+                } | {
+                    kind: 'external';
+                    source?: 'action' | 'cli' | 'mcp' | undefined;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                    draftCorrelationId?: string | undefined;
+                };
+                requestedConfiguration?: undefined | {
+                    modelId?: string | undefined;
+                    reasoningEffort?: string | undefined;
+                };
+                resolvedSelection?: undefined | {
+                    source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                    modelSelection?: undefined | {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    teamCredentialModel?: undefined | {
+                        kind: 'team_credential_provider_model';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        agentTargetKey: string;
+                        modelId: string;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    modelId?: string | undefined;
+                    connectedServices?: null | undefined | {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        }>;
+                    };
+                };
+                approvalProfileId?: null | string | undefined;
+                turnInFlight?: boolean | undefined;
+                inputTurns?: undefined | {
+                    occurrenceId: string;
+                    current?: undefined | {
+                        turnId: string;
+                        inputIds: string[];
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
+                            value: string;
+                        } | {
+                            kind: 'json';
+                            value: JsonValue;
+                        } | {
+                            kind: 'text';
+                            value: string;
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: Readonly<{
+                                v: 1;
+                                scope: 'primary_session';
+                                status: 'failed';
+                                code: string;
+                                source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                occurredAt: number;
+                                sessionSeq?: number | undefined;
+                                agentId?: string | undefined;
+                                agentTurnId?: string | undefined;
+                                sanitizedPreview?: string | undefined;
+                                usageLimit?: undefined | {
+                                    v: 1;
+                                    resetAtMs: null | number;
+                                    retryAfterMs: null | number;
+                                    quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                    recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                    providerLimitId?: string | undefined;
+                                    planType?: null | string | undefined;
+                                    utilization?: null | number | undefined;
+                                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                    quotaSnapshotRef?: undefined | {
+                                        serviceId: string;
+                                        profileId?: string | undefined;
+                                        groupId?: string | undefined;
+                                        fetchedAtMs?: number | undefined;
+                                    };
+                                    effectiveMeterId?: string | undefined;
+                                    effectiveRemainingPct?: number | undefined;
+                                    allWindows?: undefined | {
+                                        meterId: string;
+                                        scope?: string | undefined;
+                                        remainingPct?: number | undefined;
+                                        resetAtMs?: number | undefined;
+                                        status?: string | undefined;
+                                    }[];
+                                    recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                    overage?: null | undefined | {
+                                        status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                        resetAtMs: null | number;
+                                        disabledReason?: null | string | undefined;
+                                    };
+                                    action?: null | undefined | {
+                                        kind: 'none';
+                                    } | {
+                                        kind: 'open_url';
+                                        url: string;
+                                        labelKey?: string | undefined;
+                                    } | {
+                                        kind: 'settings';
+                                    };
+                                    connectedService?: null | undefined | {
+                                        serviceId: string;
+                                        profileId: null | string;
+                                        groupId: null | string;
+                                        groupExhausted?: boolean | undefined;
+                                    };
+                                };
+                                teamCredential?: undefined | {
+                                    v: 1;
+                                    resourceId: string;
+                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    usageLimit?: undefined | {
+                                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                        remaining: string;
+                                        resetsAtUtc: string;
+                                    };
+                                };
+                                temporaryThrottle?: undefined | {
+                                    v: 1;
+                                    retryAfterMs: null | number;
+                                    recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                };
+                                failureCause?: undefined | {
+                                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    code?: string | undefined;
+                                    retryable?: boolean | undefined;
+                                    requestId?: string | undefined;
+                                    preparationCause?: undefined | {
+                                        code: string;
+                                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                        requestId?: string | undefined;
+                                    };
+                                    connectedServicesDefault?: undefined | {
+                                        v: 1;
+                                        source: 'account_default';
+                                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                        phase: 'purpose_binding';
+                                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                    };
+                                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    httpStatus?: number | undefined;
+                                    providerErrorMessage?: string | undefined;
+                                };
+                                agentProcessExitAfterSwitch?: undefined | {
+                                    exitCode: null | number;
+                                    signal: null | string;
+                                    lastStderrLine: null | string;
+                                    vendorResumeId: null | string;
+                                    materializationRoot: null | string;
+                                    effectiveStateMode: 'isolated' | 'shared' | null;
+                                };
+                            }> | undefined;
+                            uxDiagnostic?: undefined | {
+                                code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: undefined | ({
+                                    [x: string]: boolean | null | number | string;
+                                } & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                });
+                            };
+                        };
+                    };
+                    last?: undefined | {
+                        turnId: string;
+                        inputIds: string[];
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
+                            value: string;
+                        } | {
+                            kind: 'json';
+                            value: JsonValue;
+                        } | {
+                            kind: 'text';
+                            value: string;
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: Readonly<{
+                                v: 1;
+                                scope: 'primary_session';
+                                status: 'failed';
+                                code: string;
+                                source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                occurredAt: number;
+                                sessionSeq?: number | undefined;
+                                agentId?: string | undefined;
+                                agentTurnId?: string | undefined;
+                                sanitizedPreview?: string | undefined;
+                                usageLimit?: undefined | {
+                                    v: 1;
+                                    resetAtMs: null | number;
+                                    retryAfterMs: null | number;
+                                    quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                    recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                    providerLimitId?: string | undefined;
+                                    planType?: null | string | undefined;
+                                    utilization?: null | number | undefined;
+                                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                    quotaSnapshotRef?: undefined | {
+                                        serviceId: string;
+                                        profileId?: string | undefined;
+                                        groupId?: string | undefined;
+                                        fetchedAtMs?: number | undefined;
+                                    };
+                                    effectiveMeterId?: string | undefined;
+                                    effectiveRemainingPct?: number | undefined;
+                                    allWindows?: undefined | {
+                                        meterId: string;
+                                        scope?: string | undefined;
+                                        remainingPct?: number | undefined;
+                                        resetAtMs?: number | undefined;
+                                        status?: string | undefined;
+                                    }[];
+                                    recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                    overage?: null | undefined | {
+                                        status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                        resetAtMs: null | number;
+                                        disabledReason?: null | string | undefined;
+                                    };
+                                    action?: null | undefined | {
+                                        kind: 'none';
+                                    } | {
+                                        kind: 'open_url';
+                                        url: string;
+                                        labelKey?: string | undefined;
+                                    } | {
+                                        kind: 'settings';
+                                    };
+                                    connectedService?: null | undefined | {
+                                        serviceId: string;
+                                        profileId: null | string;
+                                        groupId: null | string;
+                                        groupExhausted?: boolean | undefined;
+                                    };
+                                };
+                                teamCredential?: undefined | {
+                                    v: 1;
+                                    resourceId: string;
+                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    usageLimit?: undefined | {
+                                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                        remaining: string;
+                                        resetsAtUtc: string;
+                                    };
+                                };
+                                temporaryThrottle?: undefined | {
+                                    v: 1;
+                                    retryAfterMs: null | number;
+                                    recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                };
+                                failureCause?: undefined | {
+                                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    code?: string | undefined;
+                                    retryable?: boolean | undefined;
+                                    requestId?: string | undefined;
+                                    preparationCause?: undefined | {
+                                        code: string;
+                                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                        requestId?: string | undefined;
+                                    };
+                                    connectedServicesDefault?: undefined | {
+                                        v: 1;
+                                        source: 'account_default';
+                                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                        phase: 'purpose_binding';
+                                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                    };
+                                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    httpStatus?: number | undefined;
+                                    providerErrorMessage?: string | undefined;
+                                };
+                                agentProcessExitAfterSwitch?: undefined | {
+                                    exitCode: null | number;
+                                    signal: null | string;
+                                    lastStderrLine: null | string;
+                                    vendorResumeId: null | string;
+                                    materializationRoot: null | string;
+                                    effectiveStateMode: 'isolated' | 'shared' | null;
+                                };
+                            }> | undefined;
+                            uxDiagnostic?: undefined | {
+                                code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: undefined | ({
+                                    [x: string]: boolean | null | number | string;
+                                } & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                });
+                            };
+                        };
+                    };
+                };
+                interaction?: undefined | {
+                    kind: 'retained_agent_session.v1';
+                    capabilities: {
+                        open: ('create' | 'fork' | 'resume')[];
+                        delivery: ('followUp' | 'newTurn' | 'steer')[];
+                        cancel: boolean;
+                        configuration?: boolean | undefined;
+                        workspaceWrites?: 'deny' | undefined;
+                        compaction?: undefined | {
+                            events: true;
+                            manual?: true | undefined;
+                            idle?: undefined | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            };
+                        };
+                        conversationRollback?: true | undefined;
+                        goals?: undefined | {
+                            source: string;
+                            active?: undefined | {
+                                get?: true | undefined;
+                                clear?: true | undefined;
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                            inactive?: undefined | {
+                                get?: true | undefined;
+                                clear?: true | undefined;
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                        };
+                        usageReporting?: true | undefined;
+                        catalog?: undefined | {
+                            active?: ('skills' | 'vendorPlugins')[] | undefined;
+                            inactive?: ('skills' | 'vendorPlugins')[] | undefined;
+                        };
+                        usageLimitRecovery?: undefined | {
+                            active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                            inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                        };
+                        continuationVerification?: undefined | {
+                            intents: ('fork' | 'resume')[];
+                            requirement: 'advisory' | 'required';
+                        };
+                        workStateSources?: undefined | {
+                            id: string;
+                            itemKinds: ('goal' | 'task' | 'todo')[];
+                        }[];
+                        runtimeActivitySnapshots?: true | undefined;
+                        startupInstructions?: undefined | {
+                            versions: [
+                                1
+                            ];
+                            revisionChanges?: 'resume' | undefined;
+                        };
+                        executionRunContext?: undefined | {
+                            versions: [
+                                1
+                            ];
+                        };
+                    };
+                };
+                attention?: undefined | {
+                    kind: 'permission_required';
+                    requestIds: string[];
+                    requests?: undefined | {
+                        requestId: string;
+                        createdAt: number;
+                    }[];
+                };
+                lifecycle?: undefined | {
+                    v: 1;
+                    state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+                };
+                availableActionIds?: string[] | undefined;
+                resumeHandle?: undefined | {
+                    [x: string]: unknown;
+                    kind: 'provider_session.v1';
+                    backendTarget: {
+                        kind: 'backend';
+                        backendId: string;
+                        configuredBackendId?: string | undefined;
+                        sourceKind?: 'built_in' | 'configured' | undefined;
+                    };
+                    providerSessionId: string;
+                } | {
+                    [x: string]: unknown;
+                    kind: 'voice_agent_sessions.v1';
+                    backendTarget: {
+                        kind: 'backend';
+                        backendId: string;
+                        configuredBackendId?: string | undefined;
+                        sourceKind?: 'built_in' | 'configured' | undefined;
+                    };
+                    chatProviderSessionId: string;
+                    commitProviderSessionId: string;
+                };
+                transcript?: undefined | {
+                    [x: string]: unknown;
+                    persistenceMode: 'ephemeral' | 'persistent';
+                    epoch: number;
+                };
+                voicePolicy?: undefined | {
+                    assistantLanguage: null | string;
+                    welcome: {
+                        enabled: boolean;
+                        mode: 'immediate' | 'on_first_turn';
+                        text?: string | undefined;
+                    };
+                };
+                finishedAtMs?: number | undefined;
+                error?: undefined | {
+                    [x: string]: unknown;
+                    code: string;
+                    message?: string | undefined;
+                    runtimeIssueV1?: Readonly<{
+                        v: 1;
+                        scope: 'primary_session';
+                        status: 'failed';
+                        code: string;
+                        source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                        occurredAt: number;
+                        sessionSeq?: number | undefined;
+                        agentId?: string | undefined;
+                        agentTurnId?: string | undefined;
+                        sanitizedPreview?: string | undefined;
+                        usageLimit?: undefined | {
+                            v: 1;
+                            resetAtMs: null | number;
+                            retryAfterMs: null | number;
+                            quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                            recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                            providerLimitId?: string | undefined;
+                            planType?: null | string | undefined;
+                            utilization?: null | number | undefined;
+                            limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                            quotaSnapshotRef?: undefined | {
+                                serviceId: string;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                fetchedAtMs?: number | undefined;
+                            };
+                            effectiveMeterId?: string | undefined;
+                            effectiveRemainingPct?: number | undefined;
+                            allWindows?: undefined | {
+                                meterId: string;
+                                scope?: string | undefined;
+                                remainingPct?: number | undefined;
+                                resetAtMs?: number | undefined;
+                                status?: string | undefined;
+                            }[];
+                            recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                            overage?: null | undefined | {
+                                status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                resetAtMs: null | number;
+                                disabledReason?: null | string | undefined;
+                            };
+                            action?: null | undefined | {
+                                kind: 'none';
+                            } | {
+                                kind: 'open_url';
+                                url: string;
+                                labelKey?: string | undefined;
+                            } | {
+                                kind: 'settings';
+                            };
+                            connectedService?: null | undefined | {
+                                serviceId: string;
+                                profileId: null | string;
+                                groupId: null | string;
+                                groupExhausted?: boolean | undefined;
+                            };
+                        };
+                        teamCredential?: undefined | {
+                            v: 1;
+                            resourceId: string;
+                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            usageLimit?: undefined | {
+                                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                remaining: string;
+                                resetsAtUtc: string;
+                            };
+                        };
+                        temporaryThrottle?: undefined | {
+                            v: 1;
+                            retryAfterMs: null | number;
+                            recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                        };
+                        failureCause?: undefined | {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            code?: string | undefined;
+                            retryable?: boolean | undefined;
+                            requestId?: string | undefined;
+                            preparationCause?: undefined | {
+                                code: string;
+                                stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                requestId?: string | undefined;
+                            };
+                            connectedServicesDefault?: undefined | {
+                                v: 1;
+                                source: 'account_default';
+                                reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                phase: 'purpose_binding';
+                                catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                            };
+                            reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            httpStatus?: number | undefined;
+                            providerErrorMessage?: string | undefined;
+                        };
+                        agentProcessExitAfterSwitch?: undefined | {
+                            exitCode: null | number;
+                            signal: null | string;
+                            lastStderrLine: null | string;
+                            vendorResumeId: null | string;
+                            materializationRoot: null | string;
+                            effectiveStateMode: 'isolated' | 'shared' | null;
+                        };
+                    }> | undefined;
+                    uxDiagnostic?: undefined | {
+                        code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                        failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                        source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                        retryable: boolean;
+                        suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: undefined | ({
+                            [x: string]: boolean | null | number | string;
+                        } & {
+                            reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                        });
+                    };
+                };
+            };
+            latestToolResult?: unknown;
+            structuredMeta?: undefined | {
+                [x: string]: unknown;
+                kind: string;
+                payload: unknown;
+            };
+            reviewFindings?: undefined | {
+                [x: string]: unknown;
+                runRef: {
+                    [x: string]: unknown;
+                    runId: string;
+                    callId: string;
+                    backendId: string;
+                    backendTarget?: undefined | {
+                        kind: 'builtInAgent';
+                        agentId: string;
+                    } | {
+                        kind: 'configuredAcpBackend';
+                        backendId: string;
+                    };
+                    retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
+                };
+                summary: string;
+                overviewMarkdown: string;
+                findings: {
+                    [x: string]: unknown;
+                    id: string;
+                    title: string;
+                    severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                    category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                    summary: string;
+                    filePath?: string | undefined;
+                    startLine?: number | undefined;
+                    endLine?: number | undefined;
+                    whyItMatters?: string | undefined;
+                    evidence?: string | undefined;
+                    confidence?: number | undefined;
+                    suggestion?: string | undefined;
+                    patch?: string | undefined;
+                    comment?: undefined | {
+                        id: string;
+                        state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
+                        serverRevision: number;
+                        sessionId?: string | undefined;
+                        runId?: string | undefined;
+                        projectId?: string | undefined;
+                        workspace?: undefined | {
+                            machineId: string;
+                            path: string;
+                        };
+                    };
+                    attributionConfidence?: string | undefined;
+                }[];
+                questions: {
+                    [x: string]: unknown;
+                    id: string;
+                    text: string;
+                    status: 'answered' | 'open' | 'superseded';
+                    findingIds?: string[] | undefined;
+                }[];
+                assumptions: {
+                    [x: string]: unknown;
+                    id: string;
+                    text: string;
+                    findingIds?: string[] | undefined;
+                }[];
+                generatedAtMs: number;
+                comparisonId?: string | undefined;
+                fileCount?: number | undefined;
+                reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                proposedComments?: undefined | {
+                    body: string;
+                    anchor: {
+                        kind: 'file';
+                        filePath: string;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        side?: 'after' | 'before' | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        side?: 'after' | 'before' | undefined;
+                    };
+                    findingId?: string | undefined;
+                    severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                    taxonomyIds?: string[] | undefined;
+                    tags?: string[] | undefined;
+                }[];
+                triage?: undefined | {
+                    [x: string]: unknown;
+                    findings: {
+                        [x: string]: unknown;
+                        id: string;
+                        status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
+                        commentId?: string | undefined;
+                        comment?: string | undefined;
+                    }[];
+                };
+                publication?: undefined | {
+                    [x: string]: unknown;
+                    findings: {
+                        [x: string]: unknown;
+                        id: string;
+                        published: boolean;
+                        publishedAtMs?: number | undefined;
+                        publishedMessageRef?: string | undefined;
+                    }[];
+                };
+                limits?: undefined | {
+                    [x: string]: unknown;
+                    findingsTruncated?: boolean | undefined;
+                    patchesTruncated?: boolean | undefined;
+                };
+            };
+        };
+    } | {
+        ok: true;
+        status: 'cancelled' | 'failed' | 'succeeded' | 'timeout';
+        result: {
+            [x: string]: unknown;
+            run: {
+                [x: string]: unknown;
+                runId: string;
+                callId: string;
+                sidechainId: string;
+                intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                backendTarget: {
+                    kind: 'builtInAgent';
+                    agentId: string;
+                } | {
+                    kind: 'configuredAcpBackend';
+                    backendId: string;
+                };
+                permissionMode: string;
+                retentionPolicy: 'ephemeral' | 'resumable';
+                runClass: 'bounded' | 'long_lived';
+                ioMode: 'request_response' | 'streaming';
+                status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                startedAtMs: number;
+                originWorkflowRunId?: string | undefined;
+                display?: undefined | {
+                    [x: string]: unknown;
+                    title?: string | undefined;
+                    participantLabel?: string | undefined;
+                    groupId?: string | undefined;
+                };
+                launchOrigin?: undefined | {
+                    kind: 'discussion';
+                    serverId: string;
+                    discussionId: string;
+                    messageIds: string[];
+                    draftCorrelationId?: string | undefined;
+                } | {
+                    kind: 'external';
+                    source?: 'action' | 'cli' | 'mcp' | undefined;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                    draftCorrelationId?: string | undefined;
+                };
+                requestedConfiguration?: undefined | {
+                    modelId?: string | undefined;
+                    reasoningEffort?: string | undefined;
+                };
+                resolvedSelection?: undefined | {
+                    source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                    modelSelection?: undefined | {
+                        agentTargetKey: string;
+                        providerConnectionId: null;
+                        modelId: string;
+                    } | {
+                        agentTargetKey: string;
+                        providerConnectionId: string;
+                        modelId: string;
+                    };
+                    teamCredentialModel?: undefined | {
+                        kind: 'team_credential_provider_model';
+                        resourceId: string;
+                        teamId: string;
+                        expectedResourceRevision: number;
+                        agentTargetKey: string;
+                        modelId: string;
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                        nativeDelivery?: undefined | {
+                            managedId: string;
+                            controllerInstallationId: string;
+                            guestInstallationId: string;
+                            bindingKey: string;
+                            placeholderRef: string;
+                            sourceRevision: string;
+                            providerTicket: string;
+                        };
+                    };
+                    modelId?: string | undefined;
+                    connectedServices?: null | undefined | {
+                        v: 2;
+                        bindingsByServiceId: Record<string, {
+                            source: 'connected';
+                            selection: 'group';
+                            groupId: string;
+                            profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
+                        } | {
+                            source: 'connected';
+                            selection: 'profile';
+                            profileId: string;
+                        } | {
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'direct';
+                            disclosedMember: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        }>;
+                    };
+                };
+                approvalProfileId?: null | string | undefined;
+                turnInFlight?: boolean | undefined;
+                inputTurns?: undefined | {
+                    occurrenceId: string;
+                    current?: undefined | {
+                        turnId: string;
+                        inputIds: string[];
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
+                            value: string;
+                        } | {
+                            kind: 'json';
+                            value: JsonValue;
+                        } | {
+                            kind: 'text';
+                            value: string;
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: Readonly<{
+                                v: 1;
+                                scope: 'primary_session';
+                                status: 'failed';
+                                code: string;
+                                source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                occurredAt: number;
+                                sessionSeq?: number | undefined;
+                                agentId?: string | undefined;
+                                agentTurnId?: string | undefined;
+                                sanitizedPreview?: string | undefined;
+                                usageLimit?: undefined | {
+                                    v: 1;
+                                    resetAtMs: null | number;
+                                    retryAfterMs: null | number;
+                                    quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                    recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                    providerLimitId?: string | undefined;
+                                    planType?: null | string | undefined;
+                                    utilization?: null | number | undefined;
+                                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                    quotaSnapshotRef?: undefined | {
+                                        serviceId: string;
+                                        profileId?: string | undefined;
+                                        groupId?: string | undefined;
+                                        fetchedAtMs?: number | undefined;
+                                    };
+                                    effectiveMeterId?: string | undefined;
+                                    effectiveRemainingPct?: number | undefined;
+                                    allWindows?: undefined | {
+                                        meterId: string;
+                                        scope?: string | undefined;
+                                        remainingPct?: number | undefined;
+                                        resetAtMs?: number | undefined;
+                                        status?: string | undefined;
+                                    }[];
+                                    recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                    overage?: null | undefined | {
+                                        status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                        resetAtMs: null | number;
+                                        disabledReason?: null | string | undefined;
+                                    };
+                                    action?: null | undefined | {
+                                        kind: 'none';
+                                    } | {
+                                        kind: 'open_url';
+                                        url: string;
+                                        labelKey?: string | undefined;
+                                    } | {
+                                        kind: 'settings';
+                                    };
+                                    connectedService?: null | undefined | {
+                                        serviceId: string;
+                                        profileId: null | string;
+                                        groupId: null | string;
+                                        groupExhausted?: boolean | undefined;
+                                    };
+                                };
+                                teamCredential?: undefined | {
+                                    v: 1;
+                                    resourceId: string;
+                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    usageLimit?: undefined | {
+                                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                        remaining: string;
+                                        resetsAtUtc: string;
+                                    };
+                                };
+                                temporaryThrottle?: undefined | {
+                                    v: 1;
+                                    retryAfterMs: null | number;
+                                    recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                };
+                                failureCause?: undefined | {
+                                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    code?: string | undefined;
+                                    retryable?: boolean | undefined;
+                                    requestId?: string | undefined;
+                                    preparationCause?: undefined | {
+                                        code: string;
+                                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                        requestId?: string | undefined;
+                                    };
+                                    connectedServicesDefault?: undefined | {
+                                        v: 1;
+                                        source: 'account_default';
+                                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                        phase: 'purpose_binding';
+                                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                    };
+                                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    httpStatus?: number | undefined;
+                                    providerErrorMessage?: string | undefined;
+                                };
+                                agentProcessExitAfterSwitch?: undefined | {
+                                    exitCode: null | number;
+                                    signal: null | string;
+                                    lastStderrLine: null | string;
+                                    vendorResumeId: null | string;
+                                    materializationRoot: null | string;
+                                    effectiveStateMode: 'isolated' | 'shared' | null;
+                                };
+                            }> | undefined;
+                            uxDiagnostic?: undefined | {
+                                code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: undefined | ({
+                                    [x: string]: boolean | null | number | string;
+                                } & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                });
+                            };
+                        };
+                    };
+                    last?: undefined | {
+                        turnId: string;
+                        inputIds: string[];
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
+                            value: string;
+                        } | {
+                            kind: 'json';
+                            value: JsonValue;
+                        } | {
+                            kind: 'text';
+                            value: string;
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: Readonly<{
+                                v: 1;
+                                scope: 'primary_session';
+                                status: 'failed';
+                                code: string;
+                                source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                occurredAt: number;
+                                sessionSeq?: number | undefined;
+                                agentId?: string | undefined;
+                                agentTurnId?: string | undefined;
+                                sanitizedPreview?: string | undefined;
+                                usageLimit?: undefined | {
+                                    v: 1;
+                                    resetAtMs: null | number;
+                                    retryAfterMs: null | number;
+                                    quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                    recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                    providerLimitId?: string | undefined;
+                                    planType?: null | string | undefined;
+                                    utilization?: null | number | undefined;
+                                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                    quotaSnapshotRef?: undefined | {
+                                        serviceId: string;
+                                        profileId?: string | undefined;
+                                        groupId?: string | undefined;
+                                        fetchedAtMs?: number | undefined;
+                                    };
+                                    effectiveMeterId?: string | undefined;
+                                    effectiveRemainingPct?: number | undefined;
+                                    allWindows?: undefined | {
+                                        meterId: string;
+                                        scope?: string | undefined;
+                                        remainingPct?: number | undefined;
+                                        resetAtMs?: number | undefined;
+                                        status?: string | undefined;
+                                    }[];
+                                    recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                    overage?: null | undefined | {
+                                        status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                        resetAtMs: null | number;
+                                        disabledReason?: null | string | undefined;
+                                    };
+                                    action?: null | undefined | {
+                                        kind: 'none';
+                                    } | {
+                                        kind: 'open_url';
+                                        url: string;
+                                        labelKey?: string | undefined;
+                                    } | {
+                                        kind: 'settings';
+                                    };
+                                    connectedService?: null | undefined | {
+                                        serviceId: string;
+                                        profileId: null | string;
+                                        groupId: null | string;
+                                        groupExhausted?: boolean | undefined;
+                                    };
+                                };
+                                teamCredential?: undefined | {
+                                    v: 1;
+                                    resourceId: string;
+                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    usageLimit?: undefined | {
+                                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                        remaining: string;
+                                        resetsAtUtc: string;
+                                    };
+                                };
+                                temporaryThrottle?: undefined | {
+                                    v: 1;
+                                    retryAfterMs: null | number;
+                                    recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                };
+                                failureCause?: undefined | {
+                                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    code?: string | undefined;
+                                    retryable?: boolean | undefined;
+                                    requestId?: string | undefined;
+                                    preparationCause?: undefined | {
+                                        code: string;
+                                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                        requestId?: string | undefined;
+                                    };
+                                    connectedServicesDefault?: undefined | {
+                                        v: 1;
+                                        source: 'account_default';
+                                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                        phase: 'purpose_binding';
+                                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                    };
+                                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    httpStatus?: number | undefined;
+                                    providerErrorMessage?: string | undefined;
+                                };
+                                agentProcessExitAfterSwitch?: undefined | {
+                                    exitCode: null | number;
+                                    signal: null | string;
+                                    lastStderrLine: null | string;
+                                    vendorResumeId: null | string;
+                                    materializationRoot: null | string;
+                                    effectiveStateMode: 'isolated' | 'shared' | null;
+                                };
+                            }> | undefined;
+                            uxDiagnostic?: undefined | {
+                                code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: undefined | ({
+                                    [x: string]: boolean | null | number | string;
+                                } & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                });
+                            };
+                        };
+                    };
+                };
+                interaction?: undefined | {
+                    kind: 'retained_agent_session.v1';
+                    capabilities: {
+                        open: ('create' | 'fork' | 'resume')[];
+                        delivery: ('followUp' | 'newTurn' | 'steer')[];
+                        cancel: boolean;
+                        configuration?: boolean | undefined;
+                        workspaceWrites?: 'deny' | undefined;
+                        compaction?: undefined | {
+                            events: true;
+                            manual?: true | undefined;
+                            idle?: undefined | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | {
+                                mode: 'native';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                                nativeHonorsMinimum?: true | undefined;
+                            };
+                        };
+                        conversationRollback?: true | undefined;
+                        goals?: undefined | {
+                            source: string;
+                            active?: undefined | {
+                                get?: true | undefined;
+                                clear?: true | undefined;
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                            inactive?: undefined | {
+                                get?: true | undefined;
+                                clear?: true | undefined;
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                        };
+                        usageReporting?: true | undefined;
+                        catalog?: undefined | {
+                            active?: ('skills' | 'vendorPlugins')[] | undefined;
+                            inactive?: ('skills' | 'vendorPlugins')[] | undefined;
+                        };
+                        usageLimitRecovery?: undefined | {
+                            active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                            inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
+                        };
+                        continuationVerification?: undefined | {
+                            intents: ('fork' | 'resume')[];
+                            requirement: 'advisory' | 'required';
+                        };
+                        workStateSources?: undefined | {
+                            id: string;
+                            itemKinds: ('goal' | 'task' | 'todo')[];
+                        }[];
+                        runtimeActivitySnapshots?: true | undefined;
+                        startupInstructions?: undefined | {
+                            versions: [
+                                1
+                            ];
+                            revisionChanges?: 'resume' | undefined;
+                        };
+                        executionRunContext?: undefined | {
+                            versions: [
+                                1
+                            ];
+                        };
+                    };
+                };
+                attention?: undefined | {
+                    kind: 'permission_required';
+                    requestIds: string[];
+                    requests?: undefined | {
+                        requestId: string;
+                        createdAt: number;
+                    }[];
+                };
+                lifecycle?: undefined | {
+                    v: 1;
+                    state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+                };
+                availableActionIds?: string[] | undefined;
+                resumeHandle?: undefined | {
+                    [x: string]: unknown;
+                    kind: 'provider_session.v1';
+                    backendTarget: {
+                        kind: 'backend';
+                        backendId: string;
+                        configuredBackendId?: string | undefined;
+                        sourceKind?: 'built_in' | 'configured' | undefined;
+                    };
+                    providerSessionId: string;
+                } | {
+                    [x: string]: unknown;
+                    kind: 'voice_agent_sessions.v1';
+                    backendTarget: {
+                        kind: 'backend';
+                        backendId: string;
+                        configuredBackendId?: string | undefined;
+                        sourceKind?: 'built_in' | 'configured' | undefined;
+                    };
+                    chatProviderSessionId: string;
+                    commitProviderSessionId: string;
+                };
+                transcript?: undefined | {
+                    [x: string]: unknown;
+                    persistenceMode: 'ephemeral' | 'persistent';
+                    epoch: number;
+                };
+                voicePolicy?: undefined | {
+                    assistantLanguage: null | string;
+                    welcome: {
+                        enabled: boolean;
+                        mode: 'immediate' | 'on_first_turn';
+                        text?: string | undefined;
+                    };
+                };
+                finishedAtMs?: number | undefined;
+                error?: undefined | {
+                    [x: string]: unknown;
+                    code: string;
+                    message?: string | undefined;
+                    runtimeIssueV1?: Readonly<{
+                        v: 1;
+                        scope: 'primary_session';
+                        status: 'failed';
+                        code: string;
+                        source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                        occurredAt: number;
+                        sessionSeq?: number | undefined;
+                        agentId?: string | undefined;
+                        agentTurnId?: string | undefined;
+                        sanitizedPreview?: string | undefined;
+                        usageLimit?: undefined | {
+                            v: 1;
+                            resetAtMs: null | number;
+                            retryAfterMs: null | number;
+                            quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                            recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                            providerLimitId?: string | undefined;
+                            planType?: null | string | undefined;
+                            utilization?: null | number | undefined;
+                            limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                            quotaSnapshotRef?: undefined | {
+                                serviceId: string;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                fetchedAtMs?: number | undefined;
+                            };
+                            effectiveMeterId?: string | undefined;
+                            effectiveRemainingPct?: number | undefined;
+                            allWindows?: undefined | {
+                                meterId: string;
+                                scope?: string | undefined;
+                                remainingPct?: number | undefined;
+                                resetAtMs?: number | undefined;
+                                status?: string | undefined;
+                            }[];
+                            recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                            overage?: null | undefined | {
+                                status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                resetAtMs: null | number;
+                                disabledReason?: null | string | undefined;
+                            };
+                            action?: null | undefined | {
+                                kind: 'none';
+                            } | {
+                                kind: 'open_url';
+                                url: string;
+                                labelKey?: string | undefined;
+                            } | {
+                                kind: 'settings';
+                            };
+                            connectedService?: null | undefined | {
+                                serviceId: string;
+                                profileId: null | string;
+                                groupId: null | string;
+                                groupExhausted?: boolean | undefined;
+                            };
+                        };
+                        teamCredential?: undefined | {
+                            v: 1;
+                            resourceId: string;
+                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            usageLimit?: undefined | {
+                                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                remaining: string;
+                                resetsAtUtc: string;
+                            };
+                        };
+                        temporaryThrottle?: undefined | {
+                            v: 1;
+                            retryAfterMs: null | number;
+                            recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                        };
+                        failureCause?: undefined | {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                            code?: string | undefined;
+                            retryable?: boolean | undefined;
+                            requestId?: string | undefined;
+                            preparationCause?: undefined | {
+                                code: string;
+                                stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                requestId?: string | undefined;
+                            };
+                            connectedServicesDefault?: undefined | {
+                                v: 1;
+                                source: 'account_default';
+                                reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                phase: 'purpose_binding';
+                                catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                            };
+                            reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                            httpStatus?: number | undefined;
+                            providerErrorMessage?: string | undefined;
+                        };
+                        agentProcessExitAfterSwitch?: undefined | {
+                            exitCode: null | number;
+                            signal: null | string;
+                            lastStderrLine: null | string;
+                            vendorResumeId: null | string;
+                            materializationRoot: null | string;
+                            effectiveStateMode: 'isolated' | 'shared' | null;
+                        };
+                    }> | undefined;
+                    uxDiagnostic?: undefined | {
+                        code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                        failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                        source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                        retryable: boolean;
+                        suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                        serviceId?: string | undefined;
+                        agentId?: string | undefined;
+                        profileId?: string | undefined;
+                        groupId?: string | undefined;
+                        diagnostics?: undefined | ({
+                            [x: string]: boolean | null | number | string;
+                        } & {
+                            reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                        });
+                    };
+                };
+            };
+            latestToolResult?: unknown;
+            structuredMeta?: undefined | {
+                [x: string]: unknown;
+                kind: string;
+                payload: unknown;
+            };
+            reviewFindings?: undefined | {
+                [x: string]: unknown;
+                runRef: {
+                    [x: string]: unknown;
+                    runId: string;
+                    callId: string;
+                    backendId: string;
+                    backendTarget?: undefined | {
+                        kind: 'builtInAgent';
+                        agentId: string;
+                    } | {
+                        kind: 'configuredAcpBackend';
+                        backendId: string;
+                    };
+                    retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
+                };
+                summary: string;
+                overviewMarkdown: string;
+                findings: {
+                    [x: string]: unknown;
+                    id: string;
+                    title: string;
+                    severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                    category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                    summary: string;
+                    filePath?: string | undefined;
+                    startLine?: number | undefined;
+                    endLine?: number | undefined;
+                    whyItMatters?: string | undefined;
+                    evidence?: string | undefined;
+                    confidence?: number | undefined;
+                    suggestion?: string | undefined;
+                    patch?: string | undefined;
+                    comment?: undefined | {
+                        id: string;
+                        state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
+                        serverRevision: number;
+                        sessionId?: string | undefined;
+                        runId?: string | undefined;
+                        projectId?: string | undefined;
+                        workspace?: undefined | {
+                            machineId: string;
+                            path: string;
+                        };
+                    };
+                    attributionConfidence?: string | undefined;
+                }[];
+                questions: {
+                    [x: string]: unknown;
+                    id: string;
+                    text: string;
+                    status: 'answered' | 'open' | 'superseded';
+                    findingIds?: string[] | undefined;
+                }[];
+                assumptions: {
+                    [x: string]: unknown;
+                    id: string;
+                    text: string;
+                    findingIds?: string[] | undefined;
+                }[];
+                generatedAtMs: number;
+                comparisonId?: string | undefined;
+                fileCount?: number | undefined;
+                reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                proposedComments?: undefined | {
+                    body: string;
+                    anchor: {
+                        kind: 'file';
+                        filePath: string;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        side?: 'after' | 'before' | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        side?: 'after' | 'before' | undefined;
+                    };
+                    findingId?: string | undefined;
+                    severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
+                    taxonomyIds?: string[] | undefined;
+                    tags?: string[] | undefined;
+                }[];
+                triage?: undefined | {
+                    [x: string]: unknown;
+                    findings: {
+                        [x: string]: unknown;
+                        id: string;
+                        status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
+                        commentId?: string | undefined;
+                        comment?: string | undefined;
+                    }[];
+                };
+                publication?: undefined | {
+                    [x: string]: unknown;
+                    findings: {
+                        [x: string]: unknown;
+                        id: string;
+                        published: boolean;
+                        publishedAtMs?: number | undefined;
+                        publishedMessageRef?: string | undefined;
+                    }[];
+                };
+                limits?: undefined | {
+                    [x: string]: unknown;
+                    findingsTruncated?: boolean | undefined;
+                    patchesTruncated?: boolean | undefined;
+                };
+            };
         };
     } | {
         ok: true;
@@ -5556,7 +9028,7 @@ export type ExecutionRunControlActionResultById = {
                 runId: string;
                 callId: string;
                 sidechainId: string;
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
                 backendTarget: {
                     kind: 'builtInAgent';
                     agentId: string;
@@ -5568,36 +9040,36 @@ export type ExecutionRunControlActionResultById = {
                 retentionPolicy: 'ephemeral' | 'resumable';
                 runClass: 'bounded' | 'long_lived';
                 ioMode: 'request_response' | 'streaming';
-                status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
+                status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                 startedAtMs: number;
                 originWorkflowRunId?: string | undefined;
-                display?: {
+                display?: undefined | {
                     [x: string]: unknown;
                     title?: string | undefined;
                     participantLabel?: string | undefined;
                     groupId?: string | undefined;
-                } | undefined;
-                launchOrigin?: {
+                };
+                launchOrigin?: undefined | {
                     kind: 'discussion';
                     serverId: string;
                     discussionId: string;
                     messageIds: string[];
                     draftCorrelationId?: string | undefined;
                 } | {
+                    kind: 'external';
+                    source?: 'action' | 'cli' | 'mcp' | undefined;
+                } | {
                     kind: 'session';
                     sessionId: string;
                     draftCorrelationId?: string | undefined;
-                } | {
-                    kind: 'external';
-                    source?: 'cli' | 'mcp' | 'action' | undefined;
-                } | undefined;
-                requestedConfiguration?: {
+                };
+                requestedConfiguration?: undefined | {
                     modelId?: string | undefined;
                     reasoningEffort?: string | undefined;
-                } | undefined;
-                resolvedSelection?: {
-                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                    modelSelection?: {
+                };
+                resolvedSelection?: undefined | {
+                    source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                    modelSelection?: undefined | {
                         agentTargetKey: string;
                         providerConnectionId: null;
                         modelId: string;
@@ -5605,8 +9077,8 @@ export type ExecutionRunControlActionResultById = {
                         agentTargetKey: string;
                         providerConnectionId: string;
                         modelId: string;
-                    } | undefined;
-                    teamCredentialModel?: {
+                    };
+                    teamCredentialModel?: undefined | {
                         kind: 'team_credential_provider_model';
                         resourceId: string;
                         teamId: string;
@@ -5614,7 +9086,7 @@ export type ExecutionRunControlActionResultById = {
                         agentTargetKey: string;
                         modelId: string;
                         deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                        nativeDelivery?: {
+                        nativeDelivery?: undefined | {
                             managedId: string;
                             controllerInstallationId: string;
                             guestInstallationId: string;
@@ -5622,22 +9094,27 @@ export type ExecutionRunControlActionResultById = {
                             placeholderRef: string;
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     modelId?: string | undefined;
-                    connectedServices?: {
+                    connectedServices?: null | undefined | {
                         v: 2;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
-                        } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
                             source: 'connected';
                             selection: 'profile';
                             profileId: string;
+                        } | {
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
                         } | {
                             source: 'team_resource';
                             resourceId: string;
@@ -5649,135 +9126,383 @@ export type ExecutionRunControlActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
                         }>;
-                    } | null | undefined;
-                } | undefined;
+                    };
+                };
+                approvalProfileId?: null | string | undefined;
                 turnInFlight?: boolean | undefined;
-                inputTurns?: {
+                inputTurns?: undefined | {
                     occurrenceId: string;
-                    current?: {
+                    current?: undefined | {
                         turnId: string;
                         inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
                             value: string;
                         } | {
                             kind: 'json';
                             value: JsonValue;
                         } | {
-                            kind: 'decision';
+                            kind: 'text';
                             value: string;
-                        } | undefined;
-                    } | undefined;
-                    last?: {
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: Readonly<{
+                                v: 1;
+                                scope: 'primary_session';
+                                status: 'failed';
+                                code: string;
+                                source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                occurredAt: number;
+                                sessionSeq?: number | undefined;
+                                agentId?: string | undefined;
+                                agentTurnId?: string | undefined;
+                                sanitizedPreview?: string | undefined;
+                                usageLimit?: undefined | {
+                                    v: 1;
+                                    resetAtMs: null | number;
+                                    retryAfterMs: null | number;
+                                    quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                    recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                    providerLimitId?: string | undefined;
+                                    planType?: null | string | undefined;
+                                    utilization?: null | number | undefined;
+                                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                    quotaSnapshotRef?: undefined | {
+                                        serviceId: string;
+                                        profileId?: string | undefined;
+                                        groupId?: string | undefined;
+                                        fetchedAtMs?: number | undefined;
+                                    };
+                                    effectiveMeterId?: string | undefined;
+                                    effectiveRemainingPct?: number | undefined;
+                                    allWindows?: undefined | {
+                                        meterId: string;
+                                        scope?: string | undefined;
+                                        remainingPct?: number | undefined;
+                                        resetAtMs?: number | undefined;
+                                        status?: string | undefined;
+                                    }[];
+                                    recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                    overage?: null | undefined | {
+                                        status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                        resetAtMs: null | number;
+                                        disabledReason?: null | string | undefined;
+                                    };
+                                    action?: null | undefined | {
+                                        kind: 'none';
+                                    } | {
+                                        kind: 'open_url';
+                                        url: string;
+                                        labelKey?: string | undefined;
+                                    } | {
+                                        kind: 'settings';
+                                    };
+                                    connectedService?: null | undefined | {
+                                        serviceId: string;
+                                        profileId: null | string;
+                                        groupId: null | string;
+                                        groupExhausted?: boolean | undefined;
+                                    };
+                                };
+                                teamCredential?: undefined | {
+                                    v: 1;
+                                    resourceId: string;
+                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    usageLimit?: undefined | {
+                                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                        remaining: string;
+                                        resetsAtUtc: string;
+                                    };
+                                };
+                                temporaryThrottle?: undefined | {
+                                    v: 1;
+                                    retryAfterMs: null | number;
+                                    recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                };
+                                failureCause?: undefined | {
+                                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    code?: string | undefined;
+                                    retryable?: boolean | undefined;
+                                    requestId?: string | undefined;
+                                    preparationCause?: undefined | {
+                                        code: string;
+                                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                        requestId?: string | undefined;
+                                    };
+                                    connectedServicesDefault?: undefined | {
+                                        v: 1;
+                                        source: 'account_default';
+                                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                        phase: 'purpose_binding';
+                                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                    };
+                                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    httpStatus?: number | undefined;
+                                    providerErrorMessage?: string | undefined;
+                                };
+                                agentProcessExitAfterSwitch?: undefined | {
+                                    exitCode: null | number;
+                                    signal: null | string;
+                                    lastStderrLine: null | string;
+                                    vendorResumeId: null | string;
+                                    materializationRoot: null | string;
+                                    effectiveStateMode: 'isolated' | 'shared' | null;
+                                };
+                            }> | undefined;
+                            uxDiagnostic?: undefined | {
+                                code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: undefined | ({
+                                    [x: string]: boolean | null | number | string;
+                                } & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                });
+                            };
+                        };
+                    };
+                    last?: undefined | {
                         turnId: string;
                         inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
+                        state: 'active' | 'cancelled' | 'completed' | 'failed';
+                        result?: undefined | {
+                            kind: 'decision';
                             value: string;
                         } | {
                             kind: 'json';
                             value: JsonValue;
                         } | {
-                            kind: 'decision';
+                            kind: 'text';
                             value: string;
-                        } | undefined;
-                    } | undefined;
-                } | undefined;
-                interaction?: {
+                        };
+                        error?: undefined | {
+                            [x: string]: unknown;
+                            code: string;
+                            message?: string | undefined;
+                            runtimeIssueV1?: Readonly<{
+                                v: 1;
+                                scope: 'primary_session';
+                                status: 'failed';
+                                code: string;
+                                source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
+                                occurredAt: number;
+                                sessionSeq?: number | undefined;
+                                agentId?: string | undefined;
+                                agentTurnId?: string | undefined;
+                                sanitizedPreview?: string | undefined;
+                                usageLimit?: undefined | {
+                                    v: 1;
+                                    resetAtMs: null | number;
+                                    retryAfterMs: null | number;
+                                    quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                                    recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
+                                    providerLimitId?: string | undefined;
+                                    planType?: null | string | undefined;
+                                    utilization?: null | number | undefined;
+                                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                                    quotaSnapshotRef?: undefined | {
+                                        serviceId: string;
+                                        profileId?: string | undefined;
+                                        groupId?: string | undefined;
+                                        fetchedAtMs?: number | undefined;
+                                    };
+                                    effectiveMeterId?: string | undefined;
+                                    effectiveRemainingPct?: number | undefined;
+                                    allWindows?: undefined | {
+                                        meterId: string;
+                                        scope?: string | undefined;
+                                        remainingPct?: number | undefined;
+                                        resetAtMs?: number | undefined;
+                                        status?: string | undefined;
+                                    }[];
+                                    recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                                    overage?: null | undefined | {
+                                        status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                        resetAtMs: null | number;
+                                        disabledReason?: null | string | undefined;
+                                    };
+                                    action?: null | undefined | {
+                                        kind: 'none';
+                                    } | {
+                                        kind: 'open_url';
+                                        url: string;
+                                        labelKey?: string | undefined;
+                                    } | {
+                                        kind: 'settings';
+                                    };
+                                    connectedService?: null | undefined | {
+                                        serviceId: string;
+                                        profileId: null | string;
+                                        groupId: null | string;
+                                        groupExhausted?: boolean | undefined;
+                                    };
+                                };
+                                teamCredential?: undefined | {
+                                    v: 1;
+                                    resourceId: string;
+                                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                                    usageLimit?: undefined | {
+                                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                                        remaining: string;
+                                        resetsAtUtc: string;
+                                    };
+                                };
+                                temporaryThrottle?: undefined | {
+                                    v: 1;
+                                    retryAfterMs: null | number;
+                                    recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                                };
+                                failureCause?: undefined | {
+                                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
+                                    code?: string | undefined;
+                                    retryable?: boolean | undefined;
+                                    requestId?: string | undefined;
+                                    preparationCause?: undefined | {
+                                        code: string;
+                                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                        requestId?: string | undefined;
+                                    };
+                                    connectedServicesDefault?: undefined | {
+                                        v: 1;
+                                        source: 'account_default';
+                                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                        phase: 'purpose_binding';
+                                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                                    };
+                                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
+                                    httpStatus?: number | undefined;
+                                    providerErrorMessage?: string | undefined;
+                                };
+                                agentProcessExitAfterSwitch?: undefined | {
+                                    exitCode: null | number;
+                                    signal: null | string;
+                                    lastStderrLine: null | string;
+                                    vendorResumeId: null | string;
+                                    materializationRoot: null | string;
+                                    effectiveStateMode: 'isolated' | 'shared' | null;
+                                };
+                            }> | undefined;
+                            uxDiagnostic?: undefined | {
+                                code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                                failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                                source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
+                                retryable: boolean;
+                                suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
+                                serviceId?: string | undefined;
+                                agentId?: string | undefined;
+                                profileId?: string | undefined;
+                                groupId?: string | undefined;
+                                diagnostics?: undefined | ({
+                                    [x: string]: boolean | null | number | string;
+                                } & {
+                                    reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                                });
+                            };
+                        };
+                    };
+                };
+                interaction?: undefined | {
                     kind: 'retained_agent_session.v1';
                     capabilities: {
-                        open: ('resume' | 'create' | 'fork')[];
-                        delivery: ('newTurn' | 'steer' | 'followUp')[];
+                        open: ('create' | 'fork' | 'resume')[];
+                        delivery: ('followUp' | 'newTurn' | 'steer')[];
                         cancel: boolean;
                         configuration?: boolean | undefined;
                         workspaceWrites?: 'deny' | undefined;
-                        compaction?: {
+                        compaction?: undefined | {
                             events: true;
                             manual?: true | undefined;
-                            idle?: {
+                            idle?: undefined | {
+                                mode: 'host';
+                                defaultEnabled: boolean;
+                                defaultMinContextTokens?: number | undefined;
+                            } | {
                                 mode: 'native';
                                 defaultEnabled: boolean;
                                 defaultMinContextTokens?: number | undefined;
                                 nativeHonorsMinimum?: true | undefined;
-                            } | {
-                                mode: 'host';
-                                defaultEnabled: boolean;
-                                defaultMinContextTokens?: number | undefined;
-                            } | undefined;
-                        } | undefined;
+                            };
+                        };
                         conversationRollback?: true | undefined;
-                        goals?: {
+                        goals?: undefined | {
                             source: string;
-                            active?: {
+                            active?: undefined | {
                                 get?: true | undefined;
                                 clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                            inactive?: {
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                            inactive?: undefined | {
                                 get?: true | undefined;
                                 clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                        } | undefined;
+                                set?: undefined | {
+                                    fields: ('objective' | 'status' | 'tokenBudget')[];
+                                    writableStatuses?: ('active' | 'complete' | 'paused')[] | undefined;
+                                };
+                            };
+                        };
                         usageReporting?: true | undefined;
-                        catalog?: {
+                        catalog?: undefined | {
                             active?: ('skills' | 'vendorPlugins')[] | undefined;
                             inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                        } | undefined;
-                        usageLimitRecovery?: {
+                        };
+                        usageLimitRecovery?: undefined | {
                             active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
                             inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                        } | undefined;
-                        continuationVerification?: {
-                            intents: ('resume' | 'fork')[];
-                            requirement: 'required' | 'advisory';
-                        } | undefined;
-                        workStateSources?: {
+                        };
+                        continuationVerification?: undefined | {
+                            intents: ('fork' | 'resume')[];
+                            requirement: 'advisory' | 'required';
+                        };
+                        workStateSources?: undefined | {
                             id: string;
-                            itemKinds: ('task' | 'goal' | 'todo')[];
-                        }[] | undefined;
+                            itemKinds: ('goal' | 'task' | 'todo')[];
+                        }[];
                         runtimeActivitySnapshots?: true | undefined;
-                        startupInstructions?: {
+                        startupInstructions?: undefined | {
                             versions: [
                                 1
                             ];
                             revisionChanges?: 'resume' | undefined;
-                        } | undefined;
-                        executionRunContext?: {
+                        };
+                        executionRunContext?: undefined | {
                             versions: [
                                 1
                             ];
-                        } | undefined;
+                        };
                     };
-                } | undefined;
-                attention?: {
+                };
+                attention?: undefined | {
                     kind: 'permission_required';
                     requestIds: string[];
-                    requests?: {
+                    requests?: undefined | {
                         requestId: string;
                         createdAt: number;
-                    }[] | undefined;
-                } | undefined;
-                lifecycle?: {
+                    }[];
+                };
+                lifecycle?: undefined | {
                     v: 1;
-                    state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                } | undefined;
+                    state: 'current' | 'recoverable' | 'recoverable_with_input' | 'recovering' | 'unavailable';
+                };
                 availableActionIds?: string[] | undefined;
-                resumeHandle?: {
+                resumeHandle?: undefined | {
                     [x: string]: unknown;
                     kind: 'provider_session.v1';
                     backendTarget: {
@@ -5798,22 +9523,22 @@ export type ExecutionRunControlActionResultById = {
                     };
                     chatProviderSessionId: string;
                     commitProviderSessionId: string;
-                } | undefined;
-                transcript?: {
+                };
+                transcript?: undefined | {
                     [x: string]: unknown;
                     persistenceMode: 'ephemeral' | 'persistent';
                     epoch: number;
-                } | undefined;
-                voicePolicy?: {
-                    assistantLanguage: string | null;
+                };
+                voicePolicy?: undefined | {
+                    assistantLanguage: null | string;
                     welcome: {
                         enabled: boolean;
                         mode: 'immediate' | 'on_first_turn';
                         text?: string | undefined;
                     };
-                } | undefined;
+                };
                 finishedAtMs?: number | undefined;
-                error?: {
+                error?: undefined | {
                     [x: string]: unknown;
                     code: string;
                     message?: string | undefined;
@@ -5822,1134 +9547,144 @@ export type ExecutionRunControlActionResultById = {
                         scope: 'primary_session';
                         status: 'failed';
                         code: string;
-                        source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
+                        source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
                         occurredAt: number;
                         sessionSeq?: number | undefined;
                         agentId?: string | undefined;
                         agentTurnId?: string | undefined;
                         sanitizedPreview?: string | undefined;
-                        usageLimit?: {
+                        usageLimit?: undefined | {
                             v: 1;
-                            resetAtMs: number | null;
-                            retryAfterMs: number | null;
-                            quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                            recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
+                            resetAtMs: null | number;
+                            retryAfterMs: null | number;
+                            quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                            recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
                             providerLimitId?: string | undefined;
-                            planType?: string | null | undefined;
-                            utilization?: number | null | undefined;
-                            limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                            quotaSnapshotRef?: {
+                            planType?: null | string | undefined;
+                            utilization?: null | number | undefined;
+                            limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                            quotaSnapshotRef?: undefined | {
                                 serviceId: string;
                                 profileId?: string | undefined;
                                 groupId?: string | undefined;
                                 fetchedAtMs?: number | undefined;
-                            } | undefined;
-                            effectiveMeterId?: string | undefined;
-                            effectiveRemainingPct?: number | undefined;
-                            allWindows?: {
-                                meterId: string;
-                                scope?: string | undefined;
-                                remainingPct?: number | undefined;
-                                resetAtMs?: number | undefined;
-                                status?: string | undefined;
-                            }[] | undefined;
-                            recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                            overage?: {
-                                status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                                resetAtMs: number | null;
-                                disabledReason?: string | null | undefined;
-                            } | null | undefined;
-                            action?: {
-                                kind: 'open_url';
-                                url: string;
-                                labelKey?: string | undefined;
-                            } | {
-                                kind: 'settings';
-                            } | {
-                                kind: 'none';
-                            } | null | undefined;
-                            connectedService?: {
-                                serviceId: string;
-                                profileId: string | null;
-                                groupId: string | null;
-                                groupExhausted?: boolean | undefined;
-                            } | null | undefined;
-                        } | undefined;
-                        teamCredential?: {
-                            v: 1;
-                            resourceId: string;
-                            reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                            usageLimit?: {
-                                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
-                                remaining: string;
-                                resetsAtUtc: string;
-                            } | undefined;
-                        } | undefined;
-                        temporaryThrottle?: {
-                            v: 1;
-                            retryAfterMs: number | null;
-                            recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                        } | undefined;
-                        failureCause?: {
-                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
-                            code?: string | undefined;
-                            preparationCause?: {
-                                code: string;
-                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                            } | undefined;
-                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
-                            httpStatus?: number | undefined;
-                            providerErrorMessage?: string | undefined;
-                        } | undefined;
-                        agentProcessExitAfterSwitch?: {
-                            exitCode: number | null;
-                            signal: string | null;
-                            lastStderrLine: string | null;
-                            vendorResumeId: string | null;
-                            materializationRoot: string | null;
-                            effectiveStateMode: 'shared' | 'isolated' | null;
-                        } | undefined;
-                    }> | undefined;
-                    uxDiagnostic?: {
-                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
-                        retryable: boolean;
-                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
-                        serviceId?: string | undefined;
-                        agentId?: string | undefined;
-                        profileId?: string | undefined;
-                        groupId?: string | undefined;
-                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                    } | undefined;
-                } | undefined;
-            };
-            latestToolResult?: unknown;
-            structuredMeta?: {
-                [x: string]: unknown;
-                kind: string;
-                payload: unknown;
-            } | undefined;
-            reviewFindings?: {
-                [x: string]: unknown;
-                runRef: {
-                    [x: string]: unknown;
-                    runId: string;
-                    callId: string;
-                    backendId: string;
-                    backendTarget?: {
-                        kind: 'builtInAgent';
-                        agentId: string;
-                    } | {
-                        kind: 'configuredAcpBackend';
-                        backendId: string;
-                    } | undefined;
-                    retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
-                };
-                summary: string;
-                overviewMarkdown: string;
-                findings: {
-                    [x: string]: unknown;
-                    id: string;
-                    title: string;
-                    severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                    category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
-                    summary: string;
-                    filePath?: string | undefined;
-                    startLine?: number | undefined;
-                    endLine?: number | undefined;
-                    whyItMatters?: string | undefined;
-                    evidence?: string | undefined;
-                    confidence?: number | undefined;
-                    suggestion?: string | undefined;
-                    patch?: string | undefined;
-                    comment?: {
-                        id: string;
-                        state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
-                        serverRevision: number;
-                        sessionId?: string | undefined;
-                        runId?: string | undefined;
-                        projectId?: string | undefined;
-                        workspace?: {
-                            machineId: string;
-                            path: string;
-                        } | undefined;
-                    } | undefined;
-                    attributionConfidence?: string | undefined;
-                }[];
-                questions: {
-                    [x: string]: unknown;
-                    id: string;
-                    text: string;
-                    status: 'open' | 'answered' | 'superseded';
-                    findingIds?: string[] | undefined;
-                }[];
-                assumptions: {
-                    [x: string]: unknown;
-                    id: string;
-                    text: string;
-                    findingIds?: string[] | undefined;
-                }[];
-                generatedAtMs: number;
-                comparisonId?: string | undefined;
-                fileCount?: number | undefined;
-                reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-                proposedComments?: {
-                    body: string;
-                    anchor: {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        side?: 'after' | 'before' | undefined;
-                    } | {
-                        kind: 'file';
-                        filePath: string;
-                    } | {
-                        kind: 'line';
-                        filePath: string;
-                        line: number;
-                        side?: 'after' | 'before' | undefined;
-                    };
-                    findingId?: string | undefined;
-                    severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
-                    taxonomyIds?: string[] | undefined;
-                    tags?: string[] | undefined;
-                }[] | undefined;
-                triage?: {
-                    [x: string]: unknown;
-                    findings: {
-                        [x: string]: unknown;
-                        id: string;
-                        status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
-                        commentId?: string | undefined;
-                        comment?: string | undefined;
-                    }[];
-                } | undefined;
-                publication?: {
-                    [x: string]: unknown;
-                    findings: {
-                        [x: string]: unknown;
-                        id: string;
-                        published: boolean;
-                        publishedAtMs?: number | undefined;
-                        publishedMessageRef?: string | undefined;
-                    }[];
-                } | undefined;
-                limits?: {
-                    [x: string]: unknown;
-                    findingsTruncated?: boolean | undefined;
-                    patchesTruncated?: boolean | undefined;
-                } | undefined;
-            } | undefined;
-        };
-    } | {
-        ok: true;
-        status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
-        disposition: 'snapshot';
-        result: {
-            [x: string]: unknown;
-            run: {
-                [x: string]: unknown;
-                runId: string;
-                callId: string;
-                sidechainId: string;
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
-                backendTarget: {
-                    kind: 'builtInAgent';
-                    agentId: string;
-                } | {
-                    kind: 'configuredAcpBackend';
-                    backendId: string;
-                };
-                permissionMode: string;
-                retentionPolicy: 'ephemeral' | 'resumable';
-                runClass: 'bounded' | 'long_lived';
-                ioMode: 'request_response' | 'streaming';
-                status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
-                startedAtMs: number;
-                originWorkflowRunId?: string | undefined;
-                display?: {
-                    [x: string]: unknown;
-                    title?: string | undefined;
-                    participantLabel?: string | undefined;
-                    groupId?: string | undefined;
-                } | undefined;
-                launchOrigin?: {
-                    kind: 'discussion';
-                    serverId: string;
-                    discussionId: string;
-                    messageIds: string[];
-                    draftCorrelationId?: string | undefined;
-                } | {
-                    kind: 'session';
-                    sessionId: string;
-                    draftCorrelationId?: string | undefined;
-                } | {
-                    kind: 'external';
-                    source?: 'cli' | 'mcp' | 'action' | undefined;
-                } | undefined;
-                requestedConfiguration?: {
-                    modelId?: string | undefined;
-                    reasoningEffort?: string | undefined;
-                } | undefined;
-                resolvedSelection?: {
-                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                    modelSelection?: {
-                        agentTargetKey: string;
-                        providerConnectionId: null;
-                        modelId: string;
-                    } | {
-                        agentTargetKey: string;
-                        providerConnectionId: string;
-                        modelId: string;
-                    } | undefined;
-                    teamCredentialModel?: {
-                        kind: 'team_credential_provider_model';
-                        resourceId: string;
-                        teamId: string;
-                        expectedResourceRevision: number;
-                        agentTargetKey: string;
-                        modelId: string;
-                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                        nativeDelivery?: {
-                            managedId: string;
-                            controllerInstallationId: string;
-                            guestInstallationId: string;
-                            bindingKey: string;
-                            placeholderRef: string;
-                            sourceRevision: string;
-                            providerTicket: string;
-                        } | undefined;
-                    } | undefined;
-                    modelId?: string | undefined;
-                    connectedServices?: {
-                        v: 2;
-                        bindingsByServiceId: Record<string, {
-                            source: 'native';
-                        } | {
-                            source: 'connected';
-                            selection: 'group';
-                            groupId: string;
-                            profileId?: string | undefined;
-                        } | {
-                            source: 'connected';
-                            selection: 'profile';
-                            profileId: string;
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'direct';
-                            disclosedMember: {
-                                service: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
-                        }>;
-                    } | null | undefined;
-                } | undefined;
-                turnInFlight?: boolean | undefined;
-                inputTurns?: {
-                    occurrenceId: string;
-                    current?: {
-                        turnId: string;
-                        inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
-                            value: string;
-                        } | {
-                            kind: 'json';
-                            value: JsonValue;
-                        } | {
-                            kind: 'decision';
-                            value: string;
-                        } | undefined;
-                    } | undefined;
-                    last?: {
-                        turnId: string;
-                        inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
-                            value: string;
-                        } | {
-                            kind: 'json';
-                            value: JsonValue;
-                        } | {
-                            kind: 'decision';
-                            value: string;
-                        } | undefined;
-                    } | undefined;
-                } | undefined;
-                interaction?: {
-                    kind: 'retained_agent_session.v1';
-                    capabilities: {
-                        open: ('resume' | 'create' | 'fork')[];
-                        delivery: ('newTurn' | 'steer' | 'followUp')[];
-                        cancel: boolean;
-                        configuration?: boolean | undefined;
-                        workspaceWrites?: 'deny' | undefined;
-                        compaction?: {
-                            events: true;
-                            manual?: true | undefined;
-                            idle?: {
-                                mode: 'native';
-                                defaultEnabled: boolean;
-                                defaultMinContextTokens?: number | undefined;
-                                nativeHonorsMinimum?: true | undefined;
-                            } | {
-                                mode: 'host';
-                                defaultEnabled: boolean;
-                                defaultMinContextTokens?: number | undefined;
-                            } | undefined;
-                        } | undefined;
-                        conversationRollback?: true | undefined;
-                        goals?: {
-                            source: string;
-                            active?: {
-                                get?: true | undefined;
-                                clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                            inactive?: {
-                                get?: true | undefined;
-                                clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                        } | undefined;
-                        usageReporting?: true | undefined;
-                        catalog?: {
-                            active?: ('skills' | 'vendorPlugins')[] | undefined;
-                            inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                        } | undefined;
-                        usageLimitRecovery?: {
-                            active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                            inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                        } | undefined;
-                        continuationVerification?: {
-                            intents: ('resume' | 'fork')[];
-                            requirement: 'required' | 'advisory';
-                        } | undefined;
-                        workStateSources?: {
-                            id: string;
-                            itemKinds: ('task' | 'goal' | 'todo')[];
-                        }[] | undefined;
-                        runtimeActivitySnapshots?: true | undefined;
-                        startupInstructions?: {
-                            versions: [
-                                1
-                            ];
-                            revisionChanges?: 'resume' | undefined;
-                        } | undefined;
-                        executionRunContext?: {
-                            versions: [
-                                1
-                            ];
-                        } | undefined;
-                    };
-                } | undefined;
-                attention?: {
-                    kind: 'permission_required';
-                    requestIds: string[];
-                    requests?: {
-                        requestId: string;
-                        createdAt: number;
-                    }[] | undefined;
-                } | undefined;
-                lifecycle?: {
-                    v: 1;
-                    state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                } | undefined;
-                availableActionIds?: string[] | undefined;
-                resumeHandle?: {
-                    [x: string]: unknown;
-                    kind: 'provider_session.v1';
-                    backendTarget: {
-                        kind: 'backend';
-                        backendId: string;
-                        configuredBackendId?: string | undefined;
-                        sourceKind?: 'built_in' | 'configured' | undefined;
-                    };
-                    providerSessionId: string;
-                } | {
-                    [x: string]: unknown;
-                    kind: 'voice_agent_sessions.v1';
-                    backendTarget: {
-                        kind: 'backend';
-                        backendId: string;
-                        configuredBackendId?: string | undefined;
-                        sourceKind?: 'built_in' | 'configured' | undefined;
-                    };
-                    chatProviderSessionId: string;
-                    commitProviderSessionId: string;
-                } | undefined;
-                transcript?: {
-                    [x: string]: unknown;
-                    persistenceMode: 'ephemeral' | 'persistent';
-                    epoch: number;
-                } | undefined;
-                voicePolicy?: {
-                    assistantLanguage: string | null;
-                    welcome: {
-                        enabled: boolean;
-                        mode: 'immediate' | 'on_first_turn';
-                        text?: string | undefined;
-                    };
-                } | undefined;
-                finishedAtMs?: number | undefined;
-                error?: {
-                    [x: string]: unknown;
-                    code: string;
-                    message?: string | undefined;
-                    runtimeIssueV1?: Readonly<{
-                        v: 1;
-                        scope: 'primary_session';
-                        status: 'failed';
-                        code: string;
-                        source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
-                        occurredAt: number;
-                        sessionSeq?: number | undefined;
-                        agentId?: string | undefined;
-                        agentTurnId?: string | undefined;
-                        sanitizedPreview?: string | undefined;
-                        usageLimit?: {
-                            v: 1;
-                            resetAtMs: number | null;
-                            retryAfterMs: number | null;
-                            quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                            recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
-                            providerLimitId?: string | undefined;
-                            planType?: string | null | undefined;
-                            utilization?: number | null | undefined;
-                            limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                            quotaSnapshotRef?: {
-                                serviceId: string;
-                                profileId?: string | undefined;
-                                groupId?: string | undefined;
-                                fetchedAtMs?: number | undefined;
-                            } | undefined;
                             effectiveMeterId?: string | undefined;
                             effectiveRemainingPct?: number | undefined;
-                            allWindows?: {
+                            allWindows?: undefined | {
                                 meterId: string;
                                 scope?: string | undefined;
                                 remainingPct?: number | undefined;
                                 resetAtMs?: number | undefined;
                                 status?: string | undefined;
-                            }[] | undefined;
-                            recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                            overage?: {
-                                status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                                resetAtMs: number | null;
-                                disabledReason?: string | null | undefined;
-                            } | null | undefined;
-                            action?: {
-                                kind: 'open_url';
-                                url: string;
-                                labelKey?: string | undefined;
-                            } | {
-                                kind: 'settings';
-                            } | {
-                                kind: 'none';
-                            } | null | undefined;
-                            connectedService?: {
-                                serviceId: string;
-                                profileId: string | null;
-                                groupId: string | null;
-                                groupExhausted?: boolean | undefined;
-                            } | null | undefined;
-                        } | undefined;
-                        teamCredential?: {
-                            v: 1;
-                            resourceId: string;
-                            reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                            usageLimit?: {
-                                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
-                                remaining: string;
-                                resetsAtUtc: string;
-                            } | undefined;
-                        } | undefined;
-                        temporaryThrottle?: {
-                            v: 1;
-                            retryAfterMs: number | null;
-                            recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                        } | undefined;
-                        failureCause?: {
-                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
-                            code?: string | undefined;
-                            preparationCause?: {
-                                code: string;
-                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                            } | undefined;
-                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
-                            httpStatus?: number | undefined;
-                            providerErrorMessage?: string | undefined;
-                        } | undefined;
-                        agentProcessExitAfterSwitch?: {
-                            exitCode: number | null;
-                            signal: string | null;
-                            lastStderrLine: string | null;
-                            vendorResumeId: string | null;
-                            materializationRoot: string | null;
-                            effectiveStateMode: 'shared' | 'isolated' | null;
-                        } | undefined;
-                    }> | undefined;
-                    uxDiagnostic?: {
-                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
-                        retryable: boolean;
-                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
-                        serviceId?: string | undefined;
-                        agentId?: string | undefined;
-                        profileId?: string | undefined;
-                        groupId?: string | undefined;
-                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                    } | undefined;
-                } | undefined;
-            };
-            latestToolResult?: unknown;
-            structuredMeta?: {
-                [x: string]: unknown;
-                kind: string;
-                payload: unknown;
-            } | undefined;
-            reviewFindings?: {
-                [x: string]: unknown;
-                runRef: {
-                    [x: string]: unknown;
-                    runId: string;
-                    callId: string;
-                    backendId: string;
-                    backendTarget?: {
-                        kind: 'builtInAgent';
-                        agentId: string;
-                    } | {
-                        kind: 'configuredAcpBackend';
-                        backendId: string;
-                    } | undefined;
-                    retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
-                };
-                summary: string;
-                overviewMarkdown: string;
-                findings: {
-                    [x: string]: unknown;
-                    id: string;
-                    title: string;
-                    severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                    category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
-                    summary: string;
-                    filePath?: string | undefined;
-                    startLine?: number | undefined;
-                    endLine?: number | undefined;
-                    whyItMatters?: string | undefined;
-                    evidence?: string | undefined;
-                    confidence?: number | undefined;
-                    suggestion?: string | undefined;
-                    patch?: string | undefined;
-                    comment?: {
-                        id: string;
-                        state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
-                        serverRevision: number;
-                        sessionId?: string | undefined;
-                        runId?: string | undefined;
-                        projectId?: string | undefined;
-                        workspace?: {
-                            machineId: string;
-                            path: string;
-                        } | undefined;
-                    } | undefined;
-                    attributionConfidence?: string | undefined;
-                }[];
-                questions: {
-                    [x: string]: unknown;
-                    id: string;
-                    text: string;
-                    status: 'open' | 'answered' | 'superseded';
-                    findingIds?: string[] | undefined;
-                }[];
-                assumptions: {
-                    [x: string]: unknown;
-                    id: string;
-                    text: string;
-                    findingIds?: string[] | undefined;
-                }[];
-                generatedAtMs: number;
-                comparisonId?: string | undefined;
-                fileCount?: number | undefined;
-                reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-                proposedComments?: {
-                    body: string;
-                    anchor: {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        side?: 'after' | 'before' | undefined;
-                    } | {
-                        kind: 'file';
-                        filePath: string;
-                    } | {
-                        kind: 'line';
-                        filePath: string;
-                        line: number;
-                        side?: 'after' | 'before' | undefined;
-                    };
-                    findingId?: string | undefined;
-                    severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
-                    taxonomyIds?: string[] | undefined;
-                    tags?: string[] | undefined;
-                }[] | undefined;
-                triage?: {
-                    [x: string]: unknown;
-                    findings: {
-                        [x: string]: unknown;
-                        id: string;
-                        status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
-                        commentId?: string | undefined;
-                        comment?: string | undefined;
-                    }[];
-                } | undefined;
-                publication?: {
-                    [x: string]: unknown;
-                    findings: {
-                        [x: string]: unknown;
-                        id: string;
-                        published: boolean;
-                        publishedAtMs?: number | undefined;
-                        publishedMessageRef?: string | undefined;
-                    }[];
-                } | undefined;
-                limits?: {
-                    [x: string]: unknown;
-                    findingsTruncated?: boolean | undefined;
-                    patchesTruncated?: boolean | undefined;
-                } | undefined;
-            } | undefined;
-        };
-    } | {
-        ok: true;
-        disposition: 'observation_timeout';
-        runId: string;
-        timeoutMs: number;
-        observedAtMs: number;
-        deadlineAtMs: number;
-        status: 'succeeded' | 'failed' | 'cancelled' | 'timeout';
-        result: {
-            [x: string]: unknown;
-            run: {
-                [x: string]: unknown;
-                runId: string;
-                callId: string;
-                sidechainId: string;
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
-                backendTarget: {
-                    kind: 'builtInAgent';
-                    agentId: string;
-                } | {
-                    kind: 'configuredAcpBackend';
-                    backendId: string;
-                };
-                permissionMode: string;
-                retentionPolicy: 'ephemeral' | 'resumable';
-                runClass: 'bounded' | 'long_lived';
-                ioMode: 'request_response' | 'streaming';
-                status: 'succeeded' | 'failed' | 'cancelled' | 'timeout' | 'running';
-                startedAtMs: number;
-                originWorkflowRunId?: string | undefined;
-                display?: {
-                    [x: string]: unknown;
-                    title?: string | undefined;
-                    participantLabel?: string | undefined;
-                    groupId?: string | undefined;
-                } | undefined;
-                launchOrigin?: {
-                    kind: 'discussion';
-                    serverId: string;
-                    discussionId: string;
-                    messageIds: string[];
-                    draftCorrelationId?: string | undefined;
-                } | {
-                    kind: 'session';
-                    sessionId: string;
-                    draftCorrelationId?: string | undefined;
-                } | {
-                    kind: 'external';
-                    source?: 'cli' | 'mcp' | 'action' | undefined;
-                } | undefined;
-                requestedConfiguration?: {
-                    modelId?: string | undefined;
-                    reasoningEffort?: string | undefined;
-                } | undefined;
-                resolvedSelection?: {
-                    source: 'inherited' | 'explicit' | 'independent' | 'retained';
-                    modelSelection?: {
-                        agentTargetKey: string;
-                        providerConnectionId: null;
-                        modelId: string;
-                    } | {
-                        agentTargetKey: string;
-                        providerConnectionId: string;
-                        modelId: string;
-                    } | undefined;
-                    teamCredentialModel?: {
-                        kind: 'team_credential_provider_model';
-                        resourceId: string;
-                        teamId: string;
-                        expectedResourceRevision: number;
-                        agentTargetKey: string;
-                        modelId: string;
-                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-                        nativeDelivery?: {
-                            managedId: string;
-                            controllerInstallationId: string;
-                            guestInstallationId: string;
-                            bindingKey: string;
-                            placeholderRef: string;
-                            sourceRevision: string;
-                            providerTicket: string;
-                        } | undefined;
-                    } | undefined;
-                    modelId?: string | undefined;
-                    connectedServices?: {
-                        v: 2;
-                        bindingsByServiceId: Record<string, {
-                            source: 'native';
-                        } | {
-                            source: 'connected';
-                            selection: 'group';
-                            groupId: string;
-                            profileId?: string | undefined;
-                        } | {
-                            source: 'connected';
-                            selection: 'profile';
-                            profileId: string;
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'direct';
-                            disclosedMember: {
-                                service: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                accountId: string;
+                            }[];
+                            recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                            overage?: null | undefined | {
+                                status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                                resetAtMs: null | number;
+                                disabledReason?: null | string | undefined;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
-                        }>;
-                    } | null | undefined;
-                } | undefined;
-                turnInFlight?: boolean | undefined;
-                inputTurns?: {
-                    occurrenceId: string;
-                    current?: {
-                        turnId: string;
-                        inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
-                            value: string;
-                        } | {
-                            kind: 'json';
-                            value: JsonValue;
-                        } | {
-                            kind: 'decision';
-                            value: string;
-                        } | undefined;
-                    } | undefined;
-                    last?: {
-                        turnId: string;
-                        inputIds: string[];
-                        state: 'failed' | 'cancelled' | 'active' | 'completed';
-                        result?: {
-                            kind: 'text';
-                            value: string;
-                        } | {
-                            kind: 'json';
-                            value: JsonValue;
-                        } | {
-                            kind: 'decision';
-                            value: string;
-                        } | undefined;
-                    } | undefined;
-                } | undefined;
-                interaction?: {
-                    kind: 'retained_agent_session.v1';
-                    capabilities: {
-                        open: ('resume' | 'create' | 'fork')[];
-                        delivery: ('newTurn' | 'steer' | 'followUp')[];
-                        cancel: boolean;
-                        configuration?: boolean | undefined;
-                        workspaceWrites?: 'deny' | undefined;
-                        compaction?: {
-                            events: true;
-                            manual?: true | undefined;
-                            idle?: {
-                                mode: 'native';
-                                defaultEnabled: boolean;
-                                defaultMinContextTokens?: number | undefined;
-                                nativeHonorsMinimum?: true | undefined;
+                            action?: null | undefined | {
+                                kind: 'none';
                             } | {
-                                mode: 'host';
-                                defaultEnabled: boolean;
-                                defaultMinContextTokens?: number | undefined;
-                            } | undefined;
-                        } | undefined;
-                        conversationRollback?: true | undefined;
-                        goals?: {
-                            source: string;
-                            active?: {
-                                get?: true | undefined;
-                                clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                            inactive?: {
-                                get?: true | undefined;
-                                clear?: true | undefined;
-                                set?: {
-                                    fields: ('status' | 'objective' | 'tokenBudget')[];
-                                    writableStatuses?: ('active' | 'paused' | 'complete')[] | undefined;
-                                } | undefined;
-                            } | undefined;
-                        } | undefined;
-                        usageReporting?: true | undefined;
-                        catalog?: {
-                            active?: ('skills' | 'vendorPlugins')[] | undefined;
-                            inactive?: ('skills' | 'vendorPlugins')[] | undefined;
-                        } | undefined;
-                        usageLimitRecovery?: {
-                            active?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                            inactive?: ('checkNow' | 'consumeResetCredit')[] | undefined;
-                        } | undefined;
-                        continuationVerification?: {
-                            intents: ('resume' | 'fork')[];
-                            requirement: 'required' | 'advisory';
-                        } | undefined;
-                        workStateSources?: {
-                            id: string;
-                            itemKinds: ('task' | 'goal' | 'todo')[];
-                        }[] | undefined;
-                        runtimeActivitySnapshots?: true | undefined;
-                        startupInstructions?: {
-                            versions: [
-                                1
-                            ];
-                            revisionChanges?: 'resume' | undefined;
-                        } | undefined;
-                        executionRunContext?: {
-                            versions: [
-                                1
-                            ];
-                        } | undefined;
-                    };
-                } | undefined;
-                attention?: {
-                    kind: 'permission_required';
-                    requestIds: string[];
-                    requests?: {
-                        requestId: string;
-                        createdAt: number;
-                    }[] | undefined;
-                } | undefined;
-                lifecycle?: {
-                    v: 1;
-                    state: 'unavailable' | 'current' | 'recovering' | 'recoverable' | 'recoverable_with_input';
-                } | undefined;
-                availableActionIds?: string[] | undefined;
-                resumeHandle?: {
-                    [x: string]: unknown;
-                    kind: 'provider_session.v1';
-                    backendTarget: {
-                        kind: 'backend';
-                        backendId: string;
-                        configuredBackendId?: string | undefined;
-                        sourceKind?: 'built_in' | 'configured' | undefined;
-                    };
-                    providerSessionId: string;
-                } | {
-                    [x: string]: unknown;
-                    kind: 'voice_agent_sessions.v1';
-                    backendTarget: {
-                        kind: 'backend';
-                        backendId: string;
-                        configuredBackendId?: string | undefined;
-                        sourceKind?: 'built_in' | 'configured' | undefined;
-                    };
-                    chatProviderSessionId: string;
-                    commitProviderSessionId: string;
-                } | undefined;
-                transcript?: {
-                    [x: string]: unknown;
-                    persistenceMode: 'ephemeral' | 'persistent';
-                    epoch: number;
-                } | undefined;
-                voicePolicy?: {
-                    assistantLanguage: string | null;
-                    welcome: {
-                        enabled: boolean;
-                        mode: 'immediate' | 'on_first_turn';
-                        text?: string | undefined;
-                    };
-                } | undefined;
-                finishedAtMs?: number | undefined;
-                error?: {
-                    [x: string]: unknown;
-                    code: string;
-                    message?: string | undefined;
-                    runtimeIssueV1?: Readonly<{
-                        v: 1;
-                        scope: 'primary_session';
-                        status: 'failed';
-                        code: string;
-                        source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
-                        occurredAt: number;
-                        sessionSeq?: number | undefined;
-                        agentId?: string | undefined;
-                        agentTurnId?: string | undefined;
-                        sanitizedPreview?: string | undefined;
-                        usageLimit?: {
-                            v: 1;
-                            resetAtMs: number | null;
-                            retryAfterMs: number | null;
-                            quotaScope: 'unknown' | 'account' | 'workspace' | 'organization' | 'model' | 'provider';
-                            recoverability: 'unknown' | 'manual' | 'wait' | 'switch_account';
-                            providerLimitId?: string | undefined;
-                            planType?: string | null | undefined;
-                            utilization?: number | null | undefined;
-                            limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                            quotaSnapshotRef?: {
-                                serviceId: string;
-                                profileId?: string | undefined;
-                                groupId?: string | undefined;
-                                fetchedAtMs?: number | undefined;
-                            } | undefined;
-                            effectiveMeterId?: string | undefined;
-                            effectiveRemainingPct?: number | undefined;
-                            allWindows?: {
-                                meterId: string;
-                                scope?: string | undefined;
-                                remainingPct?: number | undefined;
-                                resetAtMs?: number | undefined;
-                                status?: string | undefined;
-                            }[] | undefined;
-                            recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                            overage?: {
-                                status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                                resetAtMs: number | null;
-                                disabledReason?: string | null | undefined;
-                            } | null | undefined;
-                            action?: {
                                 kind: 'open_url';
                                 url: string;
                                 labelKey?: string | undefined;
                             } | {
                                 kind: 'settings';
-                            } | {
-                                kind: 'none';
-                            } | null | undefined;
-                            connectedService?: {
+                            };
+                            connectedService?: null | undefined | {
                                 serviceId: string;
-                                profileId: string | null;
-                                groupId: string | null;
+                                profileId: null | string;
+                                groupId: null | string;
                                 groupExhausted?: boolean | undefined;
-                            } | null | undefined;
-                        } | undefined;
-                        teamCredential?: {
+                            };
+                        };
+                        teamCredential?: undefined | {
                             v: 1;
                             resourceId: string;
-                            reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                            usageLimit?: {
-                                metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                            reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                            usageLimit?: undefined | {
+                                metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                                 remaining: string;
                                 resetsAtUtc: string;
-                            } | undefined;
-                        } | undefined;
-                        temporaryThrottle?: {
+                            };
+                        };
+                        temporaryThrottle?: undefined | {
                             v: 1;
-                            retryAfterMs: number | null;
-                            recoverability: 'unknown' | 'manual' | 'wait' | 'retry';
-                        } | undefined;
-                        failureCause?: {
-                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                            failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                            retryAfterMs: null | number;
+                            recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                        };
+                        failureCause?: undefined | {
+                            phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                            failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                             code?: string | undefined;
-                            preparationCause?: {
+                            retryable?: boolean | undefined;
+                            requestId?: string | undefined;
+                            preparationCause?: undefined | {
                                 code: string;
-                                stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                            } | undefined;
-                            reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                            providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                                stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                                requestId?: string | undefined;
+                            };
+                            connectedServicesDefault?: undefined | {
+                                v: 1;
+                                source: 'account_default';
+                                reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                                phase: 'purpose_binding';
+                                catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                            };
+                            reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                            providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
                             httpStatus?: number | undefined;
                             providerErrorMessage?: string | undefined;
-                        } | undefined;
-                        agentProcessExitAfterSwitch?: {
-                            exitCode: number | null;
-                            signal: string | null;
-                            lastStderrLine: string | null;
-                            vendorResumeId: string | null;
-                            materializationRoot: string | null;
-                            effectiveStateMode: 'shared' | 'isolated' | null;
-                        } | undefined;
+                        };
+                        agentProcessExitAfterSwitch?: undefined | {
+                            exitCode: null | number;
+                            signal: null | string;
+                            lastStderrLine: null | string;
+                            vendorResumeId: null | string;
+                            materializationRoot: null | string;
+                            effectiveStateMode: 'isolated' | 'shared' | null;
+                        };
                     }> | undefined;
-                    uxDiagnostic?: {
-                        code: 'provider_session_state_unavailable_for_resume' | 'connected_service_materialization_identity_missing' | 'resume_reachability_inputs_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'recovery_retry_scheduled' | 'recovery_dead_lettered' | 'provider_account_adoption_mismatch' | 'post_switch_verification_failed' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified';
-                        failurePhase: 'session_lookup' | 'agent_validation' | 'normalization' | 'continuity' | 'materialization' | 'metadata' | 'restart' | 'hot_apply' | 'rollback' | 'post_switch_recovery' | 'post_switch_verification' | 'runtime_auth_recovery';
-                        source: 'runtime_auth_recovery' | 'spawn_resume' | 'new_session' | 'inactive_resume' | 'manual_auth_switch' | 'usage_limit_recovery' | 'transcript_switch_attempt' | 'session_view';
+                    uxDiagnostic?: undefined | {
+                        code: 'claude_subscription_missing_claude_code_scope' | 'claude_subscription_native_auth_materialization_failed' | 'claude_subscription_setup_token_not_supported_for_unified' | 'connected_service_credential_reconnect_required' | 'connected_service_credential_refresh_unavailable' | 'connected_service_materialization_identity_missing' | 'metadata_update_failed' | 'no_eligible_group_member' | 'post_switch_verification_failed' | 'provider_account_adoption_mismatch' | 'provider_session_state_unavailable_for_resume' | 'recovery_dead_lettered' | 'recovery_retry_scheduled' | 'resume_reachability_inputs_missing';
+                        failurePhase: 'agent_validation' | 'continuity' | 'hot_apply' | 'materialization' | 'metadata' | 'normalization' | 'post_switch_recovery' | 'post_switch_verification' | 'restart' | 'rollback' | 'runtime_auth_recovery' | 'session_lookup';
+                        source: 'inactive_resume' | 'manual_auth_switch' | 'new_session' | 'runtime_auth_recovery' | 'session_view' | 'spawn_resume' | 'transcript_switch_attempt' | 'usage_limit_recovery';
                         retryable: boolean;
-                        suggestedActions: ('retry' | 'start_fresh_under_selected_account' | 'resume_current_account' | 'open_connected_accounts' | 'reconnect_profile' | 'enable_state_sharing' | 'view_latest_fork' | 'view_native_fork' | 'dismiss')[];
+                        suggestedActions: ('dismiss' | 'enable_state_sharing' | 'open_connected_accounts' | 'reconnect_profile' | 'resume_current_account' | 'retry' | 'start_fresh_under_selected_account' | 'view_latest_fork' | 'view_native_fork')[];
                         serviceId?: string | undefined;
                         agentId?: string | undefined;
                         profileId?: string | undefined;
                         groupId?: string | undefined;
-                        diagnostics?: Record<string, string | number | boolean | null> | undefined;
-                    } | undefined;
-                } | undefined;
+                        diagnostics?: undefined | ({
+                            [x: string]: boolean | null | number | string;
+                        } & {
+                            reconnectCause?: 'credential_missing' | 'listed_needs_reauth' | 'stored_health_rejected' | undefined;
+                        });
+                    };
+                };
             };
             latestToolResult?: unknown;
-            structuredMeta?: {
+            structuredMeta?: undefined | {
                 [x: string]: unknown;
                 kind: string;
                 payload: unknown;
-            } | undefined;
-            reviewFindings?: {
+            };
+            reviewFindings?: undefined | {
                 [x: string]: unknown;
                 runRef: {
                     [x: string]: unknown;
                     runId: string;
                     callId: string;
                     backendId: string;
-                    backendTarget?: {
+                    backendTarget?: undefined | {
                         kind: 'builtInAgent';
                         agentId: string;
                     } | {
                         kind: 'configuredAcpBackend';
                         backendId: string;
-                    } | undefined;
+                    };
                     retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
                 };
                 summary: string;
@@ -6958,8 +9693,8 @@ export type ExecutionRunControlActionResultById = {
                     [x: string]: unknown;
                     id: string;
                     title: string;
-                    severity: 'blocker' | 'high' | 'medium' | 'low' | 'nit';
-                    category: 'correctness' | 'security' | 'performance' | 'maintainability' | 'testing' | 'style' | 'docs';
+                    severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                    category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
                     summary: string;
                     filePath?: string | undefined;
                     startLine?: number | undefined;
@@ -6969,25 +9704,25 @@ export type ExecutionRunControlActionResultById = {
                     confidence?: number | undefined;
                     suggestion?: string | undefined;
                     patch?: string | undefined;
-                    comment?: {
+                    comment?: undefined | {
                         id: string;
-                        state: 'open' | 'proposed' | 'delegated' | 'pending_review' | 'resolved' | 'dismissed';
+                        state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
                         serverRevision: number;
                         sessionId?: string | undefined;
                         runId?: string | undefined;
                         projectId?: string | undefined;
-                        workspace?: {
+                        workspace?: undefined | {
                             machineId: string;
                             path: string;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     attributionConfidence?: string | undefined;
                 }[];
                 questions: {
                     [x: string]: unknown;
                     id: string;
                     text: string;
-                    status: 'open' | 'answered' | 'superseded';
+                    status: 'answered' | 'open' | 'superseded';
                     findingIds?: string[] | undefined;
                 }[];
                 assumptions: {
@@ -6999,16 +9734,10 @@ export type ExecutionRunControlActionResultById = {
                 generatedAtMs: number;
                 comparisonId?: string | undefined;
                 fileCount?: number | undefined;
-                reviewOutcome?: 'failed' | 'complete' | 'partial' | undefined;
-                proposedComments?: {
+                reviewOutcome?: 'complete' | 'failed' | 'partial' | undefined;
+                proposedComments?: undefined | {
                     body: string;
                     anchor: {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        side?: 'after' | 'before' | undefined;
-                    } | {
                         kind: 'file';
                         filePath: string;
                     } | {
@@ -7016,23 +9745,29 @@ export type ExecutionRunControlActionResultById = {
                         filePath: string;
                         line: number;
                         side?: 'after' | 'before' | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        side?: 'after' | 'before' | undefined;
                     };
                     findingId?: string | undefined;
-                    severity?: 'error' | 'info' | 'warning' | 'critical' | undefined;
+                    severity?: 'critical' | 'error' | 'info' | 'warning' | undefined;
                     taxonomyIds?: string[] | undefined;
                     tags?: string[] | undefined;
-                }[] | undefined;
-                triage?: {
+                }[];
+                triage?: undefined | {
                     [x: string]: unknown;
                     findings: {
                         [x: string]: unknown;
                         id: string;
-                        status: 'accept' | 'reject' | 'defer' | 'needs_refinement';
+                        status: 'accept' | 'defer' | 'needs_refinement' | 'reject';
                         commentId?: string | undefined;
                         comment?: string | undefined;
                     }[];
-                } | undefined;
-                publication?: {
+                };
+                publication?: undefined | {
                     [x: string]: unknown;
                     findings: {
                         [x: string]: unknown;
@@ -7041,13 +9776,13 @@ export type ExecutionRunControlActionResultById = {
                         publishedAtMs?: number | undefined;
                         publishedMessageRef?: string | undefined;
                     }[];
-                } | undefined;
-                limits?: {
+                };
+                limits?: undefined | {
                     [x: string]: unknown;
                     findingsTruncated?: boolean | undefined;
                     patchesTruncated?: boolean | undefined;
-                } | undefined;
-            } | undefined;
+                };
+            };
         };
     } | {
         ok: true;
@@ -7057,11 +9792,5 @@ export type ExecutionRunControlActionResultById = {
         timeoutMs: number;
         observedAtMs: number;
         deadlineAtMs: number;
-    } | {
-        ok: false;
-        code: 'cancelled';
-    } | {
-        ok: false;
-        code: 'execution_run_not_found' | 'permission_denied' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded';
     };
 };

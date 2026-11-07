@@ -11,14 +11,16 @@ export type ListReorderActionInputById = {
         };
         sourceId: string;
         position: {
-            anchorId: string | null;
-            placement: 'before' | 'after';
+            anchorId: null | string;
+            placement: 'after' | 'before';
         };
         sessionId: string;
-        recipient: {
+        recipient: null | {
             kind: 'execution_run';
             runId: string;
-        } | null;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "tasks.internal.reorder": {
         scope: {
@@ -27,8 +29,8 @@ export type ListReorderActionInputById = {
         };
         sourceId: string;
         position: {
-            anchorId: string | null;
-            placement: 'before' | 'after';
+            anchorId: null | string;
+            placement: 'after' | 'before';
         };
     };
 };
@@ -36,10 +38,10 @@ export type ListReorderActionResultById = {
     readonly "session.pending.reorder": {
         status: 'applied';
     } | {
-        status: 'unavailable';
-    } | {
         status: 'refused';
         reason: string;
+    } | {
+        status: 'unavailable';
     } | {
         status: 'unknown';
         reason: string;
@@ -47,10 +49,10 @@ export type ListReorderActionResultById = {
     readonly "tasks.internal.reorder": {
         status: 'applied';
     } | {
-        status: 'unavailable';
-    } | {
         status: 'refused';
         reason: string;
+    } | {
+        status: 'unavailable';
     } | {
         status: 'unknown';
         reason: string;

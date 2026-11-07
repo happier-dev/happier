@@ -13,55 +13,55 @@ export type FriendsActionInputById = {
 };
 export type FriendsActionResultById = {
     readonly "friends.add": {
-        user: {
-            name: string | null;
+        user: null | {
+            name: null | string;
             id: string;
             firstName: string;
-            lastName: string | null;
-            avatar: {
+            lastName: null | string;
+            avatar: null | {
                 path: string;
                 url: string;
                 width?: number | undefined;
                 height?: number | undefined;
                 thumbhash?: string | undefined;
-            } | null;
+            };
             username: string;
-            bio: string | null;
+            bio: null | string;
             badges: {
                 id: string;
                 label: string;
                 url: string;
             }[];
-            status: 'none' | 'requested' | 'pending' | 'friend' | 'rejected';
-            publicKey: string | null;
-            contentPublicKey?: string | null | undefined;
-            contentPublicKeySig?: string | null | undefined;
-        } | null;
+            status: 'friend' | 'none' | 'pending' | 'rejected' | 'requested';
+            publicKey: null | string;
+            contentPublicKey?: null | string | undefined;
+            contentPublicKeySig?: null | string | undefined;
+        };
     };
     readonly "friends.remove": {
-        user: {
-            name: string | null;
+        user: null | {
+            name: null | string;
             id: string;
             firstName: string;
-            lastName: string | null;
-            avatar: {
+            lastName: null | string;
+            avatar: null | {
                 path: string;
                 url: string;
                 width?: number | undefined;
                 height?: number | undefined;
                 thumbhash?: string | undefined;
-            } | null;
+            };
             username: string;
-            bio: string | null;
+            bio: null | string;
             badges: {
                 id: string;
                 label: string;
                 url: string;
             }[];
-            status: 'none' | 'requested' | 'pending' | 'friend' | 'rejected';
-            publicKey: string | null;
-            contentPublicKey?: string | null | undefined;
-            contentPublicKeySig?: string | null | undefined;
-        } | null;
+            status: 'friend' | 'none' | 'pending' | 'rejected' | 'requested';
+            publicKey: null | string;
+            contentPublicKey?: null | string | undefined;
+            contentPublicKeySig?: null | string | undefined;
+        };
     };
 };

@@ -6,117 +6,121 @@
 export type WorkspaceLayoutActionInputById = {
     readonly "workspace.files.link.get": {
         target: {
-            kind: 'session';
-            sessionId: string;
-            serverId?: string | undefined;
-        } | {
             kind: 'project';
             workspaceRefId: string;
             serverId: string;
             machineId?: string | undefined;
             rootPath?: string | undefined;
+        } | {
+            kind: 'session';
+            sessionId: string;
+            serverId?: string | undefined;
         };
         path: string;
         rootPath?: string | undefined;
-        anchor?: {
-            kind: 'fileLine';
-            startLine: number;
-            lineHash?: `lh1:${string}` | undefined;
-        } | {
+        anchor?: undefined | {
             kind: 'diffLine';
             startLine: number;
-            side: 'before' | 'after';
-            oldLine: number | null;
-            newLine: number | null;
+            side: 'after' | 'before';
+            oldLine: null | number;
+            newLine: null | number;
+            lineHash?: `lh1:${string}` | undefined;
+        } | {
+            kind: 'fileLine';
+            startLine: number;
             lineHash?: `lh1:${string}` | undefined;
         } | {
             kind: 'line';
             filePath: string;
             line: number;
-            side?: 'before' | 'after' | undefined;
+            side?: 'after' | 'before' | undefined;
             lineHash?: `lh1:${string}` | undefined;
         } | {
             kind: 'range';
             filePath: string;
             startLine: number;
             endLine: number;
-            side?: 'before' | 'after' | undefined;
+            side?: 'after' | 'before' | undefined;
             startLineHash?: `lh1:${string}` | undefined;
             endLineHash?: `lh1:${string}` | undefined;
             selectedTextHash?: `lh1:${string}` | undefined;
-        } | undefined;
-        anchorSource?: 'file' | 'diff' | undefined;
-        view?: 'view' | 'changes' | 'edit' | undefined;
+        };
+        anchorSource?: 'diff' | 'file' | undefined;
+        view?: 'changes' | 'edit' | 'view' | undefined;
         blame?: boolean | undefined;
-        changesScope?: {
+        changesScope?: undefined | {
+            kind: 'session';
+        } | {
             kind: 'turn';
             turnId: string;
         } | {
-            kind: 'session';
-        } | {
             kind: 'workingTree';
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "workspace.tabs.list": Record<string, never>;
+    readonly "workspace.tabs.list": Record<string, never> & {
+        clientId?: string | undefined;
+    };
     readonly "workspace.tabs.open": {
         href?: string | undefined;
         tabId?: string | undefined;
         groupId?: string | undefined;
-        file?: {
+        file?: undefined | {
             target: {
-                kind: 'session';
-                sessionId: string;
-                serverId?: string | undefined;
-            } | {
                 kind: 'project';
                 workspaceRefId: string;
                 serverId: string;
                 machineId?: string | undefined;
                 rootPath?: string | undefined;
+            } | {
+                kind: 'session';
+                sessionId: string;
+                serverId?: string | undefined;
             };
             path: string;
             rootPath?: string | undefined;
-            anchor?: {
-                kind: 'fileLine';
-                startLine: number;
-                lineHash?: `lh1:${string}` | undefined;
-            } | {
+            anchor?: undefined | {
                 kind: 'diffLine';
                 startLine: number;
-                side: 'before' | 'after';
-                oldLine: number | null;
-                newLine: number | null;
+                side: 'after' | 'before';
+                oldLine: null | number;
+                newLine: null | number;
+                lineHash?: `lh1:${string}` | undefined;
+            } | {
+                kind: 'fileLine';
+                startLine: number;
                 lineHash?: `lh1:${string}` | undefined;
             } | {
                 kind: 'line';
                 filePath: string;
                 line: number;
-                side?: 'before' | 'after' | undefined;
+                side?: 'after' | 'before' | undefined;
                 lineHash?: `lh1:${string}` | undefined;
             } | {
                 kind: 'range';
                 filePath: string;
                 startLine: number;
                 endLine: number;
-                side?: 'before' | 'after' | undefined;
+                side?: 'after' | 'before' | undefined;
                 startLineHash?: `lh1:${string}` | undefined;
                 endLineHash?: `lh1:${string}` | undefined;
                 selectedTextHash?: `lh1:${string}` | undefined;
-            } | undefined;
-            anchorSource?: 'file' | 'diff' | undefined;
-            view?: 'view' | 'changes' | 'edit' | undefined;
+            };
+            anchorSource?: 'diff' | 'file' | undefined;
+            view?: 'changes' | 'edit' | 'view' | undefined;
             blame?: boolean | undefined;
-            changesScope?: {
+            changesScope?: undefined | {
+                kind: 'session';
+            } | {
                 kind: 'turn';
                 turnId: string;
             } | {
-                kind: 'session';
-            } | {
                 kind: 'workingTree';
-            } | undefined;
-        } | undefined;
+            };
+        };
         present?: boolean | undefined;
-        find?: {
+        find?: undefined | {
             query: string;
             target: {
                 kind: 'native-message';
@@ -124,10 +128,10 @@ export type WorkspaceLayoutActionInputById = {
                 remoteSessionId: string;
                 sourceItemId: string;
             };
-            options?: {
+            options?: undefined | {
                 matchCase: boolean;
                 regex: boolean;
-            } | undefined;
+            };
         } | {
             query: string;
             target: {
@@ -137,38 +141,38 @@ export type WorkspaceLayoutActionInputById = {
                 machineId: string;
                 rootPath: string;
                 path: string;
-                anchor?: {
-                    kind: 'fileLine';
-                    startLine: number;
-                    lineHash?: `lh1:${string}` | undefined;
-                } | {
+                anchor?: undefined | {
                     kind: 'diffLine';
                     startLine: number;
-                    side: 'before' | 'after';
-                    oldLine: number | null;
-                    newLine: number | null;
+                    side: 'after' | 'before';
+                    oldLine: null | number;
+                    newLine: null | number;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'fileLine';
+                    startLine: number;
                     lineHash?: `lh1:${string}` | undefined;
                 } | {
                     kind: 'line';
                     filePath: string;
                     line: number;
-                    side?: 'before' | 'after' | undefined;
+                    side?: 'after' | 'before' | undefined;
                     lineHash?: `lh1:${string}` | undefined;
                 } | {
                     kind: 'range';
                     filePath: string;
                     startLine: number;
                     endLine: number;
-                    side?: 'before' | 'after' | undefined;
+                    side?: 'after' | 'before' | undefined;
                     startLineHash?: `lh1:${string}` | undefined;
                     endLineHash?: `lh1:${string}` | undefined;
                     selectedTextHash?: `lh1:${string}` | undefined;
-                } | undefined;
+                };
             };
-            options?: {
+            options?: undefined | {
                 matchCase: boolean;
                 regex: boolean;
-            } | undefined;
+            };
         } | {
             query: string;
             target: {
@@ -178,96 +182,174 @@ export type WorkspaceLayoutActionInputById = {
                 machineId: string;
                 rootPath: string;
                 path: string;
-                anchor?: {
-                    kind: 'fileLine';
-                    startLine: number;
-                    lineHash?: `lh1:${string}` | undefined;
-                } | {
+                anchor?: undefined | {
                     kind: 'diffLine';
                     startLine: number;
-                    side: 'before' | 'after';
-                    oldLine: number | null;
-                    newLine: number | null;
+                    side: 'after' | 'before';
+                    oldLine: null | number;
+                    newLine: null | number;
+                    lineHash?: `lh1:${string}` | undefined;
+                } | {
+                    kind: 'fileLine';
+                    startLine: number;
                     lineHash?: `lh1:${string}` | undefined;
                 } | {
                     kind: 'line';
                     filePath: string;
                     line: number;
-                    side?: 'before' | 'after' | undefined;
+                    side?: 'after' | 'before' | undefined;
                     lineHash?: `lh1:${string}` | undefined;
                 } | {
                     kind: 'range';
                     filePath: string;
                     startLine: number;
                     endLine: number;
-                    side?: 'before' | 'after' | undefined;
+                    side?: 'after' | 'before' | undefined;
                     startLineHash?: `lh1:${string}` | undefined;
                     endLineHash?: `lh1:${string}` | undefined;
                     selectedTextHash?: `lh1:${string}` | undefined;
-                } | undefined;
+                };
             };
-            options?: {
+            options?: undefined | {
                 matchCase: boolean;
                 regex: boolean;
-            } | undefined;
-        } | undefined;
-        beforeTabId?: string | null | undefined;
+            };
+        };
+        beforeTabId?: null | string | undefined;
         reuseExisting?: boolean | undefined;
-        mode?: 'preview' | 'newTab' | 'splitLeft' | 'splitRight' | 'splitUp' | 'splitDown' | undefined;
+        replace?: boolean | undefined;
+        mode?: 'newTab' | 'preview' | 'splitDown' | 'splitLeft' | 'splitRight' | 'splitUp' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.tabs.activate": {
-        tabId: string;
+        windowId?: string | undefined;
+        tabId?: string | undefined;
+        address?: undefined | {
+            scopeId: string;
+            tabKey: string;
+            serverId: string;
+            accountId: string;
+            layoutId: string;
+            kind: 'paneTab';
+        } | {
+            tabId: string;
+            serverId: string;
+            accountId: string;
+            layoutId: string;
+            kind: 'workspaceTab';
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.tabs.close": {
-        tabId: string;
+        tabId?: string | undefined;
+        address?: undefined | {
+            scopeId: string;
+            tabKey: string;
+            serverId: string;
+            accountId: string;
+            layoutId: string;
+            kind: 'paneTab';
+        } | {
+            tabId: string;
+            serverId: string;
+            accountId: string;
+            layoutId: string;
+            kind: 'workspaceTab';
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.tabs.close_others": {
         tabId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.tabs.close_left": {
         tabId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.tabs.close_right": {
         tabId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.tabs.close_all": {
         groupId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "workspace.tabs.closed.list": Record<string, never>;
+    readonly "workspace.tabs.closed.list": Record<string, never> & {
+        clientId?: string | undefined;
+    };
     readonly "workspace.tabs.reopen": {
         tabId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.tabs.pin": {
         tabId: string;
         pinned: boolean;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.tabs.move": {
-        tabId: string;
         targetGroupId: string;
-        beforeTabId?: string | null | undefined;
+        beforeTabId?: null | string | undefined;
+        tabId?: string | undefined;
+        address?: undefined | {
+            scopeId: string;
+            tabKey: string;
+            serverId: string;
+            accountId: string;
+            layoutId: string;
+            kind: 'paneTab';
+        } | {
+            tabId: string;
+            serverId: string;
+            accountId: string;
+            layoutId: string;
+            kind: 'workspaceTab';
+        };
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "workspace.tabs.reorder": {
+    readonly "workspace.tabs.reorder": ({
         tabId: string;
-        index: number;
+        beforeTabId: null | string;
     } | {
         tabId: string;
-        beforeTabId: string | null;
+        index: number;
+    }) & {
+        clientId?: string | undefined;
     };
     readonly "workspace.groups.focus": {
         groupId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.groups.maximize": {
         groupId: string;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "workspace.groups.restore": Record<string, never>;
+    readonly "workspace.groups.restore": Record<string, never> & {
+        clientId?: string | undefined;
+    };
     readonly "workspace.split": {
-        direction: 'left' | 'right' | 'up' | 'down';
+        direction: 'down' | 'left' | 'right' | 'up';
         tabId?: string | undefined;
         groupId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "workspace.resize": {
         splitId: string;
         ratio: number;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type WorkspaceLayoutActionResultById = {
@@ -277,7 +359,7 @@ export type WorkspaceLayoutActionResultById = {
     };
     readonly "workspace.tabs.list": {
         ok: true;
-        tabs: {
+        tabs: ({
             id: string;
             groupId: string;
             target: {
@@ -286,7 +368,40 @@ export type WorkspaceLayoutActionResultById = {
             };
             pinned: boolean;
             preview: boolean;
-        }[];
+            address?: undefined | {
+                tabId: string;
+                serverId: string;
+                accountId: string;
+                layoutId: string;
+                kind: 'workspaceTab';
+            };
+            presentation?: undefined | {
+                windowId: string;
+                focused?: boolean | undefined;
+            };
+        } | {
+            kind: 'paneTab';
+            id: string;
+            groupId: string;
+            address: {
+                scopeId: string;
+                tabKey: string;
+                serverId: string;
+                accountId: string;
+                layoutId: string;
+                kind: 'paneTab';
+            };
+            scopeId: string;
+            tabKey: string;
+            paneType: string;
+            pinned: boolean;
+            preview: boolean;
+            title?: string | undefined;
+            presentation?: undefined | {
+                windowId: string;
+                focused?: boolean | undefined;
+            };
+        })[];
         groups: {
             id: string;
             tabIds: string[];
@@ -294,14 +409,23 @@ export type WorkspaceLayoutActionResultById = {
         }[];
         splits: {
             id: string;
-            axis: 'row' | 'column';
+            axis: 'column' | 'row';
             ratio: number;
             firstNodeId: string;
             secondNodeId: string;
         }[];
         rootNodeId: string;
         focusedGroupId: string;
-        maximizedGroupId: string | null;
+        maximizedGroupId: null | string;
+        windows?: undefined | {
+            windowId: string;
+            role: 'primary' | 'secondary';
+            chrome: 'destination' | 'full';
+            serverId: string;
+            accountId: string;
+            layoutId: string;
+            focused: boolean;
+        }[];
     };
     readonly "workspace.tabs.open": {
         ok: true;

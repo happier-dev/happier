@@ -21,6 +21,61 @@ export type AgentAcpCatalogActionInputById = {
             name: string;
             title: string;
             launch: {
+                kind: 'archive';
+                version: string;
+                assetsByPlatform: {
+                    'darwin-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'darwin-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                };
+                args?: string[] | undefined;
+                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-arm64' | 'win32-x64', Record<string, string>>> | undefined;
+            } | {
                 kind: 'command';
                 command: string;
                 args?: string[] | undefined;
@@ -31,61 +86,6 @@ export type AgentAcpCatalogActionInputById = {
                 bin?: string | undefined;
                 args?: string[] | undefined;
             } | {
-                kind: 'archive';
-                version: string;
-                assetsByPlatform: {
-                    'darwin-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'darwin-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                };
-                args?: string[] | undefined;
-                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64', Record<string, string>>> | undefined;
-            } | {
                 kind: 'uv';
                 package: string;
                 version: string;
@@ -93,14 +93,17 @@ export type AgentAcpCatalogActionInputById = {
                 args?: string[] | undefined;
             };
             description?: string | undefined;
-            origin?: {
+            origin?: undefined | {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -110,15 +113,18 @@ export type AgentAcpCatalogActionInputById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -127,15 +133,26 @@ export type AgentAcpCatalogActionInputById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
+                    sourceUrl?: undefined;
                 };
                 iconUrl?: string | undefined;
                 publisher?: string | undefined;
                 license?: string | undefined;
                 repository?: string | undefined;
                 website?: string | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -145,30 +162,23 @@ export type AgentAcpCatalogActionInputById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
-            } | undefined;
+                    };
+                };
+            };
             env?: Record<string, {
                 t: 'literal';
                 v: string;
             } | {
                 t: 'savedSecret';
                 secretId: string;
+            } | {
+                t: 'sessionAttested';
+                field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
             } | {
                 t: 'template';
                 template: string;
@@ -179,67 +189,64 @@ export type AgentAcpCatalogActionInputById = {
                     t: 'savedSecret';
                     secretId: string;
                 }>;
-            } | {
-                t: 'sessionAttested';
-                field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
             }> | undefined;
-            auth?: {
+            auth?: undefined | {
                 support: string;
                 machineLoginKey?: string | undefined;
                 docsUrl?: string | undefined;
-                loginCommand?: {
+                loginCommand?: undefined | {
                     command: string;
                     args?: string[] | undefined;
-                } | undefined;
+                };
                 envVars?: string[] | undefined;
-            } | undefined;
-            runtime?: {
-                stderrRules?: {
+            };
+            runtime?: undefined | {
+                stderrRules?: undefined | {
                     authenticationErrorDetail?: string | undefined;
-                    suppress?: {
+                    suppress?: undefined | {
                         includes: string[];
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                    statusErrors?: {
+                    }[];
+                    statusErrors?: undefined | {
                         includes: string[];
                         detail: string;
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                } | undefined;
-                permissionModeMapping?: {
-                    default?: string | null | undefined;
-                    'read-only'?: string | null | undefined;
-                    'safe-yolo'?: string | null | undefined;
-                    yolo?: string | null | undefined;
-                    plan?: string | null | undefined;
-                } | undefined;
-            } | undefined;
-            compatibility?: {
+                    }[];
+                };
+                permissionModeMapping?: undefined | {
+                    default?: null | string | string[] | undefined;
+                    'read-only'?: null | string | string[] | undefined;
+                    'safe-yolo'?: null | string | string[] | undefined;
+                    yolo?: null | string | string[] | undefined;
+                    plan?: null | string | string[] | undefined;
+                };
+            };
+            compatibility?: undefined | {
                 source: 'acp-catalog-v2';
                 authStatus: {
                     statusCommand?: string[] | undefined;
-                    parser?: 'unknown' | 'exitCodeOnly' | 'stdoutNonEmpty' | 'kiroWhoamiJson' | undefined;
+                    parser?: 'exitCodeOnly' | 'kiroWhoamiJson' | 'stdoutNonEmpty' | 'unknown' | undefined;
                 };
-            } | undefined;
+            };
             defaultMode?: string | undefined;
             defaultModel?: string | undefined;
-            capabilities?: {
+            capabilities?: undefined | {
                 supportsLoadSession?: boolean | undefined;
-                supportsModes?: 'unknown' | 'yes' | 'no' | undefined;
-                supportsModels?: 'unknown' | 'yes' | 'no' | undefined;
-                supportsConfigOptions?: 'unknown' | 'yes' | 'no' | undefined;
-                promptImageSupport?: 'unknown' | 'yes' | 'no' | undefined;
-            } | undefined;
+                supportsModes?: 'no' | 'unknown' | 'yes' | undefined;
+                supportsModels?: 'no' | 'unknown' | 'yes' | undefined;
+                supportsConfigOptions?: 'no' | 'unknown' | 'yes' | undefined;
+                promptImageSupport?: 'no' | 'unknown' | 'yes' | undefined;
+            };
             createdAt?: number | undefined;
             updatedAt?: number | undefined;
         };
-        expectedRevision?: number | 'absent' | undefined;
+        expectedRevision?: 'absent' | number | undefined;
         sourceSettingsVersion?: number | undefined;
         dryRun?: boolean | undefined;
     };
     readonly "agents.acp.backends.delete": {
         backendId: string;
-        expectedRevision?: number | 'absent' | undefined;
+        expectedRevision?: 'absent' | number | undefined;
         sourceSettingsVersion?: number | undefined;
     };
 };
@@ -250,6 +257,61 @@ export type AgentAcpCatalogActionResultById = {
             name: string;
             title: string;
             launch: {
+                kind: 'archive';
+                version: string;
+                assetsByPlatform: {
+                    'darwin-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'darwin-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                };
+                args: string[];
+                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-arm64' | 'win32-x64', Record<string, string>>> | undefined;
+            } | {
                 kind: 'command';
                 command: string;
                 args: string[];
@@ -259,61 +321,6 @@ export type AgentAcpCatalogActionResultById = {
                 version: string;
                 args: string[];
                 bin?: string | undefined;
-            } | {
-                kind: 'archive';
-                version: string;
-                assetsByPlatform: {
-                    'darwin-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'darwin-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                };
-                args: string[];
-                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64', Record<string, string>>> | undefined;
             } | {
                 kind: 'uv';
                 package: string;
@@ -328,6 +335,9 @@ export type AgentAcpCatalogActionResultById = {
                 t: 'savedSecret';
                 secretId: string;
             } | {
+                t: 'sessionAttested';
+                field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+            } | {
                 t: 'template';
                 template: string;
                 vars: Record<string, {
@@ -337,28 +347,28 @@ export type AgentAcpCatalogActionResultById = {
                     t: 'savedSecret';
                     secretId: string;
                 }>;
-            } | {
-                t: 'sessionAttested';
-                field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
             }>;
             capabilities: {
                 supportsLoadSession: boolean;
-                supportsModes: 'unknown' | 'yes' | 'no';
-                supportsModels: 'unknown' | 'yes' | 'no';
-                supportsConfigOptions: 'unknown' | 'yes' | 'no';
-                promptImageSupport: 'unknown' | 'yes' | 'no';
+                supportsModes: 'no' | 'unknown' | 'yes';
+                supportsModels: 'no' | 'unknown' | 'yes';
+                supportsConfigOptions: 'no' | 'unknown' | 'yes';
+                promptImageSupport: 'no' | 'unknown' | 'yes';
             };
             createdAt: number;
             updatedAt: number;
             description?: string | undefined;
-            origin?: {
+            origin?: undefined | {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -368,15 +378,18 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -385,15 +398,26 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
+                    sourceUrl?: undefined;
                 };
                 iconUrl?: string | undefined;
                 publisher?: string | undefined;
                 license?: string | undefined;
                 repository?: string | undefined;
                 website?: string | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -403,62 +427,52 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
-            } | undefined;
-            auth?: {
-                support: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
+                    };
+                };
+            };
+            auth?: undefined | {
+                support: 'login_terminal' | 'manual_only' | 'status_only' | 'unsupported';
                 machineLoginKey?: string | undefined;
                 docsUrl?: string | undefined;
-                loginCommand?: {
+                loginCommand?: undefined | {
                     command: string;
                     args: string[];
-                } | undefined;
+                };
                 envVars?: string[] | undefined;
-            } | undefined;
-            runtime?: {
-                stderrRules?: {
+            };
+            runtime?: undefined | {
+                stderrRules?: undefined | {
                     authenticationErrorDetail?: string | undefined;
-                    suppress?: {
+                    suppress?: undefined | {
                         includes: string[];
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                    statusErrors?: {
+                    }[];
+                    statusErrors?: undefined | {
                         includes: string[];
                         detail: string;
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                } | undefined;
-                permissionModeMapping?: {
-                    default?: string | null | undefined;
-                    'read-only'?: string | null | undefined;
-                    'safe-yolo'?: string | null | undefined;
-                    yolo?: string | null | undefined;
-                    plan?: string | null | undefined;
-                } | undefined;
-            } | undefined;
-            compatibility?: {
+                    }[];
+                };
+                permissionModeMapping?: undefined | {
+                    default?: null | string | string[] | undefined;
+                    'read-only'?: null | string | string[] | undefined;
+                    'safe-yolo'?: null | string | string[] | undefined;
+                    yolo?: null | string | string[] | undefined;
+                    plan?: null | string | string[] | undefined;
+                };
+            };
+            compatibility?: undefined | {
                 source: 'acp-catalog-v2';
                 authStatus: {
                     statusCommand?: string[] | undefined;
-                    parser?: 'unknown' | 'exitCodeOnly' | 'stdoutNonEmpty' | 'kiroWhoamiJson' | undefined;
+                    parser?: 'exitCodeOnly' | 'kiroWhoamiJson' | 'stdoutNonEmpty' | 'unknown' | undefined;
                 };
-            } | undefined;
+            };
             defaultMode?: string | undefined;
             defaultModel?: string | undefined;
         };
@@ -473,6 +487,61 @@ export type AgentAcpCatalogActionResultById = {
             name: string;
             title: string;
             launch: {
+                kind: 'archive';
+                version: string;
+                assetsByPlatform: {
+                    'darwin-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'darwin-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                };
+                args: string[];
+                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-arm64' | 'win32-x64', Record<string, string>>> | undefined;
+            } | {
                 kind: 'command';
                 command: string;
                 args: string[];
@@ -482,61 +551,6 @@ export type AgentAcpCatalogActionResultById = {
                 version: string;
                 args: string[];
                 bin?: string | undefined;
-            } | {
-                kind: 'archive';
-                version: string;
-                assetsByPlatform: {
-                    'darwin-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'darwin-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                };
-                args: string[];
-                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64', Record<string, string>>> | undefined;
             } | {
                 kind: 'uv';
                 package: string;
@@ -548,10 +562,10 @@ export type AgentAcpCatalogActionResultById = {
             updatedAt: number;
             capabilities: {
                 supportsLoadSession: boolean;
-                supportsModes: 'unknown' | 'yes' | 'no';
-                supportsModels: 'unknown' | 'yes' | 'no';
-                supportsConfigOptions: 'unknown' | 'yes' | 'no';
-                promptImageSupport: 'unknown' | 'yes' | 'no';
+                supportsModes: 'no' | 'unknown' | 'yes';
+                supportsModels: 'no' | 'unknown' | 'yes';
+                supportsConfigOptions: 'no' | 'unknown' | 'yes';
+                promptImageSupport: 'no' | 'unknown' | 'yes';
             };
             env: Record<string, {
                 t: 'literal';
@@ -559,6 +573,9 @@ export type AgentAcpCatalogActionResultById = {
             } | {
                 t: 'savedSecret';
                 secretId: string;
+            } | {
+                t: 'sessionAttested';
+                field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
             } | {
                 t: 'template';
                 template: string;
@@ -569,19 +586,19 @@ export type AgentAcpCatalogActionResultById = {
                     t: 'savedSecret';
                     secretId: string;
                 }>;
-            } | {
-                t: 'sessionAttested';
-                field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
             }>;
             description?: string | undefined;
-            origin?: {
+            origin?: undefined | {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -591,15 +608,18 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -608,15 +628,26 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
+                    sourceUrl?: undefined;
                 };
                 iconUrl?: string | undefined;
                 publisher?: string | undefined;
                 license?: string | undefined;
                 repository?: string | undefined;
                 website?: string | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -626,66 +657,56 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
-            } | undefined;
-            runtime?: {
-                stderrRules?: {
+                    };
+                };
+            };
+            runtime?: undefined | {
+                stderrRules?: undefined | {
                     authenticationErrorDetail?: string | undefined;
-                    suppress?: {
+                    suppress?: undefined | {
                         includes: string[];
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                    statusErrors?: {
+                    }[];
+                    statusErrors?: undefined | {
                         includes: string[];
                         detail: string;
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                } | undefined;
-                permissionModeMapping?: {
-                    default?: string | null | undefined;
-                    'read-only'?: string | null | undefined;
-                    'safe-yolo'?: string | null | undefined;
-                    yolo?: string | null | undefined;
-                    plan?: string | null | undefined;
-                } | undefined;
-            } | undefined;
-            compatibility?: {
+                    }[];
+                };
+                permissionModeMapping?: undefined | {
+                    default?: null | string | string[] | undefined;
+                    'read-only'?: null | string | string[] | undefined;
+                    'safe-yolo'?: null | string | string[] | undefined;
+                    yolo?: null | string | string[] | undefined;
+                    plan?: null | string | string[] | undefined;
+                };
+            };
+            compatibility?: undefined | {
                 source: 'acp-catalog-v2';
                 authStatus: {
                     statusCommand?: string[] | undefined;
-                    parser?: 'unknown' | 'exitCodeOnly' | 'stdoutNonEmpty' | 'kiroWhoamiJson' | undefined;
+                    parser?: 'exitCodeOnly' | 'kiroWhoamiJson' | 'stdoutNonEmpty' | 'unknown' | undefined;
                 };
-            } | undefined;
+            };
             defaultMode?: string | undefined;
             defaultModel?: string | undefined;
-            auth?: {
-                support: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
+            auth?: undefined | {
+                support: 'login_terminal' | 'manual_only' | 'status_only' | 'unsupported';
                 machineLoginKey?: string | undefined;
                 docsUrl?: string | undefined;
                 envVars?: string[] | undefined;
-                loginCommand?: {
+                loginCommand?: undefined | {
                     command: string;
                     args: string[];
-                } | undefined;
-            } | undefined;
+                };
+            };
         };
-        revision: number | 'absent';
+        revision: 'absent' | number;
     };
     readonly "agents.acp.backends.upsert": {
         backend: {
@@ -693,6 +714,61 @@ export type AgentAcpCatalogActionResultById = {
             name: string;
             title: string;
             launch: {
+                kind: 'archive';
+                version: string;
+                assetsByPlatform: {
+                    'darwin-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'darwin-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                };
+                args: string[];
+                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-arm64' | 'win32-x64', Record<string, string>>> | undefined;
+            } | {
                 kind: 'command';
                 command: string;
                 args: string[];
@@ -702,61 +778,6 @@ export type AgentAcpCatalogActionResultById = {
                 version: string;
                 args: string[];
                 bin?: string | undefined;
-            } | {
-                kind: 'archive';
-                version: string;
-                assetsByPlatform: {
-                    'darwin-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'darwin-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                };
-                args: string[];
-                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64', Record<string, string>>> | undefined;
             } | {
                 kind: 'uv';
                 package: string;
@@ -771,6 +792,9 @@ export type AgentAcpCatalogActionResultById = {
                 t: 'savedSecret';
                 secretId: string;
             } | {
+                t: 'sessionAttested';
+                field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+            } | {
                 t: 'template';
                 template: string;
                 vars: Record<string, {
@@ -780,28 +804,28 @@ export type AgentAcpCatalogActionResultById = {
                     t: 'savedSecret';
                     secretId: string;
                 }>;
-            } | {
-                t: 'sessionAttested';
-                field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
             }>;
             capabilities: {
                 supportsLoadSession: boolean;
-                supportsModes: 'unknown' | 'yes' | 'no';
-                supportsModels: 'unknown' | 'yes' | 'no';
-                supportsConfigOptions: 'unknown' | 'yes' | 'no';
-                promptImageSupport: 'unknown' | 'yes' | 'no';
+                supportsModes: 'no' | 'unknown' | 'yes';
+                supportsModels: 'no' | 'unknown' | 'yes';
+                supportsConfigOptions: 'no' | 'unknown' | 'yes';
+                promptImageSupport: 'no' | 'unknown' | 'yes';
             };
             createdAt: number;
             updatedAt: number;
             description?: string | undefined;
-            origin?: {
+            origin?: undefined | {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -811,15 +835,18 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -828,15 +855,26 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
+                    sourceUrl?: undefined;
                 };
                 iconUrl?: string | undefined;
                 publisher?: string | undefined;
                 license?: string | undefined;
                 repository?: string | undefined;
                 website?: string | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -846,72 +884,62 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
-            } | undefined;
-            auth?: {
-                support: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
+                    };
+                };
+            };
+            auth?: undefined | {
+                support: 'login_terminal' | 'manual_only' | 'status_only' | 'unsupported';
                 machineLoginKey?: string | undefined;
                 docsUrl?: string | undefined;
-                loginCommand?: {
+                loginCommand?: undefined | {
                     command: string;
                     args: string[];
-                } | undefined;
+                };
                 envVars?: string[] | undefined;
-            } | undefined;
-            runtime?: {
-                stderrRules?: {
+            };
+            runtime?: undefined | {
+                stderrRules?: undefined | {
                     authenticationErrorDetail?: string | undefined;
-                    suppress?: {
+                    suppress?: undefined | {
                         includes: string[];
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                    statusErrors?: {
+                    }[];
+                    statusErrors?: undefined | {
                         includes: string[];
                         detail: string;
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                } | undefined;
-                permissionModeMapping?: {
-                    default?: string | null | undefined;
-                    'read-only'?: string | null | undefined;
-                    'safe-yolo'?: string | null | undefined;
-                    yolo?: string | null | undefined;
-                    plan?: string | null | undefined;
-                } | undefined;
-            } | undefined;
-            compatibility?: {
+                    }[];
+                };
+                permissionModeMapping?: undefined | {
+                    default?: null | string | string[] | undefined;
+                    'read-only'?: null | string | string[] | undefined;
+                    'safe-yolo'?: null | string | string[] | undefined;
+                    yolo?: null | string | string[] | undefined;
+                    plan?: null | string | string[] | undefined;
+                };
+            };
+            compatibility?: undefined | {
                 source: 'acp-catalog-v2';
                 authStatus: {
                     statusCommand?: string[] | undefined;
-                    parser?: 'unknown' | 'exitCodeOnly' | 'stdoutNonEmpty' | 'kiroWhoamiJson' | undefined;
+                    parser?: 'exitCodeOnly' | 'kiroWhoamiJson' | 'stdoutNonEmpty' | 'unknown' | undefined;
                 };
-            } | undefined;
+            };
             defaultMode?: string | undefined;
             defaultModel?: string | undefined;
         };
         revision: number;
-        cleanup?: {
-            status: 'complete';
-        } | {
+        cleanup?: undefined | {
             status: 'cleanup-pending';
             reason: 'history-incomplete';
-        } | undefined;
+        } | {
+            status: 'complete';
+        };
     } | {
         dryRun: true;
         backend: {
@@ -919,6 +947,61 @@ export type AgentAcpCatalogActionResultById = {
             name: string;
             title: string;
             launch: {
+                kind: 'archive';
+                version: string;
+                assetsByPlatform: {
+                    'darwin-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'darwin-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'linux-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-x64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                    'win32-arm64'?: undefined | {
+                        archiveUrl: string;
+                        executableSubpath: string;
+                        sha256?: string | undefined;
+                        kind?: 'archive' | 'executable' | undefined;
+                        sizeBytes?: number | undefined;
+                        args?: string[] | undefined;
+                    };
+                };
+                args: string[];
+                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-arm64' | 'win32-x64', Record<string, string>>> | undefined;
+            } | {
                 kind: 'command';
                 command: string;
                 args: string[];
@@ -928,61 +1011,6 @@ export type AgentAcpCatalogActionResultById = {
                 version: string;
                 args: string[];
                 bin?: string | undefined;
-            } | {
-                kind: 'archive';
-                version: string;
-                assetsByPlatform: {
-                    'darwin-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'darwin-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'linux-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-x64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                    'win32-arm64'?: {
-                        archiveUrl: string;
-                        executableSubpath: string;
-                        sha256?: string | undefined;
-                        kind?: 'archive' | 'executable' | undefined;
-                        sizeBytes?: number | undefined;
-                        args?: string[] | undefined;
-                    } | undefined;
-                };
-                args: string[];
-                envByPlatform?: Partial<Record<'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64', Record<string, string>>> | undefined;
             } | {
                 kind: 'uv';
                 package: string;
@@ -997,6 +1025,9 @@ export type AgentAcpCatalogActionResultById = {
                 t: 'savedSecret';
                 secretId: string;
             } | {
+                t: 'sessionAttested';
+                field: 'externalPrincipalId' | 'sessionId' | 'sourceMessageId';
+            } | {
                 t: 'template';
                 template: string;
                 vars: Record<string, {
@@ -1006,28 +1037,28 @@ export type AgentAcpCatalogActionResultById = {
                     t: 'savedSecret';
                     secretId: string;
                 }>;
-            } | {
-                t: 'sessionAttested';
-                field: 'externalPrincipalId' | 'sourceMessageId' | 'sessionId';
             }>;
             capabilities: {
                 supportsLoadSession: boolean;
-                supportsModes: 'unknown' | 'yes' | 'no';
-                supportsModels: 'unknown' | 'yes' | 'no';
-                supportsConfigOptions: 'unknown' | 'yes' | 'no';
-                promptImageSupport: 'unknown' | 'yes' | 'no';
+                supportsModes: 'no' | 'unknown' | 'yes';
+                supportsModels: 'no' | 'unknown' | 'yes';
+                supportsConfigOptions: 'no' | 'unknown' | 'yes';
+                promptImageSupport: 'no' | 'unknown' | 'yes';
             };
             createdAt: number;
             updatedAt: number;
             description?: string | undefined;
-            origin?: {
+            origin?: undefined | {
                 kind: 'registry';
                 provenance: {
                     sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
                     sourceUrl: string;
                     itemId: string;
                     ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -1037,15 +1068,18 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
                         digest: string;
                         pluginId: string;
                         pluginVersion: string;
@@ -1054,15 +1088,26 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'packageContent';
                     };
                     importedAt: number;
+                    sourceUrl?: undefined;
                 };
                 iconUrl?: string | undefined;
                 publisher?: string | undefined;
                 license?: string | undefined;
                 repository?: string | undefined;
                 website?: string | undefined;
-                upstream?: {
-                    state: 'current' | 'update_available' | 'removed_from_source';
-                    latest?: {
+                upstream?: undefined | {
+                    state: 'current' | 'removed_from_source' | 'update_available';
+                    latest?: undefined | {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    } | {
+                        kind: 'content';
+                        digest: string;
+                    } | {
                         kind: 'gitTree';
                         repo: string;
                         path: string;
@@ -1072,62 +1117,52 @@ export type AgentAcpCatalogActionResultById = {
                         kind: 'version';
                         version: string;
                     } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
                         kind: 'wellKnown';
                         indexUrl: string;
                         name: string;
                         digest: string;
                         publishedDigest?: string | undefined;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    } | undefined;
-                } | undefined;
-            } | undefined;
-            auth?: {
-                support: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
+                    };
+                };
+            };
+            auth?: undefined | {
+                support: 'login_terminal' | 'manual_only' | 'status_only' | 'unsupported';
                 machineLoginKey?: string | undefined;
                 docsUrl?: string | undefined;
-                loginCommand?: {
+                loginCommand?: undefined | {
                     command: string;
                     args: string[];
-                } | undefined;
+                };
                 envVars?: string[] | undefined;
-            } | undefined;
-            runtime?: {
-                stderrRules?: {
+            };
+            runtime?: undefined | {
+                stderrRules?: undefined | {
                     authenticationErrorDetail?: string | undefined;
-                    suppress?: {
+                    suppress?: undefined | {
                         includes: string[];
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                    statusErrors?: {
+                    }[];
+                    statusErrors?: undefined | {
                         includes: string[];
                         detail: string;
                         caseSensitive?: boolean | undefined;
-                    }[] | undefined;
-                } | undefined;
-                permissionModeMapping?: {
-                    default?: string | null | undefined;
-                    'read-only'?: string | null | undefined;
-                    'safe-yolo'?: string | null | undefined;
-                    yolo?: string | null | undefined;
-                    plan?: string | null | undefined;
-                } | undefined;
-            } | undefined;
-            compatibility?: {
+                    }[];
+                };
+                permissionModeMapping?: undefined | {
+                    default?: null | string | string[] | undefined;
+                    'read-only'?: null | string | string[] | undefined;
+                    'safe-yolo'?: null | string | string[] | undefined;
+                    yolo?: null | string | string[] | undefined;
+                    plan?: null | string | string[] | undefined;
+                };
+            };
+            compatibility?: undefined | {
                 source: 'acp-catalog-v2';
                 authStatus: {
                     statusCommand?: string[] | undefined;
-                    parser?: 'unknown' | 'exitCodeOnly' | 'stdoutNonEmpty' | 'kiroWhoamiJson' | undefined;
+                    parser?: 'exitCodeOnly' | 'kiroWhoamiJson' | 'stdoutNonEmpty' | 'unknown' | undefined;
                 };
-            } | undefined;
+            };
             defaultMode?: string | undefined;
             defaultModel?: string | undefined;
         };
@@ -1135,14 +1170,14 @@ export type AgentAcpCatalogActionResultById = {
             machineId: string;
             fit: {
                 kind: 'can_run';
-                via: 'command' | 'npm' | 'archive' | 'uv';
-                target?: 'darwin-arm64' | 'darwin-x64' | 'linux-x64' | 'linux-arm64' | 'win32-x64' | 'win32-arm64' | undefined;
+                via: 'archive' | 'command' | 'npm' | 'uv';
+                target?: 'darwin-arm64' | 'darwin-x64' | 'linux-arm64' | 'linux-x64' | 'win32-arm64' | 'win32-x64' | undefined;
             } | {
                 kind: 'cant_run';
-                reason: 'no_build_for_platform' | 'archive_type_unsupported';
+                reason: 'archive_type_unsupported' | 'no_build_for_platform';
             } | {
                 kind: 'unknown';
-                reason: 'platform_unknown' | 'arch_unknown';
+                reason: 'arch_unknown' | 'platform_unknown';
             };
             commandFound: boolean | null;
         }[];
@@ -1150,11 +1185,11 @@ export type AgentAcpCatalogActionResultById = {
     readonly "agents.acp.backends.delete": {
         backendId: string;
         deleted: true;
-        cleanup?: {
-            status: 'complete';
-        } | {
+        cleanup?: undefined | {
             status: 'cleanup-pending';
             reason: 'history-incomplete';
-        } | undefined;
+        } | {
+            status: 'complete';
+        };
     };
 };

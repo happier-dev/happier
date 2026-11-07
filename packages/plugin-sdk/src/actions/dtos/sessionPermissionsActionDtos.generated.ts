@@ -7,16 +7,16 @@ import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 export type SessionPermissionsActionInputById = {
     readonly "session.permission.respond": {
         [x: string]: unknown;
-        decision: 'allow' | 'deny' | 'approved' | 'approved_for_session' | 'approved_execpolicy_amendment' | 'denied' | 'abort';
+        decision: 'abort' | 'allow' | 'approved' | 'approved_execpolicy_amendment' | 'approved_for_session' | 'denied' | 'deny';
         sessionId?: string | undefined;
         requestId?: string | undefined;
         turnId?: string | undefined;
         reason?: string | undefined;
-        mode?: 'default' | 'acceptEdits' | 'bypassPermissions' | 'plan' | undefined;
+        mode?: 'acceptEdits' | 'bypassPermissions' | 'default' | 'plan' | undefined;
         allowedTools?: string[] | undefined;
-        execPolicyAmendment?: {
+        execPolicyAmendment?: undefined | {
             command: string[];
-        } | undefined;
+        };
         updatedPermissions?: unknown;
         answers?: unknown;
     };
@@ -28,7 +28,7 @@ export type SessionPermissionsActionInputById = {
         sessionId: string;
         sourceRef: string;
         sourceRevisionOrEpoch: string;
-        cursor?: string | null | undefined;
+        cursor?: null | string | undefined;
     };
     readonly "session.permission.remote.respond": {
         sessionId: string;
@@ -58,7 +58,7 @@ export type SessionPermissionsActionInputById = {
     readonly "session.permission.remote.grants.list": {
         sessionId: string;
         limit?: number | undefined;
-        cursor?: string | null | undefined;
+        cursor?: null | string | undefined;
     };
     readonly "session.permission.remote.grants.revoke": {
         sessionId: string;
@@ -67,19 +67,12 @@ export type SessionPermissionsActionInputById = {
         grantId: string;
     };
     readonly "session.needs_you.raise": {
-        mode: 'wait' | 'continue';
-        type: 'decision' | 'blocked';
+        mode: 'continue' | 'wait';
+        type: 'blocked' | 'decision';
         questions: ({
             id: string;
             prompt: string;
-            type: 'text';
-            description?: string | undefined;
-            initialValue?: string | undefined;
-            required?: boolean | undefined;
-        } | {
-            id: string;
-            prompt: string;
-            type: 'singleChoice' | 'multipleChoice';
+            type: 'multipleChoice' | 'singleChoice';
             choices: {
                 id: string;
                 label?: string | undefined;
@@ -88,6 +81,13 @@ export type SessionPermissionsActionInputById = {
             description?: string | undefined;
             required?: boolean | undefined;
             allowCustom?: boolean | undefined;
+        } | {
+            id: string;
+            prompt: string;
+            type: 'text';
+            description?: string | undefined;
+            initialValue?: string | undefined;
+            required?: boolean | undefined;
         })[];
         sessionId?: string | undefined;
         assumption?: string | undefined;
@@ -105,14 +105,14 @@ export type SessionPermissionsActionInputById = {
         decision?: 'approve' | 'reject' | 'request_changes' | undefined;
         disposition?: 'pass_up' | undefined;
         reason?: string | undefined;
-        answers?: {
+        answers?: undefined | {
             question: string;
             values?: string[] | undefined;
             answer?: string | undefined;
-        }[] | undefined;
+        }[];
     };
     readonly "session.control.switch": {
-        to: 'remote' | 'local';
+        to: 'local' | 'remote';
         sessionId?: string | undefined;
     };
     readonly "session.mode.set": {
@@ -135,10 +135,10 @@ export type SessionPermissionsActionResultById = {
             turnId: string;
             createdAtMs: number;
             allowedScopes: [
+                'request'
+            ] | [
                 'request',
                 'session'
-            ] | [
-                'request'
             ];
             agentRequestSummary: {
                 kind: 'permission';
@@ -155,22 +155,22 @@ export type SessionPermissionsActionResultById = {
                 kind: 'user_action';
                 questions: {
                     question: string;
-                    selection: 'text' | 'single' | 'multiple';
+                    selection: 'multiple' | 'single' | 'text';
                     required: boolean;
                     allowCustom: boolean;
                     choices: string[];
                 }[];
-                fullForm?: {
+                fullForm?: undefined | {
                     questionCount: number;
                     url: string;
-                } | undefined;
+                };
             };
         })[];
         truncated: boolean;
-        nextCursor: string | null;
+        nextCursor: null | string;
     };
     readonly "session.permission.remote.respond": {
-        status: 'applied' | 'alreadyApplied';
+        status: 'alreadyApplied' | 'applied';
         settlementId: string;
         requestId: string;
         decision: 'allow';
@@ -184,7 +184,7 @@ export type SessionPermissionsActionResultById = {
             admittedPermissionCeiling: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo';
         };
     } | {
-        status: 'applied' | 'alreadyApplied';
+        status: 'alreadyApplied' | 'applied';
         settlementId: string;
         requestId: string;
         decision: 'deny';
@@ -193,14 +193,14 @@ export type SessionPermissionsActionResultById = {
         };
     } | {
         status: 'rejected';
-        code: 'requestNotFound' | 'requestNotPending' | 'decisionConflict' | 'remoteApprovalDisabled' | 'scopeExceedsPolicy' | 'sessionScopeUnsupported' | 'sessionGrantCapacityExceeded' | 'permissionCeilingExceeded' | 'actorUnattributable' | 'mediationStateUnavailable' | 'sessionUnavailable' | 'ownerMachineUnavailable' | 'canceled';
+        code: 'actorUnattributable' | 'canceled' | 'decisionConflict' | 'mediationStateUnavailable' | 'ownerMachineUnavailable' | 'permissionCeilingExceeded' | 'remoteApprovalDisabled' | 'requestNotFound' | 'requestNotPending' | 'scopeExceedsPolicy' | 'sessionGrantCapacityExceeded' | 'sessionScopeUnsupported' | 'sessionUnavailable';
     };
     readonly "session.user_action.remote.answer": {
         status: 'applied';
         requestId: string;
     } | {
         status: 'rejected';
-        code: 'requestNotFound' | 'requestNotPending' | 'mediationStateUnavailable' | 'sessionUnavailable' | 'ownerMachineUnavailable' | 'canceled' | 'answerInvalid';
+        code: 'answerInvalid' | 'canceled' | 'mediationStateUnavailable' | 'ownerMachineUnavailable' | 'requestNotFound' | 'requestNotPending' | 'sessionUnavailable';
     };
     readonly "session.permission.remote.grants.list": {
         grants: {
@@ -224,29 +224,29 @@ export type SessionPermissionsActionResultById = {
                     kind: 'exactTool';
                     identifier: string;
                 };
-                revocationActor?: {
+                revocationActor?: undefined | {
                     kind: 'accountUser';
                     accountId: string;
                 } | {
                     kind: 'mediatorPlugin';
                     pluginId: string;
-                } | undefined;
+                };
             };
             revokedAtMs?: number | undefined;
         }[];
-        nextCursor: string | null;
+        nextCursor: null | string;
     };
     readonly "session.permission.remote.grants.revoke": {
-        status: 'revoked' | 'alreadyRevoked';
+        status: 'alreadyRevoked' | 'revoked';
         grantId: string;
     } | {
         status: 'rejected';
-        code: 'mediationStateUnavailable' | 'sessionUnavailable' | 'ownerMachineUnavailable' | 'canceled' | 'notFound';
+        code: 'canceled' | 'mediationStateUnavailable' | 'notFound' | 'ownerMachineUnavailable' | 'sessionUnavailable';
     };
     readonly "session.needs_you.raise": {
         ok: true;
         requestId: string;
-        mode: 'wait' | 'continue';
+        mode: 'continue' | 'wait';
     } | {
         ok: true;
         requestId: string;

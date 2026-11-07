@@ -4,19 +4,19 @@
 import type { JsonValue } from '../../identity.js';
 
 export type SessionAuthoringActionInputById = {
-    readonly "session.authoring.open": {
+    readonly "session.authoring.open": ({
         seed: {
             sessionName?: string | undefined;
-            initialSessionFacts?: {
-                bot?: {
+            initialSessionFacts?: undefined | {
+                bot?: undefined | {
                     kind: 'bot';
-                } | undefined;
-                botFace?: {
-                    style?: 'dither' | 'pixel' | 'solid' | 'dots' | 'planet' | undefined;
-                    body?: 'crab' | 'squid' | 'octopus' | 'ufo' | 'specter' | 'ghost' | 'beetle' | 'spider' | 'jelly' | 'hopper' | 'pup' | 'drone' | 'robot' | 'walker' | 'rocket' | 'feet' | 'tail' | 'drip' | 'bracelegs' | 'tagclaws' | 'cursortail' | 'termbody' | 'antlers' | 'semi' | 'brackets' | 'cursor' | 'bean' | 'squat' | 'bag' | 'loaf' | 'puddle' | 'tower' | 'stilts' | 'tall' | 'cat' | undefined;
-                    palette?: 'daybreak' | 'lagoon' | 'orchid' | 'aurora' | 'indigo' | 'glacier' | 'moss' | 'sand' | 'ink' | undefined;
+                };
+                botFace?: undefined | {
+                    style?: 'dither' | 'dots' | 'pixel' | 'planet' | 'solid' | undefined;
+                    body?: 'antlers' | 'bag' | 'bean' | 'beetle' | 'bracelegs' | 'brackets' | 'cat' | 'crab' | 'cursor' | 'cursortail' | 'drip' | 'drone' | 'feet' | 'ghost' | 'hopper' | 'jelly' | 'loaf' | 'octopus' | 'puddle' | 'pup' | 'robot' | 'rocket' | 'semi' | 'specter' | 'spider' | 'squat' | 'squid' | 'stilts' | 'tagclaws' | 'tail' | 'tall' | 'termbody' | 'tower' | 'ufo' | 'walker' | undefined;
+                    palette?: 'aurora' | 'daybreak' | 'glacier' | 'indigo' | 'ink' | 'lagoon' | 'moss' | 'orchid' | 'sand' | undefined;
                     seed?: string | undefined;
-                    shape?: {
+                    shape?: undefined | {
                         v: 1;
                         fill: string[];
                         mouth: [
@@ -28,60 +28,60 @@ export type SessionAuthoringActionInputById = {
                             string,
                             number
                         ][] | undefined;
-                        cut?: (string | [
+                        cut?: ([
                             string,
                             number
-                        ])[] | undefined;
+                        ] | string)[] | undefined;
                         origin?: 'custom' | 'surprise' | undefined;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
                 createdAsBot?: true | undefined;
-            } | undefined;
-            promptStack?: {
+            };
+            promptStack?: undefined | {
                 id: string;
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
                 enabled?: boolean | undefined;
-                placement?: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset' | undefined;
+                placement?: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append' | undefined;
                 maxChars?: number | undefined;
                 required?: boolean | undefined;
                 skillMigrationV1?: true | undefined;
                 plan?: true | undefined;
-            }[] | undefined;
+            }[];
             prompt?: string | undefined;
-            currentUiContext?: {
+            currentUiContext?: undefined | {
                 navigation: {
                     area: string;
                     screen: string;
                     title?: string | undefined;
-                    presentation?: 'screen' | 'modal' | 'pane' | undefined;
+                    presentation?: 'modal' | 'pane' | 'screen' | undefined;
                 };
                 commands: {
                     id: string;
                     title: string;
                     description?: string | undefined;
                 }[];
-                entity?: {
+                entity?: undefined | {
                     kind: string;
                     label: string;
                     summary?: string | undefined;
                     reference?: JsonValue | undefined;
-                } | undefined;
+                };
                 detail?: JsonValue | undefined;
-            } | undefined;
+            };
             profileId?: string | undefined;
-            agentTarget?: {
+            agentTarget?: undefined | {
                 kind: 'agent';
                 identity: {
                     pluginId: string;
                     localId: string;
                 };
                 definitionId?: string | undefined;
-            } | undefined;
-            origin?: {
+            };
+            origin?: undefined | {
                 kind: 'project';
                 accountId: string;
                 workspace: {
@@ -90,153 +90,159 @@ export type SessionAuthoringActionInputById = {
                     machineId: string;
                     rootPath: string;
                 };
-                page: 'code' | 'overview' | 'changes' | 'scripts' | 'services' | 'context';
+                page: 'changes' | 'code' | 'context' | 'overview' | 'scripts' | 'services';
                 purpose?: 'session' | undefined;
                 comparisonId?: string | undefined;
                 layoutId?: string | undefined;
-                attachedDashboard?: {
+                attachedDashboard?: undefined | {
                     sourceId: string;
                     artifactId: string;
                     serverId?: string | undefined;
-                } | undefined;
-                codeLocation?: {
+                };
+                codeLocation?: undefined | {
+                    kind: 'file';
+                    path: string;
+                } | {
                     kind: 'folder';
                     path: string;
-                } | {
-                    kind: 'file';
-                    path: string;
-                } | undefined;
-                resource?: {
-                    kind: 'file';
-                    path: string;
-                    anchor?: {
-                        kind: 'fileLine';
-                        startLine: number;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'fileLine';
-                        startLine: number;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'fileLine';
-                        startLine: number;
-                        side?: 'before' | 'after' | undefined;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'fileLine';
-                        startLine: number;
-                        side?: 'before' | 'after' | undefined;
-                        startLineHash?: `lh1:${string}` | undefined;
-                        endLineHash?: `lh1:${string}` | undefined;
-                        selectedTextHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'diffLine';
-                        startLine: number;
-                        side: 'before' | 'after';
-                        oldLine: number | null;
-                        newLine: number | null;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'diffLine';
-                        startLine: number;
-                        side: 'before' | 'after';
-                        oldLine: number | null;
-                        newLine: number | null;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'diffLine';
-                        startLine: number;
-                        side: 'before' | 'after';
-                        oldLine: number | null;
-                        newLine: number | null;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'diffLine';
-                        startLine: number;
-                        side: 'before' | 'after';
-                        oldLine: number | null;
-                        newLine: number | null;
-                        startLineHash?: `lh1:${string}` | undefined;
-                        endLineHash?: `lh1:${string}` | undefined;
-                        selectedTextHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'line';
-                        filePath: string;
-                        line: number;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'line';
-                        filePath: string;
-                        line: number;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'line';
-                        filePath: string;
-                        line: number;
-                        side?: 'before' | 'after' | undefined;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'line';
-                        filePath: string;
-                        line: number;
-                        side?: 'before' | 'after' | undefined;
-                        startLineHash?: `lh1:${string}` | undefined;
-                        endLineHash?: `lh1:${string}` | undefined;
-                        selectedTextHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        side?: 'before' | 'after' | undefined;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        side?: 'before' | 'after' | undefined;
-                        startLineHash?: `lh1:${string}` | undefined;
-                        endLineHash?: `lh1:${string}` | undefined;
-                        selectedTextHash?: `lh1:${string}` | undefined;
-                    } | undefined;
-                    anchorSource?: 'file' | 'diff' | undefined;
-                } | {
+                };
+                resource?: undefined | {
                     kind: 'commit';
                     sha: string;
-                } | undefined;
-                surface?: 'code' | 'overview' | 'changes' | 'scripts' | 'services' | 'context' | 'browse' | 'git' | 'tabs' | 'terminal' | 'browser' | undefined;
-                companion?: 'scripts' | 'services' | 'git' | 'terminal' | 'browser' | 'files' | {
+                } | {
+                    kind: 'file';
+                    path: string;
+                    anchor?: undefined | {
+                        kind: 'diffLine';
+                        startLine: number;
+                        side: 'after' | 'before';
+                        oldLine: null | number;
+                        newLine: null | number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'diffLine';
+                        startLine: number;
+                        side: 'after' | 'before';
+                        oldLine: null | number;
+                        newLine: null | number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'diffLine';
+                        startLine: number;
+                        side: 'after' | 'before';
+                        oldLine: null | number;
+                        newLine: null | number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'diffLine';
+                        startLine: number;
+                        side: 'after' | 'before';
+                        oldLine: null | number;
+                        newLine: null | number;
+                        startLineHash?: `lh1:${string}` | undefined;
+                        endLineHash?: `lh1:${string}` | undefined;
+                        selectedTextHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'fileLine';
+                        startLine: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'fileLine';
+                        startLine: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'fileLine';
+                        startLine: number;
+                        side?: 'after' | 'before' | undefined;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'fileLine';
+                        startLine: number;
+                        side?: 'after' | 'before' | undefined;
+                        startLineHash?: `lh1:${string}` | undefined;
+                        endLineHash?: `lh1:${string}` | undefined;
+                        selectedTextHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        side?: 'after' | 'before' | undefined;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        side?: 'after' | 'before' | undefined;
+                        startLineHash?: `lh1:${string}` | undefined;
+                        endLineHash?: `lh1:${string}` | undefined;
+                        selectedTextHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        side?: 'after' | 'before' | undefined;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        side?: 'after' | 'before' | undefined;
+                        startLineHash?: `lh1:${string}` | undefined;
+                        endLineHash?: `lh1:${string}` | undefined;
+                        selectedTextHash?: `lh1:${string}` | undefined;
+                    };
+                    anchorSource?: 'diff' | 'file' | undefined;
+                };
+                surface?: 'browse' | 'browser' | 'changes' | 'code' | 'context' | 'git' | 'overview' | 'scripts' | 'services' | 'tabs' | 'terminal' | undefined;
+                companion?: 'browser' | 'files' | 'git' | 'scripts' | 'services' | 'terminal' | undefined | {
                     kind: 'plugin';
                     destination: {
                         pluginId: string;
                         localId: string;
                     };
                     instanceKey?: string | undefined;
-                } | undefined;
-            } | undefined;
-            checkoutIntent?: 'none' | 'preparedReviewWorkspace' | 'reuseWorkspace' | 'createWorktree' | 'ask' | undefined;
-            placement?: {
+                };
+            };
+            checkoutIntent?: 'ask' | 'createWorktree' | 'none' | 'preparedReviewWorkspace' | 'reuseWorkspace' | undefined;
+            placement?: undefined | {
+                kind: 'currentTarget';
+                directory: string;
+            } | {
                 kind: 'exactTarget';
                 serverId: string;
                 machineId: string;
                 directory?: string | undefined;
+            };
+            directoryIntent?: undefined | {
+                kind: 'managed';
             } | {
-                kind: 'currentTarget';
-                directory: string;
-            } | undefined;
+                kind: 'path';
+                path: string;
+            };
             candidates?: readonly {
                 projectKey: {
                     id: string;
@@ -255,7 +261,7 @@ export type SessionAuthoringActionInputById = {
                 reachable: boolean;
                 worktrees: {
                     path: string;
-                    branch: string | null;
+                    branch: null | string;
                     isMain: boolean;
                     isCurrent: boolean;
                 }[];
@@ -269,8 +275,16 @@ export type SessionAuthoringActionInputById = {
                     presentation: {
                         label: string;
                         description?: string | undefined;
-                        icon?: 'file' | 'error' | 'check' | 'commit' | 'terminal' | 'browser' | 'branch' | 'action' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'workflow' | 'neutral' | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
+                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                        tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                        source?: undefined | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
                     };
                 };
             }[] | undefined;
@@ -280,22 +294,24 @@ export type SessionAuthoringActionInputById = {
             serverId: string;
             sessionId: string;
         };
+    }) & {
+        clientId?: string | undefined;
     };
 };
 export type SessionAuthoringActionResultById = {
     readonly "session.authoring.open": {
+        kind: 'invalid';
+        reason: 'seed_attachments_uncredited' | 'seed_empty' | 'seed_invalid';
+    } | {
         kind: 'opened';
         draftId: string;
         destination: 'newSession';
     } | {
-        kind: 'invalid';
-        reason: 'seed_invalid' | 'seed_empty' | 'seed_attachments_uncredited';
-    } | {
-        kind: 'unavailable';
-        reason: 'aborted' | 'navigation_unavailable' | 'prepared_review_workspace_unavailable' | 'origin_unavailable';
-    } | {
         kind: 'stale';
         reason: 'host_retired';
+    } | {
+        kind: 'unavailable';
+        reason: 'aborted' | 'navigation_unavailable' | 'origin_unavailable' | 'prepared_review_workspace_unavailable';
     } | {
         kind: 'unavailable';
         reason: 'client_unavailable';

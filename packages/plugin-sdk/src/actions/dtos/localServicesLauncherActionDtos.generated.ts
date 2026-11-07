@@ -15,7 +15,7 @@ export type LocalServicesLauncherActionInputById = {
         targetId: string;
         sessionId?: string | undefined;
         workspaceId?: string | undefined;
-        choice?: {
+        choice?: undefined | {
             kind: 'primary';
         } | {
             kind: 'workers';
@@ -25,16 +25,16 @@ export type LocalServicesLauncherActionInputById = {
             } | {
                 kind: 'pool';
                 poolId: string;
-                selection: 'automatic' | 'ask';
+                selection: 'ask' | 'automatic';
             };
-        } | undefined;
-        workspace?: {
+        };
+        workspace?: undefined | {
             serverId: string;
             workspaceId: string;
             machineId: string;
             rootPath: string;
-        } | undefined;
-        declaration?: {
+        };
+        declaration?: undefined | {
             workspaceRefId: string;
             selection: {
                 kind: 'manifest';
@@ -43,7 +43,7 @@ export type LocalServicesLauncherActionInputById = {
                 kind: 'native';
                 source: {
                     kind: 'native';
-                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                     file: string;
                     target: string;
                 } | {
@@ -56,7 +56,7 @@ export type LocalServicesLauncherActionInputById = {
                     target: string;
                 };
             };
-        } | undefined;
+        };
         expectedEffectDigest?: string | undefined;
     };
     readonly "localServices.launcher.openPreview": {
@@ -67,6 +67,8 @@ export type LocalServicesLauncherActionInputById = {
         targetId?: string | undefined;
         scope?: 'machine' | 'workspace' | undefined;
         workspaceRoot?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "localServices.launcher.registerPreview": {
         [x: string]: unknown;
@@ -94,25 +96,28 @@ export type LocalServicesLauncherActionResultById = {
         updatedAt: number;
         targets: {
             id: string;
-            source: 'package_script' | 'managed_service' | 'inventory_entry' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset' | 'recent';
+            source: 'inventory_entry' | 'managed_service' | 'package_script' | 'recent' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset';
             machineId: string;
             title: string;
-            confidence: 'high' | 'medium' | 'low';
-            state: 'starting' | 'available' | 'stale' | 'unavailable';
-            actions: ('start' | 'open' | 'open_preview' | 'register_preview' | 'manage' | 'terminate_detected')[];
-            sourceClass?: {
+            confidence: 'high' | 'low' | 'medium';
+            state: 'available' | 'stale' | 'starting' | 'unavailable';
+            actions: ('manage' | 'open' | 'open_preview' | 'register_preview' | 'start' | 'terminate_detected')[];
+            sourceClass?: undefined | {
+                kind: 'inventory_entry';
+                inventoryEntryId: string;
+            } | {
+                kind: 'managed_service';
+                managedServiceId: string;
+                inventoryEntryId?: string | undefined;
+            } | {
                 kind: 'package_script';
                 runTargetId: string;
                 packageName: string;
                 scriptName: string;
                 cwd?: string | undefined;
             } | {
-                kind: 'managed_service';
-                managedServiceId: string;
-                inventoryEntryId?: string | undefined;
-            } | {
-                kind: 'inventory_entry';
-                inventoryEntryId: string;
+                kind: 'recent';
+                targetId: string;
             } | {
                 kind: 'registered_preview';
                 previewId: string;
@@ -127,20 +132,17 @@ export type LocalServicesLauncherActionResultById = {
                 sourceId: string;
                 assetRef: string;
                 mediaType?: string | undefined;
-            } | {
-                kind: 'recent';
-                targetId: string;
-            } | undefined;
+            };
             sessionId?: string | undefined;
             workspaceId?: string | undefined;
-            workspace?: {
+            workspace?: undefined | {
                 serverId: string;
                 workspaceId: string;
                 machineId: string;
                 rootPath: string;
-            } | undefined;
+            };
             cwd?: string | undefined;
-            declaration?: {
+            declaration?: undefined | {
                 workspaceRefId: string;
                 selection: {
                     kind: 'manifest';
@@ -149,7 +151,7 @@ export type LocalServicesLauncherActionResultById = {
                     kind: 'native';
                     source: {
                         kind: 'native';
-                        tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                         file: string;
                         target: string;
                     } | {
@@ -162,39 +164,86 @@ export type LocalServicesLauncherActionResultById = {
                         target: string;
                     };
                 };
-            } | undefined;
-            execution?: 'primary' | 'portable' | undefined;
-            serviceState?: 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed' | undefined;
-            diagnostics?: {
+            };
+            environment?: undefined | {
+                environmentId: string;
+                environmentInstanceId: string;
+                deploymentId: string;
+                composeService: string;
+            };
+            lifecyclePurpose?: 'deployment' | 'development' | 'infrastructure' | undefined;
+            execution?: 'portable' | 'primary' | undefined;
+            serviceState?: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | undefined;
+            diagnostics?: undefined | {
                 code: string;
                 severity: 'error' | 'info' | 'warning';
                 message?: string | undefined;
-            }[] | undefined;
-            readiness?: 'ready' | 'not_ready' | 'not_reported' | undefined;
+            }[];
+            readiness?: 'not_ready' | 'not_reported' | 'ready' | undefined;
             endpointUrl?: string | undefined;
             startedAtMs?: number | undefined;
             startedByAccountId?: string | undefined;
-            endpointKind?: 'native' | 'none' | 'http' | undefined;
+            endpointKind?: 'http' | 'native' | 'none' | undefined;
             subtitle?: string | undefined;
             kind?: string | undefined;
             commandPreview?: string | undefined;
             unavailableReason?: string | undefined;
             unavailableMachineId?: string | undefined;
-            browserTarget?: {
+            browserTarget?: undefined | {
+                kind: 'streamedBrowser';
                 targetId: string;
-                kind: 'localServicePreview';
-                machineId: string;
-                display?: {
+                streamId: string;
+                display?: undefined | {
                     title: string;
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                } | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+                daemonView?: undefined | {
+                    browserSessionId: string;
+                    viewId: string;
+                };
+            } | {
+                targetId: string;
+                kind: 'externalUrl';
+                url: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'hostedPluginWeb';
+                pluginId: string;
+                contributionId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
+            } | {
+                targetId: string;
+                kind: 'localServicePreview';
+                machineId: string;
+                display?: undefined | {
+                    title: string;
+                    addressLabel?: string | undefined;
+                    folderLabel?: string | undefined;
+                    iconToken?: string | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
                 sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
+                serviceTarget?: undefined | {
                     kind: 'managed_service';
+                    machineId: string;
+                    cwd: string;
+                    managedServiceId: string;
                     declaration: {
                         workspaceRefId: string;
                         selection: {
@@ -204,7 +253,7 @@ export type LocalServicesLauncherActionResultById = {
                             kind: 'native';
                             source: {
                                 kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                 file: string;
                                 target: string;
                             } | {
@@ -218,61 +267,21 @@ export type LocalServicesLauncherActionResultById = {
                             };
                         };
                     };
-                    cwd: string;
-                    managedServiceId: string;
                     workspaceId?: string | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'hostedPluginWeb';
-                pluginId: string;
-                contributionId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                targetId: string;
-                kind: 'externalUrl';
-                url: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                } | undefined;
-            } | {
-                kind: 'streamedBrowser';
-                targetId: string;
-                streamId: string;
-                display?: {
-                    title: string;
-                    addressLabel?: string | undefined;
-                    folderLabel?: string | undefined;
-                    iconToken?: string | undefined;
-                    tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                } | undefined;
-                daemonView?: {
-                    browserSessionId: string;
-                    viewId: string;
-                } | undefined;
+                };
             } | {
                 targetId: string;
                 kind: 'simulatorPreview';
                 deviceId: string;
-                display?: {
+                display?: undefined | {
                     title: string;
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                } | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
                 sourceId?: string | undefined;
-            } | undefined;
+            };
         }[];
         sessionId?: string | undefined;
     };
@@ -280,32 +289,35 @@ export type LocalServicesLauncherActionResultById = {
         protocolVersion: 1;
         machineId: string;
         targetId: string;
-        status: 'failed' | 'succeeded' | 'denied';
+        status: 'denied' | 'failed' | 'succeeded';
         snapshot: {
             v: 1;
             machineId: string;
             updatedAt: number;
             targets: {
                 id: string;
-                source: 'package_script' | 'managed_service' | 'inventory_entry' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset' | 'recent';
+                source: 'inventory_entry' | 'managed_service' | 'package_script' | 'recent' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset';
                 machineId: string;
                 title: string;
-                confidence: 'high' | 'medium' | 'low';
-                state: 'starting' | 'available' | 'stale' | 'unavailable';
-                actions: ('start' | 'open' | 'open_preview' | 'register_preview' | 'manage' | 'terminate_detected')[];
-                sourceClass?: {
+                confidence: 'high' | 'low' | 'medium';
+                state: 'available' | 'stale' | 'starting' | 'unavailable';
+                actions: ('manage' | 'open' | 'open_preview' | 'register_preview' | 'start' | 'terminate_detected')[];
+                sourceClass?: undefined | {
+                    kind: 'inventory_entry';
+                    inventoryEntryId: string;
+                } | {
+                    kind: 'managed_service';
+                    managedServiceId: string;
+                    inventoryEntryId?: string | undefined;
+                } | {
                     kind: 'package_script';
                     runTargetId: string;
                     packageName: string;
                     scriptName: string;
                     cwd?: string | undefined;
                 } | {
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    inventoryEntryId?: string | undefined;
-                } | {
-                    kind: 'inventory_entry';
-                    inventoryEntryId: string;
+                    kind: 'recent';
+                    targetId: string;
                 } | {
                     kind: 'registered_preview';
                     previewId: string;
@@ -320,20 +332,17 @@ export type LocalServicesLauncherActionResultById = {
                     sourceId: string;
                     assetRef: string;
                     mediaType?: string | undefined;
-                } | {
-                    kind: 'recent';
-                    targetId: string;
-                } | undefined;
+                };
                 sessionId?: string | undefined;
                 workspaceId?: string | undefined;
-                workspace?: {
+                workspace?: undefined | {
                     serverId: string;
                     workspaceId: string;
                     machineId: string;
                     rootPath: string;
-                } | undefined;
+                };
                 cwd?: string | undefined;
-                declaration?: {
+                declaration?: undefined | {
                     workspaceRefId: string;
                     selection: {
                         kind: 'manifest';
@@ -342,7 +351,7 @@ export type LocalServicesLauncherActionResultById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -355,39 +364,86 @@ export type LocalServicesLauncherActionResultById = {
                             target: string;
                         };
                     };
-                } | undefined;
-                execution?: 'primary' | 'portable' | undefined;
-                serviceState?: 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed' | undefined;
-                diagnostics?: {
+                };
+                environment?: undefined | {
+                    environmentId: string;
+                    environmentInstanceId: string;
+                    deploymentId: string;
+                    composeService: string;
+                };
+                lifecyclePurpose?: 'deployment' | 'development' | 'infrastructure' | undefined;
+                execution?: 'portable' | 'primary' | undefined;
+                serviceState?: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | undefined;
+                diagnostics?: undefined | {
                     code: string;
                     severity: 'error' | 'info' | 'warning';
                     message?: string | undefined;
-                }[] | undefined;
-                readiness?: 'ready' | 'not_ready' | 'not_reported' | undefined;
+                }[];
+                readiness?: 'not_ready' | 'not_reported' | 'ready' | undefined;
                 endpointUrl?: string | undefined;
                 startedAtMs?: number | undefined;
                 startedByAccountId?: string | undefined;
-                endpointKind?: 'native' | 'none' | 'http' | undefined;
+                endpointKind?: 'http' | 'native' | 'none' | undefined;
                 subtitle?: string | undefined;
                 kind?: string | undefined;
                 commandPreview?: string | undefined;
                 unavailableReason?: string | undefined;
                 unavailableMachineId?: string | undefined;
-                browserTarget?: {
+                browserTarget?: undefined | {
+                    kind: 'streamedBrowser';
                     targetId: string;
-                    kind: 'localServicePreview';
-                    machineId: string;
-                    display?: {
+                    streamId: string;
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    daemonView?: undefined | {
+                        browserSessionId: string;
+                        viewId: string;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'externalUrl';
+                    url: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'hostedPluginWeb';
+                    pluginId: string;
+                    contributionId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'localServicePreview';
+                    machineId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sessionId?: string | undefined;
-                    serviceTarget?: {
-                        machineId: string;
+                    serviceTarget?: undefined | {
                         kind: 'managed_service';
+                        machineId: string;
+                        cwd: string;
+                        managedServiceId: string;
                         declaration: {
                             workspaceRefId: string;
                             selection: {
@@ -397,7 +453,7 @@ export type LocalServicesLauncherActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -411,88 +467,48 @@ export type LocalServicesLauncherActionResultById = {
                                 };
                             };
                         };
-                        cwd: string;
-                        managedServiceId: string;
                         workspaceId?: string | undefined;
-                    } | undefined;
-                } | {
-                    targetId: string;
-                    kind: 'hostedPluginWeb';
-                    pluginId: string;
-                    contributionId: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                } | {
-                    targetId: string;
-                    kind: 'externalUrl';
-                    url: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                } | {
-                    kind: 'streamedBrowser';
-                    targetId: string;
-                    streamId: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                    daemonView?: {
-                        browserSessionId: string;
-                        viewId: string;
-                    } | undefined;
+                    };
                 } | {
                     targetId: string;
                     kind: 'simulatorPreview';
                     deviceId: string;
-                    display?: {
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sourceId?: string | undefined;
-                } | undefined;
+                };
             }[];
             sessionId?: string | undefined;
         };
         reasonCode?: string | undefined;
-        prerequisite?: {
+        prerequisite?: undefined | {
             tool: 'docker';
             machineName: string;
-            cause: 'unavailable' | 'not_installed' | 'not_running' | 'permission_denied';
-        } | undefined;
-        establishmentFailure?: {
-            cause: 'process_exited' | 'port_in_use';
+            cause: 'not_installed' | 'not_running' | 'permission_denied' | 'unavailable';
+        };
+        establishmentFailure?: undefined | {
+            cause: 'port_in_use' | 'process_exited';
             exitCode?: number | undefined;
             signal?: string | undefined;
             lastStderrLine?: string | undefined;
             port?: number | undefined;
             sameProject?: boolean | undefined;
-        } | undefined;
+        };
         reviewedEffect?: JsonValue | undefined;
         reviewedEffectDigest?: string | undefined;
-        currentTarget?: {
+        currentTarget?: undefined | {
             kind: 'managed_service';
             managedServiceId: string;
             machineId: string;
             sessionId?: string | undefined;
             workspaceId?: string | undefined;
             cwd?: string | undefined;
-            declaration?: {
+            declaration?: undefined | {
                 workspaceRefId: string;
                 selection: {
                     kind: 'manifest';
@@ -501,7 +517,7 @@ export type LocalServicesLauncherActionResultById = {
                     kind: 'native';
                     source: {
                         kind: 'native';
-                        tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                         file: string;
                         target: string;
                     } | {
@@ -514,28 +530,68 @@ export type LocalServicesLauncherActionResultById = {
                         target: string;
                     };
                 };
-            } | undefined;
-        } | undefined;
+            };
+        };
     };
     readonly "localServices.launcher.openPreview": {
         protocolVersion: 1;
-        status: 'unavailable' | 'opened';
+        status: 'opened' | 'unavailable';
         targetId: string;
-        browserTarget?: {
+        browserTarget?: undefined | {
+            kind: 'streamedBrowser';
             targetId: string;
-            kind: 'localServicePreview';
-            machineId: string;
-            display?: {
+            streamId: string;
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+            daemonView?: undefined | {
+                browserSessionId: string;
+                viewId: string;
+            };
+        } | {
+            targetId: string;
+            kind: 'externalUrl';
+            url: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'hostedPluginWeb';
+            pluginId: string;
+            contributionId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'localServicePreview';
+            machineId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sessionId?: string | undefined;
-            serviceTarget?: {
-                machineId: string;
+            serviceTarget?: undefined | {
                 kind: 'managed_service';
+                machineId: string;
+                cwd: string;
+                managedServiceId: string;
                 declaration: {
                     workspaceRefId: string;
                     selection: {
@@ -545,7 +601,7 @@ export type LocalServicesLauncherActionResultById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -559,83 +615,83 @@ export type LocalServicesLauncherActionResultById = {
                         };
                     };
                 };
-                cwd: string;
-                managedServiceId: string;
                 workspaceId?: string | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'hostedPluginWeb';
-            pluginId: string;
-            contributionId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'externalUrl';
-            url: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            kind: 'streamedBrowser';
-            targetId: string;
-            streamId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
-            daemonView?: {
-                browserSessionId: string;
-                viewId: string;
-            } | undefined;
+            };
         } | {
             targetId: string;
             kind: 'simulatorPreview';
             deviceId: string;
-            display?: {
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sourceId?: string | undefined;
-        } | undefined;
+        };
         reasonCode?: string | undefined;
     };
     readonly "localServices.launcher.registerPreview": {
         protocolVersion: 1;
-        status: 'unavailable' | 'registered' | 'existing';
+        status: 'existing' | 'registered' | 'unavailable';
         targetId: string;
         previewId?: string | undefined;
-        browserTarget?: {
+        browserTarget?: undefined | {
+            kind: 'streamedBrowser';
             targetId: string;
-            kind: 'localServicePreview';
-            machineId: string;
-            display?: {
+            streamId: string;
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+            daemonView?: undefined | {
+                browserSessionId: string;
+                viewId: string;
+            };
+        } | {
+            targetId: string;
+            kind: 'externalUrl';
+            url: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'hostedPluginWeb';
+            pluginId: string;
+            contributionId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
+        } | {
+            targetId: string;
+            kind: 'localServicePreview';
+            machineId: string;
+            display?: undefined | {
+                title: string;
+                addressLabel?: string | undefined;
+                folderLabel?: string | undefined;
+                iconToken?: string | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sessionId?: string | undefined;
-            serviceTarget?: {
-                machineId: string;
+            serviceTarget?: undefined | {
                 kind: 'managed_service';
+                machineId: string;
+                cwd: string;
+                managedServiceId: string;
                 declaration: {
                     workspaceRefId: string;
                     selection: {
@@ -645,7 +701,7 @@ export type LocalServicesLauncherActionResultById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -659,61 +715,21 @@ export type LocalServicesLauncherActionResultById = {
                         };
                     };
                 };
-                cwd: string;
-                managedServiceId: string;
                 workspaceId?: string | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'hostedPluginWeb';
-            pluginId: string;
-            contributionId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            targetId: string;
-            kind: 'externalUrl';
-            url: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
-        } | {
-            kind: 'streamedBrowser';
-            targetId: string;
-            streamId: string;
-            display?: {
-                title: string;
-                addressLabel?: string | undefined;
-                folderLabel?: string | undefined;
-                iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
-            daemonView?: {
-                browserSessionId: string;
-                viewId: string;
-            } | undefined;
+            };
         } | {
             targetId: string;
             kind: 'simulatorPreview';
             deviceId: string;
-            display?: {
+            display?: undefined | {
                 title: string;
                 addressLabel?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-            } | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+            };
             sourceId?: string | undefined;
-        } | undefined;
+        };
         reasonCode?: string | undefined;
     };
     readonly "localServices.launcher.history.clear": {
@@ -725,25 +741,28 @@ export type LocalServicesLauncherActionResultById = {
             updatedAt: number;
             targets: {
                 id: string;
-                source: 'package_script' | 'managed_service' | 'inventory_entry' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset' | 'recent';
+                source: 'inventory_entry' | 'managed_service' | 'package_script' | 'recent' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset';
                 machineId: string;
                 title: string;
-                confidence: 'high' | 'medium' | 'low';
-                state: 'starting' | 'available' | 'stale' | 'unavailable';
-                actions: ('start' | 'open' | 'open_preview' | 'register_preview' | 'manage' | 'terminate_detected')[];
-                sourceClass?: {
+                confidence: 'high' | 'low' | 'medium';
+                state: 'available' | 'stale' | 'starting' | 'unavailable';
+                actions: ('manage' | 'open' | 'open_preview' | 'register_preview' | 'start' | 'terminate_detected')[];
+                sourceClass?: undefined | {
+                    kind: 'inventory_entry';
+                    inventoryEntryId: string;
+                } | {
+                    kind: 'managed_service';
+                    managedServiceId: string;
+                    inventoryEntryId?: string | undefined;
+                } | {
                     kind: 'package_script';
                     runTargetId: string;
                     packageName: string;
                     scriptName: string;
                     cwd?: string | undefined;
                 } | {
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    inventoryEntryId?: string | undefined;
-                } | {
-                    kind: 'inventory_entry';
-                    inventoryEntryId: string;
+                    kind: 'recent';
+                    targetId: string;
                 } | {
                     kind: 'registered_preview';
                     previewId: string;
@@ -758,20 +777,17 @@ export type LocalServicesLauncherActionResultById = {
                     sourceId: string;
                     assetRef: string;
                     mediaType?: string | undefined;
-                } | {
-                    kind: 'recent';
-                    targetId: string;
-                } | undefined;
+                };
                 sessionId?: string | undefined;
                 workspaceId?: string | undefined;
-                workspace?: {
+                workspace?: undefined | {
                     serverId: string;
                     workspaceId: string;
                     machineId: string;
                     rootPath: string;
-                } | undefined;
+                };
                 cwd?: string | undefined;
-                declaration?: {
+                declaration?: undefined | {
                     workspaceRefId: string;
                     selection: {
                         kind: 'manifest';
@@ -780,7 +796,7 @@ export type LocalServicesLauncherActionResultById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -793,39 +809,86 @@ export type LocalServicesLauncherActionResultById = {
                             target: string;
                         };
                     };
-                } | undefined;
-                execution?: 'primary' | 'portable' | undefined;
-                serviceState?: 'starting' | 'running' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'stopped' | 'failed' | undefined;
-                diagnostics?: {
+                };
+                environment?: undefined | {
+                    environmentId: string;
+                    environmentInstanceId: string;
+                    deploymentId: string;
+                    composeService: string;
+                };
+                lifecyclePurpose?: 'deployment' | 'development' | 'infrastructure' | undefined;
+                execution?: 'portable' | 'primary' | undefined;
+                serviceState?: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | undefined;
+                diagnostics?: undefined | {
                     code: string;
                     severity: 'error' | 'info' | 'warning';
                     message?: string | undefined;
-                }[] | undefined;
-                readiness?: 'ready' | 'not_ready' | 'not_reported' | undefined;
+                }[];
+                readiness?: 'not_ready' | 'not_reported' | 'ready' | undefined;
                 endpointUrl?: string | undefined;
                 startedAtMs?: number | undefined;
                 startedByAccountId?: string | undefined;
-                endpointKind?: 'native' | 'none' | 'http' | undefined;
+                endpointKind?: 'http' | 'native' | 'none' | undefined;
                 subtitle?: string | undefined;
                 kind?: string | undefined;
                 commandPreview?: string | undefined;
                 unavailableReason?: string | undefined;
                 unavailableMachineId?: string | undefined;
-                browserTarget?: {
+                browserTarget?: undefined | {
+                    kind: 'streamedBrowser';
                     targetId: string;
-                    kind: 'localServicePreview';
-                    machineId: string;
-                    display?: {
+                    streamId: string;
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    daemonView?: undefined | {
+                        browserSessionId: string;
+                        viewId: string;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'externalUrl';
+                    url: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'hostedPluginWeb';
+                    pluginId: string;
+                    contributionId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'localServicePreview';
+                    machineId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sessionId?: string | undefined;
-                    serviceTarget?: {
-                        machineId: string;
+                    serviceTarget?: undefined | {
                         kind: 'managed_service';
+                        machineId: string;
+                        cwd: string;
+                        managedServiceId: string;
                         declaration: {
                             workspaceRefId: string;
                             selection: {
@@ -835,7 +898,7 @@ export type LocalServicesLauncherActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -849,61 +912,21 @@ export type LocalServicesLauncherActionResultById = {
                                 };
                             };
                         };
-                        cwd: string;
-                        managedServiceId: string;
                         workspaceId?: string | undefined;
-                    } | undefined;
-                } | {
-                    targetId: string;
-                    kind: 'hostedPluginWeb';
-                    pluginId: string;
-                    contributionId: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                } | {
-                    targetId: string;
-                    kind: 'externalUrl';
-                    url: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                } | {
-                    kind: 'streamedBrowser';
-                    targetId: string;
-                    streamId: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                    daemonView?: {
-                        browserSessionId: string;
-                        viewId: string;
-                    } | undefined;
+                    };
                 } | {
                     targetId: string;
                     kind: 'simulatorPreview';
                     deviceId: string;
-                    display?: {
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sourceId?: string | undefined;
-                } | undefined;
+                };
             }[];
             sessionId?: string | undefined;
         };

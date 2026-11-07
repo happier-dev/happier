@@ -7,58 +7,22 @@ import type { InputPredicate, PluginDeclarativeNodeV2, PluginJsonSchemaV2, Widge
 export type HomeHubLayoutActionInputById = {
     readonly "home.reachNudge.dismiss": {
         homeServerId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "home.hub.layout.get": Record<string, never>;
     readonly "home.hub.layout.update": {
         intent: {
-            kind: 'move';
-            sectionId: string;
-            step: 1 | -1;
-        } | {
-            kind: 'move_to';
-            sectionId: string;
-            position: {
-                anchorId: string | null;
-                placement: 'before' | 'after';
-            } | {
-                nativeIndex: number;
-            };
-        } | {
-            kind: 'reorder';
-            sectionIds: string[];
-        } | {
-            kind: 'visibility';
-            sectionId: string;
-            hidden: boolean;
-        } | {
-            kind: 'frameStyle';
-            sectionId: string;
-            frameStyle: 'card' | 'plain' | null;
-        } | {
-            kind: 'setup_visibility';
-            stepId: string;
-            hidden: boolean;
-        } | {
-            kind: 'restore_setup';
-        } | {
-            kind: 'reset';
-        } | {
-            kind: 'widget_add';
+            kind: 'add';
             instance: {
                 v: 1;
                 id: string;
                 definition: {
-                    kind: 'installed';
-                    surface: {
-                        pluginId: string;
-                        localId: string;
-                    };
+                    kind: 'artifact';
+                    artifactId: string;
                 } | {
                     kind: 'builtin';
                     id: string;
-                } | {
-                    kind: 'artifact';
-                    artifactId: string;
                 } | {
                     kind: 'inline';
                     definition: {
@@ -72,14 +36,14 @@ export type HomeHubLayoutActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
-                            author?: {
-                                kind: 'person' | 'agent' | 'plugin';
-                            } | undefined;
+                            author?: undefined | {
+                                kind: 'agent' | 'person' | 'plugin';
+                            };
                             createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
-                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                            sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                            defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                         };
                         name: string;
                         body: WidgetDefinitionBodyV1Input<true>;
@@ -89,17 +53,17 @@ export type HomeHubLayoutActionInputById = {
                             submitLabel?: string | undefined;
                             fields?: readonly {
                                 path: string;
-                                widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                 title: string;
-                                inputType?: {
-                                    pluginId: string;
-                                    localId: string;
+                                inputType?: undefined | {
+                                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                                 } | {
                                     hostType: 'usageQuery';
                                     field?: 'period' | 'session' | undefined;
                                 } | {
-                                    hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                } | undefined;
+                                    pluginId: string;
+                                    localId: string;
+                                };
                                 contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
@@ -123,6 +87,25 @@ export type HomeHubLayoutActionInputById = {
                                     labelKey?: string | undefined;
                                     description?: string | undefined;
                                     disabled?: boolean | undefined;
+                                    icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                    brand?: undefined | {
+                                        state: 'available';
+                                        resource: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        width: number;
+                                        height: number;
+                                        digest: string;
+                                        monochrome?: boolean | undefined;
+                                    } | {
+                                        state: 'invalid' | 'missing' | 'retired';
+                                    };
+                                    source?: undefined | {
+                                        kind: string;
+                                        locator: string;
+                                    };
+                                    version?: string | undefined;
                                 }[] | undefined;
                             }[] | undefined;
                         };
@@ -130,12 +113,12 @@ export type HomeHubLayoutActionInputById = {
                         v: 1;
                         id: string;
                         description?: string | undefined;
-                        publicPresentation?: {
+                        publicPresentation?: undefined | {
                             kind: 'declarative';
                             document: unknown;
-                        } | undefined;
+                        };
                         sessionInputPath?: string | undefined;
-                        connectedAccountPurposeBindings?: {
+                        connectedAccountPurposeBindings?: undefined | {
                             path: string;
                             purpose: string;
                             consumer: {
@@ -143,212 +126,48 @@ export type HomeHubLayoutActionInputById = {
                                 localId: string;
                             };
                             nativeServicePath?: string | undefined;
-                        }[] | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
+                        }[];
+                        networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
-                        } | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'installed';
+                    surface: {
+                        pluginId: string;
+                        localId: string;
                     };
                 };
                 bindings: Record<string, {
-                    kind: 'value';
-                    value: unknown;
-                } | {
                     kind: 'context';
                     slot: string;
+                } | {
+                    kind: 'value';
+                    value: unknown;
                 } | {
                     kind: 'viewer';
                     purpose: string;
                 }>;
                 displayName?: string | undefined;
-                networkOverride?: {
-                    networkOrigins?: string[] | undefined;
+                networkOverride?: undefined | {
                     network?: 'none' | 'open' | undefined;
-                } | undefined;
+                    networkOrigins?: string[] | undefined;
+                };
             };
-            position?: {
-                anchorId: string | null;
-                placement: 'before' | 'after';
-            } | {
-                nativeIndex: number;
-            } | undefined;
-            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-            frameStyle?: 'card' | 'plain' | undefined;
             groupId?: string | undefined;
+            toIndex?: number | undefined;
+            size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
+            frameStyle?: 'card' | 'plain' | undefined;
+            area?: 'aside' | 'main' | undefined;
         } | {
-            kind: 'widget_remove';
+            kind: 'frame';
             instanceId: string;
-            expectedInstance?: {
-                v: 1;
-                id: string;
-                definition: {
-                    kind: 'installed';
-                    surface: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                } | {
-                    kind: 'builtin';
-                    id: string;
-                } | {
-                    kind: 'artifact';
-                    artifactId: string;
-                } | {
-                    kind: 'inline';
-                    definition: {
-                        provenance: {
-                            source: {
-                                kind: 'authored';
-                            } | {
-                                kind: 'session';
-                                serverId: string;
-                                sessionId: string;
-                                itemId: string;
-                            };
-                            authorAccountId?: string | undefined;
-                            author?: {
-                                kind: 'person' | 'agent' | 'plugin';
-                            } | undefined;
-                            createdAt?: number | undefined;
-                        };
-                        sizeDeclaration: {
-                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                        };
-                        name: string;
-                        body: WidgetDefinitionBodyV1Input<true>;
-                        inputs: {
-                            title?: string | undefined;
-                            description?: string | undefined;
-                            submitLabel?: string | undefined;
-                            fields?: readonly {
-                                path: string;
-                                widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                title: string;
-                                inputType?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | {
-                                    hostType: 'usageQuery';
-                                    field?: 'period' | 'session' | undefined;
-                                } | {
-                                    hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                } | undefined;
-                                contextMode?: 'follow' | 'own' | undefined;
-                                required?: boolean | undefined;
-                                requireExplicitSelection?: boolean | undefined;
-                                listSeparator?: 'comma' | 'newline' | undefined;
-                                maxSelections?: number | undefined;
-                                defaultValue?: unknown;
-                                unit?: 'bytes' | undefined;
-                                visibleWhen?: unknown;
-                                visibleWhenContextSlot?: string | undefined;
-                                requiredWhen?: unknown;
-                                disabledWhen?: unknown;
-                                optionsSourceId?: string | undefined;
-                                connectedAccountOptions?: true | undefined;
-                                resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                prompt?: string | undefined;
-                                description?: string | undefined;
-                                placeholder?: string | undefined;
-                                options?: readonly {
-                                    value: unknown;
-                                    label: string;
-                                    labelKey?: string | undefined;
-                                    description?: string | undefined;
-                                    disabled?: boolean | undefined;
-                                }[] | undefined;
-                            }[] | undefined;
-                        };
-                        inputSchema: unknown;
-                        v: 1;
-                        id: string;
-                        description?: string | undefined;
-                        publicPresentation?: {
-                            kind: 'declarative';
-                            document: unknown;
-                        } | undefined;
-                        sessionInputPath?: string | undefined;
-                        connectedAccountPurposeBindings?: {
-                            path: string;
-                            purpose: string;
-                            consumer: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            nativeServicePath?: string | undefined;
-                        }[] | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
-                            network?: 'none' | 'open' | undefined;
-                        } | undefined;
-                    };
-                };
-                bindings: Record<string, {
-                    kind: 'value';
-                    value: unknown;
-                } | {
-                    kind: 'context';
-                    slot: string;
-                } | {
-                    kind: 'viewer';
-                    purpose: string;
-                }>;
-                displayName?: string | undefined;
-                networkOverride?: {
-                    networkOrigins?: string[] | undefined;
-                    network?: 'none' | 'open' | undefined;
-                } | undefined;
-            } | undefined;
-            expectedPresentation?: {
-                frameStyle: 'card' | 'plain' | null;
-                nativeIndex: number;
-                size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-                hidden?: boolean | undefined;
-                groupId?: string | null | undefined;
-            } | undefined;
+            frameStyle: 'card' | 'plain' | null;
         } | {
-            kind: 'widget_rename';
-            instanceId: string;
-            displayName?: string | undefined;
-        } | {
-            kind: 'widget_inputs';
-            instanceId: string;
-            bindings: Record<string, {
-                kind: 'value';
-                value: unknown;
-            } | {
-                kind: 'context';
-                slot: string;
-            } | {
-                kind: 'viewer';
-                purpose: string;
-            }>;
-            paths?: string[] | undefined;
-        } | {
-            kind: 'widget_inputs_reset';
-            instanceId: string;
-            paths?: string[] | undefined;
-        } | {
-            kind: 'widget_size';
-            instanceId: string;
-            size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-        } | {
-            kind: 'group_create';
-            groupId: string;
-            instanceIds: string[];
-            width?: 'full' | 'half' | undefined;
-            title?: string | undefined;
-            context?: Record<string, {
-                kind: 'value';
-                value: unknown;
-            } | {
-                kind: 'context';
-                slot: string;
-            } | {
-                kind: 'viewer';
-                purpose: string;
-            }> | undefined;
+            kind: 'frameStyle';
+            sectionId: string;
+            frameStyle: 'card' | 'plain' | null;
         } | {
             kind: 'group_add';
             group: {
@@ -360,17 +179,11 @@ export type HomeHubLayoutActionInputById = {
                         v: 1;
                         id: string;
                         definition: {
-                            kind: 'installed';
-                            surface: {
-                                pluginId: string;
-                                localId: string;
-                            };
+                            kind: 'artifact';
+                            artifactId: string;
                         } | {
                             kind: 'builtin';
                             id: string;
-                        } | {
-                            kind: 'artifact';
-                            artifactId: string;
                         } | {
                             kind: 'inline';
                             definition: {
@@ -384,14 +197,14 @@ export type HomeHubLayoutActionInputById = {
                                         itemId: string;
                                     };
                                     authorAccountId?: string | undefined;
-                                    author?: {
-                                        kind: 'person' | 'agent' | 'plugin';
-                                    } | undefined;
+                                    author?: undefined | {
+                                        kind: 'agent' | 'person' | 'plugin';
+                                    };
                                     createdAt?: number | undefined;
                                 };
                                 sizeDeclaration: {
-                                    sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                    defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                                    sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                    defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                                 };
                                 name: string;
                                 body: WidgetDefinitionBodyV1Input<true>;
@@ -401,17 +214,17 @@ export type HomeHubLayoutActionInputById = {
                                     submitLabel?: string | undefined;
                                     fields?: readonly {
                                         path: string;
-                                        widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                        widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                         title: string;
-                                        inputType?: {
-                                            pluginId: string;
-                                            localId: string;
+                                        inputType?: undefined | {
+                                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                                         } | {
                                             hostType: 'usageQuery';
                                             field?: 'period' | 'session' | undefined;
                                         } | {
-                                            hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                        } | undefined;
+                                            pluginId: string;
+                                            localId: string;
+                                        };
                                         contextMode?: 'follow' | 'own' | undefined;
                                         required?: boolean | undefined;
                                         requireExplicitSelection?: boolean | undefined;
@@ -435,6 +248,25 @@ export type HomeHubLayoutActionInputById = {
                                             labelKey?: string | undefined;
                                             description?: string | undefined;
                                             disabled?: boolean | undefined;
+                                            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                            brand?: undefined | {
+                                                state: 'available';
+                                                resource: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                width: number;
+                                                height: number;
+                                                digest: string;
+                                                monochrome?: boolean | undefined;
+                                            } | {
+                                                state: 'invalid' | 'missing' | 'retired';
+                                            };
+                                            source?: undefined | {
+                                                kind: string;
+                                                locator: string;
+                                            };
+                                            version?: string | undefined;
                                         }[] | undefined;
                                     }[] | undefined;
                                 };
@@ -442,12 +274,12 @@ export type HomeHubLayoutActionInputById = {
                                 v: 1;
                                 id: string;
                                 description?: string | undefined;
-                                publicPresentation?: {
+                                publicPresentation?: undefined | {
                                     kind: 'declarative';
                                     document: unknown;
-                                } | undefined;
+                                };
                                 sessionInputPath?: string | undefined;
-                                connectedAccountPurposeBindings?: {
+                                connectedAccountPurposeBindings?: undefined | {
                                     path: string;
                                     purpose: string;
                                     consumer: {
@@ -455,89 +287,175 @@ export type HomeHubLayoutActionInputById = {
                                         localId: string;
                                     };
                                     nativeServicePath?: string | undefined;
-                                }[] | undefined;
-                                networkOverride?: {
-                                    networkOrigins?: string[] | undefined;
+                                }[];
+                                networkOverride?: undefined | {
                                     network?: 'none' | 'open' | undefined;
-                                } | undefined;
+                                    networkOrigins?: string[] | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'installed';
+                            surface: {
+                                pluginId: string;
+                                localId: string;
                             };
                         };
                         bindings: Record<string, {
-                            kind: 'value';
-                            value: unknown;
-                        } | {
                             kind: 'context';
                             slot: string;
+                        } | {
+                            kind: 'value';
+                            value: unknown;
                         } | {
                             kind: 'viewer';
                             purpose: string;
                         }>;
                         displayName?: string | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
+                        networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
-                        } | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
                     };
-                    size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
+                    size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
                     frameStyle?: 'card' | 'plain' | undefined;
-                    area?: 'main' | 'aside' | undefined;
+                    area?: 'aside' | 'main' | undefined;
                 }[];
                 width?: 'full' | 'half' | undefined;
                 title?: string | undefined;
                 titleKey?: string | undefined;
                 frameStyle?: 'card' | 'plain' | undefined;
-                dividers?: 'none' | 'hairline' | undefined;
+                dividers?: 'hairline' | 'none' | undefined;
                 context?: Record<string, {
-                    kind: 'value';
-                    value: unknown;
-                } | {
                     kind: 'context';
                     slot: string;
+                } | {
+                    kind: 'value';
+                    value: unknown;
                 } | {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
-                area?: 'main' | 'aside' | undefined;
+                area?: 'aside' | 'main' | undefined;
             };
             toIndex?: number | undefined;
         } | {
-            kind: 'group_ungroup';
-            instanceId: string;
-        } | {
-            kind: 'group_set';
-            instanceId: string;
+            kind: 'group_create';
+            groupId: string;
+            instanceIds: string[];
             width?: 'full' | 'half' | undefined;
-            dividers?: 'none' | 'hairline' | undefined;
+            title?: string | undefined;
+            context?: Record<string, {
+                kind: 'context';
+                slot: string;
+            } | {
+                kind: 'value';
+                value: unknown;
+            } | {
+                kind: 'viewer';
+                purpose: string;
+            }> | undefined;
         } | {
             kind: 'group_inputs';
             instanceId: string;
             bindings: Record<string, {
-                kind: 'value';
-                value: unknown;
-            } | {
                 kind: 'context';
                 slot: string;
+            } | {
+                kind: 'value';
+                value: unknown;
             } | {
                 kind: 'viewer';
                 purpose: string;
             }>;
         } | {
-            kind: 'add';
+            kind: 'group_set';
+            instanceId: string;
+            width?: 'full' | 'half' | undefined;
+            dividers?: 'hairline' | 'none' | undefined;
+        } | {
+            kind: 'group_ungroup';
+            instanceId: string;
+        } | {
+            kind: 'inputs';
+            instanceId: string;
+            bindings: Record<string, {
+                kind: 'context';
+                slot: string;
+            } | {
+                kind: 'value';
+                value: unknown;
+            } | {
+                kind: 'viewer';
+                purpose: string;
+            }>;
+            paths?: string[] | undefined;
+        } | {
+            kind: 'inputs_reset';
+            instanceId: string;
+            paths?: string[] | undefined;
+        } | {
+            kind: 'move';
+            instanceId: string;
+            toIndex: number;
+            groupId?: null | string | undefined;
+            area?: 'aside' | 'main' | undefined;
+        } | {
+            kind: 'move';
+            sectionId: string;
+            step: -1 | 1;
+        } | {
+            kind: 'move_to';
+            sectionId: string;
+            position: {
+                anchorId: null | string;
+                placement: 'after' | 'before';
+            } | {
+                nativeIndex: number;
+            };
+        } | {
+            kind: 'network';
+            instanceId: string;
+            network: {
+                network?: 'none' | 'open' | undefined;
+                networkOrigins?: string[] | undefined;
+            };
+        } | {
+            kind: 'remove';
+            instanceId: string;
+        } | {
+            kind: 'rename';
+            instanceId: string;
+            displayName: null | string;
+        } | {
+            kind: 'reorder';
+            sectionIds: string[];
+        } | {
+            kind: 'reset';
+        } | {
+            kind: 'restore_setup';
+        } | {
+            kind: 'setup_visibility';
+            stepId: string;
+            hidden: boolean;
+        } | {
+            kind: 'size';
+            instanceId: string;
+            size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+        } | {
+            kind: 'visibility';
+            sectionId: string;
+            hidden: boolean;
+        } | {
+            kind: 'widget_add';
             instance: {
                 v: 1;
                 id: string;
                 definition: {
-                    kind: 'installed';
-                    surface: {
-                        pluginId: string;
-                        localId: string;
-                    };
+                    kind: 'artifact';
+                    artifactId: string;
                 } | {
                     kind: 'builtin';
                     id: string;
-                } | {
-                    kind: 'artifact';
-                    artifactId: string;
                 } | {
                     kind: 'inline';
                     definition: {
@@ -551,14 +469,14 @@ export type HomeHubLayoutActionInputById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
-                            author?: {
-                                kind: 'person' | 'agent' | 'plugin';
-                            } | undefined;
+                            author?: undefined | {
+                                kind: 'agent' | 'person' | 'plugin';
+                            };
                             createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
-                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                            sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                            defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                         };
                         name: string;
                         body: WidgetDefinitionBodyV1Input<true>;
@@ -568,17 +486,17 @@ export type HomeHubLayoutActionInputById = {
                             submitLabel?: string | undefined;
                             fields?: readonly {
                                 path: string;
-                                widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                 title: string;
-                                inputType?: {
-                                    pluginId: string;
-                                    localId: string;
+                                inputType?: undefined | {
+                                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                                 } | {
                                     hostType: 'usageQuery';
                                     field?: 'period' | 'session' | undefined;
                                 } | {
-                                    hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                } | undefined;
+                                    pluginId: string;
+                                    localId: string;
+                                };
                                 contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
@@ -602,6 +520,25 @@ export type HomeHubLayoutActionInputById = {
                                     labelKey?: string | undefined;
                                     description?: string | undefined;
                                     disabled?: boolean | undefined;
+                                    icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                    brand?: undefined | {
+                                        state: 'available';
+                                        resource: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        width: number;
+                                        height: number;
+                                        digest: string;
+                                        monochrome?: boolean | undefined;
+                                    } | {
+                                        state: 'invalid' | 'missing' | 'retired';
+                                    };
+                                    source?: undefined | {
+                                        kind: string;
+                                        locator: string;
+                                    };
+                                    version?: string | undefined;
                                 }[] | undefined;
                             }[] | undefined;
                         };
@@ -609,12 +546,12 @@ export type HomeHubLayoutActionInputById = {
                         v: 1;
                         id: string;
                         description?: string | undefined;
-                        publicPresentation?: {
+                        publicPresentation?: undefined | {
                             kind: 'declarative';
                             document: unknown;
-                        } | undefined;
+                        };
                         sessionInputPath?: string | undefined;
-                        connectedAccountPurposeBindings?: {
+                        connectedAccountPurposeBindings?: undefined | {
                             path: string;
                             purpose: string;
                             consumer: {
@@ -622,84 +559,225 @@ export type HomeHubLayoutActionInputById = {
                                 localId: string;
                             };
                             nativeServicePath?: string | undefined;
-                        }[] | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
+                        }[];
+                        networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
-                        } | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'installed';
+                    surface: {
+                        pluginId: string;
+                        localId: string;
                     };
                 };
                 bindings: Record<string, {
-                    kind: 'value';
-                    value: unknown;
-                } | {
                     kind: 'context';
                     slot: string;
+                } | {
+                    kind: 'value';
+                    value: unknown;
                 } | {
                     kind: 'viewer';
                     purpose: string;
                 }>;
                 displayName?: string | undefined;
-                networkOverride?: {
-                    networkOrigins?: string[] | undefined;
+                networkOverride?: undefined | {
                     network?: 'none' | 'open' | undefined;
-                } | undefined;
+                    networkOrigins?: string[] | undefined;
+                };
             };
-            groupId?: string | undefined;
-            toIndex?: number | undefined;
-            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
+            position?: undefined | {
+                anchorId: null | string;
+                placement: 'after' | 'before';
+            } | {
+                nativeIndex: number;
+            };
+            size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
             frameStyle?: 'card' | 'plain' | undefined;
-            area?: 'main' | 'aside' | undefined;
+            groupId?: string | undefined;
         } | {
-            kind: 'remove';
-            instanceId: string;
-        } | {
-            kind: 'move';
-            instanceId: string;
-            toIndex: number;
-            groupId?: string | null | undefined;
-            area?: 'main' | 'aside' | undefined;
-        } | {
-            kind: 'rename';
-            instanceId: string;
-            displayName: string | null;
-        } | {
-            kind: 'size';
-            instanceId: string;
-            size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-        } | {
-            kind: 'width';
-            instanceId: string;
-            width: 'full' | 'half';
-        } | {
-            kind: 'frame';
-            instanceId: string;
-            frameStyle: 'card' | 'plain' | null;
-        } | {
-            kind: 'inputs';
+            kind: 'widget_inputs';
             instanceId: string;
             bindings: Record<string, {
-                kind: 'value';
-                value: unknown;
-            } | {
                 kind: 'context';
                 slot: string;
+            } | {
+                kind: 'value';
+                value: unknown;
             } | {
                 kind: 'viewer';
                 purpose: string;
             }>;
             paths?: string[] | undefined;
         } | {
-            kind: 'inputs_reset';
+            kind: 'widget_inputs_reset';
             instanceId: string;
             paths?: string[] | undefined;
         } | {
-            kind: 'network';
+            kind: 'widget_remove';
             instanceId: string;
-            network: {
-                networkOrigins?: string[] | undefined;
-                network?: 'none' | 'open' | undefined;
+            expectedInstance?: undefined | {
+                v: 1;
+                id: string;
+                definition: {
+                    kind: 'artifact';
+                    artifactId: string;
+                } | {
+                    kind: 'builtin';
+                    id: string;
+                } | {
+                    kind: 'inline';
+                    definition: {
+                        provenance: {
+                            source: {
+                                kind: 'authored';
+                            } | {
+                                kind: 'session';
+                                serverId: string;
+                                sessionId: string;
+                                itemId: string;
+                            };
+                            authorAccountId?: string | undefined;
+                            author?: undefined | {
+                                kind: 'agent' | 'person' | 'plugin';
+                            };
+                            createdAt?: number | undefined;
+                        };
+                        sizeDeclaration: {
+                            sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                            defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                        };
+                        name: string;
+                        body: WidgetDefinitionBodyV1Input<true>;
+                        inputs: {
+                            title?: string | undefined;
+                            description?: string | undefined;
+                            submitLabel?: string | undefined;
+                            fields?: readonly {
+                                path: string;
+                                widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
+                                title: string;
+                                inputType?: undefined | {
+                                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                } | {
+                                    hostType: 'usageQuery';
+                                    field?: 'period' | 'session' | undefined;
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                contextMode?: 'follow' | 'own' | undefined;
+                                required?: boolean | undefined;
+                                requireExplicitSelection?: boolean | undefined;
+                                listSeparator?: 'comma' | 'newline' | undefined;
+                                maxSelections?: number | undefined;
+                                defaultValue?: unknown;
+                                unit?: 'bytes' | undefined;
+                                visibleWhen?: unknown;
+                                visibleWhenContextSlot?: string | undefined;
+                                requiredWhen?: unknown;
+                                disabledWhen?: unknown;
+                                optionsSourceId?: string | undefined;
+                                connectedAccountOptions?: true | undefined;
+                                resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                prompt?: string | undefined;
+                                description?: string | undefined;
+                                placeholder?: string | undefined;
+                                options?: readonly {
+                                    value: unknown;
+                                    label: string;
+                                    labelKey?: string | undefined;
+                                    description?: string | undefined;
+                                    disabled?: boolean | undefined;
+                                    icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                    brand?: undefined | {
+                                        state: 'available';
+                                        resource: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        width: number;
+                                        height: number;
+                                        digest: string;
+                                        monochrome?: boolean | undefined;
+                                    } | {
+                                        state: 'invalid' | 'missing' | 'retired';
+                                    };
+                                    source?: undefined | {
+                                        kind: string;
+                                        locator: string;
+                                    };
+                                    version?: string | undefined;
+                                }[] | undefined;
+                            }[] | undefined;
+                        };
+                        inputSchema: unknown;
+                        v: 1;
+                        id: string;
+                        description?: string | undefined;
+                        publicPresentation?: undefined | {
+                            kind: 'declarative';
+                            document: unknown;
+                        };
+                        sessionInputPath?: string | undefined;
+                        connectedAccountPurposeBindings?: undefined | {
+                            path: string;
+                            purpose: string;
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            nativeServicePath?: string | undefined;
+                        }[];
+                        networkOverride?: undefined | {
+                            network?: 'none' | 'open' | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'installed';
+                    surface: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                };
+                bindings: Record<string, {
+                    kind: 'context';
+                    slot: string;
+                } | {
+                    kind: 'value';
+                    value: unknown;
+                } | {
+                    kind: 'viewer';
+                    purpose: string;
+                }>;
+                displayName?: string | undefined;
+                networkOverride?: undefined | {
+                    network?: 'none' | 'open' | undefined;
+                    networkOrigins?: string[] | undefined;
+                };
             };
+            expectedPresentation?: undefined | {
+                frameStyle: 'card' | 'plain' | null;
+                nativeIndex: number;
+                size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
+                hidden?: boolean | undefined;
+                groupId?: null | string | undefined;
+            };
+        } | {
+            kind: 'widget_rename';
+            instanceId: string;
+            displayName?: string | undefined;
+        } | {
+            kind: 'widget_size';
+            instanceId: string;
+            size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+        } | {
+            kind: 'width';
+            instanceId: string;
+            width: 'full' | 'half';
         };
     };
 };
@@ -714,136 +792,6 @@ export type HomeHubLayoutActionResultById = {
             order: string[];
             hidden: string[];
             items: ({
-                kind: 'widget';
-                instance: {
-                    v: 1;
-                    id: string;
-                    definition: {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                    } | {
-                        kind: 'builtin';
-                        id: string;
-                    } | {
-                        kind: 'artifact';
-                        artifactId: string;
-                    } | {
-                        kind: 'inline';
-                        definition: {
-                            provenance: {
-                                source: {
-                                    kind: 'authored';
-                                } | {
-                                    kind: 'session';
-                                    serverId: string;
-                                    sessionId: string;
-                                    itemId: string;
-                                };
-                                authorAccountId?: string | undefined;
-                                author?: {
-                                    kind: 'person' | 'agent' | 'plugin';
-                                } | undefined;
-                                createdAt?: number | undefined;
-                            };
-                            sizeDeclaration: {
-                                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                            };
-                            name: string;
-                            body: WidgetDefinitionBodyV1;
-                            inputs: {
-                                fields: readonly {
-                                    path: string;
-                                    widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                    title: string;
-                                    inputType?: {
-                                        pluginId: string;
-                                        localId: string;
-                                    } | {
-                                        hostType: 'usageQuery';
-                                        field?: 'period' | 'session' | undefined;
-                                    } | {
-                                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                    } | undefined;
-                                    contextMode?: 'follow' | 'own' | undefined;
-                                    required?: boolean | undefined;
-                                    requireExplicitSelection?: boolean | undefined;
-                                    listSeparator?: 'comma' | 'newline' | undefined;
-                                    maxSelections?: number | undefined;
-                                    defaultValue?: JsonValue | undefined;
-                                    unit?: 'bytes' | undefined;
-                                    visibleWhen?: InputPredicate | undefined;
-                                    visibleWhenContextSlot?: string | undefined;
-                                    requiredWhen?: InputPredicate | undefined;
-                                    disabledWhen?: InputPredicate | undefined;
-                                    optionsSourceId?: string | undefined;
-                                    connectedAccountOptions?: true | undefined;
-                                    resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                    prompt?: string | undefined;
-                                    description?: string | undefined;
-                                    placeholder?: string | undefined;
-                                    options?: readonly {
-                                        value: JsonValue;
-                                        label: string;
-                                        labelKey?: string | undefined;
-                                        description?: string | undefined;
-                                        disabled?: boolean | undefined;
-                                    }[] | undefined;
-                                }[];
-                                title?: string | undefined;
-                                description?: string | undefined;
-                                submitLabel?: string | undefined;
-                            };
-                            inputSchema: PluginJsonSchemaV2;
-                            v: 1;
-                            id: string;
-                            description?: string | undefined;
-                            publicPresentation?: {
-                                kind: 'declarative';
-                                document: Readonly<{
-                                    version: 1;
-                                    root: PluginDeclarativeNodeV2;
-                                }>;
-                            } | undefined;
-                            sessionInputPath?: string | undefined;
-                            connectedAccountPurposeBindings?: {
-                                path: string;
-                                purpose: string;
-                                consumer: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                nativeServicePath?: string | undefined;
-                            }[] | undefined;
-                            networkOverride?: {
-                                networkOrigins?: string[] | undefined;
-                                network?: 'none' | 'open' | undefined;
-                            } | undefined;
-                        };
-                    };
-                    bindings: Record<string, {
-                        kind: 'value';
-                        value: JsonValue;
-                    } | {
-                        kind: 'context';
-                        slot: string;
-                    } | {
-                        kind: 'viewer';
-                        purpose: string;
-                    }>;
-                    displayName?: string | undefined;
-                    networkOverride?: {
-                        networkOrigins?: string[] | undefined;
-                        network?: 'none' | 'open' | undefined;
-                    } | undefined;
-                };
-                size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-                frameStyle?: 'card' | 'plain' | undefined;
-                area?: 'main' | 'aside' | undefined;
-            } | {
                 kind: 'group';
                 id: string;
                 children: {
@@ -852,17 +800,11 @@ export type HomeHubLayoutActionResultById = {
                         v: 1;
                         id: string;
                         definition: {
-                            kind: 'installed';
-                            surface: {
-                                pluginId: string;
-                                localId: string;
-                            };
+                            kind: 'artifact';
+                            artifactId: string;
                         } | {
                             kind: 'builtin';
                             id: string;
-                        } | {
-                            kind: 'artifact';
-                            artifactId: string;
                         } | {
                             kind: 'inline';
                             definition: {
@@ -876,31 +818,31 @@ export type HomeHubLayoutActionResultById = {
                                         itemId: string;
                                     };
                                     authorAccountId?: string | undefined;
-                                    author?: {
-                                        kind: 'person' | 'agent' | 'plugin';
-                                    } | undefined;
+                                    author?: undefined | {
+                                        kind: 'agent' | 'person' | 'plugin';
+                                    };
                                     createdAt?: number | undefined;
                                 };
                                 sizeDeclaration: {
-                                    sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                    defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                                    sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                    defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                                 };
                                 name: string;
                                 body: WidgetDefinitionBodyV1;
                                 inputs: {
                                     fields: readonly {
                                         path: string;
-                                        widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                        widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                         title: string;
-                                        inputType?: {
-                                            pluginId: string;
-                                            localId: string;
+                                        inputType?: undefined | {
+                                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                                         } | {
                                             hostType: 'usageQuery';
                                             field?: 'period' | 'session' | undefined;
                                         } | {
-                                            hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                        } | undefined;
+                                            pluginId: string;
+                                            localId: string;
+                                        };
                                         contextMode?: 'follow' | 'own' | undefined;
                                         required?: boolean | undefined;
                                         requireExplicitSelection?: boolean | undefined;
@@ -924,6 +866,25 @@ export type HomeHubLayoutActionResultById = {
                                             labelKey?: string | undefined;
                                             description?: string | undefined;
                                             disabled?: boolean | undefined;
+                                            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                            brand?: undefined | {
+                                                state: 'available';
+                                                resource: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                width: number;
+                                                height: number;
+                                                digest: `sha256:${string}`;
+                                                monochrome?: boolean | undefined;
+                                            } | {
+                                                state: 'invalid' | 'missing' | 'retired';
+                                            };
+                                            source?: undefined | {
+                                                kind: string;
+                                                locator: string;
+                                            };
+                                            version?: string | undefined;
                                         }[] | undefined;
                                     }[];
                                     title?: string | undefined;
@@ -934,15 +895,15 @@ export type HomeHubLayoutActionResultById = {
                                 v: 1;
                                 id: string;
                                 description?: string | undefined;
-                                publicPresentation?: {
+                                publicPresentation?: undefined | {
                                     kind: 'declarative';
                                     document: Readonly<{
                                         version: 1;
                                         root: PluginDeclarativeNodeV2;
                                     }>;
-                                } | undefined;
+                                };
                                 sessionInputPath?: string | undefined;
-                                connectedAccountPurposeBindings?: {
+                                connectedAccountPurposeBindings?: undefined | {
                                     path: string;
                                     purpose: string;
                                     consumer: {
@@ -950,49 +911,204 @@ export type HomeHubLayoutActionResultById = {
                                         localId: string;
                                     };
                                     nativeServicePath?: string | undefined;
-                                }[] | undefined;
-                                networkOverride?: {
-                                    networkOrigins?: string[] | undefined;
+                                }[];
+                                networkOverride?: undefined | {
                                     network?: 'none' | 'open' | undefined;
-                                } | undefined;
+                                    networkOrigins?: string[] | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'installed';
+                            surface: {
+                                pluginId: string;
+                                localId: string;
                             };
                         };
                         bindings: Record<string, {
-                            kind: 'value';
-                            value: JsonValue;
-                        } | {
                             kind: 'context';
                             slot: string;
+                        } | {
+                            kind: 'value';
+                            value: JsonValue;
                         } | {
                             kind: 'viewer';
                             purpose: string;
                         }>;
                         displayName?: string | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
+                        networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
-                        } | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
                     };
-                    size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
+                    size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
                     frameStyle?: 'card' | 'plain' | undefined;
-                    area?: 'main' | 'aside' | undefined;
+                    area?: 'aside' | 'main' | undefined;
                 }[];
                 width: 'full' | 'half';
                 frameStyle: 'card' | 'plain';
-                dividers: 'none' | 'hairline';
+                dividers: 'hairline' | 'none';
                 title?: string | undefined;
                 titleKey?: string | undefined;
                 context?: Record<string, {
-                    kind: 'value';
-                    value: JsonValue;
-                } | {
                     kind: 'context';
                     slot: string;
+                } | {
+                    kind: 'value';
+                    value: JsonValue;
                 } | {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
-                area?: 'main' | 'aside' | undefined;
+                area?: 'aside' | 'main' | undefined;
+            } | {
+                kind: 'widget';
+                instance: {
+                    v: 1;
+                    id: string;
+                    definition: {
+                        kind: 'artifact';
+                        artifactId: string;
+                    } | {
+                        kind: 'builtin';
+                        id: string;
+                    } | {
+                        kind: 'inline';
+                        definition: {
+                            provenance: {
+                                source: {
+                                    kind: 'authored';
+                                } | {
+                                    kind: 'session';
+                                    serverId: string;
+                                    sessionId: string;
+                                    itemId: string;
+                                };
+                                authorAccountId?: string | undefined;
+                                author?: undefined | {
+                                    kind: 'agent' | 'person' | 'plugin';
+                                };
+                                createdAt?: number | undefined;
+                            };
+                            sizeDeclaration: {
+                                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                            };
+                            name: string;
+                            body: WidgetDefinitionBodyV1;
+                            inputs: {
+                                fields: readonly {
+                                    path: string;
+                                    widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
+                                    title: string;
+                                    inputType?: undefined | {
+                                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                    } | {
+                                        hostType: 'usageQuery';
+                                        field?: 'period' | 'session' | undefined;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    contextMode?: 'follow' | 'own' | undefined;
+                                    required?: boolean | undefined;
+                                    requireExplicitSelection?: boolean | undefined;
+                                    listSeparator?: 'comma' | 'newline' | undefined;
+                                    maxSelections?: number | undefined;
+                                    defaultValue?: JsonValue | undefined;
+                                    unit?: 'bytes' | undefined;
+                                    visibleWhen?: InputPredicate | undefined;
+                                    visibleWhenContextSlot?: string | undefined;
+                                    requiredWhen?: InputPredicate | undefined;
+                                    disabledWhen?: InputPredicate | undefined;
+                                    optionsSourceId?: string | undefined;
+                                    connectedAccountOptions?: true | undefined;
+                                    resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                    prompt?: string | undefined;
+                                    description?: string | undefined;
+                                    placeholder?: string | undefined;
+                                    options?: readonly {
+                                        value: JsonValue;
+                                        label: string;
+                                        labelKey?: string | undefined;
+                                        description?: string | undefined;
+                                        disabled?: boolean | undefined;
+                                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                        brand?: undefined | {
+                                            state: 'available';
+                                            resource: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            width: number;
+                                            height: number;
+                                            digest: `sha256:${string}`;
+                                            monochrome?: boolean | undefined;
+                                        } | {
+                                            state: 'invalid' | 'missing' | 'retired';
+                                        };
+                                        source?: undefined | {
+                                            kind: string;
+                                            locator: string;
+                                        };
+                                        version?: string | undefined;
+                                    }[] | undefined;
+                                }[];
+                                title?: string | undefined;
+                                description?: string | undefined;
+                                submitLabel?: string | undefined;
+                            };
+                            inputSchema: PluginJsonSchemaV2;
+                            v: 1;
+                            id: string;
+                            description?: string | undefined;
+                            publicPresentation?: undefined | {
+                                kind: 'declarative';
+                                document: Readonly<{
+                                    version: 1;
+                                    root: PluginDeclarativeNodeV2;
+                                }>;
+                            };
+                            sessionInputPath?: string | undefined;
+                            connectedAccountPurposeBindings?: undefined | {
+                                path: string;
+                                purpose: string;
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                nativeServicePath?: string | undefined;
+                            }[];
+                            networkOverride?: undefined | {
+                                network?: 'none' | 'open' | undefined;
+                                networkOrigins?: string[] | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    bindings: Record<string, {
+                        kind: 'context';
+                        slot: string;
+                    } | {
+                        kind: 'value';
+                        value: JsonValue;
+                    } | {
+                        kind: 'viewer';
+                        purpose: string;
+                    }>;
+                    displayName?: string | undefined;
+                    networkOverride?: undefined | {
+                        network?: 'none' | 'open' | undefined;
+                        networkOrigins?: string[] | undefined;
+                    };
+                };
+                size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
+                frameStyle?: 'card' | 'plain' | undefined;
+                area?: 'aside' | 'main' | undefined;
             })[];
             sections?: Record<string, {
                 frameStyle?: 'card' | 'plain' | undefined;
@@ -1006,6 +1122,334 @@ export type HomeHubLayoutActionResultById = {
             frameStyle?: 'card' | 'plain' | undefined;
         } | {
             id: string;
+            kind: 'group';
+            hidden: boolean;
+            hideable: true;
+            frameStyle: 'card' | 'plain';
+            group: {
+                kind: 'group';
+                id: string;
+                children: {
+                    kind: 'widget';
+                    instance: {
+                        v: 1;
+                        id: string;
+                        definition: {
+                            kind: 'artifact';
+                            artifactId: string;
+                        } | {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            kind: 'inline';
+                            definition: {
+                                provenance: {
+                                    source: {
+                                        kind: 'authored';
+                                    } | {
+                                        kind: 'session';
+                                        serverId: string;
+                                        sessionId: string;
+                                        itemId: string;
+                                    };
+                                    authorAccountId?: string | undefined;
+                                    author?: undefined | {
+                                        kind: 'agent' | 'person' | 'plugin';
+                                    };
+                                    createdAt?: number | undefined;
+                                };
+                                sizeDeclaration: {
+                                    sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                    defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                                };
+                                name: string;
+                                body: WidgetDefinitionBodyV1;
+                                inputs: {
+                                    fields: readonly {
+                                        path: string;
+                                        widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
+                                        title: string;
+                                        inputType?: undefined | {
+                                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                        } | {
+                                            hostType: 'usageQuery';
+                                            field?: 'period' | 'session' | undefined;
+                                        } | {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        contextMode?: 'follow' | 'own' | undefined;
+                                        required?: boolean | undefined;
+                                        requireExplicitSelection?: boolean | undefined;
+                                        listSeparator?: 'comma' | 'newline' | undefined;
+                                        maxSelections?: number | undefined;
+                                        defaultValue?: JsonValue | undefined;
+                                        unit?: 'bytes' | undefined;
+                                        visibleWhen?: InputPredicate | undefined;
+                                        visibleWhenContextSlot?: string | undefined;
+                                        requiredWhen?: InputPredicate | undefined;
+                                        disabledWhen?: InputPredicate | undefined;
+                                        optionsSourceId?: string | undefined;
+                                        connectedAccountOptions?: true | undefined;
+                                        resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                        prompt?: string | undefined;
+                                        description?: string | undefined;
+                                        placeholder?: string | undefined;
+                                        options?: readonly {
+                                            value: JsonValue;
+                                            label: string;
+                                            labelKey?: string | undefined;
+                                            description?: string | undefined;
+                                            disabled?: boolean | undefined;
+                                            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                            brand?: undefined | {
+                                                state: 'available';
+                                                resource: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                width: number;
+                                                height: number;
+                                                digest: `sha256:${string}`;
+                                                monochrome?: boolean | undefined;
+                                            } | {
+                                                state: 'invalid' | 'missing' | 'retired';
+                                            };
+                                            source?: undefined | {
+                                                kind: string;
+                                                locator: string;
+                                            };
+                                            version?: string | undefined;
+                                        }[] | undefined;
+                                    }[];
+                                    title?: string | undefined;
+                                    description?: string | undefined;
+                                    submitLabel?: string | undefined;
+                                };
+                                inputSchema: PluginJsonSchemaV2;
+                                v: 1;
+                                id: string;
+                                description?: string | undefined;
+                                publicPresentation?: undefined | {
+                                    kind: 'declarative';
+                                    document: Readonly<{
+                                        version: 1;
+                                        root: PluginDeclarativeNodeV2;
+                                    }>;
+                                };
+                                sessionInputPath?: string | undefined;
+                                connectedAccountPurposeBindings?: undefined | {
+                                    path: string;
+                                    purpose: string;
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    nativeServicePath?: string | undefined;
+                                }[];
+                                networkOverride?: undefined | {
+                                    network?: 'none' | 'open' | undefined;
+                                    networkOrigins?: string[] | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'installed';
+                            surface: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        bindings: Record<string, {
+                            kind: 'context';
+                            slot: string;
+                        } | {
+                            kind: 'value';
+                            value: JsonValue;
+                        } | {
+                            kind: 'viewer';
+                            purpose: string;
+                        }>;
+                        displayName?: string | undefined;
+                        networkOverride?: undefined | {
+                            network?: 'none' | 'open' | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
+                    };
+                    size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
+                    frameStyle?: 'card' | 'plain' | undefined;
+                    area?: 'aside' | 'main' | undefined;
+                }[];
+                width: 'full' | 'half';
+                frameStyle: 'card' | 'plain';
+                dividers: 'hairline' | 'none';
+                title?: string | undefined;
+                titleKey?: string | undefined;
+                context?: Record<string, {
+                    kind: 'context';
+                    slot: string;
+                } | {
+                    kind: 'value';
+                    value: JsonValue;
+                } | {
+                    kind: 'viewer';
+                    purpose: string;
+                }> | undefined;
+                area?: 'aside' | 'main' | undefined;
+            };
+            children: {
+                id: string;
+                kind: 'widget';
+                hidden: boolean;
+                hideable: true;
+                instance: {
+                    v: 1;
+                    id: string;
+                    definition: {
+                        kind: 'artifact';
+                        artifactId: string;
+                    } | {
+                        kind: 'builtin';
+                        id: string;
+                    } | {
+                        kind: 'inline';
+                        definition: {
+                            provenance: {
+                                source: {
+                                    kind: 'authored';
+                                } | {
+                                    kind: 'session';
+                                    serverId: string;
+                                    sessionId: string;
+                                    itemId: string;
+                                };
+                                authorAccountId?: string | undefined;
+                                author?: undefined | {
+                                    kind: 'agent' | 'person' | 'plugin';
+                                };
+                                createdAt?: number | undefined;
+                            };
+                            sizeDeclaration: {
+                                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                            };
+                            name: string;
+                            body: WidgetDefinitionBodyV1;
+                            inputs: {
+                                fields: readonly {
+                                    path: string;
+                                    widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
+                                    title: string;
+                                    inputType?: undefined | {
+                                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                    } | {
+                                        hostType: 'usageQuery';
+                                        field?: 'period' | 'session' | undefined;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    contextMode?: 'follow' | 'own' | undefined;
+                                    required?: boolean | undefined;
+                                    requireExplicitSelection?: boolean | undefined;
+                                    listSeparator?: 'comma' | 'newline' | undefined;
+                                    maxSelections?: number | undefined;
+                                    defaultValue?: JsonValue | undefined;
+                                    unit?: 'bytes' | undefined;
+                                    visibleWhen?: InputPredicate | undefined;
+                                    visibleWhenContextSlot?: string | undefined;
+                                    requiredWhen?: InputPredicate | undefined;
+                                    disabledWhen?: InputPredicate | undefined;
+                                    optionsSourceId?: string | undefined;
+                                    connectedAccountOptions?: true | undefined;
+                                    resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                    prompt?: string | undefined;
+                                    description?: string | undefined;
+                                    placeholder?: string | undefined;
+                                    options?: readonly {
+                                        value: JsonValue;
+                                        label: string;
+                                        labelKey?: string | undefined;
+                                        description?: string | undefined;
+                                        disabled?: boolean | undefined;
+                                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                        brand?: undefined | {
+                                            state: 'available';
+                                            resource: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            width: number;
+                                            height: number;
+                                            digest: `sha256:${string}`;
+                                            monochrome?: boolean | undefined;
+                                        } | {
+                                            state: 'invalid' | 'missing' | 'retired';
+                                        };
+                                        source?: undefined | {
+                                            kind: string;
+                                            locator: string;
+                                        };
+                                        version?: string | undefined;
+                                    }[] | undefined;
+                                }[];
+                                title?: string | undefined;
+                                description?: string | undefined;
+                                submitLabel?: string | undefined;
+                            };
+                            inputSchema: PluginJsonSchemaV2;
+                            v: 1;
+                            id: string;
+                            description?: string | undefined;
+                            publicPresentation?: undefined | {
+                                kind: 'declarative';
+                                document: Readonly<{
+                                    version: 1;
+                                    root: PluginDeclarativeNodeV2;
+                                }>;
+                            };
+                            sessionInputPath?: string | undefined;
+                            connectedAccountPurposeBindings?: undefined | {
+                                path: string;
+                                purpose: string;
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                nativeServicePath?: string | undefined;
+                            }[];
+                            networkOverride?: undefined | {
+                                network?: 'none' | 'open' | undefined;
+                                networkOrigins?: string[] | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    bindings: Record<string, {
+                        kind: 'context';
+                        slot: string;
+                    } | {
+                        kind: 'value';
+                        value: JsonValue;
+                    } | {
+                        kind: 'viewer';
+                        purpose: string;
+                    }>;
+                    displayName?: string | undefined;
+                    networkOverride?: undefined | {
+                        network?: 'none' | 'open' | undefined;
+                        networkOrigins?: string[] | undefined;
+                    };
+                };
+                size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                frameStyle?: 'card' | 'plain' | undefined;
+            }[];
+        } | {
+            id: string;
             kind: 'widget';
             hidden: boolean;
             hideable: true;
@@ -1013,17 +1457,11 @@ export type HomeHubLayoutActionResultById = {
                 v: 1;
                 id: string;
                 definition: {
-                    kind: 'installed';
-                    surface: {
-                        pluginId: string;
-                        localId: string;
-                    };
+                    kind: 'artifact';
+                    artifactId: string;
                 } | {
                     kind: 'builtin';
                     id: string;
-                } | {
-                    kind: 'artifact';
-                    artifactId: string;
                 } | {
                     kind: 'inline';
                     definition: {
@@ -1037,31 +1475,31 @@ export type HomeHubLayoutActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
-                            author?: {
-                                kind: 'person' | 'agent' | 'plugin';
-                            } | undefined;
+                            author?: undefined | {
+                                kind: 'agent' | 'person' | 'plugin';
+                            };
                             createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
-                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                            sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                            defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                         };
                         name: string;
                         body: WidgetDefinitionBodyV1;
                         inputs: {
                             fields: readonly {
                                 path: string;
-                                widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                 title: string;
-                                inputType?: {
-                                    pluginId: string;
-                                    localId: string;
+                                inputType?: undefined | {
+                                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                                 } | {
                                     hostType: 'usageQuery';
                                     field?: 'period' | 'session' | undefined;
                                 } | {
-                                    hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                } | undefined;
+                                    pluginId: string;
+                                    localId: string;
+                                };
                                 contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
@@ -1085,6 +1523,25 @@ export type HomeHubLayoutActionResultById = {
                                     labelKey?: string | undefined;
                                     description?: string | undefined;
                                     disabled?: boolean | undefined;
+                                    icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                    brand?: undefined | {
+                                        state: 'available';
+                                        resource: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        width: number;
+                                        height: number;
+                                        digest: `sha256:${string}`;
+                                        monochrome?: boolean | undefined;
+                                    } | {
+                                        state: 'invalid' | 'missing' | 'retired';
+                                    };
+                                    source?: undefined | {
+                                        kind: string;
+                                        locator: string;
+                                    };
+                                    version?: string | undefined;
                                 }[] | undefined;
                             }[];
                             title?: string | undefined;
@@ -1095,15 +1552,15 @@ export type HomeHubLayoutActionResultById = {
                         v: 1;
                         id: string;
                         description?: string | undefined;
-                        publicPresentation?: {
+                        publicPresentation?: undefined | {
                             kind: 'declarative';
                             document: Readonly<{
                                 version: 1;
                                 root: PluginDeclarativeNodeV2;
                             }>;
-                        } | undefined;
+                        };
                         sessionInputPath?: string | undefined;
-                        connectedAccountPurposeBindings?: {
+                        connectedAccountPurposeBindings?: undefined | {
                             path: string;
                             purpose: string;
                             consumer: {
@@ -1111,321 +1568,37 @@ export type HomeHubLayoutActionResultById = {
                                 localId: string;
                             };
                             nativeServicePath?: string | undefined;
-                        }[] | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
+                        }[];
+                        networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
-                        } | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'installed';
+                    surface: {
+                        pluginId: string;
+                        localId: string;
                     };
                 };
                 bindings: Record<string, {
-                    kind: 'value';
-                    value: JsonValue;
-                } | {
                     kind: 'context';
                     slot: string;
+                } | {
+                    kind: 'value';
+                    value: JsonValue;
                 } | {
                     kind: 'viewer';
                     purpose: string;
                 }>;
                 displayName?: string | undefined;
-                networkOverride?: {
-                    networkOrigins?: string[] | undefined;
+                networkOverride?: undefined | {
                     network?: 'none' | 'open' | undefined;
-                } | undefined;
-            };
-            size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-            frameStyle?: 'card' | 'plain' | undefined;
-        } | {
-            id: string;
-            kind: 'group';
-            hidden: boolean;
-            hideable: true;
-            frameStyle: 'card' | 'plain';
-            group: {
-                kind: 'group';
-                id: string;
-                children: {
-                    kind: 'widget';
-                    instance: {
-                        v: 1;
-                        id: string;
-                        definition: {
-                            kind: 'installed';
-                            surface: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                        } | {
-                            kind: 'builtin';
-                            id: string;
-                        } | {
-                            kind: 'artifact';
-                            artifactId: string;
-                        } | {
-                            kind: 'inline';
-                            definition: {
-                                provenance: {
-                                    source: {
-                                        kind: 'authored';
-                                    } | {
-                                        kind: 'session';
-                                        serverId: string;
-                                        sessionId: string;
-                                        itemId: string;
-                                    };
-                                    authorAccountId?: string | undefined;
-                                    author?: {
-                                        kind: 'person' | 'agent' | 'plugin';
-                                    } | undefined;
-                                    createdAt?: number | undefined;
-                                };
-                                sizeDeclaration: {
-                                    sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                    defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                                };
-                                name: string;
-                                body: WidgetDefinitionBodyV1;
-                                inputs: {
-                                    fields: readonly {
-                                        path: string;
-                                        widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                        title: string;
-                                        inputType?: {
-                                            pluginId: string;
-                                            localId: string;
-                                        } | {
-                                            hostType: 'usageQuery';
-                                            field?: 'period' | 'session' | undefined;
-                                        } | {
-                                            hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                        } | undefined;
-                                        contextMode?: 'follow' | 'own' | undefined;
-                                        required?: boolean | undefined;
-                                        requireExplicitSelection?: boolean | undefined;
-                                        listSeparator?: 'comma' | 'newline' | undefined;
-                                        maxSelections?: number | undefined;
-                                        defaultValue?: JsonValue | undefined;
-                                        unit?: 'bytes' | undefined;
-                                        visibleWhen?: InputPredicate | undefined;
-                                        visibleWhenContextSlot?: string | undefined;
-                                        requiredWhen?: InputPredicate | undefined;
-                                        disabledWhen?: InputPredicate | undefined;
-                                        optionsSourceId?: string | undefined;
-                                        connectedAccountOptions?: true | undefined;
-                                        resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                        prompt?: string | undefined;
-                                        description?: string | undefined;
-                                        placeholder?: string | undefined;
-                                        options?: readonly {
-                                            value: JsonValue;
-                                            label: string;
-                                            labelKey?: string | undefined;
-                                            description?: string | undefined;
-                                            disabled?: boolean | undefined;
-                                        }[] | undefined;
-                                    }[];
-                                    title?: string | undefined;
-                                    description?: string | undefined;
-                                    submitLabel?: string | undefined;
-                                };
-                                inputSchema: PluginJsonSchemaV2;
-                                v: 1;
-                                id: string;
-                                description?: string | undefined;
-                                publicPresentation?: {
-                                    kind: 'declarative';
-                                    document: Readonly<{
-                                        version: 1;
-                                        root: PluginDeclarativeNodeV2;
-                                    }>;
-                                } | undefined;
-                                sessionInputPath?: string | undefined;
-                                connectedAccountPurposeBindings?: {
-                                    path: string;
-                                    purpose: string;
-                                    consumer: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    nativeServicePath?: string | undefined;
-                                }[] | undefined;
-                                networkOverride?: {
-                                    networkOrigins?: string[] | undefined;
-                                    network?: 'none' | 'open' | undefined;
-                                } | undefined;
-                            };
-                        };
-                        bindings: Record<string, {
-                            kind: 'value';
-                            value: JsonValue;
-                        } | {
-                            kind: 'context';
-                            slot: string;
-                        } | {
-                            kind: 'viewer';
-                            purpose: string;
-                        }>;
-                        displayName?: string | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
-                            network?: 'none' | 'open' | undefined;
-                        } | undefined;
-                    };
-                    size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-                    frameStyle?: 'card' | 'plain' | undefined;
-                    area?: 'main' | 'aside' | undefined;
-                }[];
-                width: 'full' | 'half';
-                frameStyle: 'card' | 'plain';
-                dividers: 'none' | 'hairline';
-                title?: string | undefined;
-                titleKey?: string | undefined;
-                context?: Record<string, {
-                    kind: 'value';
-                    value: JsonValue;
-                } | {
-                    kind: 'context';
-                    slot: string;
-                } | {
-                    kind: 'viewer';
-                    purpose: string;
-                }> | undefined;
-                area?: 'main' | 'aside' | undefined;
-            };
-            children: {
-                id: string;
-                kind: 'widget';
-                hidden: boolean;
-                hideable: true;
-                instance: {
-                    v: 1;
-                    id: string;
-                    definition: {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                    } | {
-                        kind: 'builtin';
-                        id: string;
-                    } | {
-                        kind: 'artifact';
-                        artifactId: string;
-                    } | {
-                        kind: 'inline';
-                        definition: {
-                            provenance: {
-                                source: {
-                                    kind: 'authored';
-                                } | {
-                                    kind: 'session';
-                                    serverId: string;
-                                    sessionId: string;
-                                    itemId: string;
-                                };
-                                authorAccountId?: string | undefined;
-                                author?: {
-                                    kind: 'person' | 'agent' | 'plugin';
-                                } | undefined;
-                                createdAt?: number | undefined;
-                            };
-                            sizeDeclaration: {
-                                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                            };
-                            name: string;
-                            body: WidgetDefinitionBodyV1;
-                            inputs: {
-                                fields: readonly {
-                                    path: string;
-                                    widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                    title: string;
-                                    inputType?: {
-                                        pluginId: string;
-                                        localId: string;
-                                    } | {
-                                        hostType: 'usageQuery';
-                                        field?: 'period' | 'session' | undefined;
-                                    } | {
-                                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                    } | undefined;
-                                    contextMode?: 'follow' | 'own' | undefined;
-                                    required?: boolean | undefined;
-                                    requireExplicitSelection?: boolean | undefined;
-                                    listSeparator?: 'comma' | 'newline' | undefined;
-                                    maxSelections?: number | undefined;
-                                    defaultValue?: JsonValue | undefined;
-                                    unit?: 'bytes' | undefined;
-                                    visibleWhen?: InputPredicate | undefined;
-                                    visibleWhenContextSlot?: string | undefined;
-                                    requiredWhen?: InputPredicate | undefined;
-                                    disabledWhen?: InputPredicate | undefined;
-                                    optionsSourceId?: string | undefined;
-                                    connectedAccountOptions?: true | undefined;
-                                    resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                    prompt?: string | undefined;
-                                    description?: string | undefined;
-                                    placeholder?: string | undefined;
-                                    options?: readonly {
-                                        value: JsonValue;
-                                        label: string;
-                                        labelKey?: string | undefined;
-                                        description?: string | undefined;
-                                        disabled?: boolean | undefined;
-                                    }[] | undefined;
-                                }[];
-                                title?: string | undefined;
-                                description?: string | undefined;
-                                submitLabel?: string | undefined;
-                            };
-                            inputSchema: PluginJsonSchemaV2;
-                            v: 1;
-                            id: string;
-                            description?: string | undefined;
-                            publicPresentation?: {
-                                kind: 'declarative';
-                                document: Readonly<{
-                                    version: 1;
-                                    root: PluginDeclarativeNodeV2;
-                                }>;
-                            } | undefined;
-                            sessionInputPath?: string | undefined;
-                            connectedAccountPurposeBindings?: {
-                                path: string;
-                                purpose: string;
-                                consumer: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                nativeServicePath?: string | undefined;
-                            }[] | undefined;
-                            networkOverride?: {
-                                networkOrigins?: string[] | undefined;
-                                network?: 'none' | 'open' | undefined;
-                            } | undefined;
-                        };
-                    };
-                    bindings: Record<string, {
-                        kind: 'value';
-                        value: JsonValue;
-                    } | {
-                        kind: 'context';
-                        slot: string;
-                    } | {
-                        kind: 'viewer';
-                        purpose: string;
-                    }>;
-                    displayName?: string | undefined;
-                    networkOverride?: {
-                        networkOrigins?: string[] | undefined;
-                        network?: 'none' | 'open' | undefined;
-                    } | undefined;
+                    networkOrigins?: string[] | undefined;
                 };
-                size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                frameStyle?: 'card' | 'plain' | undefined;
-            }[];
+            };
+            size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+            frameStyle?: 'card' | 'plain' | undefined;
         })[];
         availableWidgetIds: string[];
         hiddenSetupStepIds: string[];
@@ -1436,136 +1609,6 @@ export type HomeHubLayoutActionResultById = {
             order: string[];
             hidden: string[];
             items: ({
-                kind: 'widget';
-                instance: {
-                    v: 1;
-                    id: string;
-                    definition: {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                    } | {
-                        kind: 'builtin';
-                        id: string;
-                    } | {
-                        kind: 'artifact';
-                        artifactId: string;
-                    } | {
-                        kind: 'inline';
-                        definition: {
-                            provenance: {
-                                source: {
-                                    kind: 'authored';
-                                } | {
-                                    kind: 'session';
-                                    serverId: string;
-                                    sessionId: string;
-                                    itemId: string;
-                                };
-                                authorAccountId?: string | undefined;
-                                author?: {
-                                    kind: 'person' | 'agent' | 'plugin';
-                                } | undefined;
-                                createdAt?: number | undefined;
-                            };
-                            sizeDeclaration: {
-                                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                            };
-                            name: string;
-                            body: WidgetDefinitionBodyV1;
-                            inputs: {
-                                fields: readonly {
-                                    path: string;
-                                    widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                    title: string;
-                                    inputType?: {
-                                        pluginId: string;
-                                        localId: string;
-                                    } | {
-                                        hostType: 'usageQuery';
-                                        field?: 'period' | 'session' | undefined;
-                                    } | {
-                                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                    } | undefined;
-                                    contextMode?: 'follow' | 'own' | undefined;
-                                    required?: boolean | undefined;
-                                    requireExplicitSelection?: boolean | undefined;
-                                    listSeparator?: 'comma' | 'newline' | undefined;
-                                    maxSelections?: number | undefined;
-                                    defaultValue?: JsonValue | undefined;
-                                    unit?: 'bytes' | undefined;
-                                    visibleWhen?: InputPredicate | undefined;
-                                    visibleWhenContextSlot?: string | undefined;
-                                    requiredWhen?: InputPredicate | undefined;
-                                    disabledWhen?: InputPredicate | undefined;
-                                    optionsSourceId?: string | undefined;
-                                    connectedAccountOptions?: true | undefined;
-                                    resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                    prompt?: string | undefined;
-                                    description?: string | undefined;
-                                    placeholder?: string | undefined;
-                                    options?: readonly {
-                                        value: JsonValue;
-                                        label: string;
-                                        labelKey?: string | undefined;
-                                        description?: string | undefined;
-                                        disabled?: boolean | undefined;
-                                    }[] | undefined;
-                                }[];
-                                title?: string | undefined;
-                                description?: string | undefined;
-                                submitLabel?: string | undefined;
-                            };
-                            inputSchema: PluginJsonSchemaV2;
-                            v: 1;
-                            id: string;
-                            description?: string | undefined;
-                            publicPresentation?: {
-                                kind: 'declarative';
-                                document: Readonly<{
-                                    version: 1;
-                                    root: PluginDeclarativeNodeV2;
-                                }>;
-                            } | undefined;
-                            sessionInputPath?: string | undefined;
-                            connectedAccountPurposeBindings?: {
-                                path: string;
-                                purpose: string;
-                                consumer: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                nativeServicePath?: string | undefined;
-                            }[] | undefined;
-                            networkOverride?: {
-                                networkOrigins?: string[] | undefined;
-                                network?: 'none' | 'open' | undefined;
-                            } | undefined;
-                        };
-                    };
-                    bindings: Record<string, {
-                        kind: 'value';
-                        value: JsonValue;
-                    } | {
-                        kind: 'context';
-                        slot: string;
-                    } | {
-                        kind: 'viewer';
-                        purpose: string;
-                    }>;
-                    displayName?: string | undefined;
-                    networkOverride?: {
-                        networkOrigins?: string[] | undefined;
-                        network?: 'none' | 'open' | undefined;
-                    } | undefined;
-                };
-                size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-                frameStyle?: 'card' | 'plain' | undefined;
-                area?: 'main' | 'aside' | undefined;
-            } | {
                 kind: 'group';
                 id: string;
                 children: {
@@ -1574,17 +1617,11 @@ export type HomeHubLayoutActionResultById = {
                         v: 1;
                         id: string;
                         definition: {
-                            kind: 'installed';
-                            surface: {
-                                pluginId: string;
-                                localId: string;
-                            };
+                            kind: 'artifact';
+                            artifactId: string;
                         } | {
                             kind: 'builtin';
                             id: string;
-                        } | {
-                            kind: 'artifact';
-                            artifactId: string;
                         } | {
                             kind: 'inline';
                             definition: {
@@ -1598,31 +1635,31 @@ export type HomeHubLayoutActionResultById = {
                                         itemId: string;
                                     };
                                     authorAccountId?: string | undefined;
-                                    author?: {
-                                        kind: 'person' | 'agent' | 'plugin';
-                                    } | undefined;
+                                    author?: undefined | {
+                                        kind: 'agent' | 'person' | 'plugin';
+                                    };
                                     createdAt?: number | undefined;
                                 };
                                 sizeDeclaration: {
-                                    sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                    defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                                    sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                    defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                                 };
                                 name: string;
                                 body: WidgetDefinitionBodyV1;
                                 inputs: {
                                     fields: readonly {
                                         path: string;
-                                        widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                        widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                         title: string;
-                                        inputType?: {
-                                            pluginId: string;
-                                            localId: string;
+                                        inputType?: undefined | {
+                                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                                         } | {
                                             hostType: 'usageQuery';
                                             field?: 'period' | 'session' | undefined;
                                         } | {
-                                            hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                        } | undefined;
+                                            pluginId: string;
+                                            localId: string;
+                                        };
                                         contextMode?: 'follow' | 'own' | undefined;
                                         required?: boolean | undefined;
                                         requireExplicitSelection?: boolean | undefined;
@@ -1646,6 +1683,25 @@ export type HomeHubLayoutActionResultById = {
                                             labelKey?: string | undefined;
                                             description?: string | undefined;
                                             disabled?: boolean | undefined;
+                                            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                            brand?: undefined | {
+                                                state: 'available';
+                                                resource: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                width: number;
+                                                height: number;
+                                                digest: `sha256:${string}`;
+                                                monochrome?: boolean | undefined;
+                                            } | {
+                                                state: 'invalid' | 'missing' | 'retired';
+                                            };
+                                            source?: undefined | {
+                                                kind: string;
+                                                locator: string;
+                                            };
+                                            version?: string | undefined;
                                         }[] | undefined;
                                     }[];
                                     title?: string | undefined;
@@ -1656,15 +1712,15 @@ export type HomeHubLayoutActionResultById = {
                                 v: 1;
                                 id: string;
                                 description?: string | undefined;
-                                publicPresentation?: {
+                                publicPresentation?: undefined | {
                                     kind: 'declarative';
                                     document: Readonly<{
                                         version: 1;
                                         root: PluginDeclarativeNodeV2;
                                     }>;
-                                } | undefined;
+                                };
                                 sessionInputPath?: string | undefined;
-                                connectedAccountPurposeBindings?: {
+                                connectedAccountPurposeBindings?: undefined | {
                                     path: string;
                                     purpose: string;
                                     consumer: {
@@ -1672,49 +1728,204 @@ export type HomeHubLayoutActionResultById = {
                                         localId: string;
                                     };
                                     nativeServicePath?: string | undefined;
-                                }[] | undefined;
-                                networkOverride?: {
-                                    networkOrigins?: string[] | undefined;
+                                }[];
+                                networkOverride?: undefined | {
                                     network?: 'none' | 'open' | undefined;
-                                } | undefined;
+                                    networkOrigins?: string[] | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'installed';
+                            surface: {
+                                pluginId: string;
+                                localId: string;
                             };
                         };
                         bindings: Record<string, {
-                            kind: 'value';
-                            value: JsonValue;
-                        } | {
                             kind: 'context';
                             slot: string;
+                        } | {
+                            kind: 'value';
+                            value: JsonValue;
                         } | {
                             kind: 'viewer';
                             purpose: string;
                         }>;
                         displayName?: string | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
+                        networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
-                        } | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
                     };
-                    size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
+                    size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
                     frameStyle?: 'card' | 'plain' | undefined;
-                    area?: 'main' | 'aside' | undefined;
+                    area?: 'aside' | 'main' | undefined;
                 }[];
                 width: 'full' | 'half';
                 frameStyle: 'card' | 'plain';
-                dividers: 'none' | 'hairline';
+                dividers: 'hairline' | 'none';
                 title?: string | undefined;
                 titleKey?: string | undefined;
                 context?: Record<string, {
-                    kind: 'value';
-                    value: JsonValue;
-                } | {
                     kind: 'context';
                     slot: string;
+                } | {
+                    kind: 'value';
+                    value: JsonValue;
                 } | {
                     kind: 'viewer';
                     purpose: string;
                 }> | undefined;
-                area?: 'main' | 'aside' | undefined;
+                area?: 'aside' | 'main' | undefined;
+            } | {
+                kind: 'widget';
+                instance: {
+                    v: 1;
+                    id: string;
+                    definition: {
+                        kind: 'artifact';
+                        artifactId: string;
+                    } | {
+                        kind: 'builtin';
+                        id: string;
+                    } | {
+                        kind: 'inline';
+                        definition: {
+                            provenance: {
+                                source: {
+                                    kind: 'authored';
+                                } | {
+                                    kind: 'session';
+                                    serverId: string;
+                                    sessionId: string;
+                                    itemId: string;
+                                };
+                                authorAccountId?: string | undefined;
+                                author?: undefined | {
+                                    kind: 'agent' | 'person' | 'plugin';
+                                };
+                                createdAt?: number | undefined;
+                            };
+                            sizeDeclaration: {
+                                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                            };
+                            name: string;
+                            body: WidgetDefinitionBodyV1;
+                            inputs: {
+                                fields: readonly {
+                                    path: string;
+                                    widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
+                                    title: string;
+                                    inputType?: undefined | {
+                                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                    } | {
+                                        hostType: 'usageQuery';
+                                        field?: 'period' | 'session' | undefined;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    contextMode?: 'follow' | 'own' | undefined;
+                                    required?: boolean | undefined;
+                                    requireExplicitSelection?: boolean | undefined;
+                                    listSeparator?: 'comma' | 'newline' | undefined;
+                                    maxSelections?: number | undefined;
+                                    defaultValue?: JsonValue | undefined;
+                                    unit?: 'bytes' | undefined;
+                                    visibleWhen?: InputPredicate | undefined;
+                                    visibleWhenContextSlot?: string | undefined;
+                                    requiredWhen?: InputPredicate | undefined;
+                                    disabledWhen?: InputPredicate | undefined;
+                                    optionsSourceId?: string | undefined;
+                                    connectedAccountOptions?: true | undefined;
+                                    resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                    prompt?: string | undefined;
+                                    description?: string | undefined;
+                                    placeholder?: string | undefined;
+                                    options?: readonly {
+                                        value: JsonValue;
+                                        label: string;
+                                        labelKey?: string | undefined;
+                                        description?: string | undefined;
+                                        disabled?: boolean | undefined;
+                                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                        brand?: undefined | {
+                                            state: 'available';
+                                            resource: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            width: number;
+                                            height: number;
+                                            digest: `sha256:${string}`;
+                                            monochrome?: boolean | undefined;
+                                        } | {
+                                            state: 'invalid' | 'missing' | 'retired';
+                                        };
+                                        source?: undefined | {
+                                            kind: string;
+                                            locator: string;
+                                        };
+                                        version?: string | undefined;
+                                    }[] | undefined;
+                                }[];
+                                title?: string | undefined;
+                                description?: string | undefined;
+                                submitLabel?: string | undefined;
+                            };
+                            inputSchema: PluginJsonSchemaV2;
+                            v: 1;
+                            id: string;
+                            description?: string | undefined;
+                            publicPresentation?: undefined | {
+                                kind: 'declarative';
+                                document: Readonly<{
+                                    version: 1;
+                                    root: PluginDeclarativeNodeV2;
+                                }>;
+                            };
+                            sessionInputPath?: string | undefined;
+                            connectedAccountPurposeBindings?: undefined | {
+                                path: string;
+                                purpose: string;
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                nativeServicePath?: string | undefined;
+                            }[];
+                            networkOverride?: undefined | {
+                                network?: 'none' | 'open' | undefined;
+                                networkOrigins?: string[] | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    bindings: Record<string, {
+                        kind: 'context';
+                        slot: string;
+                    } | {
+                        kind: 'value';
+                        value: JsonValue;
+                    } | {
+                        kind: 'viewer';
+                        purpose: string;
+                    }>;
+                    displayName?: string | undefined;
+                    networkOverride?: undefined | {
+                        network?: 'none' | 'open' | undefined;
+                        networkOrigins?: string[] | undefined;
+                    };
+                };
+                size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
+                frameStyle?: 'card' | 'plain' | undefined;
+                area?: 'aside' | 'main' | undefined;
             })[];
             sections?: Record<string, {
                 frameStyle?: 'card' | 'plain' | undefined;
@@ -1728,6 +1939,334 @@ export type HomeHubLayoutActionResultById = {
             frameStyle?: 'card' | 'plain' | undefined;
         } | {
             id: string;
+            kind: 'group';
+            hidden: boolean;
+            hideable: true;
+            frameStyle: 'card' | 'plain';
+            group: {
+                kind: 'group';
+                id: string;
+                children: {
+                    kind: 'widget';
+                    instance: {
+                        v: 1;
+                        id: string;
+                        definition: {
+                            kind: 'artifact';
+                            artifactId: string;
+                        } | {
+                            kind: 'builtin';
+                            id: string;
+                        } | {
+                            kind: 'inline';
+                            definition: {
+                                provenance: {
+                                    source: {
+                                        kind: 'authored';
+                                    } | {
+                                        kind: 'session';
+                                        serverId: string;
+                                        sessionId: string;
+                                        itemId: string;
+                                    };
+                                    authorAccountId?: string | undefined;
+                                    author?: undefined | {
+                                        kind: 'agent' | 'person' | 'plugin';
+                                    };
+                                    createdAt?: number | undefined;
+                                };
+                                sizeDeclaration: {
+                                    sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                    defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                                };
+                                name: string;
+                                body: WidgetDefinitionBodyV1;
+                                inputs: {
+                                    fields: readonly {
+                                        path: string;
+                                        widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
+                                        title: string;
+                                        inputType?: undefined | {
+                                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                        } | {
+                                            hostType: 'usageQuery';
+                                            field?: 'period' | 'session' | undefined;
+                                        } | {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        contextMode?: 'follow' | 'own' | undefined;
+                                        required?: boolean | undefined;
+                                        requireExplicitSelection?: boolean | undefined;
+                                        listSeparator?: 'comma' | 'newline' | undefined;
+                                        maxSelections?: number | undefined;
+                                        defaultValue?: JsonValue | undefined;
+                                        unit?: 'bytes' | undefined;
+                                        visibleWhen?: InputPredicate | undefined;
+                                        visibleWhenContextSlot?: string | undefined;
+                                        requiredWhen?: InputPredicate | undefined;
+                                        disabledWhen?: InputPredicate | undefined;
+                                        optionsSourceId?: string | undefined;
+                                        connectedAccountOptions?: true | undefined;
+                                        resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                        prompt?: string | undefined;
+                                        description?: string | undefined;
+                                        placeholder?: string | undefined;
+                                        options?: readonly {
+                                            value: JsonValue;
+                                            label: string;
+                                            labelKey?: string | undefined;
+                                            description?: string | undefined;
+                                            disabled?: boolean | undefined;
+                                            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                            brand?: undefined | {
+                                                state: 'available';
+                                                resource: {
+                                                    pluginId: string;
+                                                    localId: string;
+                                                };
+                                                width: number;
+                                                height: number;
+                                                digest: `sha256:${string}`;
+                                                monochrome?: boolean | undefined;
+                                            } | {
+                                                state: 'invalid' | 'missing' | 'retired';
+                                            };
+                                            source?: undefined | {
+                                                kind: string;
+                                                locator: string;
+                                            };
+                                            version?: string | undefined;
+                                        }[] | undefined;
+                                    }[];
+                                    title?: string | undefined;
+                                    description?: string | undefined;
+                                    submitLabel?: string | undefined;
+                                };
+                                inputSchema: PluginJsonSchemaV2;
+                                v: 1;
+                                id: string;
+                                description?: string | undefined;
+                                publicPresentation?: undefined | {
+                                    kind: 'declarative';
+                                    document: Readonly<{
+                                        version: 1;
+                                        root: PluginDeclarativeNodeV2;
+                                    }>;
+                                };
+                                sessionInputPath?: string | undefined;
+                                connectedAccountPurposeBindings?: undefined | {
+                                    path: string;
+                                    purpose: string;
+                                    consumer: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    nativeServicePath?: string | undefined;
+                                }[];
+                                networkOverride?: undefined | {
+                                    network?: 'none' | 'open' | undefined;
+                                    networkOrigins?: string[] | undefined;
+                                };
+                            };
+                        } | {
+                            kind: 'installed';
+                            surface: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        bindings: Record<string, {
+                            kind: 'context';
+                            slot: string;
+                        } | {
+                            kind: 'value';
+                            value: JsonValue;
+                        } | {
+                            kind: 'viewer';
+                            purpose: string;
+                        }>;
+                        displayName?: string | undefined;
+                        networkOverride?: undefined | {
+                            network?: 'none' | 'open' | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
+                    };
+                    size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
+                    frameStyle?: 'card' | 'plain' | undefined;
+                    area?: 'aside' | 'main' | undefined;
+                }[];
+                width: 'full' | 'half';
+                frameStyle: 'card' | 'plain';
+                dividers: 'hairline' | 'none';
+                title?: string | undefined;
+                titleKey?: string | undefined;
+                context?: Record<string, {
+                    kind: 'context';
+                    slot: string;
+                } | {
+                    kind: 'value';
+                    value: JsonValue;
+                } | {
+                    kind: 'viewer';
+                    purpose: string;
+                }> | undefined;
+                area?: 'aside' | 'main' | undefined;
+            };
+            children: {
+                id: string;
+                kind: 'widget';
+                hidden: boolean;
+                hideable: true;
+                instance: {
+                    v: 1;
+                    id: string;
+                    definition: {
+                        kind: 'artifact';
+                        artifactId: string;
+                    } | {
+                        kind: 'builtin';
+                        id: string;
+                    } | {
+                        kind: 'inline';
+                        definition: {
+                            provenance: {
+                                source: {
+                                    kind: 'authored';
+                                } | {
+                                    kind: 'session';
+                                    serverId: string;
+                                    sessionId: string;
+                                    itemId: string;
+                                };
+                                authorAccountId?: string | undefined;
+                                author?: undefined | {
+                                    kind: 'agent' | 'person' | 'plugin';
+                                };
+                                createdAt?: number | undefined;
+                            };
+                            sizeDeclaration: {
+                                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                            };
+                            name: string;
+                            body: WidgetDefinitionBodyV1;
+                            inputs: {
+                                fields: readonly {
+                                    path: string;
+                                    widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
+                                    title: string;
+                                    inputType?: undefined | {
+                                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                    } | {
+                                        hostType: 'usageQuery';
+                                        field?: 'period' | 'session' | undefined;
+                                    } | {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    contextMode?: 'follow' | 'own' | undefined;
+                                    required?: boolean | undefined;
+                                    requireExplicitSelection?: boolean | undefined;
+                                    listSeparator?: 'comma' | 'newline' | undefined;
+                                    maxSelections?: number | undefined;
+                                    defaultValue?: JsonValue | undefined;
+                                    unit?: 'bytes' | undefined;
+                                    visibleWhen?: InputPredicate | undefined;
+                                    visibleWhenContextSlot?: string | undefined;
+                                    requiredWhen?: InputPredicate | undefined;
+                                    disabledWhen?: InputPredicate | undefined;
+                                    optionsSourceId?: string | undefined;
+                                    connectedAccountOptions?: true | undefined;
+                                    resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                    prompt?: string | undefined;
+                                    description?: string | undefined;
+                                    placeholder?: string | undefined;
+                                    options?: readonly {
+                                        value: JsonValue;
+                                        label: string;
+                                        labelKey?: string | undefined;
+                                        description?: string | undefined;
+                                        disabled?: boolean | undefined;
+                                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                        brand?: undefined | {
+                                            state: 'available';
+                                            resource: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            width: number;
+                                            height: number;
+                                            digest: `sha256:${string}`;
+                                            monochrome?: boolean | undefined;
+                                        } | {
+                                            state: 'invalid' | 'missing' | 'retired';
+                                        };
+                                        source?: undefined | {
+                                            kind: string;
+                                            locator: string;
+                                        };
+                                        version?: string | undefined;
+                                    }[] | undefined;
+                                }[];
+                                title?: string | undefined;
+                                description?: string | undefined;
+                                submitLabel?: string | undefined;
+                            };
+                            inputSchema: PluginJsonSchemaV2;
+                            v: 1;
+                            id: string;
+                            description?: string | undefined;
+                            publicPresentation?: undefined | {
+                                kind: 'declarative';
+                                document: Readonly<{
+                                    version: 1;
+                                    root: PluginDeclarativeNodeV2;
+                                }>;
+                            };
+                            sessionInputPath?: string | undefined;
+                            connectedAccountPurposeBindings?: undefined | {
+                                path: string;
+                                purpose: string;
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                nativeServicePath?: string | undefined;
+                            }[];
+                            networkOverride?: undefined | {
+                                network?: 'none' | 'open' | undefined;
+                                networkOrigins?: string[] | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    };
+                    bindings: Record<string, {
+                        kind: 'context';
+                        slot: string;
+                    } | {
+                        kind: 'value';
+                        value: JsonValue;
+                    } | {
+                        kind: 'viewer';
+                        purpose: string;
+                    }>;
+                    displayName?: string | undefined;
+                    networkOverride?: undefined | {
+                        network?: 'none' | 'open' | undefined;
+                        networkOrigins?: string[] | undefined;
+                    };
+                };
+                size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                frameStyle?: 'card' | 'plain' | undefined;
+            }[];
+        } | {
+            id: string;
             kind: 'widget';
             hidden: boolean;
             hideable: true;
@@ -1735,17 +2274,11 @@ export type HomeHubLayoutActionResultById = {
                 v: 1;
                 id: string;
                 definition: {
-                    kind: 'installed';
-                    surface: {
-                        pluginId: string;
-                        localId: string;
-                    };
+                    kind: 'artifact';
+                    artifactId: string;
                 } | {
                     kind: 'builtin';
                     id: string;
-                } | {
-                    kind: 'artifact';
-                    artifactId: string;
                 } | {
                     kind: 'inline';
                     definition: {
@@ -1759,31 +2292,31 @@ export type HomeHubLayoutActionResultById = {
                                 itemId: string;
                             };
                             authorAccountId?: string | undefined;
-                            author?: {
-                                kind: 'person' | 'agent' | 'plugin';
-                            } | undefined;
+                            author?: undefined | {
+                                kind: 'agent' | 'person' | 'plugin';
+                            };
                             createdAt?: number | undefined;
                         };
                         sizeDeclaration: {
-                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                            sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                            defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                         };
                         name: string;
                         body: WidgetDefinitionBodyV1;
                         inputs: {
                             fields: readonly {
                                 path: string;
-                                widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                 title: string;
-                                inputType?: {
-                                    pluginId: string;
-                                    localId: string;
+                                inputType?: undefined | {
+                                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                                 } | {
                                     hostType: 'usageQuery';
                                     field?: 'period' | 'session' | undefined;
                                 } | {
-                                    hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                } | undefined;
+                                    pluginId: string;
+                                    localId: string;
+                                };
                                 contextMode?: 'follow' | 'own' | undefined;
                                 required?: boolean | undefined;
                                 requireExplicitSelection?: boolean | undefined;
@@ -1807,6 +2340,25 @@ export type HomeHubLayoutActionResultById = {
                                     labelKey?: string | undefined;
                                     description?: string | undefined;
                                     disabled?: boolean | undefined;
+                                    icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                    brand?: undefined | {
+                                        state: 'available';
+                                        resource: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        width: number;
+                                        height: number;
+                                        digest: `sha256:${string}`;
+                                        monochrome?: boolean | undefined;
+                                    } | {
+                                        state: 'invalid' | 'missing' | 'retired';
+                                    };
+                                    source?: undefined | {
+                                        kind: string;
+                                        locator: string;
+                                    };
+                                    version?: string | undefined;
                                 }[] | undefined;
                             }[];
                             title?: string | undefined;
@@ -1817,15 +2369,15 @@ export type HomeHubLayoutActionResultById = {
                         v: 1;
                         id: string;
                         description?: string | undefined;
-                        publicPresentation?: {
+                        publicPresentation?: undefined | {
                             kind: 'declarative';
                             document: Readonly<{
                                 version: 1;
                                 root: PluginDeclarativeNodeV2;
                             }>;
-                        } | undefined;
+                        };
                         sessionInputPath?: string | undefined;
-                        connectedAccountPurposeBindings?: {
+                        connectedAccountPurposeBindings?: undefined | {
                             path: string;
                             purpose: string;
                             consumer: {
@@ -1833,321 +2385,37 @@ export type HomeHubLayoutActionResultById = {
                                 localId: string;
                             };
                             nativeServicePath?: string | undefined;
-                        }[] | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
+                        }[];
+                        networkOverride?: undefined | {
                             network?: 'none' | 'open' | undefined;
-                        } | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'installed';
+                    surface: {
+                        pluginId: string;
+                        localId: string;
                     };
                 };
                 bindings: Record<string, {
-                    kind: 'value';
-                    value: JsonValue;
-                } | {
                     kind: 'context';
                     slot: string;
+                } | {
+                    kind: 'value';
+                    value: JsonValue;
                 } | {
                     kind: 'viewer';
                     purpose: string;
                 }>;
                 displayName?: string | undefined;
-                networkOverride?: {
-                    networkOrigins?: string[] | undefined;
+                networkOverride?: undefined | {
                     network?: 'none' | 'open' | undefined;
-                } | undefined;
-            };
-            size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-            frameStyle?: 'card' | 'plain' | undefined;
-        } | {
-            id: string;
-            kind: 'group';
-            hidden: boolean;
-            hideable: true;
-            frameStyle: 'card' | 'plain';
-            group: {
-                kind: 'group';
-                id: string;
-                children: {
-                    kind: 'widget';
-                    instance: {
-                        v: 1;
-                        id: string;
-                        definition: {
-                            kind: 'installed';
-                            surface: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                        } | {
-                            kind: 'builtin';
-                            id: string;
-                        } | {
-                            kind: 'artifact';
-                            artifactId: string;
-                        } | {
-                            kind: 'inline';
-                            definition: {
-                                provenance: {
-                                    source: {
-                                        kind: 'authored';
-                                    } | {
-                                        kind: 'session';
-                                        serverId: string;
-                                        sessionId: string;
-                                        itemId: string;
-                                    };
-                                    authorAccountId?: string | undefined;
-                                    author?: {
-                                        kind: 'person' | 'agent' | 'plugin';
-                                    } | undefined;
-                                    createdAt?: number | undefined;
-                                };
-                                sizeDeclaration: {
-                                    sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                    defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                                };
-                                name: string;
-                                body: WidgetDefinitionBodyV1;
-                                inputs: {
-                                    fields: readonly {
-                                        path: string;
-                                        widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                        title: string;
-                                        inputType?: {
-                                            pluginId: string;
-                                            localId: string;
-                                        } | {
-                                            hostType: 'usageQuery';
-                                            field?: 'period' | 'session' | undefined;
-                                        } | {
-                                            hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                        } | undefined;
-                                        contextMode?: 'follow' | 'own' | undefined;
-                                        required?: boolean | undefined;
-                                        requireExplicitSelection?: boolean | undefined;
-                                        listSeparator?: 'comma' | 'newline' | undefined;
-                                        maxSelections?: number | undefined;
-                                        defaultValue?: JsonValue | undefined;
-                                        unit?: 'bytes' | undefined;
-                                        visibleWhen?: InputPredicate | undefined;
-                                        visibleWhenContextSlot?: string | undefined;
-                                        requiredWhen?: InputPredicate | undefined;
-                                        disabledWhen?: InputPredicate | undefined;
-                                        optionsSourceId?: string | undefined;
-                                        connectedAccountOptions?: true | undefined;
-                                        resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                        prompt?: string | undefined;
-                                        description?: string | undefined;
-                                        placeholder?: string | undefined;
-                                        options?: readonly {
-                                            value: JsonValue;
-                                            label: string;
-                                            labelKey?: string | undefined;
-                                            description?: string | undefined;
-                                            disabled?: boolean | undefined;
-                                        }[] | undefined;
-                                    }[];
-                                    title?: string | undefined;
-                                    description?: string | undefined;
-                                    submitLabel?: string | undefined;
-                                };
-                                inputSchema: PluginJsonSchemaV2;
-                                v: 1;
-                                id: string;
-                                description?: string | undefined;
-                                publicPresentation?: {
-                                    kind: 'declarative';
-                                    document: Readonly<{
-                                        version: 1;
-                                        root: PluginDeclarativeNodeV2;
-                                    }>;
-                                } | undefined;
-                                sessionInputPath?: string | undefined;
-                                connectedAccountPurposeBindings?: {
-                                    path: string;
-                                    purpose: string;
-                                    consumer: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    nativeServicePath?: string | undefined;
-                                }[] | undefined;
-                                networkOverride?: {
-                                    networkOrigins?: string[] | undefined;
-                                    network?: 'none' | 'open' | undefined;
-                                } | undefined;
-                            };
-                        };
-                        bindings: Record<string, {
-                            kind: 'value';
-                            value: JsonValue;
-                        } | {
-                            kind: 'context';
-                            slot: string;
-                        } | {
-                            kind: 'viewer';
-                            purpose: string;
-                        }>;
-                        displayName?: string | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
-                            network?: 'none' | 'open' | undefined;
-                        } | undefined;
-                    };
-                    size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-                    frameStyle?: 'card' | 'plain' | undefined;
-                    area?: 'main' | 'aside' | undefined;
-                }[];
-                width: 'full' | 'half';
-                frameStyle: 'card' | 'plain';
-                dividers: 'none' | 'hairline';
-                title?: string | undefined;
-                titleKey?: string | undefined;
-                context?: Record<string, {
-                    kind: 'value';
-                    value: JsonValue;
-                } | {
-                    kind: 'context';
-                    slot: string;
-                } | {
-                    kind: 'viewer';
-                    purpose: string;
-                }> | undefined;
-                area?: 'main' | 'aside' | undefined;
-            };
-            children: {
-                id: string;
-                kind: 'widget';
-                hidden: boolean;
-                hideable: true;
-                instance: {
-                    v: 1;
-                    id: string;
-                    definition: {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                    } | {
-                        kind: 'builtin';
-                        id: string;
-                    } | {
-                        kind: 'artifact';
-                        artifactId: string;
-                    } | {
-                        kind: 'inline';
-                        definition: {
-                            provenance: {
-                                source: {
-                                    kind: 'authored';
-                                } | {
-                                    kind: 'session';
-                                    serverId: string;
-                                    sessionId: string;
-                                    itemId: string;
-                                };
-                                authorAccountId?: string | undefined;
-                                author?: {
-                                    kind: 'person' | 'agent' | 'plugin';
-                                } | undefined;
-                                createdAt?: number | undefined;
-                            };
-                            sizeDeclaration: {
-                                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                            };
-                            name: string;
-                            body: WidgetDefinitionBodyV1;
-                            inputs: {
-                                fields: readonly {
-                                    path: string;
-                                    widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                    title: string;
-                                    inputType?: {
-                                        pluginId: string;
-                                        localId: string;
-                                    } | {
-                                        hostType: 'usageQuery';
-                                        field?: 'period' | 'session' | undefined;
-                                    } | {
-                                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                    } | undefined;
-                                    contextMode?: 'follow' | 'own' | undefined;
-                                    required?: boolean | undefined;
-                                    requireExplicitSelection?: boolean | undefined;
-                                    listSeparator?: 'comma' | 'newline' | undefined;
-                                    maxSelections?: number | undefined;
-                                    defaultValue?: JsonValue | undefined;
-                                    unit?: 'bytes' | undefined;
-                                    visibleWhen?: InputPredicate | undefined;
-                                    visibleWhenContextSlot?: string | undefined;
-                                    requiredWhen?: InputPredicate | undefined;
-                                    disabledWhen?: InputPredicate | undefined;
-                                    optionsSourceId?: string | undefined;
-                                    connectedAccountOptions?: true | undefined;
-                                    resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                    prompt?: string | undefined;
-                                    description?: string | undefined;
-                                    placeholder?: string | undefined;
-                                    options?: readonly {
-                                        value: JsonValue;
-                                        label: string;
-                                        labelKey?: string | undefined;
-                                        description?: string | undefined;
-                                        disabled?: boolean | undefined;
-                                    }[] | undefined;
-                                }[];
-                                title?: string | undefined;
-                                description?: string | undefined;
-                                submitLabel?: string | undefined;
-                            };
-                            inputSchema: PluginJsonSchemaV2;
-                            v: 1;
-                            id: string;
-                            description?: string | undefined;
-                            publicPresentation?: {
-                                kind: 'declarative';
-                                document: Readonly<{
-                                    version: 1;
-                                    root: PluginDeclarativeNodeV2;
-                                }>;
-                            } | undefined;
-                            sessionInputPath?: string | undefined;
-                            connectedAccountPurposeBindings?: {
-                                path: string;
-                                purpose: string;
-                                consumer: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                nativeServicePath?: string | undefined;
-                            }[] | undefined;
-                            networkOverride?: {
-                                networkOrigins?: string[] | undefined;
-                                network?: 'none' | 'open' | undefined;
-                            } | undefined;
-                        };
-                    };
-                    bindings: Record<string, {
-                        kind: 'value';
-                        value: JsonValue;
-                    } | {
-                        kind: 'context';
-                        slot: string;
-                    } | {
-                        kind: 'viewer';
-                        purpose: string;
-                    }>;
-                    displayName?: string | undefined;
-                    networkOverride?: {
-                        networkOrigins?: string[] | undefined;
-                        network?: 'none' | 'open' | undefined;
-                    } | undefined;
+                    networkOrigins?: string[] | undefined;
                 };
-                size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                frameStyle?: 'card' | 'plain' | undefined;
-            }[];
+            };
+            size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+            frameStyle?: 'card' | 'plain' | undefined;
         })[];
         availableWidgetIds: string[];
         hiddenSetupStepIds: string[];

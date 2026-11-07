@@ -10,9 +10,9 @@ export type MachineAgentInstallActionInputById = {
         intent: 'install' | 'update';
         definitionId?: string | undefined;
         force?: boolean | undefined;
-        consent?: {
+        consent?: undefined | {
             vendorRecipe: boolean;
-        } | undefined;
+        };
     };
     readonly "machines.agents.uninstall": {
         machineId: string;
@@ -31,37 +31,37 @@ export type MachineAgentInstallActionInputById = {
 };
 export type MachineAgentInstallActionResultById = {
     readonly "machines.agents.install": {
+        ok: false;
+        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'not_managed';
+        error: string;
+    } | {
         ok: true;
         jobId: string;
-    } | {
-        ok: false;
-        errorCode: 'invalid_request' | 'job_not_found' | 'install_unavailable' | 'not_managed' | 'in_use' | 'definition_version_changed';
-        error: string;
     };
     readonly "machines.agents.uninstall": {
+        ok: false;
+        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'not_managed';
+        error: string;
+    } | {
         ok: true;
         jobId: string;
-    } | {
-        ok: false;
-        errorCode: 'invalid_request' | 'job_not_found' | 'install_unavailable' | 'not_managed' | 'in_use' | 'definition_version_changed';
-        error: string;
     };
     readonly "machines.agents.install.status": {
         ok: false;
-        errorCode: 'invalid_request' | 'job_not_found' | 'install_unavailable' | 'not_managed' | 'in_use' | 'definition_version_changed';
+        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'not_managed';
         error: string;
     } | {
         ok: true;
         events: ({
             stepId: string;
-            label: string;
-            state: 'running' | 'done' | 'failed';
-            t: 'step';
+            bytesDone: number;
+            bytesTotal: null | number;
+            t: 'progress';
         } | {
             stepId: string;
-            bytesDone: number;
-            bytesTotal: number | null;
-            t: 'progress';
+            label: string;
+            state: 'done' | 'failed' | 'running';
+            t: 'step';
         } | {
             t: 'log';
             line: string;
@@ -69,30 +69,30 @@ export type MachineAgentInstallActionResultById = {
         steps: {
             stepId: string;
             label: string;
-            state: 'running' | 'done' | 'failed';
+            state: 'done' | 'failed' | 'running';
         }[];
         progress: {
             stepId: string;
             bytesDone: number;
-            bytesTotal: number | null;
+            bytesTotal: null | number;
         }[];
         nextCursor: number;
         done: boolean;
-        outcome: {
-            kind: 'succeeded';
-            version: string | null;
-            checksum?: 'verified' | 'not_published' | undefined;
-        } | {
+        outcome: null | {
             kind: 'failed';
-            code: 'not_managed' | 'in_use' | 'consent_required' | 'unsupported_platform' | 'install_not_available' | 'archive_expanded_byte_limit' | 'download_failed' | 'rate_limited' | 'verification_failed' | 'timeout' | 'cancelled' | 'install_failed' | 'update_not_available';
+            code: 'archive_expanded_byte_limit' | 'cancelled' | 'consent_required' | 'download_failed' | 'in_use' | 'install_failed' | 'install_not_available' | 'not_managed' | 'rate_limited' | 'timeout' | 'unsupported_platform' | 'update_not_available' | 'verification_failed';
             stepId: string;
             message: string;
             guideUrl?: string | undefined;
-        } | null;
+        } | {
+            kind: 'succeeded';
+            version: null | string;
+            checksum?: 'not_published' | 'verified' | undefined;
+        };
     };
     readonly "machines.agents.install.cancel": {
         ok: false;
-        errorCode: 'invalid_request' | 'job_not_found' | 'install_unavailable' | 'not_managed' | 'in_use' | 'definition_version_changed';
+        errorCode: 'definition_version_changed' | 'in_use' | 'install_unavailable' | 'invalid_request' | 'job_not_found' | 'not_managed';
         error: string;
     } | {
         ok: true;

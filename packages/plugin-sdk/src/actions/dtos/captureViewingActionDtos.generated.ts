@@ -7,6 +7,8 @@ export type CaptureViewingActionInputById = {
     readonly "capture.view": {
         sourceId: string;
         sourceOccurrenceId: string;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type CaptureViewingActionResultById = {

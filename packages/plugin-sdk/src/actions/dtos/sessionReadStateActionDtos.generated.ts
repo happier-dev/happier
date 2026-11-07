@@ -11,59 +11,70 @@ export type SessionReadStateActionInputById = {
 };
 export type SessionReadStateActionResultById = {
     readonly "session.read_state.set": {
-        state: 'read' | 'unread' | 'empty';
-        lastViewedSessionSeq: number | null;
+        state: 'empty' | 'read' | 'unread';
+        lastViewedSessionSeq: null | number;
         didChange: boolean;
-        viewer?: {
+        viewer?: undefined | {
             readState: {
                 state: 'not_started';
             } | {
                 state: 'tracking';
                 lastViewedSessionSeq: number;
-                unreadSince: number | null;
+                unreadSince: null | number;
             };
-            latestFailureSeq: number | null;
+            latestFailureSeq: null | number;
             relevance: {
                 relevant: boolean;
-                reasons: readonly ('owned_by_me' | 'responsible_for_me' | 'shared_directly_with_me' | 'authored_by_me' | 'mentioned_in_discussion' | 'followed_by_me' | 'pinned_by_me' | 'explicit_attention' | 'follow_once')[];
+                reasons: readonly ('authored_by_me' | 'explicit_attention' | 'follow_once' | 'followed_by_me' | 'mentioned_in_discussion' | 'owned_by_me' | 'pinned_by_me' | 'responsible_for_me' | 'shared_directly_with_me')[];
             };
             attention: {
                 needsAttention: boolean;
-                reasons: readonly ('unread' | 'failed' | 'permission_required' | 'user_action_required' | 'pending_blocked' | 'mentioned' | 'unread_discussion' | 'ready_after_read' | 'reminder_due' | 'manual')[];
-                primary: 'unread' | 'failed' | 'permission_required' | 'user_action_required' | 'pending_blocked' | 'mentioned' | 'unread_discussion' | 'ready_after_read' | 'reminder_due' | 'manual' | null;
+                reasons: readonly ('failed' | 'manual' | 'mentioned' | 'pending_blocked' | 'permission_required' | 'ready_after_read' | 'reminder_due' | 'unread' | 'unread_discussion' | 'user_action_required')[];
+                primary: 'failed' | 'manual' | 'mentioned' | 'pending_blocked' | 'permission_required' | 'ready_after_read' | 'reminder_due' | 'unread' | 'unread_discussion' | 'user_action_required' | null;
                 presentation: 'full' | 'status_only';
             };
             follow: {
                 follows: boolean;
-                notificationLevel: 'none' | 'important' | 'all_messages' | null;
-                defaultRelationships?: {
+                notificationLevel: 'all_messages' | 'important' | 'none' | null;
+                defaultRelationships?: undefined | {
                     assigned: boolean;
                     direct: boolean;
                     team: boolean;
                     group: boolean;
-                } | undefined;
+                };
                 includeInVoice?: boolean | undefined;
                 policy?: FollowPolicyV1 | undefined;
-                once?: {
+                once?: null | undefined | {
+                    kind: 'first_needs_you';
+                } | {
                     kind: 'turn_finished';
                     sourceTurnId: string;
-                } | {
-                    kind: 'first_needs_you';
-                } | null | undefined;
+                };
                 onceAfterAgentStateVersion?: number | undefined;
-                onceDelivery?: {
-                    event: 'message' | 'failed' | 'permission_required' | 'user_action_required' | 'ready' | 'cancelled';
+                onceDelivery?: undefined | {
+                    event: 'cancelled' | 'failed' | 'message' | 'permission_required' | 'ready' | 'user_action_required';
                     agentStateVersion: number;
                     turnId?: string | undefined;
                     requestId?: string | undefined;
                     transcriptSeq?: number | undefined;
-                } | undefined;
+                };
             };
             notification: {
-                level: 'none' | 'important' | 'all_messages';
-                source: 'none' | 'preference' | 'owner';
+                level: 'all_messages' | 'important' | 'none';
+                source: 'none' | 'owner' | 'preference';
             };
+            ruleReadStates?: readonly {
+                ruleId: string;
+                ruleVersion: number;
+                readState: {
+                    state: 'not_started';
+                } | {
+                    state: 'tracking';
+                    lastViewedSessionSeq: number;
+                    unreadSince: null | number;
+                };
+            }[] | undefined;
             tagIds?: readonly string[] | undefined;
-        } | undefined;
+        };
     };
 };

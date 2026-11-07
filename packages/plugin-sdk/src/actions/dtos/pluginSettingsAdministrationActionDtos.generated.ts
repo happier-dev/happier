@@ -30,7 +30,7 @@ export type PluginSettingsAdministrationActionInputById = {
             machineId: string;
         };
         localId: string;
-        bindingServerIdentityId?: string | null | undefined;
+        bindingServerIdentityId?: null | string | undefined;
     };
     readonly "plugins.settings.set": {
         pluginId: string;
@@ -46,7 +46,7 @@ export type PluginSettingsAdministrationActionInputById = {
         };
         localId: string;
         value: unknown;
-        bindingServerIdentityId?: string | null | undefined;
+        bindingServerIdentityId?: null | string | undefined;
         expectedRevision?: string | undefined;
     };
     readonly "plugins.settings.reset": {
@@ -62,90 +62,90 @@ export type PluginSettingsAdministrationActionInputById = {
             machineId: string;
         };
         localId: string;
-        bindingServerIdentityId?: string | null | undefined;
+        bindingServerIdentityId?: null | string | undefined;
         expectedRevision?: string | undefined;
     };
     readonly "plugins.settings.secret.status": {
         pluginId: string;
         localId: string;
-        scope?: {
+        scope?: undefined | {
             kind: 'account' | 'daemon';
-        } | undefined;
-        target?: {
+        };
+        target?: undefined | {
             kind: 'account';
         } | {
             kind: 'daemon';
             serverIdentityId: string;
             machineId: string;
-        } | undefined;
-        secretDaemonTarget?: {
+        };
+        secretDaemonTarget?: undefined | {
             kind: 'daemon';
             serverIdentityId: string;
             machineId: string;
-        } | undefined;
+        };
         canonicalOrigin?: string | undefined;
     };
     readonly "plugins.settings.secret.bind": {
         pluginId: string;
         localId: string;
         savedSecretId: string;
-        scope?: {
+        scope?: undefined | {
             kind: 'account' | 'daemon';
-        } | undefined;
-        target?: {
+        };
+        target?: undefined | {
             kind: 'account';
         } | {
             kind: 'daemon';
             serverIdentityId: string;
             machineId: string;
-        } | undefined;
-        secretDaemonTarget?: {
+        };
+        secretDaemonTarget?: undefined | {
             kind: 'daemon';
             serverIdentityId: string;
             machineId: string;
-        } | undefined;
+        };
         canonicalOrigin?: string | undefined;
         expectedRevision?: string | undefined;
     };
     readonly "plugins.settings.secret.unbind": {
         pluginId: string;
         localId: string;
-        scope?: {
+        scope?: undefined | {
             kind: 'account' | 'daemon';
-        } | undefined;
-        target?: {
+        };
+        target?: undefined | {
             kind: 'account';
         } | {
             kind: 'daemon';
             serverIdentityId: string;
             machineId: string;
-        } | undefined;
-        secretDaemonTarget?: {
+        };
+        secretDaemonTarget?: undefined | {
             kind: 'daemon';
             serverIdentityId: string;
             machineId: string;
-        } | undefined;
+        };
         canonicalOrigin?: string | undefined;
         expectedRevision?: string | undefined;
     };
     readonly "plugins.settings.secret.delete": {
         pluginId: string;
         localId: string;
-        scope?: {
+        scope?: undefined | {
             kind: 'account' | 'daemon';
-        } | undefined;
-        target?: {
+        };
+        target?: undefined | {
             kind: 'account';
         } | {
             kind: 'daemon';
             serverIdentityId: string;
             machineId: string;
-        } | undefined;
-        secretDaemonTarget?: {
+        };
+        secretDaemonTarget?: undefined | {
             kind: 'daemon';
             serverIdentityId: string;
             machineId: string;
-        } | undefined;
+        };
         canonicalOrigin?: string | undefined;
         expectedRevision?: string | undefined;
     };
@@ -153,10 +153,10 @@ export type PluginSettingsAdministrationActionInputById = {
 export type PluginSettingsAdministrationActionResultById = {
     readonly "plugins.settings.list": {
         ok: false;
-        kind: 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete';
+        kind: 'plugins.settings.get' | 'plugins.settings.list' | 'plugins.settings.reset' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.delete' | 'plugins.settings.secret.status' | 'plugins.settings.secret.unbind' | 'plugins.settings.set';
         errorCode: string;
         error: string;
-        details?: {
+        details?: undefined | {
             kind: 'settings_snapshot';
             scope: {
                 kind: 'account' | 'daemon';
@@ -187,38 +187,10 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
             revision: string;
             kind: 'secret_snapshot';
             canonicalOrigin?: string | undefined;
-        } | undefined;
-    } | {
-        ok: true;
-        kind: 'plugins.settings.list';
-        data: {
-            scope: {
-                kind: 'account' | 'daemon';
-            };
-            target: {
-                kind: 'account';
-            } | {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            revision: string;
-            fields: ({
-                localId: string;
-                secret: true;
-                title?: string | undefined;
-                description?: string | undefined;
-            } | {
-                localId: string;
-                secret: false;
-                value: JsonValue;
-                title?: string | undefined;
-                description?: string | undefined;
-            })[];
         };
     } | {
         ok: true;
@@ -240,7 +212,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.set';
+        kind: 'plugins.settings.list';
         data: {
             scope: {
                 kind: 'account' | 'daemon';
@@ -252,11 +224,19 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            localId: string;
             revision: string;
-            application: {
-                kind: 'live';
-            };
+            fields: ({
+                localId: string;
+                secret: false;
+                value: JsonValue;
+                title?: string | undefined;
+                description?: string | undefined;
+            } | {
+                localId: string;
+                secret: true;
+                title?: string | undefined;
+                description?: string | undefined;
+            })[];
         };
     } | {
         ok: true;
@@ -280,43 +260,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.secret.status';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            state: 'configured' | 'missing';
-            revision: string;
-        } | {
-            localId: string;
-            custody: 'daemon';
-            target: {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
-            revision: string;
-        };
-    } | {
-        ok: true;
         kind: 'plugins.settings.secret.bind';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            revision: string;
-            application: {
-                kind: 'live';
-            };
-        };
-    } | {
-        ok: true;
-        kind: 'plugins.settings.secret.unbind';
         data: {
             localId: string;
             custody: 'account';
@@ -349,7 +293,63 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.status';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            state: 'configured' | 'missing';
+            revision: string;
+        } | {
+            localId: string;
+            custody: 'daemon';
+            target: {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.unbind';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.set';
+        data: {
+            scope: {
+                kind: 'account' | 'daemon';
+            };
+            target: {
+                kind: 'account';
+            } | {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            localId: string;
             revision: string;
             application: {
                 kind: 'live';
@@ -358,10 +358,10 @@ export type PluginSettingsAdministrationActionResultById = {
     };
     readonly "plugins.settings.get": {
         ok: false;
-        kind: 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete';
+        kind: 'plugins.settings.get' | 'plugins.settings.list' | 'plugins.settings.reset' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.delete' | 'plugins.settings.secret.status' | 'plugins.settings.secret.unbind' | 'plugins.settings.set';
         errorCode: string;
         error: string;
-        details?: {
+        details?: undefined | {
             kind: 'settings_snapshot';
             scope: {
                 kind: 'account' | 'daemon';
@@ -392,38 +392,10 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
             revision: string;
             kind: 'secret_snapshot';
             canonicalOrigin?: string | undefined;
-        } | undefined;
-    } | {
-        ok: true;
-        kind: 'plugins.settings.list';
-        data: {
-            scope: {
-                kind: 'account' | 'daemon';
-            };
-            target: {
-                kind: 'account';
-            } | {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            revision: string;
-            fields: ({
-                localId: string;
-                secret: true;
-                title?: string | undefined;
-                description?: string | undefined;
-            } | {
-                localId: string;
-                secret: false;
-                value: JsonValue;
-                title?: string | undefined;
-                description?: string | undefined;
-            })[];
         };
     } | {
         ok: true;
@@ -445,7 +417,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.set';
+        kind: 'plugins.settings.list';
         data: {
             scope: {
                 kind: 'account' | 'daemon';
@@ -457,11 +429,19 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            localId: string;
             revision: string;
-            application: {
-                kind: 'live';
-            };
+            fields: ({
+                localId: string;
+                secret: false;
+                value: JsonValue;
+                title?: string | undefined;
+                description?: string | undefined;
+            } | {
+                localId: string;
+                secret: true;
+                title?: string | undefined;
+                description?: string | undefined;
+            })[];
         };
     } | {
         ok: true;
@@ -485,43 +465,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.secret.status';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            state: 'configured' | 'missing';
-            revision: string;
-        } | {
-            localId: string;
-            custody: 'daemon';
-            target: {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
-            revision: string;
-        };
-    } | {
-        ok: true;
         kind: 'plugins.settings.secret.bind';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            revision: string;
-            application: {
-                kind: 'live';
-            };
-        };
-    } | {
-        ok: true;
-        kind: 'plugins.settings.secret.unbind';
         data: {
             localId: string;
             custody: 'account';
@@ -554,7 +498,63 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.status';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            state: 'configured' | 'missing';
+            revision: string;
+        } | {
+            localId: string;
+            custody: 'daemon';
+            target: {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.unbind';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.set';
+        data: {
+            scope: {
+                kind: 'account' | 'daemon';
+            };
+            target: {
+                kind: 'account';
+            } | {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            localId: string;
             revision: string;
             application: {
                 kind: 'live';
@@ -563,10 +563,10 @@ export type PluginSettingsAdministrationActionResultById = {
     };
     readonly "plugins.settings.set": {
         ok: false;
-        kind: 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete';
+        kind: 'plugins.settings.get' | 'plugins.settings.list' | 'plugins.settings.reset' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.delete' | 'plugins.settings.secret.status' | 'plugins.settings.secret.unbind' | 'plugins.settings.set';
         errorCode: string;
         error: string;
-        details?: {
+        details?: undefined | {
             kind: 'settings_snapshot';
             scope: {
                 kind: 'account' | 'daemon';
@@ -597,38 +597,10 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
             revision: string;
             kind: 'secret_snapshot';
             canonicalOrigin?: string | undefined;
-        } | undefined;
-    } | {
-        ok: true;
-        kind: 'plugins.settings.list';
-        data: {
-            scope: {
-                kind: 'account' | 'daemon';
-            };
-            target: {
-                kind: 'account';
-            } | {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            revision: string;
-            fields: ({
-                localId: string;
-                secret: true;
-                title?: string | undefined;
-                description?: string | undefined;
-            } | {
-                localId: string;
-                secret: false;
-                value: JsonValue;
-                title?: string | undefined;
-                description?: string | undefined;
-            })[];
         };
     } | {
         ok: true;
@@ -650,7 +622,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.set';
+        kind: 'plugins.settings.list';
         data: {
             scope: {
                 kind: 'account' | 'daemon';
@@ -662,11 +634,19 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            localId: string;
             revision: string;
-            application: {
-                kind: 'live';
-            };
+            fields: ({
+                localId: string;
+                secret: false;
+                value: JsonValue;
+                title?: string | undefined;
+                description?: string | undefined;
+            } | {
+                localId: string;
+                secret: true;
+                title?: string | undefined;
+                description?: string | undefined;
+            })[];
         };
     } | {
         ok: true;
@@ -690,43 +670,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.secret.status';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            state: 'configured' | 'missing';
-            revision: string;
-        } | {
-            localId: string;
-            custody: 'daemon';
-            target: {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
-            revision: string;
-        };
-    } | {
-        ok: true;
         kind: 'plugins.settings.secret.bind';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            revision: string;
-            application: {
-                kind: 'live';
-            };
-        };
-    } | {
-        ok: true;
-        kind: 'plugins.settings.secret.unbind';
         data: {
             localId: string;
             custody: 'account';
@@ -759,7 +703,63 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.status';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            state: 'configured' | 'missing';
+            revision: string;
+        } | {
+            localId: string;
+            custody: 'daemon';
+            target: {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.unbind';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.set';
+        data: {
+            scope: {
+                kind: 'account' | 'daemon';
+            };
+            target: {
+                kind: 'account';
+            } | {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            localId: string;
             revision: string;
             application: {
                 kind: 'live';
@@ -768,10 +768,10 @@ export type PluginSettingsAdministrationActionResultById = {
     };
     readonly "plugins.settings.reset": {
         ok: false;
-        kind: 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete';
+        kind: 'plugins.settings.get' | 'plugins.settings.list' | 'plugins.settings.reset' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.delete' | 'plugins.settings.secret.status' | 'plugins.settings.secret.unbind' | 'plugins.settings.set';
         errorCode: string;
         error: string;
-        details?: {
+        details?: undefined | {
             kind: 'settings_snapshot';
             scope: {
                 kind: 'account' | 'daemon';
@@ -802,38 +802,10 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
             revision: string;
             kind: 'secret_snapshot';
             canonicalOrigin?: string | undefined;
-        } | undefined;
-    } | {
-        ok: true;
-        kind: 'plugins.settings.list';
-        data: {
-            scope: {
-                kind: 'account' | 'daemon';
-            };
-            target: {
-                kind: 'account';
-            } | {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            revision: string;
-            fields: ({
-                localId: string;
-                secret: true;
-                title?: string | undefined;
-                description?: string | undefined;
-            } | {
-                localId: string;
-                secret: false;
-                value: JsonValue;
-                title?: string | undefined;
-                description?: string | undefined;
-            })[];
         };
     } | {
         ok: true;
@@ -855,7 +827,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.set';
+        kind: 'plugins.settings.list';
         data: {
             scope: {
                 kind: 'account' | 'daemon';
@@ -867,11 +839,19 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            localId: string;
             revision: string;
-            application: {
-                kind: 'live';
-            };
+            fields: ({
+                localId: string;
+                secret: false;
+                value: JsonValue;
+                title?: string | undefined;
+                description?: string | undefined;
+            } | {
+                localId: string;
+                secret: true;
+                title?: string | undefined;
+                description?: string | undefined;
+            })[];
         };
     } | {
         ok: true;
@@ -895,43 +875,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.secret.status';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            state: 'configured' | 'missing';
-            revision: string;
-        } | {
-            localId: string;
-            custody: 'daemon';
-            target: {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
-            revision: string;
-        };
-    } | {
-        ok: true;
         kind: 'plugins.settings.secret.bind';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            revision: string;
-            application: {
-                kind: 'live';
-            };
-        };
-    } | {
-        ok: true;
-        kind: 'plugins.settings.secret.unbind';
         data: {
             localId: string;
             custody: 'account';
@@ -964,7 +908,63 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.status';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            state: 'configured' | 'missing';
+            revision: string;
+        } | {
+            localId: string;
+            custody: 'daemon';
+            target: {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.unbind';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.set';
+        data: {
+            scope: {
+                kind: 'account' | 'daemon';
+            };
+            target: {
+                kind: 'account';
+            } | {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            localId: string;
             revision: string;
             application: {
                 kind: 'live';
@@ -973,10 +973,10 @@ export type PluginSettingsAdministrationActionResultById = {
     };
     readonly "plugins.settings.secret.status": {
         ok: false;
-        kind: 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete';
+        kind: 'plugins.settings.get' | 'plugins.settings.list' | 'plugins.settings.reset' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.delete' | 'plugins.settings.secret.status' | 'plugins.settings.secret.unbind' | 'plugins.settings.set';
         errorCode: string;
         error: string;
-        details?: {
+        details?: undefined | {
             kind: 'settings_snapshot';
             scope: {
                 kind: 'account' | 'daemon';
@@ -1007,38 +1007,10 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
             revision: string;
             kind: 'secret_snapshot';
             canonicalOrigin?: string | undefined;
-        } | undefined;
-    } | {
-        ok: true;
-        kind: 'plugins.settings.list';
-        data: {
-            scope: {
-                kind: 'account' | 'daemon';
-            };
-            target: {
-                kind: 'account';
-            } | {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            revision: string;
-            fields: ({
-                localId: string;
-                secret: true;
-                title?: string | undefined;
-                description?: string | undefined;
-            } | {
-                localId: string;
-                secret: false;
-                value: JsonValue;
-                title?: string | undefined;
-                description?: string | undefined;
-            })[];
         };
     } | {
         ok: true;
@@ -1060,7 +1032,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.set';
+        kind: 'plugins.settings.list';
         data: {
             scope: {
                 kind: 'account' | 'daemon';
@@ -1072,11 +1044,19 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            localId: string;
             revision: string;
-            application: {
-                kind: 'live';
-            };
+            fields: ({
+                localId: string;
+                secret: false;
+                value: JsonValue;
+                title?: string | undefined;
+                description?: string | undefined;
+            } | {
+                localId: string;
+                secret: true;
+                title?: string | undefined;
+                description?: string | undefined;
+            })[];
         };
     } | {
         ok: true;
@@ -1100,43 +1080,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.secret.status';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            state: 'configured' | 'missing';
-            revision: string;
-        } | {
-            localId: string;
-            custody: 'daemon';
-            target: {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
-            revision: string;
-        };
-    } | {
-        ok: true;
         kind: 'plugins.settings.secret.bind';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            revision: string;
-            application: {
-                kind: 'live';
-            };
-        };
-    } | {
-        ok: true;
-        kind: 'plugins.settings.secret.unbind';
         data: {
             localId: string;
             custody: 'account';
@@ -1169,7 +1113,63 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.status';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            state: 'configured' | 'missing';
+            revision: string;
+        } | {
+            localId: string;
+            custody: 'daemon';
+            target: {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.unbind';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.set';
+        data: {
+            scope: {
+                kind: 'account' | 'daemon';
+            };
+            target: {
+                kind: 'account';
+            } | {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            localId: string;
             revision: string;
             application: {
                 kind: 'live';
@@ -1178,10 +1178,10 @@ export type PluginSettingsAdministrationActionResultById = {
     };
     readonly "plugins.settings.secret.bind": {
         ok: false;
-        kind: 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete';
+        kind: 'plugins.settings.get' | 'plugins.settings.list' | 'plugins.settings.reset' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.delete' | 'plugins.settings.secret.status' | 'plugins.settings.secret.unbind' | 'plugins.settings.set';
         errorCode: string;
         error: string;
-        details?: {
+        details?: undefined | {
             kind: 'settings_snapshot';
             scope: {
                 kind: 'account' | 'daemon';
@@ -1212,38 +1212,10 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
             revision: string;
             kind: 'secret_snapshot';
             canonicalOrigin?: string | undefined;
-        } | undefined;
-    } | {
-        ok: true;
-        kind: 'plugins.settings.list';
-        data: {
-            scope: {
-                kind: 'account' | 'daemon';
-            };
-            target: {
-                kind: 'account';
-            } | {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            revision: string;
-            fields: ({
-                localId: string;
-                secret: true;
-                title?: string | undefined;
-                description?: string | undefined;
-            } | {
-                localId: string;
-                secret: false;
-                value: JsonValue;
-                title?: string | undefined;
-                description?: string | undefined;
-            })[];
         };
     } | {
         ok: true;
@@ -1265,7 +1237,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.set';
+        kind: 'plugins.settings.list';
         data: {
             scope: {
                 kind: 'account' | 'daemon';
@@ -1277,11 +1249,19 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            localId: string;
             revision: string;
-            application: {
-                kind: 'live';
-            };
+            fields: ({
+                localId: string;
+                secret: false;
+                value: JsonValue;
+                title?: string | undefined;
+                description?: string | undefined;
+            } | {
+                localId: string;
+                secret: true;
+                title?: string | undefined;
+                description?: string | undefined;
+            })[];
         };
     } | {
         ok: true;
@@ -1305,43 +1285,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.secret.status';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            state: 'configured' | 'missing';
-            revision: string;
-        } | {
-            localId: string;
-            custody: 'daemon';
-            target: {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
-            revision: string;
-        };
-    } | {
-        ok: true;
         kind: 'plugins.settings.secret.bind';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            revision: string;
-            application: {
-                kind: 'live';
-            };
-        };
-    } | {
-        ok: true;
-        kind: 'plugins.settings.secret.unbind';
         data: {
             localId: string;
             custody: 'account';
@@ -1374,7 +1318,63 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.status';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            state: 'configured' | 'missing';
+            revision: string;
+        } | {
+            localId: string;
+            custody: 'daemon';
+            target: {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.unbind';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.set';
+        data: {
+            scope: {
+                kind: 'account' | 'daemon';
+            };
+            target: {
+                kind: 'account';
+            } | {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            localId: string;
             revision: string;
             application: {
                 kind: 'live';
@@ -1383,10 +1383,10 @@ export type PluginSettingsAdministrationActionResultById = {
     };
     readonly "plugins.settings.secret.unbind": {
         ok: false;
-        kind: 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete';
+        kind: 'plugins.settings.get' | 'plugins.settings.list' | 'plugins.settings.reset' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.delete' | 'plugins.settings.secret.status' | 'plugins.settings.secret.unbind' | 'plugins.settings.set';
         errorCode: string;
         error: string;
-        details?: {
+        details?: undefined | {
             kind: 'settings_snapshot';
             scope: {
                 kind: 'account' | 'daemon';
@@ -1417,38 +1417,10 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
             revision: string;
             kind: 'secret_snapshot';
             canonicalOrigin?: string | undefined;
-        } | undefined;
-    } | {
-        ok: true;
-        kind: 'plugins.settings.list';
-        data: {
-            scope: {
-                kind: 'account' | 'daemon';
-            };
-            target: {
-                kind: 'account';
-            } | {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            revision: string;
-            fields: ({
-                localId: string;
-                secret: true;
-                title?: string | undefined;
-                description?: string | undefined;
-            } | {
-                localId: string;
-                secret: false;
-                value: JsonValue;
-                title?: string | undefined;
-                description?: string | undefined;
-            })[];
         };
     } | {
         ok: true;
@@ -1470,7 +1442,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.set';
+        kind: 'plugins.settings.list';
         data: {
             scope: {
                 kind: 'account' | 'daemon';
@@ -1482,11 +1454,19 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            localId: string;
             revision: string;
-            application: {
-                kind: 'live';
-            };
+            fields: ({
+                localId: string;
+                secret: false;
+                value: JsonValue;
+                title?: string | undefined;
+                description?: string | undefined;
+            } | {
+                localId: string;
+                secret: true;
+                title?: string | undefined;
+                description?: string | undefined;
+            })[];
         };
     } | {
         ok: true;
@@ -1510,43 +1490,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.secret.status';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            state: 'configured' | 'missing';
-            revision: string;
-        } | {
-            localId: string;
-            custody: 'daemon';
-            target: {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
-            revision: string;
-        };
-    } | {
-        ok: true;
         kind: 'plugins.settings.secret.bind';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            revision: string;
-            application: {
-                kind: 'live';
-            };
-        };
-    } | {
-        ok: true;
-        kind: 'plugins.settings.secret.unbind';
         data: {
             localId: string;
             custody: 'account';
@@ -1579,7 +1523,63 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.status';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            state: 'configured' | 'missing';
+            revision: string;
+        } | {
+            localId: string;
+            custody: 'daemon';
+            target: {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.unbind';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.set';
+        data: {
+            scope: {
+                kind: 'account' | 'daemon';
+            };
+            target: {
+                kind: 'account';
+            } | {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            localId: string;
             revision: string;
             application: {
                 kind: 'live';
@@ -1588,10 +1588,10 @@ export type PluginSettingsAdministrationActionResultById = {
     };
     readonly "plugins.settings.secret.delete": {
         ok: false;
-        kind: 'plugins.settings.list' | 'plugins.settings.get' | 'plugins.settings.set' | 'plugins.settings.reset' | 'plugins.settings.secret.status' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.unbind' | 'plugins.settings.secret.delete';
+        kind: 'plugins.settings.get' | 'plugins.settings.list' | 'plugins.settings.reset' | 'plugins.settings.secret.bind' | 'plugins.settings.secret.delete' | 'plugins.settings.secret.status' | 'plugins.settings.secret.unbind' | 'plugins.settings.set';
         errorCode: string;
         error: string;
-        details?: {
+        details?: undefined | {
             kind: 'settings_snapshot';
             scope: {
                 kind: 'account' | 'daemon';
@@ -1622,38 +1622,10 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
             revision: string;
             kind: 'secret_snapshot';
             canonicalOrigin?: string | undefined;
-        } | undefined;
-    } | {
-        ok: true;
-        kind: 'plugins.settings.list';
-        data: {
-            scope: {
-                kind: 'account' | 'daemon';
-            };
-            target: {
-                kind: 'account';
-            } | {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            revision: string;
-            fields: ({
-                localId: string;
-                secret: true;
-                title?: string | undefined;
-                description?: string | undefined;
-            } | {
-                localId: string;
-                secret: false;
-                value: JsonValue;
-                title?: string | undefined;
-                description?: string | undefined;
-            })[];
         };
     } | {
         ok: true;
@@ -1675,7 +1647,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.set';
+        kind: 'plugins.settings.list';
         data: {
             scope: {
                 kind: 'account' | 'daemon';
@@ -1687,11 +1659,19 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            localId: string;
             revision: string;
-            application: {
-                kind: 'live';
-            };
+            fields: ({
+                localId: string;
+                secret: false;
+                value: JsonValue;
+                title?: string | undefined;
+                description?: string | undefined;
+            } | {
+                localId: string;
+                secret: true;
+                title?: string | undefined;
+                description?: string | undefined;
+            })[];
         };
     } | {
         ok: true;
@@ -1715,43 +1695,7 @@ export type PluginSettingsAdministrationActionResultById = {
         };
     } | {
         ok: true;
-        kind: 'plugins.settings.secret.status';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            state: 'configured' | 'missing';
-            revision: string;
-        } | {
-            localId: string;
-            custody: 'daemon';
-            target: {
-                kind: 'daemon';
-                serverIdentityId: string;
-                machineId: string;
-            };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
-            revision: string;
-        };
-    } | {
-        ok: true;
         kind: 'plugins.settings.secret.bind';
-        data: {
-            localId: string;
-            custody: 'account';
-            target: {
-                kind: 'account';
-            };
-            revision: string;
-            application: {
-                kind: 'live';
-            };
-        };
-    } | {
-        ok: true;
-        kind: 'plugins.settings.secret.unbind';
         data: {
             localId: string;
             custody: 'account';
@@ -1784,7 +1728,63 @@ export type PluginSettingsAdministrationActionResultById = {
                 serverIdentityId: string;
                 machineId: string;
             };
-            state: 'configured' | 'missing' | 'denied' | 'unavailable';
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.status';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            state: 'configured' | 'missing';
+            revision: string;
+        } | {
+            localId: string;
+            custody: 'daemon';
+            target: {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            state: 'configured' | 'denied' | 'missing' | 'unavailable';
+            revision: string;
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.secret.unbind';
+        data: {
+            localId: string;
+            custody: 'account';
+            target: {
+                kind: 'account';
+            };
+            revision: string;
+            application: {
+                kind: 'live';
+            };
+        };
+    } | {
+        ok: true;
+        kind: 'plugins.settings.set';
+        data: {
+            scope: {
+                kind: 'account' | 'daemon';
+            };
+            target: {
+                kind: 'account';
+            } | {
+                kind: 'daemon';
+                serverIdentityId: string;
+                machineId: string;
+            };
+            localId: string;
             revision: string;
             application: {
                 kind: 'live';

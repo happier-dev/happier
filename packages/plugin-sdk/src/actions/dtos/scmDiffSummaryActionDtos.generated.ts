@@ -7,29 +7,18 @@ import type { ScmComparisonSource } from '../../scm/comparisonSource.js';
 export type ScmDiffSummaryActionInputById = {
     readonly "scm.commit.resolveOutcome": {
         candidateOid: string;
-        expectedHeadOid: string | null;
-        expectedRef: string | null;
+        expectedHeadOid: null | string;
+        expectedRef: null | string;
         cwd?: string | undefined;
-        backendPreference?: {
+        backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
-        } | undefined;
+        };
         outcomeVersion?: 1 | undefined;
     };
     readonly "scm.diffSummary.capture": {
         cwd: string;
         source: {
-            kind: 'turnCheckpoint';
-            sessionId?: string;
-            turnId?: string;
-            checkpointReceiptId?: string;
-            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workingTree';
-        } | {
             kind: 'branch';
             head: string;
             base: string;
@@ -37,10 +26,6 @@ export type ScmDiffSummaryActionInputById = {
             kind: 'commit';
             commit: string;
             parent?: string;
-        } | {
-            kind: 'revisionRange';
-            baseOid: string;
-            headOid: string;
         } | {
             kind: 'pullRequest';
             locator: {
@@ -63,32 +48,71 @@ export type ScmDiffSummaryActionInputById = {
                         observedRevision: string;
                     };
                 };
+                fileViewedActions?: {
+                    read: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                    set: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                };
             };
+        } | {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+        } | {
+            kind: 'workingTree';
         };
         sessionId?: string | undefined;
         comparisonId?: string | undefined;
-        backendPreference?: {
+        projection?: undefined | {
+            kind: 'index';
+            cursor?: number | undefined;
+            path?: string | undefined;
+        };
+        backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
-        } | undefined;
+        };
         turnId?: string | undefined;
         checkpointReceiptId?: string | undefined;
-        turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+        turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
     };
     readonly "scm.diffSummary.draftPullRequest": {
         cwd: string;
         source: {
-            kind: 'turnCheckpoint';
-            sessionId?: string;
-            turnId?: string;
-            checkpointReceiptId?: string;
-            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workingTree';
-        } | {
             kind: 'branch';
             head: string;
             base: string;
@@ -96,10 +120,6 @@ export type ScmDiffSummaryActionInputById = {
             kind: 'commit';
             commit: string;
             parent?: string;
-        } | {
-            kind: 'revisionRange';
-            baseOid: string;
-            headOid: string;
         } | {
             kind: 'pullRequest';
             locator: {
@@ -122,47 +142,120 @@ export type ScmDiffSummaryActionInputById = {
                         observedRevision: string;
                     };
                 };
+                fileViewedActions?: {
+                    read: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                    set: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                };
             };
+        } | {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+        } | {
+            kind: 'workingTree';
         };
         sessionId?: string | undefined;
         comparisonId?: string | undefined;
-        backendPreference?: {
+        backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
-        } | undefined;
+        };
         turnId?: string | undefined;
         checkpointReceiptId?: string | undefined;
-        turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-        modelSelector?: {
+        turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+        modelSelector?: undefined | {
             profileId?: string | undefined;
             modelId?: string | undefined;
             backendTargetKey?: string | undefined;
-        } | undefined;
-        cachePolicy?: {
-            mode: 'read_write' | 'bypass';
-            reason?: string | undefined;
-        } | undefined;
+            modelSelection?: undefined | {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            connectedServices?: null | undefined | {
+                v: 2;
+                bindingsByServiceId?: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                }> | undefined;
+            };
+        };
+        cachePolicy?: undefined | {
+            mode: 'bypass';
+        };
         investigateSurroundingFiles?: boolean | undefined;
         outputLanguage?: string | undefined;
-        pullRequestDraft?: {
+        pullRequestDraft?: undefined | {
             providerId?: string | undefined;
-        } | undefined;
-        outputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
+        };
+        outputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
     };
     readonly "scm.diffSummary.generate": {
         cwd: string;
         source: {
-            kind: 'turnCheckpoint';
-            sessionId?: string;
-            turnId?: string;
-            checkpointReceiptId?: string;
-            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workingTree';
-        } | {
             kind: 'branch';
             head: string;
             base: string;
@@ -170,10 +263,6 @@ export type ScmDiffSummaryActionInputById = {
             kind: 'commit';
             commit: string;
             parent?: string;
-        } | {
-            kind: 'revisionRange';
-            baseOid: string;
-            headOid: string;
         } | {
             kind: 'pullRequest';
             locator: {
@@ -196,50 +285,123 @@ export type ScmDiffSummaryActionInputById = {
                         observedRevision: string;
                     };
                 };
+                fileViewedActions?: {
+                    read: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                    set: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                };
             };
+        } | {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+        } | {
+            kind: 'workingTree';
         };
         sessionId?: string | undefined;
         comparisonId?: string | undefined;
-        backendPreference?: {
+        backendPreference?: undefined | {
             kind: 'prefer';
             backendId: string;
-        } | undefined;
+        };
         turnId?: string | undefined;
         checkpointReceiptId?: string | undefined;
-        turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-        modelSelector?: {
+        turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+        modelSelector?: undefined | {
             profileId?: string | undefined;
             modelId?: string | undefined;
             backendTargetKey?: string | undefined;
-        } | undefined;
-        cachePolicy?: {
-            mode: 'read_write' | 'bypass';
-            reason?: string | undefined;
-        } | undefined;
+            modelSelection?: undefined | {
+                agentTargetKey: string;
+                providerConnectionId: null;
+                modelId: string;
+            } | {
+                agentTargetKey: string;
+                providerConnectionId: string;
+                modelId: string;
+            };
+            connectedServices?: null | undefined | {
+                v: 2;
+                bindingsByServiceId?: Record<string, {
+                    source: 'connected';
+                    profileId: string;
+                    selection?: 'profile' | undefined;
+                } | {
+                    source: 'connected';
+                    selection: 'group';
+                    groupId: string;
+                    profileId?: string | undefined;
+                    appliedProfileId?: string | undefined;
+                } | {
+                    source: 'native';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'brokered';
+                } | {
+                    source: 'team_resource';
+                    resourceId: string;
+                    deliveryMode: 'direct';
+                    disclosedMember: {
+                        service: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        accountId: string;
+                    };
+                }> | undefined;
+            };
+        };
+        cachePolicy?: undefined | {
+            mode: 'bypass';
+        };
         investigateSurroundingFiles?: boolean | undefined;
         outputLanguage?: string | undefined;
-        pullRequestDraft?: {
+        pullRequestDraft?: undefined | {
             providerId?: string | undefined;
-        } | undefined;
-        outputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
+        };
+        outputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
     };
     readonly "scm.diffSummary.result.list": {
-        query?: {
+        query?: undefined | {
             cwd: string;
-            sessionId?: string | null | undefined;
-            comparisons?: {
+            sessionId?: null | string | undefined;
+            comparisons?: undefined | {
                 source: {
-                    kind: 'turnCheckpoint';
-                    sessionId?: string;
-                    turnId?: string;
-                    checkpointReceiptId?: string;
-                    evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-                } | {
-                    kind: 'session';
-                    sessionId: string;
-                } | {
-                    kind: 'workingTree';
-                } | {
                     kind: 'branch';
                     head: string;
                     base: string;
@@ -247,10 +409,6 @@ export type ScmDiffSummaryActionInputById = {
                     kind: 'commit';
                     commit: string;
                     parent?: string;
-                } | {
-                    kind: 'revisionRange';
-                    baseOid: string;
-                    headOid: string;
                 } | {
                     kind: 'pullRequest';
                     locator: {
@@ -273,12 +431,57 @@ export type ScmDiffSummaryActionInputById = {
                                 observedRevision: string;
                             };
                         };
+                        fileViewedActions?: {
+                            read: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                            set: {
+                                action: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                input?: JsonValue;
+                                clientId?: string;
+                                messageActionReference?: {
+                                    v: 1;
+                                    sessionId: string;
+                                    messageId: string;
+                                    observedRevision: string;
+                                };
+                            };
+                        };
                     };
+                } | {
+                    kind: 'revisionRange';
+                    baseOid: string;
+                    headOid: string;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                } | {
+                    kind: 'turnCheckpoint';
+                    sessionId?: string;
+                    turnId?: string;
+                    checkpointReceiptId?: string;
+                    evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+                } | {
+                    kind: 'workingTree';
                 };
-                outputs: ('summary' | 'walkthrough' | 'commitPlan')[];
+                outputs: ('commitPlan' | 'summary' | 'walkthrough')[];
                 comparisonId?: string | undefined;
-            }[] | undefined;
-        } | undefined;
+            }[];
+        };
         includeUsage?: boolean | undefined;
     };
     readonly "scm.diffSummary.result.clear": {
@@ -304,8 +507,8 @@ export type ScmDiffSummaryActionInputById = {
             leftOutChangeRefs: string[];
             comparisonId: string;
             repositoryRootPath: string;
-            expectedHeadOid: string | null;
-            expectedRef: string | null;
+            expectedHeadOid: null | string;
+            expectedRef: null | string;
         };
     };
     readonly "scm.diffSummary.commitPlan.stop": {
@@ -340,17 +543,6 @@ export type ScmDiffSummaryActionInputById = {
         cwd: string;
         comparisonId: string;
         source: {
-            kind: 'turnCheckpoint';
-            sessionId?: string;
-            turnId?: string;
-            checkpointReceiptId?: string;
-            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workingTree';
-        } | {
             kind: 'branch';
             head: string;
             base: string;
@@ -358,10 +550,6 @@ export type ScmDiffSummaryActionInputById = {
             kind: 'commit';
             commit: string;
             parent?: string;
-        } | {
-            kind: 'revisionRange';
-            baseOid: string;
-            headOid: string;
         } | {
             kind: 'pullRequest';
             locator: {
@@ -384,7 +572,52 @@ export type ScmDiffSummaryActionInputById = {
                         observedRevision: string;
                     };
                 };
+                fileViewedActions?: {
+                    read: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                    set: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                };
             };
+        } | {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+        } | {
+            kind: 'workingTree';
         };
         changeRefs: string[];
         sessionId?: string | undefined;
@@ -392,17 +625,6 @@ export type ScmDiffSummaryActionInputById = {
         v: 2;
         cwd: string;
         source: {
-            kind: 'turnCheckpoint';
-            sessionId?: string;
-            turnId?: string;
-            checkpointReceiptId?: string;
-            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workingTree';
-        } | {
             kind: 'branch';
             head: string;
             base: string;
@@ -410,10 +632,6 @@ export type ScmDiffSummaryActionInputById = {
             kind: 'commit';
             commit: string;
             parent?: string;
-        } | {
-            kind: 'revisionRange';
-            baseOid: string;
-            headOid: string;
         } | {
             kind: 'pullRequest';
             locator: {
@@ -436,7 +654,52 @@ export type ScmDiffSummaryActionInputById = {
                         observedRevision: string;
                     };
                 };
+                fileViewedActions?: {
+                    read: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                    set: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                };
             };
+        } | {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+        } | {
+            kind: 'workingTree';
         };
         changeKeys: string[];
         comparisonId?: string | undefined;
@@ -451,17 +714,6 @@ export type ScmDiffSummaryActionInputById = {
         cwd: string;
         comparisonId: string;
         source: {
-            kind: 'turnCheckpoint';
-            sessionId?: string;
-            turnId?: string;
-            checkpointReceiptId?: string;
-            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workingTree';
-        } | {
             kind: 'branch';
             head: string;
             base: string;
@@ -469,10 +721,6 @@ export type ScmDiffSummaryActionInputById = {
             kind: 'commit';
             commit: string;
             parent?: string;
-        } | {
-            kind: 'revisionRange';
-            baseOid: string;
-            headOid: string;
         } | {
             kind: 'pullRequest';
             locator: {
@@ -495,7 +743,52 @@ export type ScmDiffSummaryActionInputById = {
                         observedRevision: string;
                     };
                 };
+                fileViewedActions?: {
+                    read: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                    set: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                };
             };
+        } | {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+        } | {
+            kind: 'workingTree';
         };
         changeRefs: string[];
         sessionId?: string | undefined;
@@ -503,17 +796,6 @@ export type ScmDiffSummaryActionInputById = {
         v: 2;
         cwd: string;
         source: {
-            kind: 'turnCheckpoint';
-            sessionId?: string;
-            turnId?: string;
-            checkpointReceiptId?: string;
-            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workingTree';
-        } | {
             kind: 'branch';
             head: string;
             base: string;
@@ -521,10 +803,6 @@ export type ScmDiffSummaryActionInputById = {
             kind: 'commit';
             commit: string;
             parent?: string;
-        } | {
-            kind: 'revisionRange';
-            baseOid: string;
-            headOid: string;
         } | {
             kind: 'pullRequest';
             locator: {
@@ -547,7 +825,52 @@ export type ScmDiffSummaryActionInputById = {
                         observedRevision: string;
                     };
                 };
+                fileViewedActions?: {
+                    read: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                    set: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                };
             };
+        } | {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+        } | {
+            kind: 'workingTree';
         };
         changeKeys: string[];
         comparisonId?: string | undefined;
@@ -556,17 +879,6 @@ export type ScmDiffSummaryActionInputById = {
         v: 2;
         cwd: string;
         source: {
-            kind: 'turnCheckpoint';
-            sessionId?: string;
-            turnId?: string;
-            checkpointReceiptId?: string;
-            evidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled';
-        } | {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'workingTree';
-        } | {
             kind: 'branch';
             head: string;
             base: string;
@@ -574,10 +886,6 @@ export type ScmDiffSummaryActionInputById = {
             kind: 'commit';
             commit: string;
             parent?: string;
-        } | {
-            kind: 'revisionRange';
-            baseOid: string;
-            headOid: string;
         } | {
             kind: 'pullRequest';
             locator: {
@@ -600,7 +908,52 @@ export type ScmDiffSummaryActionInputById = {
                         observedRevision: string;
                     };
                 };
+                fileViewedActions?: {
+                    read: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                    set: {
+                        action: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        input?: JsonValue;
+                        clientId?: string;
+                        messageActionReference?: {
+                            v: 1;
+                            sessionId: string;
+                            messageId: string;
+                            observedRevision: string;
+                        };
+                    };
+                };
             };
+        } | {
+            kind: 'revisionRange';
+            baseOid: string;
+            headOid: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'turnCheckpoint';
+            sessionId?: string;
+            turnId?: string;
+            checkpointReceiptId?: string;
+            evidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled';
+        } | {
+            kind: 'workingTree';
         };
         reset: true;
         comparisonId?: string | undefined;
@@ -615,25 +968,69 @@ export type ScmDiffSummaryActionInputById = {
         resultId: string;
         expectedRevision: number;
         edit: {
-            kind: 'renameWalkthrough';
-            title: string;
-        } | {
-            kind: 'renameStop';
-            stopId: string;
-            title: string;
+            kind: 'editCommitGroup';
+            groupId: string;
+            message?: string | undefined;
+            rationale?: string | undefined;
         } | {
             kind: 'editStop';
             stopId: string;
             explanationMarkdown: string;
         } | {
-            kind: 'reorderStops';
-            stopIds: string[];
+            kind: 'mergeCommitGroups';
+            groupIds: string[];
+            targetGroupId: string;
+            message?: string | undefined;
+            rationale?: string | undefined;
         } | {
             kind: 'mergeStops';
             stopIds: string[];
             targetStopId: string;
             explanationMarkdown: string;
             title?: string | undefined;
+        } | {
+            kind: 'moveCommitChanges';
+            changeRefs: string[];
+            target: {
+                kind: 'group';
+                groupId: string;
+            } | {
+                kind: 'leftOut';
+            } | {
+                kind: 'newGroup';
+                group: {
+                    id: string;
+                    message: string;
+                    rationale: string;
+                };
+            };
+        } | {
+            kind: 'removeOutput';
+            output: 'commitPlan' | 'summary' | 'walkthrough';
+        } | {
+            kind: 'renameStop';
+            stopId: string;
+            title: string;
+        } | {
+            kind: 'renameWalkthrough';
+            title: string;
+        } | {
+            kind: 'reorderCommitGroups';
+            groupIds: string[];
+        } | {
+            kind: 'reorderStops';
+            stopIds: string[];
+        } | {
+            kind: 'replaceCommitPlan';
+            value: {
+                groups: {
+                    id: string;
+                    message: string;
+                    rationale: string;
+                    changeRefs: string[];
+                }[];
+                leftOutChangeRefs: string[];
+            };
         } | {
             kind: 'replaceSummary';
             value: {
@@ -652,10 +1049,10 @@ export type ScmDiffSummaryActionInputById = {
                     title: string;
                     explanationMarkdown: string;
                     changeRefs: string[];
-                    importance?: 'low' | 'medium' | 'high' | undefined;
+                    importance?: 'high' | 'low' | 'medium' | undefined;
                     findingRefs?: string[] | undefined;
                     suggestedQuestions?: string[] | undefined;
-                    reviewExplanations?: {
+                    reviewExplanations?: undefined | {
                         markdown: string;
                         findingRefs: {
                             runId: string;
@@ -663,7 +1060,7 @@ export type ScmDiffSummaryActionInputById = {
                         }[];
                         provenance: {
                             requestedBy: {
-                                kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                 id?: string | undefined;
                             };
                             requestedAtMs: number;
@@ -671,55 +1068,11 @@ export type ScmDiffSummaryActionInputById = {
                             modelId?: string | undefined;
                             runId?: string | undefined;
                         };
-                    }[] | undefined;
+                    }[];
                 }[];
                 otherChangeRefs: string[];
                 readingHint?: string | undefined;
             };
-        } | {
-            kind: 'replaceCommitPlan';
-            value: {
-                groups: {
-                    id: string;
-                    message: string;
-                    rationale: string;
-                    changeRefs: string[];
-                }[];
-                leftOutChangeRefs: string[];
-            };
-        } | {
-            kind: 'editCommitGroup';
-            groupId: string;
-            message?: string | undefined;
-            rationale?: string | undefined;
-        } | {
-            kind: 'reorderCommitGroups';
-            groupIds: string[];
-        } | {
-            kind: 'mergeCommitGroups';
-            groupIds: string[];
-            targetGroupId: string;
-            message?: string | undefined;
-            rationale?: string | undefined;
-        } | {
-            kind: 'moveCommitChanges';
-            changeRefs: string[];
-            target: {
-                kind: 'group';
-                groupId: string;
-            } | {
-                kind: 'newGroup';
-                group: {
-                    id: string;
-                    message: string;
-                    rationale: string;
-                };
-            } | {
-                kind: 'leftOut';
-            };
-        } | {
-            kind: 'removeOutput';
-            output: 'summary' | 'walkthrough' | 'commitPlan';
         };
     };
     readonly "scm.diffSummary.result.undo": {
@@ -736,11 +1089,11 @@ export type ScmDiffSummaryActionInputById = {
         cwd: string;
         resultId: string;
         expectedRevision: number;
-        output: 'summary' | 'walkthrough' | 'commitPlan';
+        output: 'commitPlan' | 'summary' | 'walkthrough';
         instructions: string;
         outputLanguage?: string | undefined;
         stopIds?: string[] | undefined;
-        reviewExplanation?: {
+        reviewExplanation?: undefined | {
             targets: {
                 stopId: string;
                 findingRefs: {
@@ -748,13 +1101,13 @@ export type ScmDiffSummaryActionInputById = {
                     findingId: string;
                 }[];
             }[];
-        } | undefined;
+        };
     };
     readonly "scm.diffSummary.addOutputs": {
         cwd: string;
         resultId: string;
         expectedRevision: number;
-        outputs: ('summary' | 'walkthrough' | 'commitPlan')[];
+        outputs: ('commitPlan' | 'summary' | 'walkthrough')[];
         outputLanguage?: string | undefined;
     };
     readonly "scm.diffSummary.discuss": {
@@ -771,10 +1124,10 @@ export type ScmDiffSummaryActionResultById = {
     readonly "scm.commit.resolveOutcome": {
         success: boolean;
         publication: {
-            state: 'unknown' | 'not_published' | 'published';
-            expectedHeadOid: string | null;
-            expectedRef: string | null;
-            indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+            state: 'not_published' | 'published' | 'unknown';
+            expectedHeadOid: null | string;
+            expectedRef: null | string;
+            indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
             candidateOid?: string | undefined;
             actualMessage?: string | undefined;
             indexTreeOid?: string | undefined;
@@ -784,9 +1137,13 @@ export type ScmDiffSummaryActionResultById = {
         };
         candidateTreeOid?: string | undefined;
         error?: string | undefined;
-        errorCode?: 'CHANGE_MOVED_ON' | 'FILE_CHANGED' | 'COMPARISON_UNAVAILABLE' | 'DISCARD_UNSUPPORTED' | 'unsupported' | 'not_found' | 'too_large' | 'blob_unavailable' | 'NOT_REPOSITORY' | 'INVALID_PATH' | 'ROOT_NOT_FOUND' | 'INVALID_REQUEST' | 'SCM_SOURCE_CHANGED' | 'COMMAND_FAILED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_EMPTY' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_UNDO_PUBLISHED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'REMOTE_NETWORK_FAILED' | 'COMMAND_CANCELLED' | 'COMMAND_TIMEOUT' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_OUTCOME_UNKNOWN' | 'REPOSITORY_REFRESH_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_APPLY_FAILED' | 'STASH_DROP_FAILED' | 'CHANGE_APPLY_FAILED' | 'COMMIT_REQUIRED' | 'CONFLICTING_WORKTREE' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_REJECTED' | 'REMOTE_RATE_LIMITED' | 'REMOTE_NOT_FOUND' | 'REMOTE_ALREADY_EXISTS' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'FEATURE_UNSUPPORTED' | 'BACKEND_UNAVAILABLE' | 'BACKEND_NOT_INSTALLED' | undefined;
+        errorCode?: 'BACKEND_NOT_INSTALLED' | 'BACKEND_UNAVAILABLE' | 'BRANCH_OPERATION_IN_PROGRESS' | 'BRANCH_OPERATION_NOT_IN_PROGRESS' | 'CHANGE_APPLY_FAILED' | 'CHANGE_MOVED_ON' | 'COMMAND_CANCELLED' | 'COMMAND_FAILED' | 'COMMAND_OUTCOME_UNKNOWN' | 'COMMAND_OUTPUT_LIMIT_EXCEEDED' | 'COMMAND_TIMEOUT' | 'COMMIT_AMEND_PUBLISHED' | 'COMMIT_EMPTY' | 'COMMIT_HEAD_CHANGED' | 'COMMIT_HOOK_CONTENT_CHANGED' | 'COMMIT_HOOK_FAILED' | 'COMMIT_IDENTITY_REQUIRED' | 'COMMIT_REQUIRED' | 'COMMIT_SIGNING_FAILED' | 'COMMIT_STAGING_CONFLICT' | 'COMMIT_UNDO_HEAD_CHANGED' | 'COMMIT_UNDO_MERGE' | 'COMMIT_UNDO_NO_PARENT' | 'COMMIT_UNDO_PUBLISHED' | 'COMPARISON_UNAVAILABLE' | 'CONFLICTING_WORKTREE' | 'DISCARD_UNSUPPORTED' | 'FEATURE_UNSUPPORTED' | 'FILE_CHANGED' | 'INDEX_LOCKED' | 'INDEX_RECONCILIATION_FAILED' | 'INVALID_PATH' | 'INVALID_REQUEST' | 'NOT_REPOSITORY' | 'REMOTE_ALREADY_EXISTS' | 'REMOTE_AUTH_REQUIRED' | 'REMOTE_FF_ONLY_REQUIRED' | 'REMOTE_NETWORK_FAILED' | 'REMOTE_NON_FAST_FORWARD' | 'REMOTE_NOT_FOUND' | 'REMOTE_RATE_LIMITED' | 'REMOTE_REJECTED' | 'REMOTE_UPSTREAM_REQUIRED' | 'REPOSITORY_REFRESH_FAILED' | 'ROOT_NOT_FOUND' | 'SCM_SOURCE_CHANGED' | 'STASH_APPLY_FAILED' | 'STASH_CREATE_FAILED' | 'STASH_DROP_FAILED' | 'blob_unavailable' | 'not_found' | 'too_large' | 'unsupported' | undefined;
     };
     readonly "scm.diffSummary.capture": {
+        success: false;
+        error: string;
+        errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+    } | {
         success: true;
         comparison: {
             id: string;
@@ -810,6 +1167,10 @@ export type ScmDiffSummaryActionResultById = {
                         state: 'available';
                         unifiedDiff: string;
                     } | {
+                        state: 'deferred';
+                        reason: string;
+                        unifiedDiff?: undefined;
+                    } | {
                         state: 'unavailable';
                         reason: string;
                         unifiedDiff?: string | undefined;
@@ -830,45 +1191,255 @@ export type ScmDiffSummaryActionResultById = {
                         previousPath?: string | undefined;
                         beforeBlobId?: string | undefined;
                         afterBlobId?: string | undefined;
-                        layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                        evidence?: {
+                        layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                        evidence?: undefined | {
                             state: 'available';
                         } | {
                             state: 'unavailable';
                             reason: string;
-                        } | undefined;
+                        };
                     }[];
                     previousPath?: string | undefined;
                     beforeBlobId?: string | undefined;
                     afterBlobId?: string | undefined;
+                    linesAdded?: number | undefined;
+                    linesRemoved?: number | undefined;
                 }[];
                 reasons: string[];
             };
-            commitTarget?: {
-                headOid: string | null;
-                ref: string | null;
-            } | undefined;
-            pullRequest?: {
+            commitTarget?: undefined | {
+                headOid: null | string;
+                ref: null | string;
+            };
+            pullRequest?: undefined | {
                 baseOid: string;
-            } | undefined;
-            freshness?: 'unknown' | 'current' | 'stale' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+            };
+            freshness?: 'current' | 'stale' | 'unknown' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
         };
         metadata: {
             source: ScmComparisonSource;
             sourceKey: string;
             turnId?: string | undefined;
             checkpointReceiptId?: string | undefined;
-            turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+            turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
             contentConfidence?: 'exact' | 'unavailable' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
         };
-    } | {
-        success: false;
-        error: string;
-        errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
+        page?: undefined | {
+            totalFiles: number;
+            nextCursor: null | number;
+        };
     };
     readonly "scm.diffSummary.draftPullRequest": {
+        success: false;
+        error: string;
+        errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+        admission?: 'outcomeUnknown' | undefined;
+        comparison?: undefined | {
+            id: string;
+            source: ScmComparisonSource;
+            repository: {
+                rootPath: string;
+            };
+            endpoints: {
+                before?: string | undefined;
+                after?: string | undefined;
+            };
+            inventory: {
+                state: 'complete' | 'incomplete' | 'unavailable';
+                files: {
+                    path: string;
+                    changeKind: string;
+                    binary: boolean | null;
+                    generated: boolean;
+                    lockfile: boolean;
+                    evidence: {
+                        state: 'available';
+                        unifiedDiff: string;
+                    } | {
+                        state: 'deferred';
+                        reason: string;
+                        unifiedDiff?: undefined;
+                    } | {
+                        state: 'unavailable';
+                        reason: string;
+                        unifiedDiff?: string | undefined;
+                    };
+                    occurrences: {
+                        id: string;
+                        alias: string;
+                        path: string;
+                        before: {
+                            startLine: number;
+                            lineCount: number;
+                        };
+                        after: {
+                            startLine: number;
+                            lineCount: number;
+                        };
+                        position: number;
+                        previousPath?: string | undefined;
+                        beforeBlobId?: string | undefined;
+                        afterBlobId?: string | undefined;
+                        layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                        evidence?: undefined | {
+                            state: 'available';
+                        } | {
+                            state: 'unavailable';
+                            reason: string;
+                        };
+                    }[];
+                    previousPath?: string | undefined;
+                    beforeBlobId?: string | undefined;
+                    afterBlobId?: string | undefined;
+                    linesAdded?: number | undefined;
+                    linesRemoved?: number | undefined;
+                }[];
+                reasons: string[];
+            };
+            commitTarget?: undefined | {
+                headOid: null | string;
+                ref: null | string;
+            };
+            pullRequest?: undefined | {
+                baseOid: string;
+            };
+            freshness?: 'current' | 'stale' | 'unknown' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+        };
+        requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+        outputs?: undefined | {
+            summary?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
+                    summaryMarkdown: string;
+                    risks?: string[] | undefined;
+                    testImpact?: string | undefined;
+                    suggestedPrBody?: string | undefined;
+                };
+                reason?: string | undefined;
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+            walkthrough?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
+                    title: string;
+                    intro: string;
+                    stops: {
+                        id: string;
+                        title: string;
+                        explanationMarkdown: string;
+                        changeRefs: string[];
+                        importance?: 'high' | 'low' | 'medium' | undefined;
+                        findingRefs?: string[] | undefined;
+                        suggestedQuestions?: string[] | undefined;
+                        reviewExplanations?: undefined | {
+                            markdown: string;
+                            findingRefs: {
+                                runId: string;
+                                findingId: string;
+                            }[];
+                            provenance: {
+                                requestedBy: {
+                                    kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                    id?: string | undefined;
+                                };
+                                requestedAtMs: number;
+                                generatedAtMs: number;
+                                modelId?: string | undefined;
+                                runId?: string | undefined;
+                            };
+                        }[];
+                    }[];
+                    otherChangeRefs: string[];
+                    readingHint?: string | undefined;
+                };
+                reason?: string | undefined;
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+            commitPlan?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
+                    groups: {
+                        id: string;
+                        message: string;
+                        rationale: string;
+                        changeRefs: string[];
+                    }[];
+                    leftOutChangeRefs: string[];
+                };
+                reason?: string | undefined;
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+        };
+        analysis?: undefined | {
+            suppliedChangeRefs: string[];
+            analysedChangeRefs: string[];
+            remainingChangeRefs: string[];
+            parts?: undefined | {
+                completed: number;
+                total: number;
+                phase: 'done' | 'evidence' | 'merge';
+            };
+        };
+        runId?: string | undefined;
+        resultId?: string | undefined;
+        revision?: number | undefined;
+        producer?: undefined | {
+            kind: 'generation' | 'review';
+            modelId?: string | undefined;
+            runId?: string | undefined;
+            seededFromRunId?: string | undefined;
+            reviewedBy?: string[] | undefined;
+            reviewedRuns?: undefined | {
+                runId: string;
+                callId: string;
+                backendId: string;
+                status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                hasOutput: boolean;
+                comparisonId?: string | undefined;
+                reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                reviewedFingerprint?: null | string | undefined;
+                commentIds?: string[] | undefined;
+                materialization?: undefined | {
+                    kind: 'complete';
+                } | {
+                    kind: 'failed';
+                    errorCode: string;
+                } | {
+                    kind: 'partial';
+                    errorCode: string;
+                };
+            }[];
+            narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+            comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+            narratedAtMs?: number | undefined;
+            launchFailures?: undefined | {
+                engineId: string;
+                errorCode: string;
+                error: string;
+            }[];
+        };
+        nextAction?: 'chooseModel' | undefined;
+        sourceKey?: string | undefined;
+        checkpointReceiptId?: string | undefined;
+        metadata?: undefined | {
+            source: ScmComparisonSource;
+            sourceKey: string;
+            turnId?: string | undefined;
+            checkpointReceiptId?: string | undefined;
+            turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+            contentConfidence?: 'exact' | 'unavailable' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+        };
+        cost?: undefined | {
+            [x: string]: unknown;
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            estimatedUsd?: number | undefined;
+        };
+    } | {
         success: true;
         sourceKey: string;
         metadata: {
@@ -876,12 +1447,12 @@ export type ScmDiffSummaryActionResultById = {
             sourceKey: string;
             turnId?: string | undefined;
             checkpointReceiptId?: string | undefined;
-            turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+            turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
             contentConfidence?: 'exact' | 'unavailable' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
         };
         admission?: 'outcomeUnknown' | undefined;
-        comparison?: {
+        comparison?: undefined | {
             id: string;
             source: ScmComparisonSource;
             repository: {
@@ -903,6 +1474,10 @@ export type ScmDiffSummaryActionResultById = {
                         state: 'available';
                         unifiedDiff: string;
                     } | {
+                        state: 'deferred';
+                        reason: string;
+                        unifiedDiff?: undefined;
+                    } | {
                         state: 'unavailable';
                         reason: string;
                         unifiedDiff?: string | undefined;
@@ -923,46 +1498,48 @@ export type ScmDiffSummaryActionResultById = {
                         previousPath?: string | undefined;
                         beforeBlobId?: string | undefined;
                         afterBlobId?: string | undefined;
-                        layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                        evidence?: {
+                        layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                        evidence?: undefined | {
                             state: 'available';
                         } | {
                             state: 'unavailable';
                             reason: string;
-                        } | undefined;
+                        };
                     }[];
                     previousPath?: string | undefined;
                     beforeBlobId?: string | undefined;
                     afterBlobId?: string | undefined;
+                    linesAdded?: number | undefined;
+                    linesRemoved?: number | undefined;
                 }[];
                 reasons: string[];
             };
-            commitTarget?: {
-                headOid: string | null;
-                ref: string | null;
-            } | undefined;
-            pullRequest?: {
+            commitTarget?: undefined | {
+                headOid: null | string;
+                ref: null | string;
+            };
+            pullRequest?: undefined | {
                 baseOid: string;
-            } | undefined;
-            freshness?: 'unknown' | 'current' | 'stale' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-        } | undefined;
-        requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-        outputs?: {
-            summary?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
+            };
+            freshness?: 'current' | 'stale' | 'unknown' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+        };
+        requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+        outputs?: undefined | {
+            summary?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
                     summaryMarkdown: string;
                     risks?: string[] | undefined;
                     testImpact?: string | undefined;
                     suggestedPrBody?: string | undefined;
-                } | undefined;
+                };
                 reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-            walkthrough?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+            walkthrough?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
                     title: string;
                     intro: string;
                     stops: {
@@ -970,10 +1547,10 @@ export type ScmDiffSummaryActionResultById = {
                         title: string;
                         explanationMarkdown: string;
                         changeRefs: string[];
-                        importance?: 'low' | 'medium' | 'high' | undefined;
+                        importance?: 'high' | 'low' | 'medium' | undefined;
                         findingRefs?: string[] | undefined;
                         suggestedQuestions?: string[] | undefined;
-                        reviewExplanations?: {
+                        reviewExplanations?: undefined | {
                             markdown: string;
                             findingRefs: {
                                 runId: string;
@@ -981,7 +1558,7 @@ export type ScmDiffSummaryActionResultById = {
                             }[];
                             provenance: {
                                 requestedBy: {
-                                    kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                    kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                     id?: string | undefined;
                                 };
                                 requestedAtMs: number;
@@ -989,17 +1566,17 @@ export type ScmDiffSummaryActionResultById = {
                                 modelId?: string | undefined;
                                 runId?: string | undefined;
                             };
-                        }[] | undefined;
+                        }[];
                     }[];
                     otherChangeRefs: string[];
                     readingHint?: string | undefined;
-                } | undefined;
+                };
                 reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-            commitPlan?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+            commitPlan?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
                     groups: {
                         id: string;
                         message: string;
@@ -1007,283 +1584,281 @@ export type ScmDiffSummaryActionResultById = {
                         changeRefs: string[];
                     }[];
                     leftOutChangeRefs: string[];
-                } | undefined;
+                };
                 reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-        } | undefined;
-        analysis?: {
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+        };
+        analysis?: undefined | {
             suppliedChangeRefs: string[];
             analysedChangeRefs: string[];
             remainingChangeRefs: string[];
-            parts?: {
-                admitted: number;
+            parts?: undefined | {
                 completed: number;
                 total: number;
-                phase: 'evidence' | 'merge' | 'done';
-            } | undefined;
-        } | undefined;
+                phase: 'done' | 'evidence' | 'merge';
+            };
+        };
         runId?: string | undefined;
         resultId?: string | undefined;
         revision?: number | undefined;
-        producer?: {
+        producer?: undefined | {
             kind: 'generation' | 'review';
             modelId?: string | undefined;
             runId?: string | undefined;
             seededFromRunId?: string | undefined;
             reviewedBy?: string[] | undefined;
-            reviewedRuns?: {
+            reviewedRuns?: undefined | {
                 runId: string;
                 callId: string;
                 backendId: string;
-                status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                 hasOutput: boolean;
                 comparisonId?: string | undefined;
-                reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                reviewedFingerprint?: string | null | undefined;
+                reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                reviewedFingerprint?: null | string | undefined;
                 commentIds?: string[] | undefined;
-                materialization?: {
+                materialization?: undefined | {
                     kind: 'complete';
-                } | {
-                    kind: 'partial';
-                    errorCode: string;
                 } | {
                     kind: 'failed';
                     errorCode: string;
-                } | undefined;
-            }[] | undefined;
+                } | {
+                    kind: 'partial';
+                    errorCode: string;
+                };
+            }[];
             narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-            comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+            comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
             narratedAtMs?: number | undefined;
-            launchFailures?: {
+            launchFailures?: undefined | {
                 engineId: string;
                 errorCode: string;
                 error: string;
-            }[] | undefined;
-        } | undefined;
+            }[];
+        };
         inputId?: string | undefined;
         summaryMarkdown?: string | undefined;
         checkpointReceiptId?: string | undefined;
-        truncation?: {
-            [x: string]: unknown;
-            reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-            droppedFiles?: number | undefined;
-        } | undefined;
-        generationState?: 'complete' | 'partial' | undefined;
-        cost?: {
+        cost?: undefined | {
             [x: string]: unknown;
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             estimatedUsd?: number | undefined;
-        } | undefined;
+        };
         risks?: string[] | undefined;
         testImpact?: string | undefined;
         suggestedPrBody?: string | undefined;
-    } | {
-        success: false;
-        error: string;
-        errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-        admission?: 'outcomeUnknown' | undefined;
-        comparison?: {
-            id: string;
-            source: ScmComparisonSource;
-            repository: {
-                rootPath: string;
-            };
-            endpoints: {
-                before?: string | undefined;
-                after?: string | undefined;
-            };
-            inventory: {
-                state: 'complete' | 'incomplete' | 'unavailable';
-                files: {
-                    path: string;
-                    changeKind: string;
-                    binary: boolean | null;
-                    generated: boolean;
-                    lockfile: boolean;
-                    evidence: {
-                        state: 'available';
-                        unifiedDiff: string;
-                    } | {
-                        state: 'unavailable';
-                        reason: string;
-                        unifiedDiff?: string | undefined;
-                    };
-                    occurrences: {
-                        id: string;
-                        alias: string;
-                        path: string;
-                        before: {
-                            startLine: number;
-                            lineCount: number;
-                        };
-                        after: {
-                            startLine: number;
-                            lineCount: number;
-                        };
-                        position: number;
-                        previousPath?: string | undefined;
-                        beforeBlobId?: string | undefined;
-                        afterBlobId?: string | undefined;
-                        layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                        evidence?: {
-                            state: 'available';
-                        } | {
-                            state: 'unavailable';
-                            reason: string;
-                        } | undefined;
-                    }[];
-                    previousPath?: string | undefined;
-                    beforeBlobId?: string | undefined;
-                    afterBlobId?: string | undefined;
-                }[];
-                reasons: string[];
-            };
-            commitTarget?: {
-                headOid: string | null;
-                ref: string | null;
-            } | undefined;
-            pullRequest?: {
-                baseOid: string;
-            } | undefined;
-            freshness?: 'unknown' | 'current' | 'stale' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-        } | undefined;
-        requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-        outputs?: {
-            summary?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
-                    summaryMarkdown: string;
-                    risks?: string[] | undefined;
-                    testImpact?: string | undefined;
-                    suggestedPrBody?: string | undefined;
-                } | undefined;
-                reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-            walkthrough?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
-                    title: string;
-                    intro: string;
-                    stops: {
-                        id: string;
-                        title: string;
-                        explanationMarkdown: string;
-                        changeRefs: string[];
-                        importance?: 'low' | 'medium' | 'high' | undefined;
-                        findingRefs?: string[] | undefined;
-                        suggestedQuestions?: string[] | undefined;
-                        reviewExplanations?: {
-                            markdown: string;
-                            findingRefs: {
-                                runId: string;
-                                findingId: string;
-                            }[];
-                            provenance: {
-                                requestedBy: {
-                                    kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                    id?: string | undefined;
-                                };
-                                requestedAtMs: number;
-                                generatedAtMs: number;
-                                modelId?: string | undefined;
-                                runId?: string | undefined;
-                            };
-                        }[] | undefined;
-                    }[];
-                    otherChangeRefs: string[];
-                    readingHint?: string | undefined;
-                } | undefined;
-                reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-            commitPlan?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
-                    groups: {
-                        id: string;
-                        message: string;
-                        rationale: string;
-                        changeRefs: string[];
-                    }[];
-                    leftOutChangeRefs: string[];
-                } | undefined;
-                reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-        } | undefined;
-        analysis?: {
-            suppliedChangeRefs: string[];
-            analysedChangeRefs: string[];
-            remainingChangeRefs: string[];
-            parts?: {
-                admitted: number;
-                completed: number;
-                total: number;
-                phase: 'evidence' | 'merge' | 'done';
-            } | undefined;
-        } | undefined;
-        runId?: string | undefined;
-        resultId?: string | undefined;
-        revision?: number | undefined;
-        producer?: {
-            kind: 'generation' | 'review';
-            modelId?: string | undefined;
-            runId?: string | undefined;
-            seededFromRunId?: string | undefined;
-            reviewedBy?: string[] | undefined;
-            reviewedRuns?: {
-                runId: string;
-                callId: string;
-                backendId: string;
-                status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                hasOutput: boolean;
-                comparisonId?: string | undefined;
-                reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                reviewedFingerprint?: string | null | undefined;
-                commentIds?: string[] | undefined;
-                materialization?: {
-                    kind: 'complete';
-                } | {
-                    kind: 'partial';
-                    errorCode: string;
-                } | {
-                    kind: 'failed';
-                    errorCode: string;
-                } | undefined;
-            }[] | undefined;
-            narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-            comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-            narratedAtMs?: number | undefined;
-            launchFailures?: {
-                engineId: string;
-                errorCode: string;
-                error: string;
-            }[] | undefined;
-        } | undefined;
-        nextAction?: 'chooseModel' | undefined;
-        sourceKey?: string | undefined;
-        checkpointReceiptId?: string | undefined;
-        metadata?: {
-            source: ScmComparisonSource;
-            sourceKey: string;
-            turnId?: string | undefined;
-            checkpointReceiptId?: string | undefined;
-            turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-            contentConfidence?: 'exact' | 'unavailable' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-        } | undefined;
-        cost?: {
-            [x: string]: unknown;
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            estimatedUsd?: number | undefined;
-        } | undefined;
     };
     readonly "scm.diffSummary.generate": {
+        success: false;
+        error: string;
+        errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+        admission?: 'outcomeUnknown' | undefined;
+        comparison?: undefined | {
+            id: string;
+            source: ScmComparisonSource;
+            repository: {
+                rootPath: string;
+            };
+            endpoints: {
+                before?: string | undefined;
+                after?: string | undefined;
+            };
+            inventory: {
+                state: 'complete' | 'incomplete' | 'unavailable';
+                files: {
+                    path: string;
+                    changeKind: string;
+                    binary: boolean | null;
+                    generated: boolean;
+                    lockfile: boolean;
+                    evidence: {
+                        state: 'available';
+                        unifiedDiff: string;
+                    } | {
+                        state: 'deferred';
+                        reason: string;
+                        unifiedDiff?: undefined;
+                    } | {
+                        state: 'unavailable';
+                        reason: string;
+                        unifiedDiff?: string | undefined;
+                    };
+                    occurrences: {
+                        id: string;
+                        alias: string;
+                        path: string;
+                        before: {
+                            startLine: number;
+                            lineCount: number;
+                        };
+                        after: {
+                            startLine: number;
+                            lineCount: number;
+                        };
+                        position: number;
+                        previousPath?: string | undefined;
+                        beforeBlobId?: string | undefined;
+                        afterBlobId?: string | undefined;
+                        layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                        evidence?: undefined | {
+                            state: 'available';
+                        } | {
+                            state: 'unavailable';
+                            reason: string;
+                        };
+                    }[];
+                    previousPath?: string | undefined;
+                    beforeBlobId?: string | undefined;
+                    afterBlobId?: string | undefined;
+                    linesAdded?: number | undefined;
+                    linesRemoved?: number | undefined;
+                }[];
+                reasons: string[];
+            };
+            commitTarget?: undefined | {
+                headOid: null | string;
+                ref: null | string;
+            };
+            pullRequest?: undefined | {
+                baseOid: string;
+            };
+            freshness?: 'current' | 'stale' | 'unknown' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+        };
+        requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+        outputs?: undefined | {
+            summary?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
+                    summaryMarkdown: string;
+                    risks?: string[] | undefined;
+                    testImpact?: string | undefined;
+                    suggestedPrBody?: string | undefined;
+                };
+                reason?: string | undefined;
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+            walkthrough?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
+                    title: string;
+                    intro: string;
+                    stops: {
+                        id: string;
+                        title: string;
+                        explanationMarkdown: string;
+                        changeRefs: string[];
+                        importance?: 'high' | 'low' | 'medium' | undefined;
+                        findingRefs?: string[] | undefined;
+                        suggestedQuestions?: string[] | undefined;
+                        reviewExplanations?: undefined | {
+                            markdown: string;
+                            findingRefs: {
+                                runId: string;
+                                findingId: string;
+                            }[];
+                            provenance: {
+                                requestedBy: {
+                                    kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                    id?: string | undefined;
+                                };
+                                requestedAtMs: number;
+                                generatedAtMs: number;
+                                modelId?: string | undefined;
+                                runId?: string | undefined;
+                            };
+                        }[];
+                    }[];
+                    otherChangeRefs: string[];
+                    readingHint?: string | undefined;
+                };
+                reason?: string | undefined;
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+            commitPlan?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
+                    groups: {
+                        id: string;
+                        message: string;
+                        rationale: string;
+                        changeRefs: string[];
+                    }[];
+                    leftOutChangeRefs: string[];
+                };
+                reason?: string | undefined;
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+        };
+        analysis?: undefined | {
+            suppliedChangeRefs: string[];
+            analysedChangeRefs: string[];
+            remainingChangeRefs: string[];
+            parts?: undefined | {
+                completed: number;
+                total: number;
+                phase: 'done' | 'evidence' | 'merge';
+            };
+        };
+        runId?: string | undefined;
+        resultId?: string | undefined;
+        revision?: number | undefined;
+        producer?: undefined | {
+            kind: 'generation' | 'review';
+            modelId?: string | undefined;
+            runId?: string | undefined;
+            seededFromRunId?: string | undefined;
+            reviewedBy?: string[] | undefined;
+            reviewedRuns?: undefined | {
+                runId: string;
+                callId: string;
+                backendId: string;
+                status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                hasOutput: boolean;
+                comparisonId?: string | undefined;
+                reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                reviewedFingerprint?: null | string | undefined;
+                commentIds?: string[] | undefined;
+                materialization?: undefined | {
+                    kind: 'complete';
+                } | {
+                    kind: 'failed';
+                    errorCode: string;
+                } | {
+                    kind: 'partial';
+                    errorCode: string;
+                };
+            }[];
+            narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+            comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+            narratedAtMs?: number | undefined;
+            launchFailures?: undefined | {
+                engineId: string;
+                errorCode: string;
+                error: string;
+            }[];
+        };
+        nextAction?: 'chooseModel' | undefined;
+        sourceKey?: string | undefined;
+        checkpointReceiptId?: string | undefined;
+        metadata?: undefined | {
+            source: ScmComparisonSource;
+            sourceKey: string;
+            turnId?: string | undefined;
+            checkpointReceiptId?: string | undefined;
+            turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+            contentConfidence?: 'exact' | 'unavailable' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+        };
+        cost?: undefined | {
+            [x: string]: unknown;
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            estimatedUsd?: number | undefined;
+        };
+    } | {
         success: true;
         sourceKey: string;
         metadata: {
@@ -1291,12 +1866,12 @@ export type ScmDiffSummaryActionResultById = {
             sourceKey: string;
             turnId?: string | undefined;
             checkpointReceiptId?: string | undefined;
-            turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+            turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
             contentConfidence?: 'exact' | 'unavailable' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
         };
         admission?: 'outcomeUnknown' | undefined;
-        comparison?: {
+        comparison?: undefined | {
             id: string;
             source: ScmComparisonSource;
             repository: {
@@ -1318,6 +1893,10 @@ export type ScmDiffSummaryActionResultById = {
                         state: 'available';
                         unifiedDiff: string;
                     } | {
+                        state: 'deferred';
+                        reason: string;
+                        unifiedDiff?: undefined;
+                    } | {
                         state: 'unavailable';
                         reason: string;
                         unifiedDiff?: string | undefined;
@@ -1338,46 +1917,48 @@ export type ScmDiffSummaryActionResultById = {
                         previousPath?: string | undefined;
                         beforeBlobId?: string | undefined;
                         afterBlobId?: string | undefined;
-                        layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                        evidence?: {
+                        layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                        evidence?: undefined | {
                             state: 'available';
                         } | {
                             state: 'unavailable';
                             reason: string;
-                        } | undefined;
+                        };
                     }[];
                     previousPath?: string | undefined;
                     beforeBlobId?: string | undefined;
                     afterBlobId?: string | undefined;
+                    linesAdded?: number | undefined;
+                    linesRemoved?: number | undefined;
                 }[];
                 reasons: string[];
             };
-            commitTarget?: {
-                headOid: string | null;
-                ref: string | null;
-            } | undefined;
-            pullRequest?: {
+            commitTarget?: undefined | {
+                headOid: null | string;
+                ref: null | string;
+            };
+            pullRequest?: undefined | {
                 baseOid: string;
-            } | undefined;
-            freshness?: 'unknown' | 'current' | 'stale' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-        } | undefined;
-        requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-        outputs?: {
-            summary?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
+            };
+            freshness?: 'current' | 'stale' | 'unknown' | undefined;
+            attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+        };
+        requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+        outputs?: undefined | {
+            summary?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
                     summaryMarkdown: string;
                     risks?: string[] | undefined;
                     testImpact?: string | undefined;
                     suggestedPrBody?: string | undefined;
-                } | undefined;
+                };
                 reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-            walkthrough?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+            walkthrough?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
                     title: string;
                     intro: string;
                     stops: {
@@ -1385,10 +1966,10 @@ export type ScmDiffSummaryActionResultById = {
                         title: string;
                         explanationMarkdown: string;
                         changeRefs: string[];
-                        importance?: 'low' | 'medium' | 'high' | undefined;
+                        importance?: 'high' | 'low' | 'medium' | undefined;
                         findingRefs?: string[] | undefined;
                         suggestedQuestions?: string[] | undefined;
-                        reviewExplanations?: {
+                        reviewExplanations?: undefined | {
                             markdown: string;
                             findingRefs: {
                                 runId: string;
@@ -1396,7 +1977,7 @@ export type ScmDiffSummaryActionResultById = {
                             }[];
                             provenance: {
                                 requestedBy: {
-                                    kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                    kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                     id?: string | undefined;
                                 };
                                 requestedAtMs: number;
@@ -1404,17 +1985,17 @@ export type ScmDiffSummaryActionResultById = {
                                 modelId?: string | undefined;
                                 runId?: string | undefined;
                             };
-                        }[] | undefined;
+                        }[];
                     }[];
                     otherChangeRefs: string[];
                     readingHint?: string | undefined;
-                } | undefined;
+                };
                 reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-            commitPlan?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+            commitPlan?: undefined | {
+                state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                value?: undefined | {
                     groups: {
                         id: string;
                         message: string;
@@ -1422,283 +2003,78 @@ export type ScmDiffSummaryActionResultById = {
                         changeRefs: string[];
                     }[];
                     leftOutChangeRefs: string[];
-                } | undefined;
+                };
                 reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-        } | undefined;
-        analysis?: {
+                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+            };
+        };
+        analysis?: undefined | {
             suppliedChangeRefs: string[];
             analysedChangeRefs: string[];
             remainingChangeRefs: string[];
-            parts?: {
-                admitted: number;
+            parts?: undefined | {
                 completed: number;
                 total: number;
-                phase: 'evidence' | 'merge' | 'done';
-            } | undefined;
-        } | undefined;
+                phase: 'done' | 'evidence' | 'merge';
+            };
+        };
         runId?: string | undefined;
         resultId?: string | undefined;
         revision?: number | undefined;
-        producer?: {
+        producer?: undefined | {
             kind: 'generation' | 'review';
             modelId?: string | undefined;
             runId?: string | undefined;
             seededFromRunId?: string | undefined;
             reviewedBy?: string[] | undefined;
-            reviewedRuns?: {
+            reviewedRuns?: undefined | {
                 runId: string;
                 callId: string;
                 backendId: string;
-                status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                 hasOutput: boolean;
                 comparisonId?: string | undefined;
-                reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                reviewedFingerprint?: string | null | undefined;
+                reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                reviewedFingerprint?: null | string | undefined;
                 commentIds?: string[] | undefined;
-                materialization?: {
+                materialization?: undefined | {
                     kind: 'complete';
-                } | {
-                    kind: 'partial';
-                    errorCode: string;
                 } | {
                     kind: 'failed';
                     errorCode: string;
-                } | undefined;
-            }[] | undefined;
+                } | {
+                    kind: 'partial';
+                    errorCode: string;
+                };
+            }[];
             narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-            comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+            comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
             narratedAtMs?: number | undefined;
-            launchFailures?: {
+            launchFailures?: undefined | {
                 engineId: string;
                 errorCode: string;
                 error: string;
-            }[] | undefined;
-        } | undefined;
+            }[];
+        };
         inputId?: string | undefined;
         summaryMarkdown?: string | undefined;
         checkpointReceiptId?: string | undefined;
-        truncation?: {
-            [x: string]: unknown;
-            reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-            droppedFiles?: number | undefined;
-        } | undefined;
-        generationState?: 'complete' | 'partial' | undefined;
-        cost?: {
+        cost?: undefined | {
             [x: string]: unknown;
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             estimatedUsd?: number | undefined;
-        } | undefined;
+        };
         risks?: string[] | undefined;
         testImpact?: string | undefined;
         suggestedPrBody?: string | undefined;
-    } | {
-        success: false;
-        error: string;
-        errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-        admission?: 'outcomeUnknown' | undefined;
-        comparison?: {
-            id: string;
-            source: ScmComparisonSource;
-            repository: {
-                rootPath: string;
-            };
-            endpoints: {
-                before?: string | undefined;
-                after?: string | undefined;
-            };
-            inventory: {
-                state: 'complete' | 'incomplete' | 'unavailable';
-                files: {
-                    path: string;
-                    changeKind: string;
-                    binary: boolean | null;
-                    generated: boolean;
-                    lockfile: boolean;
-                    evidence: {
-                        state: 'available';
-                        unifiedDiff: string;
-                    } | {
-                        state: 'unavailable';
-                        reason: string;
-                        unifiedDiff?: string | undefined;
-                    };
-                    occurrences: {
-                        id: string;
-                        alias: string;
-                        path: string;
-                        before: {
-                            startLine: number;
-                            lineCount: number;
-                        };
-                        after: {
-                            startLine: number;
-                            lineCount: number;
-                        };
-                        position: number;
-                        previousPath?: string | undefined;
-                        beforeBlobId?: string | undefined;
-                        afterBlobId?: string | undefined;
-                        layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                        evidence?: {
-                            state: 'available';
-                        } | {
-                            state: 'unavailable';
-                            reason: string;
-                        } | undefined;
-                    }[];
-                    previousPath?: string | undefined;
-                    beforeBlobId?: string | undefined;
-                    afterBlobId?: string | undefined;
-                }[];
-                reasons: string[];
-            };
-            commitTarget?: {
-                headOid: string | null;
-                ref: string | null;
-            } | undefined;
-            pullRequest?: {
-                baseOid: string;
-            } | undefined;
-            freshness?: 'unknown' | 'current' | 'stale' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-        } | undefined;
-        requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-        outputs?: {
-            summary?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
-                    summaryMarkdown: string;
-                    risks?: string[] | undefined;
-                    testImpact?: string | undefined;
-                    suggestedPrBody?: string | undefined;
-                } | undefined;
-                reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-            walkthrough?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
-                    title: string;
-                    intro: string;
-                    stops: {
-                        id: string;
-                        title: string;
-                        explanationMarkdown: string;
-                        changeRefs: string[];
-                        importance?: 'low' | 'medium' | 'high' | undefined;
-                        findingRefs?: string[] | undefined;
-                        suggestedQuestions?: string[] | undefined;
-                        reviewExplanations?: {
-                            markdown: string;
-                            findingRefs: {
-                                runId: string;
-                                findingId: string;
-                            }[];
-                            provenance: {
-                                requestedBy: {
-                                    kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                    id?: string | undefined;
-                                };
-                                requestedAtMs: number;
-                                generatedAtMs: number;
-                                modelId?: string | undefined;
-                                runId?: string | undefined;
-                            };
-                        }[] | undefined;
-                    }[];
-                    otherChangeRefs: string[];
-                    readingHint?: string | undefined;
-                } | undefined;
-                reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-            commitPlan?: {
-                state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                value?: {
-                    groups: {
-                        id: string;
-                        message: string;
-                        rationale: string;
-                        changeRefs: string[];
-                    }[];
-                    leftOutChangeRefs: string[];
-                } | undefined;
-                reason?: string | undefined;
-                reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-            } | undefined;
-        } | undefined;
-        analysis?: {
-            suppliedChangeRefs: string[];
-            analysedChangeRefs: string[];
-            remainingChangeRefs: string[];
-            parts?: {
-                admitted: number;
-                completed: number;
-                total: number;
-                phase: 'evidence' | 'merge' | 'done';
-            } | undefined;
-        } | undefined;
-        runId?: string | undefined;
-        resultId?: string | undefined;
-        revision?: number | undefined;
-        producer?: {
-            kind: 'generation' | 'review';
-            modelId?: string | undefined;
-            runId?: string | undefined;
-            seededFromRunId?: string | undefined;
-            reviewedBy?: string[] | undefined;
-            reviewedRuns?: {
-                runId: string;
-                callId: string;
-                backendId: string;
-                status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                hasOutput: boolean;
-                comparisonId?: string | undefined;
-                reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                reviewedFingerprint?: string | null | undefined;
-                commentIds?: string[] | undefined;
-                materialization?: {
-                    kind: 'complete';
-                } | {
-                    kind: 'partial';
-                    errorCode: string;
-                } | {
-                    kind: 'failed';
-                    errorCode: string;
-                } | undefined;
-            }[] | undefined;
-            narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-            comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-            narratedAtMs?: number | undefined;
-            launchFailures?: {
-                engineId: string;
-                errorCode: string;
-                error: string;
-            }[] | undefined;
-        } | undefined;
-        nextAction?: 'chooseModel' | undefined;
-        sourceKey?: string | undefined;
-        checkpointReceiptId?: string | undefined;
-        metadata?: {
-            source: ScmComparisonSource;
-            sourceKey: string;
-            turnId?: string | undefined;
-            checkpointReceiptId?: string | undefined;
-            turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-            contentConfidence?: 'exact' | 'unavailable' | undefined;
-            attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-        } | undefined;
-        cost?: {
-            [x: string]: unknown;
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            estimatedUsd?: number | undefined;
-        } | undefined;
     };
     readonly "scm.diffSummary.result.list": {
+        success: false;
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
+        error: string;
+        latestRevision?: number | undefined;
+    } | {
         success: true;
         results: {
             cwd: string;
@@ -1713,23 +2089,18 @@ export type ScmDiffSummaryActionResultById = {
         }[];
         count: number;
         bytes: number;
-        sevenDayCost?: {
-            status: 'unavailable' | 'partial';
+        sevenDayCost?: undefined | {
+            status: 'partial' | 'unavailable';
             pricedRunCount: number;
             unpricedRunCount: number;
             sinceMs: number;
             untilMs: number;
             estimatedUsd?: number | undefined;
-        } | undefined;
-    } | {
-        success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
-        error: string;
-        latestRevision?: number | undefined;
+        };
     };
     readonly "scm.diffSummary.result.clear": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -1741,7 +2112,7 @@ export type ScmDiffSummaryActionResultById = {
         }[];
         failures: ({
             success: false;
-            errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+            errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
             error: string;
             resultId: string;
             latestRevision?: number | undefined;
@@ -1767,7 +2138,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.accept": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -1776,6 +2147,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -1783,12 +2362,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -1810,6 +2389,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -1830,46 +2413,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -1877,10 +2462,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -1888,7 +2473,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -1896,17 +2481,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -1914,284 +2499,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -2202,7 +2577,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -2210,20 +2585,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -2235,15 +2615,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -2255,47 +2630,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -2303,13 +2678,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
@@ -2317,7 +2692,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.stop": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -2326,6 +2701,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -2333,12 +2916,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -2360,6 +2943,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -2380,46 +2967,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -2427,10 +3016,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -2438,7 +3027,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -2446,17 +3035,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -2464,284 +3053,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -2752,7 +3131,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -2760,20 +3139,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -2785,15 +3169,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -2805,47 +3184,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -2853,13 +3232,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
@@ -2867,7 +3246,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.includeHookChanges": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -2876,6 +3255,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -2883,12 +3470,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -2910,6 +3497,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -2930,46 +3521,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -2977,10 +3570,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -2988,7 +3581,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -2996,17 +3589,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -3014,284 +3607,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -3302,7 +3685,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -3310,20 +3693,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -3335,15 +3723,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -3355,47 +3738,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -3403,13 +3786,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
@@ -3417,7 +3800,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.cancel": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -3426,6 +3809,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -3433,12 +4024,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -3460,6 +4051,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -3480,46 +4075,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -3527,10 +4124,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -3538,7 +4135,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -3546,17 +4143,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -3564,284 +4161,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -3852,7 +4239,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -3860,20 +4247,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -3885,15 +4277,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -3905,47 +4292,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -3953,13 +4340,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
@@ -3967,7 +4354,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.commitPlan.recover": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -3976,6 +4363,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -3983,12 +4578,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -4010,6 +4605,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -4030,46 +4629,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -4077,10 +4678,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -4088,7 +4689,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -4096,17 +4697,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -4114,284 +4715,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -4402,7 +4793,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -4410,20 +4801,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -4435,15 +4831,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -4455,47 +4846,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -4503,19 +4894,29 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
         inputId?: string | undefined;
     };
     readonly "scm.diffSummary.reviewed.mark": {
+        success: false;
+        errorCode: string;
+        error: string;
+        record?: undefined | {
+            v: 1;
+            scopeId: string;
+            reviewedChangeKeys: string[];
+        };
+        version?: number | undefined;
+    } | {
         success: true;
         record: {
             v: 1;
@@ -4523,18 +4924,18 @@ export type ScmDiffSummaryActionResultById = {
             reviewedChangeKeys: string[];
         };
         version: number;
-    } | {
-        success: false;
-        errorCode: string;
-        error: string;
-        record?: {
-            v: 1;
-            scopeId: string;
-            reviewedChangeKeys: string[];
-        } | undefined;
-        version?: number | undefined;
     };
     readonly "scm.diffSummary.reviewed.unmark": {
+        success: false;
+        errorCode: string;
+        error: string;
+        record?: undefined | {
+            v: 1;
+            scopeId: string;
+            reviewedChangeKeys: string[];
+        };
+        version?: number | undefined;
+    } | {
         success: true;
         record: {
             v: 1;
@@ -4542,20 +4943,10 @@ export type ScmDiffSummaryActionResultById = {
             reviewedChangeKeys: string[];
         };
         version: number;
-    } | {
-        success: false;
-        errorCode: string;
-        error: string;
-        record?: {
-            v: 1;
-            scopeId: string;
-            reviewedChangeKeys: string[];
-        } | undefined;
-        version?: number | undefined;
     };
     readonly "scm.diffSummary.result.read": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -4564,6 +4955,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -4571,12 +5170,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -4598,6 +5197,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -4618,46 +5221,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -4665,10 +5270,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -4676,7 +5281,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -4684,17 +5289,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -4702,284 +5307,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -4990,7 +5385,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -4998,20 +5393,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -5023,15 +5423,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -5043,47 +5438,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -5091,13 +5486,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
@@ -5105,7 +5500,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.result.edit": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -5114,6 +5509,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -5121,12 +5724,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -5148,6 +5751,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -5168,46 +5775,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -5215,10 +5824,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -5226,7 +5835,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -5234,17 +5843,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -5252,284 +5861,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -5540,7 +5939,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -5548,20 +5947,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -5573,15 +5977,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -5593,47 +5992,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -5641,13 +6040,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
@@ -5655,7 +6054,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.result.undo": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -5664,6 +6063,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -5671,12 +6278,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -5698,6 +6305,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -5718,46 +6329,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -5765,10 +6378,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -5776,7 +6389,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -5784,17 +6397,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -5802,284 +6415,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -6090,7 +6493,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -6098,20 +6501,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -6123,15 +6531,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -6143,47 +6546,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -6191,13 +6594,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
@@ -6205,7 +6608,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.result.delete": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -6215,7 +6618,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.refine": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -6224,6 +6627,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -6231,12 +6842,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -6258,6 +6869,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -6278,46 +6893,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -6325,10 +6942,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -6336,7 +6953,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -6344,17 +6961,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -6362,284 +6979,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -6650,7 +7057,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -6658,20 +7065,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -6683,15 +7095,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -6703,47 +7110,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -6751,13 +7158,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
@@ -6765,7 +7172,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.addOutputs": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -6774,6 +7181,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -6781,12 +7396,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -6808,6 +7423,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -6828,46 +7447,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -6875,10 +7496,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -6886,7 +7507,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -6894,17 +7515,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -6912,284 +7533,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -7200,7 +7611,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -7208,20 +7619,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -7233,15 +7649,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -7253,47 +7664,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -7301,13 +7712,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;
@@ -7315,7 +7726,7 @@ export type ScmDiffSummaryActionResultById = {
     };
     readonly "scm.diffSummary.discuss": {
         success: false;
-        errorCode: 'result_not_found' | 'revision_conflict' | 'invalid_edit' | 'invalid_output' | 'nothing_to_undo' | 'discussion_unavailable' | 'admission_failed' | 'admission_unknown' | 'result_unavailable' | 'application_locked' | 'application_unavailable' | 'source_not_pending' | 'plan_unavailable' | 'acceptance_mismatch' | 'backend_unsupported' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'invalid_parameters' | 'session_input_invalid' | 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_unauthorized' | 'session_input_target_unavailable' | 'session_input_muted' | 'session_input_storage_unavailable' | 'session_input_target_update_required' | 'session_input_cancelled' | 'session_input_untrusted_assertion' | 'session_input_idempotency_conflict' | 'session_input_source_authority_mismatch' | 'session_input_permission_ceiling_rejected' | 'session_input_encryption_mode_mismatch';
+        errorCode: 'acceptance_mismatch' | 'admission_failed' | 'admission_unknown' | 'application_locked' | 'application_unavailable' | 'backend_unsupported' | 'discussion_unavailable' | 'head_moved' | 'invalid_edit' | 'invalid_output' | 'invalid_parameters' | 'model_not_granted' | 'nothing_to_undo' | 'permission_mode_not_granted' | 'plan_unavailable' | 'result_not_found' | 'result_unavailable' | 'revision_conflict' | 'selection_conflict' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion' | 'source_changed' | 'source_not_pending';
         error: string;
         latestRevision?: number | undefined;
     } | {
@@ -7324,6 +7735,214 @@ export type ScmDiffSummaryActionResultById = {
             resultId: string;
             revision: number;
             output: {
+                success: false;
+                error: string;
+                errorCode: 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SCM_DIFF_SUMMARY_DISABLED' | 'SUMMARY_FAILED' | 'TURN_CHANGE_SET_REQUIRED';
+                admission?: 'outcomeUnknown' | undefined;
+                comparison?: undefined | {
+                    id: string;
+                    source: ScmComparisonSource;
+                    repository: {
+                        rootPath: string;
+                    };
+                    endpoints: {
+                        before?: string | undefined;
+                        after?: string | undefined;
+                    };
+                    inventory: {
+                        state: 'complete' | 'incomplete' | 'unavailable';
+                        files: {
+                            path: string;
+                            changeKind: string;
+                            binary: boolean | null;
+                            generated: boolean;
+                            lockfile: boolean;
+                            evidence: {
+                                state: 'available';
+                                unifiedDiff: string;
+                            } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
+                                state: 'unavailable';
+                                reason: string;
+                                unifiedDiff?: string | undefined;
+                            };
+                            occurrences: {
+                                id: string;
+                                alias: string;
+                                path: string;
+                                before: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                after: {
+                                    startLine: number;
+                                    lineCount: number;
+                                };
+                                position: number;
+                                previousPath?: string | undefined;
+                                beforeBlobId?: string | undefined;
+                                afterBlobId?: string | undefined;
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
+                                    state: 'available';
+                                } | {
+                                    state: 'unavailable';
+                                    reason: string;
+                                };
+                            }[];
+                            previousPath?: string | undefined;
+                            beforeBlobId?: string | undefined;
+                            afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
+                        }[];
+                        reasons: string[];
+                    };
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
+                        baseOid: string;
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            summaryMarkdown: string;
+                            risks?: string[] | undefined;
+                            testImpact?: string | undefined;
+                            suggestedPrBody?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            title: string;
+                            intro: string;
+                            stops: {
+                                id: string;
+                                title: string;
+                                explanationMarkdown: string;
+                                changeRefs: string[];
+                                importance?: 'high' | 'low' | 'medium' | undefined;
+                                findingRefs?: string[] | undefined;
+                                suggestedQuestions?: string[] | undefined;
+                                reviewExplanations?: undefined | {
+                                    markdown: string;
+                                    findingRefs: {
+                                        runId: string;
+                                        findingId: string;
+                                    }[];
+                                    provenance: {
+                                        requestedBy: {
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
+                                            id?: string | undefined;
+                                        };
+                                        requestedAtMs: number;
+                                        generatedAtMs: number;
+                                        modelId?: string | undefined;
+                                        runId?: string | undefined;
+                                    };
+                                }[];
+                            }[];
+                            otherChangeRefs: string[];
+                            readingHint?: string | undefined;
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
+                            groups: {
+                                id: string;
+                                message: string;
+                                rationale: string;
+                                changeRefs: string[];
+                            }[];
+                            leftOutChangeRefs: string[];
+                        };
+                        reason?: string | undefined;
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
+                    suppliedChangeRefs: string[];
+                    analysedChangeRefs: string[];
+                    remainingChangeRefs: string[];
+                    parts?: undefined | {
+                        completed: number;
+                        total: number;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
+                runId?: string | undefined;
+                resultId?: string | undefined;
+                revision?: number | undefined;
+                producer?: undefined | {
+                    kind: 'generation' | 'review';
+                    modelId?: string | undefined;
+                    runId?: string | undefined;
+                    seededFromRunId?: string | undefined;
+                    reviewedBy?: string[] | undefined;
+                    reviewedRuns?: undefined | {
+                        runId: string;
+                        callId: string;
+                        backendId: string;
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+                        hasOutput: boolean;
+                        comparisonId?: string | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
+                        commentIds?: string[] | undefined;
+                        materialization?: undefined | {
+                            kind: 'complete';
+                        } | {
+                            kind: 'failed';
+                            errorCode: string;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
+                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
+                    narratedAtMs?: number | undefined;
+                    launchFailures?: undefined | {
+                        engineId: string;
+                        errorCode: string;
+                        error: string;
+                    }[];
+                };
+                nextAction?: 'chooseModel' | undefined;
+                sourceKey?: string | undefined;
+                checkpointReceiptId?: string | undefined;
+                metadata?: undefined | {
+                    source: ScmComparisonSource;
+                    sourceKey: string;
+                    turnId?: string | undefined;
+                    checkpointReceiptId?: string | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
+                    contentConfidence?: 'exact' | 'unavailable' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                cost?: undefined | {
+                    [x: string]: unknown;
+                    inputTokens?: number | undefined;
+                    outputTokens?: number | undefined;
+                    estimatedUsd?: number | undefined;
+                };
+            } | {
                 success: true;
                 sourceKey: string;
                 metadata: {
@@ -7331,12 +7950,12 @@ export type ScmDiffSummaryActionResultById = {
                     sourceKey: string;
                     turnId?: string | undefined;
                     checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
+                    turnEvidenceMode?: 'agent_reported' | 'checkpoint' | 'reconciled' | undefined;
                     contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
                 };
                 admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
+                comparison?: undefined | {
                     id: string;
                     source: ScmComparisonSource;
                     repository: {
@@ -7358,6 +7977,10 @@ export type ScmDiffSummaryActionResultById = {
                                 state: 'available';
                                 unifiedDiff: string;
                             } | {
+                                state: 'deferred';
+                                reason: string;
+                                unifiedDiff?: undefined;
+                            } | {
                                 state: 'unavailable';
                                 reason: string;
                                 unifiedDiff?: string | undefined;
@@ -7378,46 +8001,48 @@ export type ScmDiffSummaryActionResultById = {
                                 previousPath?: string | undefined;
                                 beforeBlobId?: string | undefined;
                                 afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
+                                layer?: 'combined' | 'staged' | 'unstaged' | 'untracked' | undefined;
+                                evidence?: undefined | {
                                     state: 'available';
                                 } | {
                                     state: 'unavailable';
                                     reason: string;
-                                } | undefined;
+                                };
                             }[];
                             previousPath?: string | undefined;
                             beforeBlobId?: string | undefined;
                             afterBlobId?: string | undefined;
+                            linesAdded?: number | undefined;
+                            linesRemoved?: number | undefined;
                         }[];
                         reasons: string[];
                     };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
+                    commitTarget?: undefined | {
+                        headOid: null | string;
+                        ref: null | string;
+                    };
+                    pullRequest?: undefined | {
                         baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                    };
+                    freshness?: 'current' | 'stale' | 'unknown' | undefined;
+                    attributionScope?: 'no_happier_checkpoint_overlap_observed' | 'shared_worktree' | 'unknown' | undefined;
+                };
+                requestedOutputs?: ('commitPlan' | 'summary' | 'walkthrough')[] | undefined;
+                outputs?: undefined | {
+                    summary?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             summaryMarkdown: string;
                             risks?: string[] | undefined;
                             testImpact?: string | undefined;
                             suggestedPrBody?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    walkthrough?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             title: string;
                             intro: string;
                             stops: {
@@ -7425,10 +8050,10 @@ export type ScmDiffSummaryActionResultById = {
                                 title: string;
                                 explanationMarkdown: string;
                                 changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
+                                importance?: 'high' | 'low' | 'medium' | undefined;
                                 findingRefs?: string[] | undefined;
                                 suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
+                                reviewExplanations?: undefined | {
                                     markdown: string;
                                     findingRefs: {
                                         runId: string;
@@ -7436,7 +8061,7 @@ export type ScmDiffSummaryActionResultById = {
                                     }[];
                                     provenance: {
                                         requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
+                                            kind: 'agent' | 'automation' | 'plugin' | 'unknown' | 'user' | 'workflow';
                                             id?: string | undefined;
                                         };
                                         requestedAtMs: number;
@@ -7444,17 +8069,17 @@ export type ScmDiffSummaryActionResultById = {
                                         modelId?: string | undefined;
                                         runId?: string | undefined;
                                     };
-                                }[] | undefined;
+                                }[];
                             }[];
                             otherChangeRefs: string[];
                             readingHint?: string | undefined;
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                    commitPlan?: undefined | {
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
+                        value?: undefined | {
                             groups: {
                                 id: string;
                                 message: string;
@@ -7462,284 +8087,74 @@ export type ScmDiffSummaryActionResultById = {
                                 changeRefs: string[];
                             }[];
                             leftOutChangeRefs: string[];
-                        } | undefined;
+                        };
                         reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
+                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'RPC_CLIENT_NOT_AVAILABLE' | 'SUMMARY_FAILED' | 'action_failed' | 'agent_context_window_exceeded' | 'approval_required' | 'definition_exceeds_authority' | 'execution_run_action_not_supported' | 'execution_run_budget_exceeded' | 'execution_run_busy' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_connected_service_generation_refresh_required' | 'execution_run_failed' | 'execution_run_input_required' | 'execution_run_invalid_action_input' | 'execution_run_not_allowed' | 'execution_run_not_found' | 'execution_run_output_limit_exceeded' | 'execution_run_parent_selection_unavailable' | 'execution_run_protocol_unsupported' | 'execution_run_scope_mismatch' | 'execution_run_send_outcome_unknown' | 'execution_run_start_ambiguous' | 'execution_run_stream_not_found' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'generation_cancelled' | 'permission_denied' | 'permission_exceeds_ceiling' | 'policy_denied_field' | 'provider_input_too_large' | 'provider_request_rejected' | 'role_runs_as_mismatch' | 'role_target_unavailable' | 'run_access_denied' | 'run_depth_exceeded' | 'subtree_denied' | 'target_unavailable' | 'work_depth_exceeded' | undefined;
+                    };
+                };
+                analysis?: undefined | {
                     suppliedChangeRefs: string[];
                     analysedChangeRefs: string[];
                     remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
+                    parts?: undefined | {
                         completed: number;
                         total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
+                        phase: 'done' | 'evidence' | 'merge';
+                    };
+                };
                 runId?: string | undefined;
                 resultId?: string | undefined;
                 revision?: number | undefined;
-                producer?: {
+                producer?: undefined | {
                     kind: 'generation' | 'review';
                     modelId?: string | undefined;
                     runId?: string | undefined;
                     seededFromRunId?: string | undefined;
                     reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
+                    reviewedRuns?: undefined | {
                         runId: string;
                         callId: string;
                         backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
+                        status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
                         hasOutput: boolean;
                         comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
+                        reviewOutcome?: 'complete' | 'failed' | 'partial' | 'unavailable' | undefined;
+                        reviewedFingerprint?: null | string | undefined;
                         commentIds?: string[] | undefined;
-                        materialization?: {
+                        materialization?: undefined | {
                             kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
                         } | {
                             kind: 'failed';
                             errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
+                        } | {
+                            kind: 'partial';
+                            errorCode: string;
+                        };
+                    }[];
                     narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
+                    comparisonFreshness?: 'changed' | 'unchanged' | 'unknown' | undefined;
                     narratedAtMs?: number | undefined;
-                    launchFailures?: {
+                    launchFailures?: undefined | {
                         engineId: string;
                         errorCode: string;
                         error: string;
-                    }[] | undefined;
-                } | undefined;
+                    }[];
+                };
                 inputId?: string | undefined;
                 summaryMarkdown?: string | undefined;
                 checkpointReceiptId?: string | undefined;
-                truncation?: {
-                    [x: string]: unknown;
-                    reason: 'fileBudget' | 'diffBytes' | 'fileCount';
-                    droppedFiles?: number | undefined;
-                } | undefined;
-                generationState?: 'complete' | 'partial' | undefined;
-                cost?: {
+                cost?: undefined | {
                     [x: string]: unknown;
                     inputTokens?: number | undefined;
                     outputTokens?: number | undefined;
                     estimatedUsd?: number | undefined;
-                } | undefined;
+                };
                 risks?: string[] | undefined;
                 testImpact?: string | undefined;
                 suggestedPrBody?: string | undefined;
-            } | {
-                success: false;
-                error: string;
-                errorCode: 'SCM_DIFF_SUMMARY_DISABLED' | 'TURN_CHANGE_SET_REQUIRED' | 'CHECKPOINT_NOT_FOUND' | 'CHECKPOINT_UNAVAILABLE' | 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED';
-                admission?: 'outcomeUnknown' | undefined;
-                comparison?: {
-                    id: string;
-                    source: ScmComparisonSource;
-                    repository: {
-                        rootPath: string;
-                    };
-                    endpoints: {
-                        before?: string | undefined;
-                        after?: string | undefined;
-                    };
-                    inventory: {
-                        state: 'complete' | 'incomplete' | 'unavailable';
-                        files: {
-                            path: string;
-                            changeKind: string;
-                            binary: boolean | null;
-                            generated: boolean;
-                            lockfile: boolean;
-                            evidence: {
-                                state: 'available';
-                                unifiedDiff: string;
-                            } | {
-                                state: 'unavailable';
-                                reason: string;
-                                unifiedDiff?: string | undefined;
-                            };
-                            occurrences: {
-                                id: string;
-                                alias: string;
-                                path: string;
-                                before: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                after: {
-                                    startLine: number;
-                                    lineCount: number;
-                                };
-                                position: number;
-                                previousPath?: string | undefined;
-                                beforeBlobId?: string | undefined;
-                                afterBlobId?: string | undefined;
-                                layer?: 'staged' | 'unstaged' | 'untracked' | 'combined' | undefined;
-                                evidence?: {
-                                    state: 'available';
-                                } | {
-                                    state: 'unavailable';
-                                    reason: string;
-                                } | undefined;
-                            }[];
-                            previousPath?: string | undefined;
-                            beforeBlobId?: string | undefined;
-                            afterBlobId?: string | undefined;
-                        }[];
-                        reasons: string[];
-                    };
-                    commitTarget?: {
-                        headOid: string | null;
-                        ref: string | null;
-                    } | undefined;
-                    pullRequest?: {
-                        baseOid: string;
-                    } | undefined;
-                    freshness?: 'unknown' | 'current' | 'stale' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                requestedOutputs?: ('summary' | 'walkthrough' | 'commitPlan')[] | undefined;
-                outputs?: {
-                    summary?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            summaryMarkdown: string;
-                            risks?: string[] | undefined;
-                            testImpact?: string | undefined;
-                            suggestedPrBody?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    walkthrough?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            title: string;
-                            intro: string;
-                            stops: {
-                                id: string;
-                                title: string;
-                                explanationMarkdown: string;
-                                changeRefs: string[];
-                                importance?: 'low' | 'medium' | 'high' | undefined;
-                                findingRefs?: string[] | undefined;
-                                suggestedQuestions?: string[] | undefined;
-                                reviewExplanations?: {
-                                    markdown: string;
-                                    findingRefs: {
-                                        runId: string;
-                                        findingId: string;
-                                    }[];
-                                    provenance: {
-                                        requestedBy: {
-                                            kind: 'unknown' | 'user' | 'agent' | 'plugin' | 'automation' | 'workflow';
-                                            id?: string | undefined;
-                                        };
-                                        requestedAtMs: number;
-                                        generatedAtMs: number;
-                                        modelId?: string | undefined;
-                                        runId?: string | undefined;
-                                    };
-                                }[] | undefined;
-                            }[];
-                            otherChangeRefs: string[];
-                            readingHint?: string | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                    commitPlan?: {
-                        state: 'pending' | 'failed' | 'complete' | 'partial' | 'writing' | 'cancelled';
-                        value?: {
-                            groups: {
-                                id: string;
-                                message: string;
-                                rationale: string;
-                                changeRefs: string[];
-                            }[];
-                            leftOutChangeRefs: string[];
-                        } | undefined;
-                        reason?: string | undefined;
-                        reasonCode?: 'DIFF_UNAVAILABLE' | 'MODEL_UNAVAILABLE' | 'SUMMARY_FAILED' | 'execution_run_not_allowed' | 'execution_run_input_required' | 'execution_run_not_found' | 'execution_run_action_not_supported' | 'execution_run_invalid_action_input' | 'execution_run_stream_not_found' | 'execution_run_busy' | 'execution_run_send_outcome_unknown' | 'execution_run_failed' | 'execution_run_budget_exceeded' | 'execution_run_output_limit_exceeded' | 'execution_run_protocol_unsupported' | 'execution_run_target_not_selected' | 'execution_run_target_unavailable' | 'execution_run_child_choice_required' | 'execution_run_child_default_unavailable' | 'execution_run_parent_selection_unavailable' | 'execution_run_start_ambiguous' | 'execution_run_scope_mismatch' | 'execution_run_connected_service_generation_refresh_required' | 'run_depth_exceeded' | 'permission_denied' | 'subtree_denied' | 'role_target_unavailable' | 'role_runs_as_mismatch' | 'policy_denied_field' | 'permission_exceeds_ceiling' | 'work_depth_exceeded' | 'definition_exceeds_authority' | 'run_access_denied' | 'target_unavailable' | 'generation_cancelled' | 'RPC_CLIENT_NOT_AVAILABLE' | 'action_failed' | 'approval_required' | undefined;
-                    } | undefined;
-                } | undefined;
-                analysis?: {
-                    suppliedChangeRefs: string[];
-                    analysedChangeRefs: string[];
-                    remainingChangeRefs: string[];
-                    parts?: {
-                        admitted: number;
-                        completed: number;
-                        total: number;
-                        phase: 'evidence' | 'merge' | 'done';
-                    } | undefined;
-                } | undefined;
-                runId?: string | undefined;
-                resultId?: string | undefined;
-                revision?: number | undefined;
-                producer?: {
-                    kind: 'generation' | 'review';
-                    modelId?: string | undefined;
-                    runId?: string | undefined;
-                    seededFromRunId?: string | undefined;
-                    reviewedBy?: string[] | undefined;
-                    reviewedRuns?: {
-                        runId: string;
-                        callId: string;
-                        backendId: string;
-                        status: 'failed' | 'cancelled' | 'running' | 'succeeded' | 'timeout';
-                        hasOutput: boolean;
-                        comparisonId?: string | undefined;
-                        reviewOutcome?: 'failed' | 'complete' | 'unavailable' | 'partial' | undefined;
-                        reviewedFingerprint?: string | null | undefined;
-                        commentIds?: string[] | undefined;
-                        materialization?: {
-                            kind: 'complete';
-                        } | {
-                            kind: 'partial';
-                            errorCode: string;
-                        } | {
-                            kind: 'failed';
-                            errorCode: string;
-                        } | undefined;
-                    }[] | undefined;
-                    narrationMode?: 'continued_review' | 'seeded_narrator' | undefined;
-                    comparisonFreshness?: 'unknown' | 'unchanged' | 'changed' | undefined;
-                    narratedAtMs?: number | undefined;
-                    launchFailures?: {
-                        engineId: string;
-                        errorCode: string;
-                        error: string;
-                    }[] | undefined;
-                } | undefined;
-                nextAction?: 'chooseModel' | undefined;
-                sourceKey?: string | undefined;
-                checkpointReceiptId?: string | undefined;
-                metadata?: {
-                    source: ScmComparisonSource;
-                    sourceKey: string;
-                    turnId?: string | undefined;
-                    checkpointReceiptId?: string | undefined;
-                    turnEvidenceMode?: 'checkpoint' | 'agent_reported' | 'reconciled' | undefined;
-                    contentConfidence?: 'exact' | 'unavailable' | undefined;
-                    attributionScope?: 'unknown' | 'shared_worktree' | 'no_happier_checkpoint_overlap_observed' | undefined;
-                } | undefined;
-                cost?: {
-                    [x: string]: unknown;
-                    inputTokens?: number | undefined;
-                    outputTokens?: number | undefined;
-                    estimatedUsd?: number | undefined;
-                } | undefined;
             };
             canUndo: boolean;
-            generator?: {
+            generator?: undefined | {
                 backendTarget: {
                     kind: 'backend';
                     backendId: string;
@@ -7750,7 +8165,7 @@ export type ScmDiffSummaryActionResultById = {
                 outputLanguage?: string | undefined;
                 modelId?: string | undefined;
                 profileId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     agentTargetKey: string;
                     providerConnectionId: null;
                     modelId: string;
@@ -7758,20 +8173,25 @@ export type ScmDiffSummaryActionResultById = {
                     agentTargetKey: string;
                     providerConnectionId: string;
                     modelId: string;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: null | undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -7783,15 +8203,10 @@ export type ScmDiffSummaryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | null | undefined;
-            } | undefined;
-            application?: {
+                };
+            };
+            application?: undefined | {
                 acceptedRevision: number;
                 acceptance: {
                     groups: {
@@ -7803,47 +8218,47 @@ export type ScmDiffSummaryActionResultById = {
                     leftOutChangeRefs: string[];
                     comparisonId: string;
                     repositoryRootPath: string;
-                    expectedHeadOid: string | null;
-                    expectedRef: string | null;
+                    expectedHeadOid: null | string;
+                    expectedRef: null | string;
                 };
-                status: 'unknown' | 'failed' | 'complete' | 'applying' | 'paused' | 'stopped';
+                status: 'applying' | 'complete' | 'failed' | 'paused' | 'stopped' | 'unknown';
                 steps: {
                     groupId: string;
-                    state: 'unknown' | 'not_published' | 'published' | 'pending' | 'writing';
+                    state: 'not_published' | 'pending' | 'published' | 'unknown' | 'writing';
                     targetTreeOid?: string | undefined;
-                    expectedHeadOid?: string | null | undefined;
+                    expectedHeadOid?: null | string | undefined;
                     commitSha?: string | undefined;
                     actualMessage?: string | undefined;
-                    publication?: {
-                        state: 'unknown' | 'not_published' | 'published';
-                        expectedHeadOid: string | null;
-                        expectedRef: string | null;
-                        indexReconciliation: 'reconciled' | 'not_required' | 'pending' | 'failed';
+                    publication?: undefined | {
+                        state: 'not_published' | 'published' | 'unknown';
+                        expectedHeadOid: null | string;
+                        expectedRef: null | string;
+                        indexReconciliation: 'failed' | 'not_required' | 'pending' | 'reconciled';
                         candidateOid?: string | undefined;
                         actualMessage?: string | undefined;
                         indexTreeOid?: string | undefined;
                         hookName?: string | undefined;
                         committedAtMs?: number | undefined;
                         signed?: boolean | undefined;
-                    } | undefined;
-                    hookContentChanges?: {
+                    };
+                    hookContentChanges?: undefined | {
                         beforeTreeOid: string;
                         afterTreeOid: string;
                         changes: {
                             path: string;
-                            kind: 'deleted' | 'added' | 'modified' | 'renamed' | 'copied' | 'type_changed';
+                            kind: 'added' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'type_changed';
                             previousPath?: string | undefined;
                         }[];
-                    } | undefined;
+                    };
                     errorCode?: string | undefined;
                     error?: string | undefined;
                     acceptedHookTreeOid?: string | undefined;
                 }[];
                 nextGroupIndex: number;
                 stopAfterCurrent: boolean;
-                reason?: 'cancelled' | 'source_changed' | 'head_moved' | 'selection_conflict' | 'stopped' | 'hook_content_changed' | 'hook_failed' | 'signing_failed' | 'staging_conflict' | 'writer_failed' | 'publication_warning' | 'outcome_unknown' | undefined;
-            } | undefined;
-            walkthroughProvenance?: {
+                reason?: 'cancelled' | 'head_moved' | 'hook_content_changed' | 'hook_failed' | 'outcome_unknown' | 'publication_warning' | 'selection_conflict' | 'signing_failed' | 'source_changed' | 'staging_conflict' | 'stopped' | 'writer_failed' | undefined;
+            };
+            walkthroughProvenance?: undefined | {
                 titleEdited: boolean;
                 stops: {
                     stopId: string;
@@ -7851,13 +8266,13 @@ export type ScmDiffSummaryActionResultById = {
                     changedAtRevision?: number | undefined;
                     movedAtRevision?: number | undefined;
                 }[];
-            } | undefined;
-            updateNotice?: {
+            };
+            updateNotice?: undefined | {
                 kind: 'edit' | 'generation' | 'undo';
                 revision: number;
                 affectedStopIds: string[];
                 mergedStopIds?: string[] | undefined;
-            } | undefined;
+            };
         };
         runId?: string | undefined;
         seededFromRunId?: string | undefined;

@@ -6,7 +6,7 @@
 export type MachineVitalsActionInputById = {
     readonly "machines.vitals.get": {
         machineId: string;
-        view?: 'summary' | 'overview' | undefined;
+        view?: 'overview' | 'summary' | undefined;
         serverId?: string | undefined;
     };
     readonly "machines.vitals.history.get": {
@@ -21,23 +21,23 @@ export type MachineVitalsActionInputById = {
 export type MachineVitalsActionResultById = {
     readonly "machines.vitals.get": {
         state: 'reporting' | 'unavailable';
-        sample: {
+        sample: null | {
             v: 1;
             sampledAt: number;
             intervalMs: number;
             cpu: {
                 reported: false;
-                reason: 'unavailable' | 'platform' | 'container';
+                reason: 'container' | 'platform' | 'unavailable';
             } | {
                 reported: true;
-                busyPct: number | null;
-                perCore?: (number | null)[] | undefined;
-                perCoreNotReportedReason?: 'unavailable' | 'container' | undefined;
-                clusters?: ('p' | 'e')[] | undefined;
-                userPct?: number | null | undefined;
-                systemPct?: number | null | undefined;
-                iowaitPct?: number | null | undefined;
-                stealPct?: number | null | undefined;
+                busyPct: null | number;
+                perCore?: (null | number)[] | undefined;
+                perCoreNotReportedReason?: 'container' | 'unavailable' | undefined;
+                clusters?: ('e' | 'p')[] | undefined;
+                userPct?: null | number | undefined;
+                systemPct?: null | number | undefined;
+                iowaitPct?: null | number | undefined;
+                stealPct?: null | number | undefined;
                 load1?: number | undefined;
                 load5?: number | undefined;
                 load15?: number | undefined;
@@ -45,26 +45,26 @@ export type MachineVitalsActionResultById = {
             };
             memory: {
                 reported: false;
-                reason: 'unavailable' | 'platform' | 'container';
+                reason: 'container' | 'platform' | 'unavailable';
             } | {
                 reported: true;
                 totalBytes: number;
                 availableBytes: number;
                 usedBytes: number;
                 pressure: {
-                    level: 'calm' | 'elevated' | 'critical' | 'not_reported';
-                    source: 'kernel_level' | 'psi' | 'events' | 'none';
+                    level: 'calm' | 'critical' | 'elevated' | 'not_reported';
+                    source: 'events' | 'kernel_level' | 'none' | 'psi';
                 };
-                composition?: {
-                    kind: 'apps' | 'wired' | 'compressed' | 'kernel' | 'system' | 'cached_files';
+                composition?: undefined | {
+                    kind: 'apps' | 'cached_files' | 'compressed' | 'kernel' | 'system' | 'wired';
                     bytes: number;
-                }[] | undefined;
-                swap?: {
-                    kind: 'swap' | 'page_file';
+                }[];
+                swap?: undefined | {
+                    kind: 'page_file' | 'swap';
                     totalBytes: number;
                     usedBytes: number;
                     swapping: boolean;
-                } | undefined;
+                };
                 limitSource?: 'cgroup' | undefined;
                 lowMemorySignal?: boolean | undefined;
                 commitUsedBytes?: number | undefined;
@@ -72,7 +72,7 @@ export type MachineVitalsActionResultById = {
             };
             disk: {
                 reported: false;
-                reason: 'unavailable' | 'platform' | 'container';
+                reason: 'container' | 'platform' | 'unavailable';
             } | {
                 reported: true;
                 volumes: {
@@ -90,147 +90,147 @@ export type MachineVitalsActionResultById = {
             };
             network: {
                 reported: false;
-                reason: 'unavailable' | 'platform' | 'container';
+                reason: 'container' | 'platform' | 'unavailable';
             } | {
                 reported: true;
-                rxBps: number | null;
-                txBps: number | null;
+                rxBps: null | number;
+                txBps: null | number;
                 label?: string | undefined;
-                interfaces?: {
+                interfaces?: undefined | {
                     id: string;
                     label: string;
                     included: boolean;
-                    rxBps: number | null;
-                    txBps: number | null;
-                }[] | undefined;
+                    rxBps: null | number;
+                    txBps: null | number;
+                }[];
             };
-            limits?: {
-                files?: {
+            limits?: undefined | {
+                files?: undefined | {
                     used: number;
                     max: number;
-                } | undefined;
-                daemonFiles?: {
+                };
+                daemonFiles?: undefined | {
                     used: number;
                     max: number;
-                } | undefined;
-                ptys?: {
+                };
+                ptys?: undefined | {
                     used: number;
                     max: number;
-                } | undefined;
-                processes?: {
+                };
+                processes?: undefined | {
                     used: number;
                     max: number;
-                } | undefined;
-                inotify?: {
+                };
+                inotify?: undefined | {
                     used: number;
                     max: number;
-                } | undefined;
-            } | undefined;
-            gpu?: {
+                };
+            };
+            gpu?: undefined | {
                 name: string;
                 powerState?: 'off' | undefined;
                 busyPct?: number | undefined;
                 memUsedBytes?: number | undefined;
                 memTotalBytes?: number | undefined;
                 cores?: number | undefined;
-            }[] | undefined;
-            power?: {
+            }[];
+            power?: undefined | {
                 onAC: boolean;
-            } | undefined;
-            battery?: {
+            };
+            battery?: undefined | {
                 pct: number;
                 state: 'charging' | 'discharging' | 'full';
                 onAC: boolean;
                 minutesToFull?: number | undefined;
                 minutesToEmpty?: number | undefined;
-            } | undefined;
-            thermal?: {
-                state?: 'critical' | 'nominal' | 'fair' | 'serious' | undefined;
+            };
+            thermal?: undefined | {
+                state?: 'critical' | 'fair' | 'nominal' | 'serious' | undefined;
                 throttled?: boolean | undefined;
                 tempC?: number | undefined;
                 sensor?: string | undefined;
                 fanPct?: number | undefined;
-            } | undefined;
-            sharedMemory?: {
+            };
+            sharedMemory?: undefined | {
                 totalBytes: number;
                 availableBytes: number;
-            } | undefined;
-        } | null;
+            };
+        };
         series5m: {
             cpu: {
                 t: number;
-                y: number | null;
+                y: null | number;
             }[];
             memory: {
                 t: number;
-                y: number | null;
+                y: null | number;
             }[];
             networkRx: {
                 t: number;
-                y: number | null;
+                y: null | number;
             }[];
             networkTx: {
                 t: number;
-                y: number | null;
+                y: null | number;
             }[];
         };
-        reason?: 'helper_missing' | 'reader_failed' | 'helper_failing' | undefined;
-        attention?: {
+        reason?: 'helper_failing' | 'helper_missing' | 'reader_failed' | undefined;
+        attention?: undefined | {
             level: 'calm' | 'look' | 'needs_you';
             reasons: ({
-                kind: 'guard_out_of_steps';
-                key: string;
-                level: 'look' | 'needs_you';
-                since: number;
-                metric: 'cpu' | 'memory' | 'disk' | 'network' | 'limits';
-                nextStep?: 'review_processes' | 'free_up_space' | undefined;
-            } | {
-                kind: 'memory_pressure';
-                pressure: 'elevated' | 'critical';
-                swapping: boolean;
-                key: string;
-                level: 'look' | 'needs_you';
-                since: number;
-                metric: 'cpu' | 'memory' | 'disk' | 'network' | 'limits';
-                nextStep?: 'review_processes' | 'free_up_space' | undefined;
-            } | {
-                kind: 'disk_nearly_full' | 'disk_full';
+                kind: 'disk_full' | 'disk_nearly_full';
                 volumeId: string;
                 volumeLabel: string;
                 key: string;
                 level: 'look' | 'needs_you';
                 since: number;
-                metric: 'cpu' | 'memory' | 'disk' | 'network' | 'limits';
-                nextStep?: 'review_processes' | 'free_up_space' | undefined;
+                metric: 'cpu' | 'disk' | 'limits' | 'memory' | 'network';
+                nextStep?: 'free_up_space' | 'review_processes' | undefined;
+            } | {
+                kind: 'guard_out_of_steps';
+                key: string;
+                level: 'look' | 'needs_you';
+                since: number;
+                metric: 'cpu' | 'disk' | 'limits' | 'memory' | 'network';
+                nextStep?: 'free_up_space' | 'review_processes' | undefined;
             } | {
                 kind: 'limit_reached';
-                limit: 'files' | 'ptys' | 'processes' | 'inotify';
+                limit: 'files' | 'inotify' | 'processes' | 'ptys';
                 used: number;
                 max: number;
                 key: string;
                 level: 'look' | 'needs_you';
                 since: number;
-                metric: 'cpu' | 'memory' | 'disk' | 'network' | 'limits';
-                nextStep?: 'review_processes' | 'free_up_space' | undefined;
+                metric: 'cpu' | 'disk' | 'limits' | 'memory' | 'network';
+                nextStep?: 'free_up_space' | 'review_processes' | undefined;
+            } | {
+                kind: 'memory_pressure';
+                pressure: 'critical' | 'elevated';
+                swapping: boolean;
+                key: string;
+                level: 'look' | 'needs_you';
+                since: number;
+                metric: 'cpu' | 'disk' | 'limits' | 'memory' | 'network';
+                nextStep?: 'free_up_space' | 'review_processes' | undefined;
             })[];
-        } | undefined;
+        };
     };
     readonly "machines.vitals.history.get": {
         range: '1h' | '24h' | '7d';
         bucketMs: number;
-        points: ({
+        points: (null | {
             t: number;
-            cpu: number | null;
-            cpuMax: number | null;
-            mem: number | null;
-            memMax: number | null;
-            lvl: 'calm' | 'elevated' | 'critical' | 'not_reported';
-            swp: number | null;
-            rx: number | null;
-            tx: number | null;
+            cpu: null | number;
+            cpuMax: null | number;
+            mem: null | number;
+            memMax: null | number;
+            lvl: 'calm' | 'critical' | 'elevated' | 'not_reported';
+            swp: null | number;
+            rx: null | number;
+            tx: null | number;
             rxObservedMs?: number | undefined;
             txObservedMs?: number | undefined;
-        } | null)[];
+        })[];
         today: {
             rxBytes: number;
             txBytes: number;
@@ -239,94 +239,97 @@ export type MachineVitalsActionResultById = {
     readonly "machines.vitals.summaries.list": {
         machineId: string;
         name: string;
-        presence: 'online' | 'offline';
-        state: 'reporting' | 'unavailable' | 'offline' | 'not_reporting';
-        attention?: {
+        presence: 'offline' | 'online';
+        state: 'not_reporting' | 'offline' | 'reporting' | 'unavailable';
+        attention?: undefined | {
             level: 'calm' | 'look' | 'needs_you';
             reasons: ({
-                kind: 'guard_out_of_steps';
-                key: string;
-                level: 'look' | 'needs_you';
-                since: number;
-                metric: 'cpu' | 'memory' | 'disk' | 'network' | 'limits';
-                nextStep?: 'review_processes' | 'free_up_space' | undefined;
-            } | {
-                kind: 'memory_pressure';
-                pressure: 'elevated' | 'critical';
-                swapping: boolean;
-                key: string;
-                level: 'look' | 'needs_you';
-                since: number;
-                metric: 'cpu' | 'memory' | 'disk' | 'network' | 'limits';
-                nextStep?: 'review_processes' | 'free_up_space' | undefined;
-            } | {
-                kind: 'disk_nearly_full' | 'disk_full';
+                kind: 'disk_full' | 'disk_nearly_full';
                 volumeId: string;
                 volumeLabel: string;
                 key: string;
                 level: 'look' | 'needs_you';
                 since: number;
-                metric: 'cpu' | 'memory' | 'disk' | 'network' | 'limits';
-                nextStep?: 'review_processes' | 'free_up_space' | undefined;
+                metric: 'cpu' | 'disk' | 'limits' | 'memory' | 'network';
+                nextStep?: 'free_up_space' | 'review_processes' | undefined;
+            } | {
+                kind: 'guard_out_of_steps';
+                key: string;
+                level: 'look' | 'needs_you';
+                since: number;
+                metric: 'cpu' | 'disk' | 'limits' | 'memory' | 'network';
+                nextStep?: 'free_up_space' | 'review_processes' | undefined;
             } | {
                 kind: 'limit_reached';
-                limit: 'files' | 'ptys' | 'processes' | 'inotify';
+                limit: 'files' | 'inotify' | 'processes' | 'ptys';
                 used: number;
                 max: number;
                 key: string;
                 level: 'look' | 'needs_you';
                 since: number;
-                metric: 'cpu' | 'memory' | 'disk' | 'network' | 'limits';
-                nextStep?: 'review_processes' | 'free_up_space' | undefined;
+                metric: 'cpu' | 'disk' | 'limits' | 'memory' | 'network';
+                nextStep?: 'free_up_space' | 'review_processes' | undefined;
+            } | {
+                kind: 'memory_pressure';
+                pressure: 'critical' | 'elevated';
+                swapping: boolean;
+                key: string;
+                level: 'look' | 'needs_you';
+                since: number;
+                metric: 'cpu' | 'disk' | 'limits' | 'memory' | 'network';
+                nextStep?: 'free_up_space' | 'review_processes' | undefined;
             })[];
-        } | undefined;
-        summary?: {
+        };
+        summary?: undefined | {
             sampledAt: number;
             stepMs: 15000;
-            seriesFrom: number | null;
+            seriesFrom: null | number;
             cpu: {
-                busyPct: number | null;
-                tone: 'calm' | 'warn' | 'crit';
+                busyPct: null | number;
+                tone: 'calm' | 'crit' | 'warn';
                 series: {
                     t: number;
-                    y: number | null;
+                    y: null | number;
                 }[];
+                load1?: number | undefined;
+                logicalCores?: number | undefined;
+                effectiveCores?: number | undefined;
             };
             memory: {
-                availableBytes: number | null;
-                totalBytes: number | null;
-                pressure: 'calm' | 'elevated' | 'critical' | 'not_reported';
-                tone: 'calm' | 'warn' | 'crit';
+                availableBytes: null | number;
+                totalBytes: null | number;
+                pressure: 'calm' | 'critical' | 'elevated' | 'not_reported';
+                tone: 'calm' | 'crit' | 'warn';
                 series: {
                     t: number;
-                    y: number | null;
+                    y: null | number;
                 }[];
-                pressureSource?: 'kernel_level' | 'psi' | 'events' | 'none' | undefined;
+                pressureSource?: 'events' | 'kernel_level' | 'none' | 'psi' | undefined;
             };
             disk: {
-                volumeId: string | null;
-                volumeLabel: string | null;
-                availableBytes: number | null;
-                totalBytes: number | null;
-                tone: 'calm' | 'warn' | 'crit';
+                volumeId: null | string;
+                volumeLabel: null | string;
+                availableBytes: null | number;
+                totalBytes: null | number;
+                tone: 'calm' | 'crit' | 'warn';
                 series: {
                     t: number;
-                    y: number | null;
+                    y: null | number;
                 }[];
             };
             network: {
-                rxBps: number | null;
-                txBps: number | null;
-                tone: 'calm' | 'warn' | 'crit';
+                rxBps: null | number;
+                txBps: null | number;
+                tone: 'calm' | 'crit' | 'warn';
                 rxSeries: {
                     t: number;
-                    y: number | null;
+                    y: null | number;
                 }[];
                 txSeries: {
                     t: number;
-                    y: number | null;
+                    y: null | number;
                 }[];
             };
-        } | undefined;
+        };
     }[];
 };

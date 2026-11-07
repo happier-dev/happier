@@ -6,6 +6,8 @@
 export type ExternalLinksActionInputById = {
     readonly "links.openExternal": {
         url: string;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type ExternalLinksActionResultById = {

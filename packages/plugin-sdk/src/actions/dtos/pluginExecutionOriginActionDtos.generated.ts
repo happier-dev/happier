@@ -7,10 +7,12 @@ export type PluginExecutionOriginActionInputById = {
     readonly "plugins.execution_origin.list": {
         pluginId: string;
         clientId?: string | undefined;
-        contextualTarget?: {
+        contextualTarget?: undefined | {
             commandId: string;
-        } | undefined;
+        };
         contextual?: true | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.execution_origin.set": {
         pluginId: string;
@@ -27,9 +29,10 @@ export type PluginExecutionOriginActionInputById = {
                 machineId: string;
                 pluginId: string;
                 sourceCustody: {
-                    kind: 'managed';
-                    immutableGenerationId: string;
-                    installSource: 'npm' | 'archive' | 'localPath';
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
                 } | {
                     kind: 'bundled_first_party';
                     packagedRuntime: {
@@ -46,32 +49,42 @@ export type PluginExecutionOriginActionInputById = {
                     kind: 'development';
                     registeredRootId: string;
                 } | {
-                    kind: 'account_release';
-                    pluginId: string;
-                    version: string;
-                    archiveDigestSha256: string;
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'localPath' | 'npm';
                 };
             };
         };
         clientId?: string | undefined;
-        contextualTarget?: {
+        contextualTarget?: undefined | {
             commandId: string;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.execution_origin.clear": {
         pluginId: string;
         clientId?: string | undefined;
-        contextualTarget?: {
+        contextualTarget?: undefined | {
             commandId: string;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type PluginExecutionOriginActionResultById = {
     readonly "plugins.execution_origin.list": {
-        status: 'unavailable';
+        status: 'available';
+        contextualTargets: {
+            commandId: string;
+            serverIdentityId: string;
+            machineId: string;
+        }[];
+        answeringClientId?: string | undefined;
+        answeringClientIds?: string[] | undefined;
     } | {
         status: 'available';
-        storedOrigin: {
+        storedOrigin: null | {
             serverIdentityId: string;
             materializationRef: {
                 machineId: string;
@@ -84,9 +97,10 @@ export type PluginExecutionOriginActionResultById = {
                 machineId: string;
                 pluginId: string;
                 sourceCustody: {
-                    kind: 'managed';
-                    immutableGenerationId: string;
-                    installSource: 'npm' | 'archive' | 'localPath';
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
                 } | {
                     kind: 'bundled_first_party';
                     packagedRuntime: {
@@ -103,14 +117,13 @@ export type PluginExecutionOriginActionResultById = {
                     kind: 'development';
                     registeredRootId: string;
                 } | {
-                    kind: 'account_release';
-                    pluginId: string;
-                    version: string;
-                    archiveDigestSha256: string;
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'localPath' | 'npm';
                 };
             };
-        } | null;
-        selectedOrigin: {
+        };
+        selectedOrigin: null | {
             serverIdentityId: string;
             materializationRef: {
                 machineId: string;
@@ -123,9 +136,10 @@ export type PluginExecutionOriginActionResultById = {
                 machineId: string;
                 pluginId: string;
                 sourceCustody: {
-                    kind: 'managed';
-                    immutableGenerationId: string;
-                    installSource: 'npm' | 'archive' | 'localPath';
+                    kind: 'account_release';
+                    pluginId: string;
+                    version: string;
+                    archiveDigestSha256: string;
                 } | {
                     kind: 'bundled_first_party';
                     packagedRuntime: {
@@ -142,13 +156,12 @@ export type PluginExecutionOriginActionResultById = {
                     kind: 'development';
                     registeredRootId: string;
                 } | {
-                    kind: 'account_release';
-                    pluginId: string;
-                    version: string;
-                    archiveDigestSha256: string;
+                    kind: 'managed';
+                    immutableGenerationId: string;
+                    installSource: 'archive' | 'localPath' | 'npm';
                 };
             };
-        } | null;
+        };
         selectionSource: 'auto' | 'pinned' | null;
         candidates: {
             origin: {
@@ -164,9 +177,10 @@ export type PluginExecutionOriginActionResultById = {
                     machineId: string;
                     pluginId: string;
                     sourceCustody: {
-                        kind: 'managed';
-                        immutableGenerationId: string;
-                        installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
                     } | {
                         kind: 'bundled_first_party';
                         packagedRuntime: {
@@ -183,10 +197,9 @@ export type PluginExecutionOriginActionResultById = {
                         kind: 'development';
                         registeredRootId: string;
                     } | {
-                        kind: 'account_release';
-                        pluginId: string;
-                        version: string;
-                        archiveDigestSha256: string;
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'localPath' | 'npm';
                     };
                 };
             };
@@ -195,28 +208,26 @@ export type PluginExecutionOriginActionResultById = {
         }[];
         answeringClientId?: string | undefined;
         answeringClientIds?: string[] | undefined;
-        storedTarget?: {
+        storedTarget?: null | undefined | {
             serverIdentityId: string;
             machineId: string;
-        } | null | undefined;
+        };
     } | {
-        status: 'available';
-        contextualTargets: {
-            commandId: string;
-            serverIdentityId: string;
-            machineId: string;
-        }[];
-        answeringClientId?: string | undefined;
-        answeringClientIds?: string[] | undefined;
+        status: 'unavailable';
+        reason: {
+            code: 'account_scope_unavailable' | 'contextual_target_unavailable' | 'current_ui_context_unavailable';
+            phase: 'selection';
+            retryable: false;
+        };
     };
     readonly "plugins.execution_origin.set": {
-        status: 'unavailable';
-    } | {
         status: 'applied';
+    } | {
+        status: 'unavailable';
     };
     readonly "plugins.execution_origin.clear": {
-        status: 'unavailable';
-    } | {
         status: 'applied';
+    } | {
+        status: 'unavailable';
     };
 };

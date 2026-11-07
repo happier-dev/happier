@@ -18,7 +18,26 @@ export type SkillsActionInputById = {
             name: string;
             path: string;
         }[];
-        where?: {
+        where?: undefined | {
+            kind: 'replace';
+            rules: {
+                enabled: boolean;
+                target: {
+                    t: 'allMachines';
+                } | {
+                    t: 'machine';
+                    machineId: string;
+                } | {
+                    t: 'project';
+                    projectKey: string;
+                } | {
+                    t: 'workspace';
+                    machineId: string;
+                    workspaceRoot: string;
+                };
+                agentId?: string | undefined;
+            }[];
+        } | {
             kind: 'write';
             write: {
                 place: {
@@ -34,29 +53,10 @@ export type SkillsActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                state: 'on' | 'off' | 'inherit';
+                state: 'inherit' | 'off' | 'on';
                 agentId?: string | undefined;
             };
-        } | {
-            kind: 'replace';
-            rules: {
-                target: {
-                    t: 'allMachines';
-                } | {
-                    t: 'machine';
-                    machineId: string;
-                } | {
-                    t: 'project';
-                    projectKey: string;
-                } | {
-                    t: 'workspace';
-                    machineId: string;
-                    workspaceRoot: string;
-                };
-                enabled: boolean;
-                agentId?: string | undefined;
-            }[];
-        } | undefined;
+        };
     };
     readonly "skills.machine.install": {
         skillId: string;
@@ -69,17 +69,18 @@ export type SkillsActionInputById = {
         force?: boolean | undefined;
     };
     readonly "skills.list": {
+        skillIds?: string[] | undefined;
         query?: string | undefined;
-        state?: 'off' | 'in_use' | 'updates' | 'needs_attention' | undefined;
+        state?: 'in_use' | 'needs_attention' | 'off' | 'updates' | undefined;
     };
     readonly "skills.read": {
-        skillId: string;
-        sessionId?: string | undefined;
+        name: string;
+        sessionId: string;
         file?: string | undefined;
         includeFileContents?: true | undefined;
     } | {
-        name: string;
-        sessionId: string;
+        skillId: string;
+        sessionId?: string | undefined;
         file?: string | undefined;
         includeFileContents?: true | undefined;
     };
@@ -88,11 +89,30 @@ export type SkillsActionInputById = {
         files: {
             path: string;
             contentBase64: string;
-            contentKind: 'utf8' | 'binary';
-            unixMode?: number | null | undefined;
+            contentKind: 'binary' | 'utf8';
+            unixMode?: null | number | undefined;
         }[];
         description?: string | undefined;
-        where?: {
+        where?: undefined | {
+            kind: 'replace';
+            rules: {
+                enabled: boolean;
+                target: {
+                    t: 'allMachines';
+                } | {
+                    t: 'machine';
+                    machineId: string;
+                } | {
+                    t: 'project';
+                    projectKey: string;
+                } | {
+                    t: 'workspace';
+                    machineId: string;
+                    workspaceRoot: string;
+                };
+                agentId?: string | undefined;
+            }[];
+        } | {
             kind: 'write';
             write: {
                 place: {
@@ -108,29 +128,10 @@ export type SkillsActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                state: 'on' | 'off' | 'inherit';
+                state: 'inherit' | 'off' | 'on';
                 agentId?: string | undefined;
             };
-        } | {
-            kind: 'replace';
-            rules: {
-                target: {
-                    t: 'allMachines';
-                } | {
-                    t: 'machine';
-                    machineId: string;
-                } | {
-                    t: 'project';
-                    projectKey: string;
-                } | {
-                    t: 'workspace';
-                    machineId: string;
-                    workspaceRoot: string;
-                };
-                enabled: boolean;
-                agentId?: string | undefined;
-            }[];
-        } | undefined;
+        };
     };
     readonly "skills.update": {
         skillId: string;
@@ -138,18 +139,18 @@ export type SkillsActionInputById = {
         name?: string | undefined;
         description?: string | undefined;
         files?: ({
+            kind: 'remove';
+            path: string;
+        } | {
             kind: 'upsert';
             file: {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
             };
-        } | {
-            kind: 'remove';
-            path: string;
         })[] | undefined;
-        updatePolicy?: 'manual' | 'auto' | 'pinned' | undefined;
+        updatePolicy?: 'auto' | 'manual' | 'pinned' | undefined;
     };
     readonly "skills.duplicate": {
         skillId: string;
@@ -160,11 +161,6 @@ export type SkillsActionInputById = {
     };
     readonly "skills.install": {
         source: {
-            sourceId: string;
-            itemId: string;
-            version: string;
-            kind: 'registry';
-        } | {
             kind: 'link';
             url: string;
             refs?: ({
@@ -185,12 +181,36 @@ export type SkillsActionInputById = {
             files: {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
             }[];
+        } | {
+            sourceId: string;
+            itemId: string;
+            version: string;
+            kind: 'registry';
         };
         selectPaths?: string[] | undefined;
-        where?: {
+        where?: undefined | {
+            kind: 'replace';
+            rules: {
+                enabled: boolean;
+                target: {
+                    t: 'allMachines';
+                } | {
+                    t: 'machine';
+                    machineId: string;
+                } | {
+                    t: 'project';
+                    projectKey: string;
+                } | {
+                    t: 'workspace';
+                    machineId: string;
+                    workspaceRoot: string;
+                };
+                agentId?: string | undefined;
+            }[];
+        } | {
             kind: 'write';
             write: {
                 place: {
@@ -206,29 +226,10 @@ export type SkillsActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                state: 'on' | 'off' | 'inherit';
+                state: 'inherit' | 'off' | 'on';
                 agentId?: string | undefined;
             };
-        } | {
-            kind: 'replace';
-            rules: {
-                target: {
-                    t: 'allMachines';
-                } | {
-                    t: 'machine';
-                    machineId: string;
-                } | {
-                    t: 'project';
-                    projectKey: string;
-                } | {
-                    t: 'workspace';
-                    machineId: string;
-                    workspaceRoot: string;
-                };
-                enabled: boolean;
-                agentId?: string | undefined;
-            }[];
-        } | undefined;
+        };
         dryRun?: boolean | undefined;
     };
     readonly "skills.export": {
@@ -236,40 +237,40 @@ export type SkillsActionInputById = {
     };
     readonly "skills.updates.diff": {
         skillId: string;
-        candidate?: {
+        candidate?: undefined | {
             baseFiles: {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
             }[];
             files: {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
             }[];
-        } | undefined;
+        };
     };
     readonly "skills.updates.apply": {
         skillId: string;
         expectedRevision: string;
-        candidate?: {
+        candidate?: undefined | {
             baseFiles: {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
             }[];
             files: {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
             }[];
-        } | undefined;
-        choices?: Record<string, 'mine' | 'theirs' | 'both'> | undefined;
-        hunkChoices?: Record<string, Record<string, 'mine' | 'theirs' | 'both'>> | undefined;
+        };
+        choices?: Record<string, 'both' | 'mine' | 'theirs'> | undefined;
+        hunkChoices?: Record<string, Record<string, 'both' | 'mine' | 'theirs'>> | undefined;
     };
 };
 export type SkillsActionResultById = {
@@ -277,23 +278,23 @@ export type SkillsActionResultById = {
         scannedAt: number;
         roots: {
             path: string;
-            scope: 'project' | 'user' | 'plugin';
+            scope: 'plugin' | 'project' | 'user';
             agents: string[];
-            status: 'ok' | 'failed';
+            status: 'failed' | 'ok';
         }[];
         items: {
             name: string;
-            description: string | null;
+            description: null | string;
             path: string;
             digest: string;
             agents: string[];
-            scope: 'project' | 'user' | 'plugin';
-            inLibrary: string | null;
+            scope: 'plugin' | 'project' | 'user';
+            inLibrary: null | string;
             masksLibrary: boolean;
             happierInstalled: boolean;
-            pluginOwned: {
+            pluginOwned: null | {
                 pluginName: string;
-            } | null;
+            };
             userInvocable?: boolean | undefined;
         }[];
     };
@@ -302,17 +303,17 @@ export type SkillsActionResultById = {
         files: {
             path: string;
             contentBase64: string;
-            contentKind: 'utf8' | 'binary';
-            unixMode?: number | null | undefined;
+            contentKind: 'binary' | 'utf8';
+            unixMode?: null | number | undefined;
         }[];
     };
     readonly "skills.found.adopt": {
         skillIds: string[];
-        includedInSessionId: string | null;
-        incomplete?: {
+        includedInSessionId: null | string;
+        incomplete?: undefined | {
             skillId: string;
             step: 'rules' | 'session_include';
-        }[] | undefined;
+        }[];
     };
     readonly "skills.machine.install": {
         receipts: {
@@ -328,7 +329,7 @@ export type SkillsActionResultById = {
         items: {
             skillId: string;
             name: string;
-            description: string | null;
+            description: null | string;
             revision: string;
             rules: {
                 id: string;
@@ -351,80 +352,41 @@ export type SkillsActionResultById = {
                 skillId: string;
                 agentId?: string | undefined;
             }[];
-            trust: 'text_only' | 'has_files' | 'runs_scripts';
+            trust: 'has_files' | 'runs_scripts' | 'text_only';
             cost: {
                 descriptionTokens: number;
                 bodyTokens: number;
             };
             provenance: {
-                kind: 'wellKnown';
-                indexUrl: string;
-                name: string;
-                digest: string;
-                publishedDigest?: string | undefined;
-            } | {
-                kind: 'registry';
-                registry: {
-                    sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
-                    sourceUrl: string;
-                    itemId: string;
-                    ref: {
-                        kind: 'gitTree';
-                        repo: string;
-                        path: string;
-                        commit: string;
-                        treeSha: string;
-                    } | {
-                        kind: 'wellKnown';
-                        indexUrl: string;
-                        name: string;
-                        digest: string;
-                        publishedDigest?: string | undefined;
-                    } | {
-                        kind: 'version';
-                        version: string;
-                    } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    };
-                    importedAt: number;
-                };
+                kind: 'first_party';
             } | {
                 kind: 'link';
                 url: string;
                 ref: {
-                    kind: 'gitTree';
-                    repo: string;
-                    path: string;
-                    commit: string;
-                    treeSha: string;
-                } | {
-                    kind: 'wellKnown';
-                    indexUrl: string;
-                    name: string;
-                    digest: string;
-                    publishedDigest?: string | undefined;
-                } | {
-                    kind: 'version';
-                    version: string;
-                } | {
-                    kind: 'content';
-                    digest: string;
-                } | {
                     digest: string;
                     pluginId: string;
                     pluginVersion: string;
                     occurrenceId: string;
                     path: string;
                     kind: 'packageContent';
+                } | {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    kind: 'gitTree';
+                    repo: string;
+                    path: string;
+                    commit: string;
+                    treeSha: string;
+                } | {
+                    kind: 'version';
+                    version: string;
+                } | {
+                    kind: 'wellKnown';
+                    indexUrl: string;
+                    name: string;
+                    digest: string;
+                    publishedDigest?: string | undefined;
                 };
             } | {
                 kind: 'machine';
@@ -433,117 +395,54 @@ export type SkillsActionResultById = {
                 path: string;
                 importedAt: number;
             } | {
-                kind: 'upload';
-                importedAt: number;
-            } | {
-                kind: 'written';
-            } | {
-                kind: 'first_party';
-            } | {
                 kind: 'plugin';
                 pluginId: string;
                 occurrenceId: string;
-            };
-            modified: boolean;
-            updatePolicy: 'manual' | 'auto' | 'pinned';
-            createdAt: number;
-            migratedFromContext: boolean;
-            userInvocable: boolean;
-            folderId: string | null;
-            upstream?: {
-                state: 'current' | 'update_available' | 'removed_from_source';
-                latest?: {
-                    kind: 'gitTree';
-                    repo: string;
-                    path: string;
-                    commit: string;
-                    treeSha: string;
+            } | {
+                kind: 'registry';
+                registry: {
+                    sourceId: string;
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    sourceUrl: string;
+                    itemId: string;
+                    ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
+                        kind: 'gitTree';
+                        repo: string;
+                        path: string;
+                        commit: string;
+                        treeSha: string;
+                    } | {
+                        kind: 'version';
+                        version: string;
+                    } | {
+                        kind: 'wellKnown';
+                        indexUrl: string;
+                        name: string;
+                        digest: string;
+                        publishedDigest?: string | undefined;
+                    };
+                    importedAt: number;
                 } | {
-                    kind: 'wellKnown';
-                    indexUrl: string;
-                    name: string;
-                    digest: string;
-                    publishedDigest?: string | undefined;
-                } | {
-                    kind: 'version';
-                    version: string;
-                } | {
-                    kind: 'content';
-                    digest: string;
-                } | {
-                    digest: string;
-                    pluginId: string;
-                    pluginVersion: string;
-                    occurrenceId: string;
-                    path: string;
-                    kind: 'packageContent';
-                } | undefined;
-            } | undefined;
-            lastUsedAt?: number | undefined;
-        }[];
-        revision: string;
-        unavailableItems?: {
-            skillId: string;
-            title: string | null;
-            reason: 'skill_content_unavailable' | 'not_found' | 'invalid_skill_lock';
-        }[] | undefined;
-        usageObservedSince?: number | null | undefined;
-    };
-    readonly "skills.read": {
-        skillId: string;
-        name: string;
-        skillMd: string;
-        revision: string;
-        provenance: {
-            kind: 'wellKnown';
-            indexUrl: string;
-            name: string;
-            digest: string;
-            publishedDigest?: string | undefined;
-        } | {
-            kind: 'registry';
-            registry: {
-                sourceId: string;
-                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
-                sourceUrl: string;
-                itemId: string;
-                ref: {
-                    kind: 'gitTree';
-                    repo: string;
-                    path: string;
-                    commit: string;
-                    treeSha: string;
-                } | {
-                    kind: 'wellKnown';
-                    indexUrl: string;
-                    name: string;
-                    digest: string;
-                    publishedDigest?: string | undefined;
-                } | {
-                    kind: 'version';
-                    version: string;
-                } | {
-                    kind: 'content';
-                    digest: string;
-                } | {
-                    digest: string;
-                    pluginId: string;
-                    pluginVersion: string;
-                    occurrenceId: string;
-                    path: string;
-                    kind: 'packageContent';
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    };
+                    importedAt: number;
+                    sourceUrl?: undefined;
                 };
+            } | {
+                kind: 'upload';
                 importedAt: number;
-            };
-        } | {
-            kind: 'link';
-            url: string;
-            ref: {
-                kind: 'gitTree';
-                repo: string;
-                path: string;
-                commit: string;
-                treeSha: string;
             } | {
                 kind: 'wellKnown';
                 indexUrl: string;
@@ -551,18 +450,96 @@ export type SkillsActionResultById = {
                 digest: string;
                 publishedDigest?: string | undefined;
             } | {
-                kind: 'version';
-                version: string;
+                kind: 'written';
+            };
+            modified: boolean;
+            updatePolicy: 'auto' | 'manual' | 'pinned';
+            createdAt: number;
+            migratedFromContext: boolean;
+            userInvocable: boolean;
+            folderId: null | string;
+            creator?: undefined | {
+                kind: 'agent';
+                accountId: string;
+                sessionId?: string | undefined;
             } | {
-                kind: 'content';
-                digest: string;
-            } | {
+                kind: 'person';
+                accountId: string;
+            };
+            upstream?: undefined | {
+                state: 'current' | 'removed_from_source' | 'update_available';
+                latest?: undefined | {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
+                } | {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    kind: 'gitTree';
+                    repo: string;
+                    path: string;
+                    commit: string;
+                    treeSha: string;
+                } | {
+                    kind: 'version';
+                    version: string;
+                } | {
+                    kind: 'wellKnown';
+                    indexUrl: string;
+                    name: string;
+                    digest: string;
+                    publishedDigest?: string | undefined;
+                };
+            };
+            lastUsedAt?: number | undefined;
+        }[];
+        revision: string;
+        unavailableItems?: undefined | {
+            skillId: string;
+            title: null | string;
+            reason: 'invalid_skill_lock' | 'not_found' | 'skill_content_unavailable';
+        }[];
+        usageObservedSince?: null | number | undefined;
+    };
+    readonly "skills.read": {
+        skillId: string;
+        name: string;
+        skillMd: string;
+        revision: string;
+        provenance: {
+            kind: 'first_party';
+        } | {
+            kind: 'link';
+            url: string;
+            ref: {
                 digest: string;
                 pluginId: string;
                 pluginVersion: string;
                 occurrenceId: string;
                 path: string;
                 kind: 'packageContent';
+            } | {
+                kind: 'content';
+                digest: string;
+            } | {
+                kind: 'gitTree';
+                repo: string;
+                path: string;
+                commit: string;
+                treeSha: string;
+            } | {
+                kind: 'version';
+                version: string;
+            } | {
+                kind: 'wellKnown';
+                indexUrl: string;
+                name: string;
+                digest: string;
+                publishedDigest?: string | undefined;
             };
         } | {
             kind: 'machine';
@@ -571,19 +548,65 @@ export type SkillsActionResultById = {
             path: string;
             importedAt: number;
         } | {
-            kind: 'upload';
-            importedAt: number;
-        } | {
-            kind: 'written';
-        } | {
-            kind: 'first_party';
-        } | {
             kind: 'plugin';
             pluginId: string;
             occurrenceId: string;
+        } | {
+            kind: 'registry';
+            registry: {
+                sourceId: string;
+                format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                sourceUrl: string;
+                itemId: string;
+                ref: {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    kind: 'gitTree';
+                    repo: string;
+                    path: string;
+                    commit: string;
+                    treeSha: string;
+                } | {
+                    kind: 'version';
+                    version: string;
+                } | {
+                    kind: 'wellKnown';
+                    indexUrl: string;
+                    name: string;
+                    digest: string;
+                    publishedDigest?: string | undefined;
+                };
+                importedAt: number;
+            } | {
+                sourceId: string;
+                format: 'happier-catalog';
+                itemId: string;
+                ref: {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
+                };
+                importedAt: number;
+                sourceUrl?: undefined;
+            };
+        } | {
+            kind: 'upload';
+            importedAt: number;
+        } | {
+            kind: 'wellKnown';
+            indexUrl: string;
+            name: string;
+            digest: string;
+            publishedDigest?: string | undefined;
+        } | {
+            kind: 'written';
         };
         modified: boolean;
-        trust: 'text_only' | 'has_files' | 'runs_scripts';
+        trust: 'has_files' | 'runs_scripts' | 'text_only';
         cost: {
             descriptionTokens: number;
             bodyTokens: number;
@@ -614,54 +637,92 @@ export type SkillsActionResultById = {
             bytes: number;
             unixMode?: number | undefined;
         }[];
-        upstream?: {
-            state: 'current' | 'update_available' | 'removed_from_source';
-            latest?: {
-                kind: 'gitTree';
-                repo: string;
-                path: string;
-                commit: string;
-                treeSha: string;
-            } | {
-                kind: 'wellKnown';
-                indexUrl: string;
-                name: string;
-                digest: string;
-                publishedDigest?: string | undefined;
-            } | {
-                kind: 'version';
-                version: string;
-            } | {
-                kind: 'content';
-                digest: string;
-            } | {
+        creator?: undefined | {
+            kind: 'agent';
+            accountId: string;
+            sessionId?: string | undefined;
+        } | {
+            kind: 'person';
+            accountId: string;
+        };
+        upstream?: undefined | {
+            state: 'current' | 'removed_from_source' | 'update_available';
+            latest?: undefined | {
                 digest: string;
                 pluginId: string;
                 pluginVersion: string;
                 occurrenceId: string;
                 path: string;
                 kind: 'packageContent';
-            } | undefined;
-        } | undefined;
+            } | {
+                kind: 'content';
+                digest: string;
+            } | {
+                kind: 'gitTree';
+                repo: string;
+                path: string;
+                commit: string;
+                treeSha: string;
+            } | {
+                kind: 'version';
+                version: string;
+            } | {
+                kind: 'wellKnown';
+                indexUrl: string;
+                name: string;
+                digest: string;
+                publishedDigest?: string | undefined;
+            };
+        };
         lastUsedAt?: number | undefined;
-        fileContents?: {
+        fileContents?: undefined | {
             path: string;
             contentBase64: string;
-            contentKind: 'utf8' | 'binary';
-            unixMode?: number | null | undefined;
-        }[] | undefined;
-        file?: {
+            contentKind: 'binary' | 'utf8';
+            unixMode?: null | number | undefined;
+        }[];
+        file?: undefined | {
             path: string;
             contentBase64: string;
-            contentKind: 'utf8' | 'binary';
+            contentKind: 'binary' | 'utf8';
             unixMode?: number | undefined;
-        } | undefined;
+        };
     };
     readonly "skills.create": {
         ok: true;
         skillId: string;
         revision: string;
-        includedInSessionId: string | null;
+        summary?: undefined | {
+            name: string;
+            description: null | string;
+            creator?: undefined | {
+                kind: 'agent';
+                accountId: string;
+                sessionId?: string | undefined;
+            } | {
+                kind: 'person';
+                accountId: string;
+            };
+        };
+        inclusion?: undefined | {
+            ok: false;
+            code: 'applies_to_new_sessions_only' | 'conflict' | 'not_found' | 'session_unavailable';
+        } | {
+            ok: true;
+            state: 'inherit' | 'off' | 'on';
+            previous: 'inherit' | 'off' | 'on';
+            applyTiming: {
+                t: 'applied_now';
+            } | {
+                t: 'next_turn';
+            } | {
+                t: 'restart_to_apply';
+                restartBy: 'terminal' | 'user';
+            } | {
+                t: 'session_not_running';
+            };
+        };
+        includedInSessionId?: null | string | undefined;
         incomplete?: 'rules' | 'session_include' | undefined;
     };
     readonly "skills.update": {
@@ -671,7 +732,37 @@ export type SkillsActionResultById = {
         ok: true;
         skillId: string;
         revision: string;
-        includedInSessionId: string | null;
+        summary?: undefined | {
+            name: string;
+            description: null | string;
+            creator?: undefined | {
+                kind: 'agent';
+                accountId: string;
+                sessionId?: string | undefined;
+            } | {
+                kind: 'person';
+                accountId: string;
+            };
+        };
+        inclusion?: undefined | {
+            ok: false;
+            code: 'applies_to_new_sessions_only' | 'conflict' | 'not_found' | 'session_unavailable';
+        } | {
+            ok: true;
+            state: 'inherit' | 'off' | 'on';
+            previous: 'inherit' | 'off' | 'on';
+            applyTiming: {
+                t: 'applied_now';
+            } | {
+                t: 'next_turn';
+            } | {
+                t: 'restart_to_apply';
+                restartBy: 'terminal' | 'user';
+            } | {
+                t: 'session_not_running';
+            };
+        };
+        includedInSessionId?: null | string | undefined;
         incomplete?: 'rules' | 'session_include' | undefined;
     };
     readonly "skills.delete": {
@@ -679,97 +770,51 @@ export type SkillsActionResultById = {
         rulesLeft?: true | undefined;
     };
     readonly "skills.install": {
-        skillIds: string[];
-        includedInSessionId: string | null;
-        incomplete?: {
-            skillId: string;
-            step: 'rules' | 'session_include';
-        }[] | undefined;
-    } | {
         items: {
             path: string;
             name: string;
-            description: string | null;
+            description: null | string;
             files: {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
             }[];
-            trust: 'text_only' | 'has_files' | 'runs_scripts';
+            trust: 'has_files' | 'runs_scripts' | 'text_only';
             cost: {
                 descriptionTokens: number;
                 bodyTokens: number;
             };
             provenance: {
-                kind: 'wellKnown';
-                indexUrl: string;
-                name: string;
-                digest: string;
-                publishedDigest?: string | undefined;
-            } | {
-                kind: 'registry';
-                registry: {
-                    sourceId: string;
-                    format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
-                    sourceUrl: string;
-                    itemId: string;
-                    ref: {
-                        kind: 'gitTree';
-                        repo: string;
-                        path: string;
-                        commit: string;
-                        treeSha: string;
-                    } | {
-                        kind: 'wellKnown';
-                        indexUrl: string;
-                        name: string;
-                        digest: string;
-                        publishedDigest?: string | undefined;
-                    } | {
-                        kind: 'version';
-                        version: string;
-                    } | {
-                        kind: 'content';
-                        digest: string;
-                    } | {
-                        digest: string;
-                        pluginId: string;
-                        pluginVersion: string;
-                        occurrenceId: string;
-                        path: string;
-                        kind: 'packageContent';
-                    };
-                    importedAt: number;
-                };
+                kind: 'first_party';
             } | {
                 kind: 'link';
                 url: string;
                 ref: {
-                    kind: 'gitTree';
-                    repo: string;
-                    path: string;
-                    commit: string;
-                    treeSha: string;
-                } | {
-                    kind: 'wellKnown';
-                    indexUrl: string;
-                    name: string;
-                    digest: string;
-                    publishedDigest?: string | undefined;
-                } | {
-                    kind: 'version';
-                    version: string;
-                } | {
-                    kind: 'content';
-                    digest: string;
-                } | {
                     digest: string;
                     pluginId: string;
                     pluginVersion: string;
                     occurrenceId: string;
                     path: string;
                     kind: 'packageContent';
+                } | {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    kind: 'gitTree';
+                    repo: string;
+                    path: string;
+                    commit: string;
+                    treeSha: string;
+                } | {
+                    kind: 'version';
+                    version: string;
+                } | {
+                    kind: 'wellKnown';
+                    indexUrl: string;
+                    name: string;
+                    digest: string;
+                    publishedDigest?: string | undefined;
                 };
             } | {
                 kind: 'machine';
@@ -778,23 +823,77 @@ export type SkillsActionResultById = {
                 path: string;
                 importedAt: number;
             } | {
-                kind: 'upload';
-                importedAt: number;
-            } | {
-                kind: 'written';
-            } | {
-                kind: 'first_party';
-            } | {
                 kind: 'plugin';
                 pluginId: string;
                 occurrenceId: string;
+            } | {
+                kind: 'registry';
+                registry: {
+                    sourceId: string;
+                    format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                    sourceUrl: string;
+                    itemId: string;
+                    ref: {
+                        kind: 'content';
+                        digest: string;
+                    } | {
+                        kind: 'gitTree';
+                        repo: string;
+                        path: string;
+                        commit: string;
+                        treeSha: string;
+                    } | {
+                        kind: 'version';
+                        version: string;
+                    } | {
+                        kind: 'wellKnown';
+                        indexUrl: string;
+                        name: string;
+                        digest: string;
+                        publishedDigest?: string | undefined;
+                    };
+                    importedAt: number;
+                } | {
+                    sourceId: string;
+                    format: 'happier-catalog';
+                    itemId: string;
+                    ref: {
+                        digest: string;
+                        pluginId: string;
+                        pluginVersion: string;
+                        occurrenceId: string;
+                        path: string;
+                        kind: 'packageContent';
+                    };
+                    importedAt: number;
+                    sourceUrl?: undefined;
+                };
+            } | {
+                kind: 'upload';
+                importedAt: number;
+            } | {
+                kind: 'wellKnown';
+                indexUrl: string;
+                name: string;
+                digest: string;
+                publishedDigest?: string | undefined;
+            } | {
+                kind: 'written';
             };
             inLibrary?: string | undefined;
+            sameNameInLibrary?: true | undefined;
             outsideReferences?: string[] | undefined;
-            siblingSkills?: {
+            siblingSkills?: undefined | {
                 path: string;
                 references: string[];
-            }[] | undefined;
+            }[];
+        }[];
+    } | {
+        skillIds: string[];
+        includedInSessionId: null | string;
+        incomplete?: undefined | {
+            skillId: string;
+            step: 'rules' | 'session_include';
         }[];
     };
     readonly "skills.export": {
@@ -804,35 +903,35 @@ export type SkillsActionResultById = {
     readonly "skills.updates.diff": {
         files: {
             path: string;
-            mine: {
+            mine: null | {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
-            } | null;
-            theirs: {
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
+            };
+            theirs: null | {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
-            } | null;
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
+            };
             changed: boolean;
-            base?: {
+            base?: null | undefined | {
                 path: string;
                 contentBase64: string;
-                contentKind: 'utf8' | 'binary';
-                unixMode?: number | null | undefined;
-            } | null | undefined;
-            comparison?: {
+                contentKind: 'binary' | 'utf8';
+                unixMode?: null | number | undefined;
+            };
+            comparison?: undefined | {
                 segments: {
                     index: number;
-                    kind: 'mine' | 'theirs' | 'unchanged' | 'same' | 'conflict';
+                    kind: 'conflict' | 'mine' | 'same' | 'theirs' | 'unchanged';
                     base: string;
                     mine: string;
                     theirs: string;
                 }[];
                 text: string;
-            } | undefined;
+            };
         }[];
         costDelta: {
             mine: {
@@ -849,74 +948,35 @@ export type SkillsActionResultById = {
     readonly "skills.updates.apply": {
         revision: string;
         provenance: {
-            kind: 'wellKnown';
-            indexUrl: string;
-            name: string;
-            digest: string;
-            publishedDigest?: string | undefined;
-        } | {
-            kind: 'registry';
-            registry: {
-                sourceId: string;
-                format: 'skills-sh' | 'git' | 'claude-marketplace' | 'mcp-registry' | 'acp-registry' | 'happier-catalog' | 'happier-npm' | 'coolify-templates' | 'dokploy-templates';
-                sourceUrl: string;
-                itemId: string;
-                ref: {
-                    kind: 'gitTree';
-                    repo: string;
-                    path: string;
-                    commit: string;
-                    treeSha: string;
-                } | {
-                    kind: 'wellKnown';
-                    indexUrl: string;
-                    name: string;
-                    digest: string;
-                    publishedDigest?: string | undefined;
-                } | {
-                    kind: 'version';
-                    version: string;
-                } | {
-                    kind: 'content';
-                    digest: string;
-                } | {
-                    digest: string;
-                    pluginId: string;
-                    pluginVersion: string;
-                    occurrenceId: string;
-                    path: string;
-                    kind: 'packageContent';
-                };
-                importedAt: number;
-            };
+            kind: 'first_party';
         } | {
             kind: 'link';
             url: string;
             ref: {
-                kind: 'gitTree';
-                repo: string;
-                path: string;
-                commit: string;
-                treeSha: string;
-            } | {
-                kind: 'wellKnown';
-                indexUrl: string;
-                name: string;
-                digest: string;
-                publishedDigest?: string | undefined;
-            } | {
-                kind: 'version';
-                version: string;
-            } | {
-                kind: 'content';
-                digest: string;
-            } | {
                 digest: string;
                 pluginId: string;
                 pluginVersion: string;
                 occurrenceId: string;
                 path: string;
                 kind: 'packageContent';
+            } | {
+                kind: 'content';
+                digest: string;
+            } | {
+                kind: 'gitTree';
+                repo: string;
+                path: string;
+                commit: string;
+                treeSha: string;
+            } | {
+                kind: 'version';
+                version: string;
+            } | {
+                kind: 'wellKnown';
+                indexUrl: string;
+                name: string;
+                digest: string;
+                publishedDigest?: string | undefined;
             };
         } | {
             kind: 'machine';
@@ -925,16 +985,62 @@ export type SkillsActionResultById = {
             path: string;
             importedAt: number;
         } | {
-            kind: 'upload';
-            importedAt: number;
-        } | {
-            kind: 'written';
-        } | {
-            kind: 'first_party';
-        } | {
             kind: 'plugin';
             pluginId: string;
             occurrenceId: string;
+        } | {
+            kind: 'registry';
+            registry: {
+                sourceId: string;
+                format: 'acp-registry' | 'claude-marketplace' | 'coolify-templates' | 'dokploy-templates' | 'git' | 'happier-catalog' | 'happier-npm' | 'mcp-registry' | 'skills-sh';
+                sourceUrl: string;
+                itemId: string;
+                ref: {
+                    kind: 'content';
+                    digest: string;
+                } | {
+                    kind: 'gitTree';
+                    repo: string;
+                    path: string;
+                    commit: string;
+                    treeSha: string;
+                } | {
+                    kind: 'version';
+                    version: string;
+                } | {
+                    kind: 'wellKnown';
+                    indexUrl: string;
+                    name: string;
+                    digest: string;
+                    publishedDigest?: string | undefined;
+                };
+                importedAt: number;
+            } | {
+                sourceId: string;
+                format: 'happier-catalog';
+                itemId: string;
+                ref: {
+                    digest: string;
+                    pluginId: string;
+                    pluginVersion: string;
+                    occurrenceId: string;
+                    path: string;
+                    kind: 'packageContent';
+                };
+                importedAt: number;
+                sourceUrl?: undefined;
+            };
+        } | {
+            kind: 'upload';
+            importedAt: number;
+        } | {
+            kind: 'wellKnown';
+            indexUrl: string;
+            name: string;
+            digest: string;
+            publishedDigest?: string | undefined;
+        } | {
+            kind: 'written';
         };
     };
 };

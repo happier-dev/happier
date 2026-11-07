@@ -5,24 +5,22 @@ import type { JsonValue } from '../../identity.js';
 import type { SystemTaskJsonValue } from './pluginActionDtoSupport.generated.js';
 
 export type HomeRuntimeActionInputById = {
-    readonly "relay.access.status": Record<string, never>;
+    readonly "relay.access.status": Record<string, never> & {
+        clientId?: string | undefined;
+    };
     readonly "relay.access.configure": {
         config: {
             provider: {
-                pluginId: string;
-                localId: string;
-            } | {
                 kind: 'builtin';
                 id: string;
+            } | {
+                pluginId: string;
+                localId: string;
             };
             config: JsonValue;
             credentialRefs: {
                 purpose: string;
                 credentialRef: {
-                    ref: string;
-                    resourceRevision: number;
-                    kind: 'savedSecret';
-                } | {
                     kind: 'connectedAccount';
                     account: {
                         service: {
@@ -31,130 +29,154 @@ export type HomeRuntimeActionInputById = {
                         };
                         accountId: string;
                     };
+                } | {
+                    ref: string;
+                    resourceRevision: number;
+                    kind: 'savedSecret';
                 };
             }[];
         };
-        upstreamUrl?: string | null | undefined;
+        upstreamUrl?: null | string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "relay.access.disable": Record<string, never>;
+    readonly "relay.access.disable": Record<string, never> & {
+        clientId?: string | undefined;
+    };
     readonly "relay.runtime.status": {
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
-        purpose?: {
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+        purpose?: undefined | {
             kind: 'personal-home';
             canonicalServerUrl: string;
-        } | undefined;
+        };
         anonymousSignupEnabled?: boolean | undefined;
-        expectedPersonalHomeState?: {
+        expectedPersonalHomeState?: undefined | {
             installed: boolean;
-            canonicalServerUrl: string | null;
+            canonicalServerUrl: null | string;
             dataPresent: boolean;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.install_or_update": {
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
-        purpose?: {
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+        purpose?: undefined | {
             kind: 'personal-home';
             canonicalServerUrl: string;
-        } | undefined;
+        };
         anonymousSignupEnabled?: boolean | undefined;
-        expectedPersonalHomeState?: {
+        expectedPersonalHomeState?: undefined | {
             installed: boolean;
-            canonicalServerUrl: string | null;
+            canonicalServerUrl: null | string;
             dataPresent: boolean;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.start": {
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
-        purpose?: {
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+        purpose?: undefined | {
             kind: 'personal-home';
             canonicalServerUrl: string;
-        } | undefined;
+        };
         anonymousSignupEnabled?: boolean | undefined;
-        expectedPersonalHomeState?: {
+        expectedPersonalHomeState?: undefined | {
             installed: boolean;
-            canonicalServerUrl: string | null;
+            canonicalServerUrl: null | string;
             dataPresent: boolean;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.stop": {
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
-        purpose?: {
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+        purpose?: undefined | {
             kind: 'personal-home';
             canonicalServerUrl: string;
-        } | undefined;
+        };
         anonymousSignupEnabled?: boolean | undefined;
-        expectedPersonalHomeState?: {
+        expectedPersonalHomeState?: undefined | {
             installed: boolean;
-            canonicalServerUrl: string | null;
+            canonicalServerUrl: null | string;
             dataPresent: boolean;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.restart": {
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
-        purpose?: {
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+        purpose?: undefined | {
             kind: 'personal-home';
             canonicalServerUrl: string;
-        } | undefined;
+        };
         anonymousSignupEnabled?: boolean | undefined;
-        expectedPersonalHomeState?: {
+        expectedPersonalHomeState?: undefined | {
             installed: boolean;
-            canonicalServerUrl: string | null;
+            canonicalServerUrl: null | string;
             dataPresent: boolean;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.uninstall": {
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
-        purpose?: {
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+        purpose?: undefined | {
             kind: 'personal-home';
             canonicalServerUrl: string;
-        } | undefined;
+        };
         anonymousSignupEnabled?: boolean | undefined;
-        expectedPersonalHomeState?: {
+        expectedPersonalHomeState?: undefined | {
             installed: boolean;
-            canonicalServerUrl: string | null;
+            canonicalServerUrl: null | string;
             dataPresent: boolean;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.personal_home.inspect": {
         purpose: {
             kind: 'personal-home';
             canonicalServerUrl: string;
         };
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.personal_home.backup": {
         purpose: {
             kind: 'personal-home';
             canonicalServerUrl: string;
         };
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
-        personalHomeOperation?: {
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+        personalHomeOperation?: undefined | {
             outputPath?: string | undefined;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.personal_home.verify_backup": {
         purpose: {
@@ -164,10 +186,12 @@ export type HomeRuntimeActionInputById = {
         personalHomeOperation: {
             archivePath: string;
         };
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.personal_home.restore": {
         purpose: {
@@ -179,30 +203,36 @@ export type HomeRuntimeActionInputById = {
             confirmOverwrite?: true | undefined;
             expectedHomeServerIdentityId?: string | undefined;
         };
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.personal_home.recover_restore": {
         purpose: {
             kind: 'personal-home';
             canonicalServerUrl: string;
         };
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.personal_home.erase": {
         purpose: {
             kind: 'personal-home';
             canonicalServerUrl: string;
         };
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.personal_home.claim": {
         purpose: {
@@ -212,52 +242,60 @@ export type HomeRuntimeActionInputById = {
         personalHomeOperation: {
             accountId: string;
         };
-        runtimeTarget?: {
-            channel: 'stable' | 'preview' | 'dev';
-            mode: 'user' | 'system';
-        } | undefined;
+        runtimeTarget?: undefined | {
+            channel: 'dev' | 'preview' | 'stable';
+            mode: 'system' | 'user';
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.personal_home.relocate": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         sourceServerId: string;
         operationId: string;
         sourceDescriptorRevision: number;
         recoveryAction?: 'finish_move' | 'return_to_source' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "relay.runtime.personal_home.choose_archive": Record<string, never>;
-    readonly "relay.runtime.personal_home.choose_backup_destination": Record<string, never>;
+    readonly "relay.runtime.personal_home.choose_archive": Record<string, never> & {
+        clientId?: string | undefined;
+    };
+    readonly "relay.runtime.personal_home.choose_backup_destination": Record<string, never> & {
+        clientId?: string | undefined;
+    };
     readonly "relay.runtime.open_path": {
         path: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.reveal_output": {
         path: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "relay.runtime.task.cancel": {
         taskId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "home.runtime.get": {
         force?: boolean | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "home.runtime.restart": {
         machineId: string;
-        channel?: 'stable' | 'preview' | 'dev' | undefined;
-        mode?: 'user' | 'system' | undefined;
+        channel?: 'dev' | 'preview' | 'stable' | undefined;
+        mode?: 'system' | 'user' | undefined;
     };
 };
 export type HomeRuntimeActionResultById = {
     readonly "relay.access.status": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -265,26 +303,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.access.configure": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -292,26 +330,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.access.disable": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -319,26 +357,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.status": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -346,26 +384,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.install_or_update": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -373,26 +411,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.start": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -400,26 +438,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.stop": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -427,26 +465,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.restart": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -454,26 +492,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.uninstall": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -481,26 +519,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.personal_home.inspect": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -508,26 +546,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.personal_home.backup": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -535,26 +573,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.personal_home.verify_backup": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -562,26 +600,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.personal_home.restore": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -589,26 +627,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.personal_home.recover_restore": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -616,26 +654,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.personal_home.erase": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -643,26 +681,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.personal_home.claim": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -670,26 +708,26 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.personal_home.relocate": {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -697,71 +735,71 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'task_started';
+        taskId: string;
     } | {
         status: 'unavailable';
         reason: string;
     };
     readonly "relay.runtime.personal_home.choose_archive": {
+        path: null | string;
+    } | {
         status: 'unavailable';
         reason: string;
-    } | {
-        path: string | null;
     };
     readonly "relay.runtime.personal_home.choose_backup_destination": {
+        path: null | string;
+    } | {
         status: 'unavailable';
         reason: string;
-    } | {
-        path: string | null;
     };
     readonly "relay.runtime.open_path": {
+        status: 'completed';
+    } | {
         status: 'unavailable';
         reason: string;
-    } | {
-        status: 'completed';
     };
     readonly "relay.runtime.reveal_output": {
+        status: 'completed';
+    } | {
         status: 'unavailable';
         reason: string;
-    } | {
-        status: 'completed';
     };
     readonly "relay.runtime.task.cancel": {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'cancellation_requested' | 'already_settled';
+        status: 'already_settled' | 'cancellation_requested';
         taskId: string;
     } | {
         status: 'outcome_unknown';
         taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "home.runtime.get": {
-        status: 'unavailable';
-        reason: string;
-    } | {
         status: 'ready';
-        serverRelease: {
+        serverRelease: null | {
             version?: string | undefined;
             flavor?: 'full' | 'light' | undefined;
-        } | null;
-        searchReadiness?: 'unknown' | 'unavailable' | 'ready' | 'indexing' | undefined;
-    };
-    readonly "home.runtime.restart": {
+        };
+        searchReadiness?: 'indexing' | 'ready' | 'unavailable' | 'unknown' | undefined;
+    } | {
         status: 'unavailable';
         reason: string;
-    } | {
+    };
+    readonly "home.runtime.restart": {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -769,9 +807,17 @@ export type HomeRuntimeActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
         status: 'outcome_unknown';
         taskId?: string | undefined;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
 };

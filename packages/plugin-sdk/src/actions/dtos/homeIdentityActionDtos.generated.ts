@@ -12,18 +12,22 @@ export type HomeIdentityActionInputById = {
         providerInstanceId: string;
         externalReference: {
             v: 1;
+            kind: 'github_app_identity';
+            installationId: string;
+        } | {
+            v: 1;
             kind: 'oidc';
         } | {
             v: 1;
             kind: 'workos_sso';
-            organizationId: string | null;
-            connectionId: string | null;
-        } | {
-            v: 1;
-            kind: 'github_app_identity';
-            installationId: string;
+            organizationId: null | string;
+            connectionId: null | string;
         };
         settings: {
+            v: 1;
+            kind: 'github_app_identity';
+            organizationLogin: string;
+        } | {
             v: 1;
             kind: 'oidc';
             allowedUsers: string[];
@@ -33,16 +37,16 @@ export type HomeIdentityActionInputById = {
         } | {
             v: 1;
             kind: 'workos_sso';
-        } | {
-            v: 1;
-            kind: 'github_app_identity';
-            organizationLogin: string;
         };
     };
     readonly "home.identity.connections.settings.update": {
         v: 1;
-        connectionId: string;
+        expectedRevision: number;
         settings: {
+            v: 1;
+            kind: 'github_app_identity';
+            organizationLogin: string;
+        } | {
             v: 1;
             kind: 'oidc';
             allowedUsers: string[];
@@ -52,37 +56,33 @@ export type HomeIdentityActionInputById = {
         } | {
             v: 1;
             kind: 'workos_sso';
-        } | {
-            v: 1;
-            kind: 'github_app_identity';
-            organizationLogin: string;
         };
-        expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.enable": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.disable": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.remove.preview": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.remove": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.test.start": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.connections.test.consume": {
         v: 1;
@@ -100,13 +100,13 @@ export type HomeIdentityActionInputById = {
     };
     readonly "home.identity.workos.reconcile": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
     };
     readonly "home.identity.workos.connection.set": {
         v: 1;
-        connectionId: string;
         expectedRevision: number;
+        connectionId: string;
         workosConnectionId: string;
     };
 };
@@ -117,23 +117,27 @@ export type HomeIdentityActionResultById = {
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -143,71 +147,76 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         }[];
         eligibleProviders: {
             v: 1;
-            providerId: string | null;
-            providerKind: 'oidc' | 'workos_sso' | 'github_app_identity';
+            providerId: null | string;
+            providerKind: 'github_app_identity' | 'oidc' | 'workos_sso';
             owner: 'home' | 'team';
-            displayName: string | null;
+            displayName: null | string;
             availability: {
                 status: 'available';
                 setupChoice: {
+                    kind: 'contact_home_admin';
+                } | {
+                    kind: 'create_managed';
+                    actionId: 'home.identity.workos.connection.create' | 'identity.githubApps.manifestSetup.start' | 'identity.providers.create' | 'teams.identity.workos.connection.create';
+                } | {
                     kind: 'use_existing';
                     providerInstanceId: string;
                     connectionDraft: {
                         externalReference: {
                             v: 1;
+                            kind: 'github_app_identity';
+                            installationId: string;
+                        } | {
+                            v: 1;
                             kind: 'oidc';
                         } | {
                             v: 1;
                             kind: 'workos_sso';
-                            organizationId: string | null;
-                            connectionId: string | null;
-                        } | {
-                            v: 1;
-                            kind: 'github_app_identity';
-                            installationId: string;
+                            organizationId: null | string;
+                            connectionId: null | string;
                         };
                         settings: {
+                            v: 1;
+                            kind: 'github_app_identity';
+                            organizationLogin: string;
+                        } | {
                             v: 1;
                             kind: 'oidc';
                             allowedUsers: string[];
@@ -217,21 +226,12 @@ export type HomeIdentityActionResultById = {
                         } | {
                             v: 1;
                             kind: 'workos_sso';
-                        } | {
-                            v: 1;
-                            kind: 'github_app_identity';
-                            organizationLogin: string;
                         };
                     };
-                } | {
-                    kind: 'create_managed';
-                    actionId: 'teams.identity.workos.connection.create' | 'home.identity.workos.connection.create' | 'identity.providers.create' | 'identity.githubApps.manifestSetup.start';
-                } | {
-                    kind: 'contact_home_admin';
                 };
             } | {
                 status: 'unavailable';
-                code: 'home_policy_unavailable' | 'home_policy_prohibited' | 'provider_disabled' | 'workos_platform_unavailable' | 'provider_setup_unavailable';
+                code: 'home_policy_prohibited' | 'home_policy_unavailable' | 'provider_disabled' | 'provider_setup_unavailable' | 'workos_platform_unavailable';
             };
         }[];
     };
@@ -241,23 +241,27 @@ export type HomeIdentityActionResultById = {
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -267,44 +271,40 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
     };
     readonly "home.identity.connections.settings.update": {
@@ -313,23 +313,27 @@ export type HomeIdentityActionResultById = {
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -339,44 +343,40 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
     };
     readonly "home.identity.connections.enable": {
@@ -385,23 +385,27 @@ export type HomeIdentityActionResultById = {
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -411,44 +415,40 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
     };
     readonly "home.identity.connections.disable": {
@@ -457,23 +457,27 @@ export type HomeIdentityActionResultById = {
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -483,44 +487,40 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
     };
     readonly "home.identity.connections.remove.preview": {
@@ -533,29 +533,33 @@ export type HomeIdentityActionResultById = {
             externalGroupBindings: number;
             managedMemberships: number;
         };
-        blockers: ('identity_connection_in_use' | 'team_authentication_policy_in_use' | 'team_authentication_policy_unavailable' | 'account_would_lose_login' | 'home_authentication_policy_unavailable' | 'directory_source_in_use' | 'external_group_binding_in_use' | 'managed_membership_in_use')[];
+        blockers: ('account_would_lose_login' | 'directory_source_in_use' | 'external_group_binding_in_use' | 'home_authentication_policy_unavailable' | 'identity_connection_in_use' | 'managed_membership_in_use' | 'team_authentication_policy_in_use' | 'team_authentication_policy_unavailable')[];
         connection: {
             v: 1;
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -565,48 +569,44 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
     };
     readonly "home.identity.connections.remove": {
-        outcome: 'removed' | 'already_absent';
+        outcome: 'already_absent' | 'removed';
     };
     readonly "home.identity.connections.test.start": {
         authorizeUrl: string;
@@ -618,23 +618,27 @@ export type HomeIdentityActionResultById = {
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -644,58 +648,54 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
-        diagnostics?: {
+        diagnostics?: undefined | {
             subjectPresent: boolean;
             loginAvailable: boolean;
             emailAvailable: boolean;
             emailVerified: boolean;
             groups: {
-                state: 'complete' | 'absent' | 'incomplete';
-                count: number | null;
+                state: 'absent' | 'complete' | 'incomplete';
+                count: null | number;
             };
             eligibility: {
                 status: 'eligible' | 'ineligible';
                 rules: {
-                    kind: 'users' | 'email_domains' | 'groups_any' | 'groups_all';
+                    kind: 'email_domains' | 'groups_all' | 'groups_any' | 'users';
                     matched: boolean;
                 }[];
             };
@@ -703,7 +703,7 @@ export type HomeIdentityActionResultById = {
                 id: string;
                 name: string;
             }[];
-        } | undefined;
+        };
     };
     readonly "home.identity.workos.adminPortalLink.create": {
         url: string;
@@ -714,23 +714,27 @@ export type HomeIdentityActionResultById = {
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -740,142 +744,70 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
     };
     readonly "home.identity.workos.reconcile": {
-        outcome: 'setting_up';
-        connection: {
-            v: 1;
-            id: string;
-            provider: {
-                id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
-                displayName: string;
-            };
-            externalReference: {
-                v: 1;
-                kind: 'oidc';
-            } | {
-                v: 1;
-                kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
-            };
-            settings: {
-                v: 1;
-                kind: 'oidc';
-                allowedUsers: string[];
-                allowedEmailDomains: string[];
-                groupsAny: string[];
-                groupsAll: string[];
-            } | {
-                v: 1;
-                kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
-            };
-            enabled: boolean;
-            firstEnabledAt: number | null;
-            revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
-                v: 1;
-                kind: 'oidc';
-            } | {
-                v: 1;
-                kind: 'workos_sso';
-                presentation: {
-                    displayName: string;
-                    strategy: string;
-                    status: string;
-                    lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
-                at: number;
-                runtimeFingerprint: string;
-                current: boolean;
-            } | null;
-            createdAt: number;
-            updatedAt: number;
-            teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
-                teamId: string;
-                name: string;
-            }[] | undefined;
-        };
-    } | {
         outcome: 'connected';
         connection: {
             v: 1;
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -885,44 +817,40 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
     } | {
         outcome: 'needs_attention';
@@ -931,23 +859,27 @@ export type HomeIdentityActionResultById = {
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -957,44 +889,40 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
     } | {
         outcome: 'selection_required';
@@ -1003,23 +931,27 @@ export type HomeIdentityActionResultById = {
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -1029,44 +961,40 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
         };
         candidates: {
             connectionId: string;
@@ -1074,30 +1002,34 @@ export type HomeIdentityActionResultById = {
             strategy: string;
             status: string;
         }[];
-    };
-    readonly "home.identity.workos.connection.set": {
+    } | {
+        outcome: 'setting_up';
         connection: {
             v: 1;
             id: string;
             provider: {
                 id: string;
-                kind: 'oidc' | 'workos_sso' | 'github_app_identity';
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
                 displayName: string;
             };
             externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                organizationId: string | null;
-                connectionId: string | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                installationId: string;
+                organizationId: null | string;
+                connectionId: null | string;
             };
             settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
                 v: 1;
                 kind: 'oidc';
                 allowedUsers: string[];
@@ -1107,44 +1039,112 @@ export type HomeIdentityActionResultById = {
             } | {
                 v: 1;
                 kind: 'workos_sso';
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-                organizationLogin: string;
             };
             enabled: boolean;
-            firstEnabledAt: number | null;
+            firstEnabledAt: null | number;
             revision: number;
-            state: 'unavailable' | 'prohibited' | 'not_configured' | 'setting_up' | 'connected' | 'needs_attention' | 'disabled';
-            lastObservation: {
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
                 v: 1;
                 kind: 'oidc';
             } | {
                 v: 1;
                 kind: 'workos_sso';
-                presentation: {
+                presentation: null | {
                     displayName: string;
                     strategy: string;
                     status: string;
                     lastCheckedAt: number;
-                } | null;
-            } | {
-                v: 1;
-                kind: 'github_app_identity';
-            } | null;
-            lastSuccessfulTest: {
+                };
+            };
+            lastSuccessfulTest: null | {
                 at: number;
                 runtimeFingerprint: string;
                 current: boolean;
-            } | null;
+            };
             createdAt: number;
             updatedAt: number;
             teamId: null;
-            allowedActions: ('home.identity.connections.settings.update' | 'home.identity.connections.enable' | 'home.identity.connections.disable' | 'home.identity.connections.remove' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.reconcile' | 'home.identity.workos.connection.set')[];
-            teamsUsingIt?: {
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
                 teamId: string;
                 name: string;
-            }[] | undefined;
+            }[];
+        };
+    };
+    readonly "home.identity.workos.connection.set": {
+        connection: {
+            v: 1;
+            id: string;
+            provider: {
+                id: string;
+                kind: 'github_app_identity' | 'oidc' | 'workos_sso';
+                displayName: string;
+            };
+            externalReference: {
+                v: 1;
+                kind: 'github_app_identity';
+                installationId: string;
+            } | {
+                v: 1;
+                kind: 'oidc';
+            } | {
+                v: 1;
+                kind: 'workos_sso';
+                organizationId: null | string;
+                connectionId: null | string;
+            };
+            settings: {
+                v: 1;
+                kind: 'github_app_identity';
+                organizationLogin: string;
+            } | {
+                v: 1;
+                kind: 'oidc';
+                allowedUsers: string[];
+                allowedEmailDomains: string[];
+                groupsAny: string[];
+                groupsAll: string[];
+            } | {
+                v: 1;
+                kind: 'workos_sso';
+            };
+            enabled: boolean;
+            firstEnabledAt: null | number;
+            revision: number;
+            state: 'connected' | 'disabled' | 'needs_attention' | 'not_configured' | 'prohibited' | 'setting_up' | 'unavailable';
+            lastObservation: null | {
+                v: 1;
+                kind: 'github_app_identity';
+            } | {
+                v: 1;
+                kind: 'oidc';
+            } | {
+                v: 1;
+                kind: 'workos_sso';
+                presentation: null | {
+                    displayName: string;
+                    strategy: string;
+                    status: string;
+                    lastCheckedAt: number;
+                };
+            };
+            lastSuccessfulTest: null | {
+                at: number;
+                runtimeFingerprint: string;
+                current: boolean;
+            };
+            createdAt: number;
+            updatedAt: number;
+            teamId: null;
+            allowedActions: ('home.identity.connections.disable' | 'home.identity.connections.enable' | 'home.identity.connections.remove' | 'home.identity.connections.settings.update' | 'home.identity.connections.test.start' | 'home.identity.workos.adminPortalLink.create' | 'home.identity.workos.connection.set' | 'home.identity.workos.reconcile')[];
+            teamsUsingIt?: undefined | {
+                teamId: string;
+                name: string;
+            }[];
         };
     };
 };

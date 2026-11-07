@@ -6,7 +6,7 @@ import {
     WorkspaceWorkerPreferenceReadResultV1ProtocolSchema,
 } from '@happier-dev/protocol/workspaces/projectWorkerPreferencesV1';
 import { WorkspaceWorkerPreferenceSetInputV1ProtocolSchema } from '@happier-dev/protocol/actions/specs/projectWorkers';
-import { ProjectDefinitionInspectOutputProtocolSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
+export { ProjectDefinitionInspectOutputProtocolSchema as ProtocolProjectDefinitionInspectOutputSchema } from '@happier-dev/protocol/actions/projectDefinitionActionFamily';
 import { ProjectComputeExecResultV1ProtocolSchema } from '@happier-dev/protocol/actions/projectActionFamily';
 import { ActionOperationAddressV1ProtocolSchema } from '@happier-dev/protocol/actions/specs/actionOperations';
 import { ActionOperationGetV1ResponseProtocolSchema as canonicalOperationResponse, type ActionOperationGetV1Response } from '@happier-dev/protocol/actions/operations/v1';
@@ -32,7 +32,6 @@ export const ProtocolWorkspaceExecutionConfigAddressV1Schema: ProtocolComposable
 export const ProtocolWorkspaceWorkerPreferenceSetInputV1Schema: ProtocolComposableSchema<PluginActionInputById['projects.worker.preferences.set']> = WorkspaceWorkerPreferenceSetInputV1ProtocolSchema;
 export const ProtocolWorkspaceWorkerPreferenceReadResultV1Schema: ProtocolComposableSchema<PluginActionResultById['projects.worker.preferences.get']> = WorkspaceWorkerPreferenceReadResultV1ProtocolSchema;
 export const ProtocolWorkspaceWorkerPreferenceMutationResultV1Schema: ProtocolComposableSchema<PluginActionResultById['projects.worker.preferences.set']> = WorkspaceWorkerPreferenceMutationResultV1ProtocolSchema;
-export const ProtocolProjectDefinitionInspectOutputSchema: ProtocolComposableSchema<PluginActionResultById['projects.inspect']> = ProjectDefinitionInspectOutputProtocolSchema;
 /** A setup hold and an accepted operation retain their distinct canonical arms. */
 export const ProtocolProjectComputeExecResultV1Schema: ProtocolComposableSchema<
     PluginActionResultById['projects.compute.exec'],

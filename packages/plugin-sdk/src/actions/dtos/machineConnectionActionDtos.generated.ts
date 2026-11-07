@@ -9,16 +9,22 @@ export type MachineConnectionActionInputById = {
         serverId: string;
         machineId: string;
         cwd?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             serverId: string;
             workspaceId: string;
             machineId: string;
             rootPath: string;
-        } | undefined;
+        };
         cols?: number | undefined;
         rows?: number | undefined;
-        initialCommand?: string | undefined;
-        launch?: {
+        launch?: undefined | {
+            kind: 'agent_login';
+            agentId: string;
+            launchId?: 'device_code' | 'primary' | undefined;
+        } | {
+            kind: 'happier_cli';
+            args: string[];
+        } | {
             kind: 'package_script';
             runTargetId: string;
         } | {
@@ -26,27 +32,25 @@ export type MachineConnectionActionInputById = {
             serviceId: string;
             expectedGeneration: string;
         } | {
-            kind: 'agent_login';
-            agentId: string;
-            launchId?: 'primary' | 'device_code' | undefined;
-        } | {
             kind: 'session_attach';
             sessionId: string;
         } | {
-            kind: 'happier_cli';
-            args: string[];
-        } | undefined;
+            kind: 'shell_command';
+            command: string;
+        };
+        initialCommand?: string | undefined;
         sessionId?: string | undefined;
     };
     readonly "machines.terminal.list": {
         serverId: string;
         machineId: string;
-        workspace?: {
+        workspace?: undefined | {
             serverId: string;
             workspaceId: string;
             machineId: string;
             rootPath: string;
-        } | undefined;
+        };
+        machineShell?: true | undefined;
     };
     readonly "machines.terminal.read": {
         terminalId: string;
@@ -60,35 +64,36 @@ export type MachineConnectionActionInputById = {
         maxFrames?: number | undefined;
         rendererId?: string | undefined;
         surfaceEpoch?: number | undefined;
+        holdForOutput?: boolean | undefined;
     };
     readonly "machines.terminal.write": {
         terminalId: string;
         event: {
-            t: 'text';
-            text: string;
+            t: 'ime';
+            phase: 'cancel' | 'commit' | 'start' | 'update';
+            text?: string | undefined;
         } | {
             t: 'key';
             key: string;
-            modifiers?: ('shift' | 'ctrl' | 'alt' | 'meta')[] | undefined;
+            modifiers?: ('alt' | 'ctrl' | 'meta' | 'shift')[] | undefined;
+        } | {
+            t: 'mouse';
+            kind: 'down' | 'move' | 'up' | 'wheel';
+            x: number;
+            y: number;
+            button?: number | undefined;
+            modifiers?: ('alt' | 'ctrl' | 'meta' | 'shift')[] | undefined;
         } | {
             t: 'paste';
             text: string;
             bracketed: boolean;
         } | {
-            t: 'ime';
-            phase: 'start' | 'update' | 'commit' | 'cancel';
-            text?: string | undefined;
-        } | {
-            t: 'mouse';
-            kind: 'down' | 'up' | 'move' | 'wheel';
-            x: number;
-            y: number;
-            button?: number | undefined;
-            modifiers?: ('shift' | 'ctrl' | 'alt' | 'meta')[] | undefined;
-        } | {
             t: 'resize';
             cols: number;
             rows: number;
+        } | {
+            t: 'text';
+            text: string;
         };
         serverId: string;
         machineId: string;
@@ -103,16 +108,22 @@ export type MachineConnectionActionInputById = {
         serverId: string;
         machineId: string;
         cwd?: string | undefined;
-        workspace?: {
+        workspace?: undefined | {
             serverId: string;
             workspaceId: string;
             machineId: string;
             rootPath: string;
-        } | undefined;
+        };
         cols?: number | undefined;
         rows?: number | undefined;
-        initialCommand?: string | undefined;
-        launch?: {
+        launch?: undefined | {
+            kind: 'agent_login';
+            agentId: string;
+            launchId?: 'device_code' | 'primary' | undefined;
+        } | {
+            kind: 'happier_cli';
+            args: string[];
+        } | {
             kind: 'package_script';
             runTargetId: string;
         } | {
@@ -120,26 +131,33 @@ export type MachineConnectionActionInputById = {
             serviceId: string;
             expectedGeneration: string;
         } | {
-            kind: 'agent_login';
-            agentId: string;
-            launchId?: 'primary' | 'device_code' | undefined;
-        } | {
             kind: 'session_attach';
             sessionId: string;
         } | {
-            kind: 'happier_cli';
-            args: string[];
-        } | undefined;
+            kind: 'shell_command';
+            command: string;
+        };
+        initialCommand?: string | undefined;
         sessionId?: string | undefined;
+    };
+    readonly "machines.capabilities.detect": {
+        machineId: string;
+        serverId?: string | undefined;
+    };
+    readonly "machines.runs.list": {
+        machineId: string;
+        serverId?: string | undefined;
     };
     readonly "machines.metadata.update": {
         patch: {
-            displayName?: string | null | undefined;
-            windowsRemoteSessionLaunchMode?: 'hidden' | 'windows_terminal' | 'console' | null | undefined;
+            displayName?: null | string | undefined;
+            windowsRemoteSessionLaunchMode?: 'console' | 'hidden' | 'windows_terminal' | null | undefined;
         };
         machineId: string;
         expectedVersion?: number | undefined;
         serverId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.daemon.stop": {
         machineId: string;
@@ -165,31 +183,76 @@ export type MachineConnectionActionInputById = {
         machineId: string;
         serverId?: string | undefined;
     };
-    readonly "machines.add.ssh.start": {
+    readonly "machines.add.local.start": ({
+        serverId: string;
+        purpose: 'relay_repair';
+    } | {
+        serverId: string;
+        reconsiderCli?: boolean | undefined;
+    }) & {
+        clientId?: string | undefined;
+    };
+    readonly "machines.add.local.cancel": {
+        taskId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
+    };
+    readonly "machines.add.ssh.start": ({
         serverId: string;
         host: string;
         username?: string | undefined;
         port?: number | undefined;
         authMode?: 'agent' | 'keyfile' | 'password' | undefined;
         identityFilePath?: string | undefined;
+        enrollmentIdentity?: undefined | {
+            kind: 'dedicatedDaemonUser';
+            username: 'happier';
+            serviceMode: 'user';
+            role: 'deployTarget' | 'server';
+            adminAccessAtCreation: 'ask' | 'none' | 'preauthorized';
+            administrator?: undefined | {
+                username: string;
+            };
+        } | {
+            kind: 'existingUser';
+            role: 'adopted' | 'personal';
+        } | {
+            kind: 'guestProcess';
+            role: 'sandbox';
+        };
     } | {
         serverId: string;
         savedHostId: string;
-        expectedHostRevision: number | 'absent';
+        expectedHostRevision: 'absent' | number;
+        enrollmentIdentity?: undefined | {
+            kind: 'dedicatedDaemonUser';
+            username: 'happier';
+            serviceMode: 'user';
+            role: 'deployTarget' | 'server';
+            adminAccessAtCreation: 'ask' | 'none' | 'preauthorized';
+            administrator?: undefined | {
+                username: string;
+            };
+        } | {
+            kind: 'existingUser';
+            role: 'adopted' | 'personal';
+        } | {
+            kind: 'guestProcess';
+            role: 'sandbox';
+        };
+    }) & {
+        clientId?: string | undefined;
     };
     readonly "machines.add.ssh.status": {
         taskId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.add.ssh.respond": {
         taskId: string;
         answer: {
-            kind: 'ssh.password';
-        } | {
-            kind: 'ssh.trustHost';
-            trusted: boolean;
-        } | {
-            kind: 'ssh.replaceHostKey';
-            trusted: boolean;
+            kind: 'administrator.establish';
+            promptId: string;
         } | {
             kind: 'auth.approveRemoteProvisioning';
             approved: boolean;
@@ -199,52 +262,88 @@ export type MachineConnectionActionInputById = {
         } | {
             kind: 'releaseChannel.switchDefaultForSetup';
             switchDefaultReleaseChannel: boolean;
+        } | {
+            kind: 'ssh.password';
+        } | {
+            kind: 'ssh.replaceHostKey';
+            trusted: boolean;
+        } | {
+            kind: 'ssh.trustHost';
+            trusted: boolean;
         };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "machines.add.ssh.cancel": {
         taskId?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "homes.reconnect": {
         serverId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "homes.connect": {
         address: string;
         displayName?: string | undefined;
         acceptInsecureHttp?: boolean | undefined;
         acceptCanonicalUrl?: boolean | undefined;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "machines.add.command": {
+    readonly "machines.add.command": ({
         method: 'another_computer';
         serverId: string;
-        os: 'macos' | 'linux' | 'windows';
+        os: 'linux' | 'macos' | 'windows';
     } | {
         method: 'ssh';
         serverId: string;
-        os: 'macos' | 'linux' | 'windows';
+        os: 'linux' | 'macos' | 'windows';
         host: string;
         username?: string | undefined;
         port?: number | undefined;
         authMode?: 'agent' | 'keyfile' | 'password' | undefined;
         identityFilePath?: string | undefined;
+        enrollmentIdentity?: undefined | {
+            kind: 'dedicatedDaemonUser';
+            username: 'happier';
+            serviceMode: 'user';
+            role: 'deployTarget' | 'server';
+            adminAccessAtCreation: 'ask' | 'none' | 'preauthorized';
+            administrator?: undefined | {
+                username: string;
+            };
+        } | {
+            kind: 'existingUser';
+            role: 'adopted' | 'personal';
+        } | {
+            kind: 'guestProcess';
+            role: 'sandbox';
+        };
+    }) & {
+        clientId?: string | undefined;
     };
     readonly "machines.pairing.create": {
         serverId: string;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "machines.managed.bootstrap.respond": {
+    readonly "machines.managed.bootstrap.respond": ({
         purpose: 'approve';
         prompt: {
             kind: 'auth.approveRemoteProvisioning';
             message: string;
         } | {
-            kind: 'ssh.trustHost' | 'ssh.replaceHostKey';
-            message: string;
-            host: string;
-            keyType: string | null;
-            fingerprint: string;
-            existingFingerprint: string | null;
-        } | {
             kind: 'daemon.replaceRemoteBackgroundServices';
             message: string;
+        } | {
+            kind: 'ssh.replaceHostKey' | 'ssh.trustHost';
+            message: string;
+            host: string;
+            keyType: null | string;
+            fingerprint: string;
+            existingFingerprint: null | string;
         };
         approved: boolean;
         serverId: string;
@@ -261,53 +360,72 @@ export type MachineConnectionActionInputById = {
         managedId: string;
         operationId: string;
         taskId: string;
+    }) & {
+        clientId?: string | undefined;
     };
 };
 export type MachineConnectionActionResultById = {
     readonly "machines.terminal.open": {
         [x: string]: unknown;
+        ok: false;
+        errorCode: 'agent_cli_missing' | 'agent_login_unsupported' | 'effect_in_progress' | 'service_admission_unavailable' | 'service_generation_changed' | 'service_unavailable' | 'terminal_busy' | 'terminal_cwd_denied' | 'terminal_disabled' | 'terminal_forbidden' | 'terminal_invalid_request' | 'terminal_not_found' | 'terminal_resize_unavailable' | 'terminal_spawn_failed' | 'terminal_unavailable';
+        error: string;
+        spawnFailure?: undefined | {
+            reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+            errno?: string | undefined;
+        };
+    } | {
+        [x: string]: unknown;
         ok: true;
         terminalId: string;
         reused: boolean;
-    } | {
-        [x: string]: unknown;
-        ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'service_generation_changed' | 'effect_in_progress' | 'service_unavailable' | 'service_admission_unavailable' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
-        error: string;
-        spawnFailure?: {
-            reason: 'too_many_open_files' | 'no_ptys' | 'process_limit' | 'out_of_memory' | 'other';
-            errno?: string | undefined;
-        } | undefined;
     };
-    readonly "machines.terminal.list": {
+    readonly "machines.terminal.list": null | {
+        ok: false;
+        errorCode: 'agent_cli_missing' | 'agent_login_unsupported' | 'effect_in_progress' | 'service_admission_unavailable' | 'service_generation_changed' | 'service_unavailable' | 'terminal_busy' | 'terminal_cwd_denied' | 'terminal_disabled' | 'terminal_forbidden' | 'terminal_invalid_request' | 'terminal_not_found' | 'terminal_resize_unavailable' | 'terminal_spawn_failed' | 'terminal_unavailable';
+        error: string;
+        spawnFailure?: undefined | {
+            reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+            errno?: string | undefined;
+        };
+    } | {
         ok: true;
         terminals: {
             terminalId: string;
             terminalKey: string;
             cwd: string;
             ended: boolean;
-            exit: {
-                exitCode: number | null;
-                signal: number | null;
-            } | null;
+            exit: null | {
+                exitCode: null | number;
+                signal: null | number;
+            };
             sessionId?: string | undefined;
-            terminalGuardStateV1?: {
+            terminalGuardStateV1?: undefined | {
                 v: 1;
                 kind: 'stopping';
                 rule: 'idle_terminals';
                 stopAt: number;
-            } | undefined;
+            };
         }[];
-    } | {
-        ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'service_generation_changed' | 'effect_in_progress' | 'service_unavailable' | 'service_admission_unavailable' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
-        error: string;
-        spawnFailure?: {
-            reason: 'too_many_open_files' | 'no_ptys' | 'process_limit' | 'out_of_memory' | 'other';
-            errno?: string | undefined;
-        } | undefined;
-    } | null;
+        machineShell?: undefined | {
+            [x: string]: unknown;
+            ok: false;
+            errorCode: 'agent_cli_missing' | 'agent_login_unsupported' | 'effect_in_progress' | 'service_admission_unavailable' | 'service_generation_changed' | 'service_unavailable' | 'terminal_busy' | 'terminal_cwd_denied' | 'terminal_disabled' | 'terminal_forbidden' | 'terminal_invalid_request' | 'terminal_not_found' | 'terminal_resize_unavailable' | 'terminal_spawn_failed' | 'terminal_unavailable';
+            error: string;
+            spawnFailure?: undefined | {
+                reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+                errno?: string | undefined;
+            };
+        } | {
+            ok: true;
+            cwd: string;
+        };
+    };
     readonly "machines.terminal.read": {
+        ok: false;
+        code: string;
+        message: string;
+    } | {
         ok: true;
         terminalId: string;
         frames: ({
@@ -319,11 +437,22 @@ export type MachineConnectionActionResultById = {
             encoding: 'base64';
             data: string;
         } | {
+            t: 'exit';
+            terminalId: string;
+            byteOffset: number;
+            exitCode: null | number;
+            signal: null | number;
+        } | {
             t: 'gap';
             terminalId: string;
             droppedBeforeByteOffset: number;
             nextAvailableByteOffset: number;
-            reason: 'ring_overflow' | 'consumer_too_slow' | 'session_restarted';
+            reason: 'consumer_too_slow' | 'ring_overflow' | 'session_restarted';
+        } | {
+            t: 'legacyOnly';
+            terminalId: string;
+            provider: 'python-relay' | 'unknown' | 'windows-conpty';
+            reason: string;
         } | {
             t: 'url';
             terminalId: string;
@@ -331,62 +460,177 @@ export type MachineConnectionActionResultById = {
             url: string;
             kind: 'auth' | 'generic';
             suggestOpen?: boolean | undefined;
-        } | {
-            t: 'exit';
-            terminalId: string;
-            byteOffset: number;
-            exitCode: number | null;
-            signal: number | null;
-        } | {
-            t: 'legacyOnly';
-            terminalId: string;
-            provider: 'unknown' | 'windows-conpty' | 'python-relay';
-            reason: string;
         })[];
         nextByteOffset: number;
         availableByteOffset: number;
         droppedBeforeByteOffset: number;
         done: boolean;
         nextControlCursor?: number | undefined;
-    } | {
-        ok: false;
-        code: string;
-        message: string;
+        holdForOutput?: true | undefined;
     };
     readonly "machines.terminal.write": {
-        ok: true;
-    } | {
         ok: false;
         code: string;
         message: string;
+    } | {
+        ok: true;
     };
     readonly "machines.terminal.close": {
         [x: string]: unknown;
         ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'service_generation_changed' | 'effect_in_progress' | 'service_unavailable' | 'service_admission_unavailable' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
+        errorCode: 'agent_cli_missing' | 'agent_login_unsupported' | 'effect_in_progress' | 'service_admission_unavailable' | 'service_generation_changed' | 'service_unavailable' | 'terminal_busy' | 'terminal_cwd_denied' | 'terminal_disabled' | 'terminal_forbidden' | 'terminal_invalid_request' | 'terminal_not_found' | 'terminal_resize_unavailable' | 'terminal_spawn_failed' | 'terminal_unavailable';
         error: string;
-        spawnFailure?: {
-            reason: 'too_many_open_files' | 'no_ptys' | 'process_limit' | 'out_of_memory' | 'other';
+        spawnFailure?: undefined | {
+            reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
             errno?: string | undefined;
-        } | undefined;
+        };
     } | {
         [x: string]: unknown;
         ok: true;
     };
     readonly "machines.terminal.restart": {
         [x: string]: unknown;
+        ok: false;
+        errorCode: 'agent_cli_missing' | 'agent_login_unsupported' | 'effect_in_progress' | 'service_admission_unavailable' | 'service_generation_changed' | 'service_unavailable' | 'terminal_busy' | 'terminal_cwd_denied' | 'terminal_disabled' | 'terminal_forbidden' | 'terminal_invalid_request' | 'terminal_not_found' | 'terminal_resize_unavailable' | 'terminal_spawn_failed' | 'terminal_unavailable';
+        error: string;
+        spawnFailure?: undefined | {
+            reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+            errno?: string | undefined;
+        };
+    } | {
+        [x: string]: unknown;
         ok: true;
         terminalId: string;
         reused: boolean;
+    };
+    readonly "machines.capabilities.detect": {
+        status: 'completed';
     } | {
+        status: 'failed';
+        reason: 'error' | 'not-supported' | 'server-switch-abort';
+        error?: undefined | {
+            name?: string | undefined;
+            rpcErrorCode?: string | undefined;
+            connectionPhase?: 'reachability-start' | 'reachability-wait' | 'socket-connect' | undefined;
+        };
+    };
+    readonly "machines.runs.list": {
         [x: string]: unknown;
-        ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'service_generation_changed' | 'effect_in_progress' | 'service_unavailable' | 'service_admission_unavailable' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
-        error: string;
-        spawnFailure?: {
-            reason: 'too_many_open_files' | 'no_ptys' | 'process_limit' | 'out_of_memory' | 'other';
-            errno?: string | undefined;
-        } | undefined;
+        runs: {
+            [x: string]: unknown;
+            status: 'cancelled' | 'failed' | 'running' | 'succeeded' | 'timeout';
+            startedAtMs: number;
+            updatedAtMs: number;
+            pid: number;
+            happySessionId: null | string;
+            runId: string;
+            callId: string;
+            sidechainId: string;
+            intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+            backendTarget: {
+                kind: 'backend';
+                backendId: string;
+            };
+            finishedAtMs?: number | undefined;
+            lastActivityAtMs?: number | undefined;
+            errorCode?: string | undefined;
+            resultSizeBytes?: number | undefined;
+            resolvedSelection?: undefined | {
+                source: 'explicit' | 'independent' | 'inherited' | 'retained';
+                modelSelection?: undefined | {
+                    agentTargetKey: string;
+                    providerConnectionId: null;
+                    modelId: string;
+                } | {
+                    agentTargetKey: string;
+                    providerConnectionId: string;
+                    modelId: string;
+                };
+                teamCredentialModel?: undefined | {
+                    kind: 'team_credential_provider_model';
+                    resourceId: string;
+                    teamId: string;
+                    expectedResourceRevision: number;
+                    agentTargetKey: string;
+                    modelId: string;
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                    nativeDelivery?: undefined | {
+                        managedId: string;
+                        controllerInstallationId: string;
+                        guestInstallationId: string;
+                        bindingKey: string;
+                        placeholderRef: string;
+                        sourceRevision: string;
+                        providerTicket: string;
+                    };
+                };
+                modelId?: string | undefined;
+                connectedServices?: null | undefined | {
+                    v: 2;
+                    bindingsByServiceId: Record<string, {
+                        source: 'connected';
+                        selection: 'group';
+                        groupId: string;
+                        profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
+                    } | {
+                        source: 'connected';
+                        selection: 'profile';
+                        profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'direct';
+                        disclosedMember: {
+                            service: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            accountId: string;
+                        };
+                    }>;
+                };
+            };
+            permissionMode?: string | undefined;
+            approvalProfileId?: null | string | undefined;
+            runClass?: 'bounded' | 'long_lived' | undefined;
+            ioMode?: 'request_response' | 'streaming' | undefined;
+            retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
+            notifyParentOnCompletion?: boolean | undefined;
+            processCommandHash?: string | undefined;
+            launchOrigin?: undefined | {
+                kind: 'discussion';
+                serverId: string;
+                discussionId: string;
+                messageIds: string[];
+                draftCorrelationId?: string | undefined;
+            } | {
+                kind: 'external';
+                source?: 'action' | 'cli' | 'mcp' | undefined;
+            } | {
+                kind: 'session';
+                sessionId: string;
+                draftCorrelationId?: string | undefined;
+            };
+            requestedConfiguration?: undefined | {
+                modelId?: string | undefined;
+                reasoningEffort?: string | undefined;
+            };
+            process?: undefined | {
+                [x: string]: unknown;
+                pid: number;
+                name?: string | undefined;
+                cmd?: string | undefined;
+                cpu?: number | undefined;
+                memory?: number | undefined;
+            };
+        }[];
     };
     readonly "machines.metadata.update": {
         version: number;
@@ -395,10 +639,6 @@ export type MachineConnectionActionResultById = {
         message: string;
     };
     readonly "machines.remove": {
-        ok: true;
-        machineAlreadyRevoked: boolean;
-        providerCleanup: 'complete' | 'not_needed';
-    } | {
         ok: false;
         status: number;
         error: string;
@@ -409,66 +649,80 @@ export type MachineConnectionActionResultById = {
         ok: false;
         status: number;
         error: string;
+    } | {
+        ok: true;
+        machineAlreadyRevoked: boolean;
+        providerCleanup: 'complete' | 'not_needed';
     };
     readonly "machines.capabilities.install": {
+        supported: false;
+        reason: 'error' | 'not-supported';
+        requestDisposition?: 'notSent' | 'outcomeUnknown' | undefined;
+    } | {
         supported: true;
         response: {
-            ok: true;
-            result?: JsonValue | undefined;
-        } | {
             ok: false;
             error: {
                 message: string;
                 code?: string | undefined;
             };
             logPath?: string | undefined;
+        } | {
+            ok: true;
+            result?: JsonValue | undefined;
         };
-    } | {
-        supported: false;
-        reason: 'error' | 'not-supported';
-        requestDisposition?: 'notSent' | 'outcomeUnknown' | undefined;
     };
     readonly "machines.replacement.set": {
-        ok: true;
-    } | {
         ok: false;
         status: number;
         error: string;
+    } | {
+        ok: true;
     };
     readonly "machines.replacement.clear": {
-        ok: true;
-    } | {
         ok: false;
         status: number;
         error: string;
+    } | {
+        ok: true;
+    };
+    readonly "machines.add.local.start": {
+        taskId: string;
+    };
+    readonly "machines.add.local.cancel": {
+        pendingCanceled: true;
+    } | {
+        taskId: string;
     };
     readonly "machines.add.ssh.start": {
         taskId: string;
     };
     readonly "machines.add.ssh.status": {
         taskId: string;
-        status: 'running' | 'canceling' | 'succeeded' | 'failed' | 'canceled';
-        currentStepId: string | null;
+        status: 'canceled' | 'canceling' | 'failed' | 'running' | 'succeeded';
+        currentStepId: null | string;
         awaitingInput: boolean;
-        prompt: {
+        prompt: null | {
             kind: string;
             message: string;
             requiresPresentUser: boolean;
             fingerprint?: string | undefined;
-            existingFingerprint?: string | null | undefined;
+            existingFingerprint?: null | string | undefined;
             target?: string | undefined;
-            publicKey?: string | null | undefined;
-        } | null;
-        machineId: string | null;
-        errorCode: string | null;
+            publicKey?: null | string | undefined;
+            promptId?: string | undefined;
+            administratorUsername?: string | undefined;
+        };
+        machineId: null | string;
+        errorCode: null | string;
     };
     readonly "machines.add.ssh.respond": {
         taskId: string;
     };
     readonly "machines.add.ssh.cancel": {
-        taskId: string;
-    } | {
         pendingCanceled: true;
+    } | {
+        taskId: string;
     };
     readonly "homes.reconnect": {
         serverId: string;
@@ -479,9 +733,9 @@ export type MachineConnectionActionResultById = {
         serverUrl: string;
         name: string;
     } | {
-        kind: 'invalid_address';
-    } | {
         kind: 'declined';
+    } | {
+        kind: 'invalid_address';
     } | {
         kind: 'mixed_content';
     } | {

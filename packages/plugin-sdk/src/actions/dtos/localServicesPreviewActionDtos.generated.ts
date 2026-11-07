@@ -39,16 +39,16 @@ export type LocalServicesPreviewActionResultById = {
                 previewId: string;
                 machineId: string;
                 owner: {
-                    kind: 'user';
-                    id: string;
-                } | {
-                    kind: 'session';
+                    kind: 'agent';
                     id: string;
                 } | {
                     kind: 'plugin';
                     id: string;
                 } | {
-                    kind: 'agent';
+                    kind: 'session';
+                    id: string;
+                } | {
+                    kind: 'user';
                     id: string;
                 };
                 target: {
@@ -66,16 +66,16 @@ export type LocalServicesPreviewActionResultById = {
                     label?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
                     diagnostics?: Record<string, unknown> | undefined;
                 };
                 originMode: 'host';
                 sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
+                serviceTarget?: undefined | {
                     kind: 'managed_service';
-                    managedServiceId: string;
+                    machineId: string;
                     cwd: string;
+                    managedServiceId: string;
                     declaration: {
                         workspaceRefId: string;
                         selection: {
@@ -85,7 +85,7 @@ export type LocalServicesPreviewActionResultById = {
                             kind: 'native';
                             source: {
                                 kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                 file: string;
                                 target: string;
                             } | {
@@ -100,32 +100,32 @@ export type LocalServicesPreviewActionResultById = {
                         };
                     };
                     workspaceId?: string | undefined;
-                } | undefined;
-                policy?: {
-                    allowedMethods: ('GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS')[];
+                };
+                policy?: undefined | {
+                    allowedMethods: ('DELETE' | 'GET' | 'HEAD' | 'OPTIONS' | 'PATCH' | 'POST' | 'PUT')[];
                     cookiePolicy: 'drop' | 'isolate' | 'rewrite';
-                    compressionPolicy: 'identity' | 'decode_reencode';
+                    compressionPolicy: 'decode_reencode' | 'identity';
                     redirectPolicy: 'preserve_host_origin';
                     maxRequestBodyBytes: number;
                     maxResponseBodyBytes: number;
-                } | undefined;
-                browserTarget?: {
+                };
+                browserTarget?: undefined | {
                     targetId: string;
                     kind: 'localServicePreview';
                     machineId: string;
-                    display?: {
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sessionId?: string | undefined;
-                    serviceTarget?: {
-                        machineId: string;
+                    serviceTarget?: undefined | {
                         kind: 'managed_service';
-                        managedServiceId: string;
+                        machineId: string;
                         cwd: string;
+                        managedServiceId: string;
                         declaration: {
                             workspaceRefId: string;
                             selection: {
@@ -135,7 +135,7 @@ export type LocalServicesPreviewActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -150,28 +150,28 @@ export type LocalServicesPreviewActionResultById = {
                             };
                         };
                         workspaceId?: string | undefined;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
-            accessUrl: string | null;
-            expiresAt: number | null;
+            accessUrl: null | string;
+            expiresAt: null | number;
             diagnostics: {
                 v: 1;
-                code: 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'expired' | 'not_yet_valid' | 'revoked' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'method_not_allowed' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
+                code: 'binding_mismatch' | 'cookie_isolated' | 'cookie_stripped' | 'credentials_stripped' | 'dns_tls_not_ready' | 'expired' | 'host_origin_unavailable' | 'https_required' | 'invalid_preview_resource' | 'invalid_public_base_url' | 'invalid_upgrade_request' | 'method_not_allowed' | 'not_yet_valid' | 'path_mode_cookie_semantics_unsupported' | 'path_mode_degraded' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'preview_loop_detected' | 'preview_not_found' | 'preview_public_base_url_missing' | 'preview_registration_failed' | 'preview_token_missing' | 'preview_token_secret_missing' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'revoked' | 'service_worker_unavailable_in_path_mode' | 'token_mismatch' | 'upstream_header_stripped' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'web_socket_unavailable';
                 severity: 'error' | 'info' | 'warning';
-                scope: 'privatePreview' | 'publicPreview' | 'previewProxy';
+                scope: 'previewProxy' | 'privatePreview' | 'publicPreview';
                 details: Record<string, unknown>;
                 previewId?: string | undefined;
                 publicExposureId?: string | undefined;
                 emittedAtMs?: number | undefined;
             }[];
             accessUnavailableReasonCode?: 'preview_private_route_unavailable' | undefined;
-            nativeDirect?: {
+            nativeDirect?: undefined | {
                 v: 1;
                 kind: 'iroh_preview';
                 previewId: string;
                 machineId: string;
-            } | undefined;
+            };
         };
         snapshot: {
             v: 1;
@@ -182,16 +182,16 @@ export type LocalServicesPreviewActionResultById = {
                 previewId: string;
                 machineId: string;
                 owner: {
-                    kind: 'user';
-                    id: string;
-                } | {
-                    kind: 'session';
+                    kind: 'agent';
                     id: string;
                 } | {
                     kind: 'plugin';
                     id: string;
                 } | {
-                    kind: 'agent';
+                    kind: 'session';
+                    id: string;
+                } | {
+                    kind: 'user';
                     id: string;
                 };
                 target: {
@@ -209,16 +209,16 @@ export type LocalServicesPreviewActionResultById = {
                     label?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
                     diagnostics?: Record<string, unknown> | undefined;
                 };
                 originMode: 'host';
                 sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
+                serviceTarget?: undefined | {
                     kind: 'managed_service';
-                    managedServiceId: string;
+                    machineId: string;
                     cwd: string;
+                    managedServiceId: string;
                     declaration: {
                         workspaceRefId: string;
                         selection: {
@@ -228,7 +228,7 @@ export type LocalServicesPreviewActionResultById = {
                             kind: 'native';
                             source: {
                                 kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                 file: string;
                                 target: string;
                             } | {
@@ -243,32 +243,32 @@ export type LocalServicesPreviewActionResultById = {
                         };
                     };
                     workspaceId?: string | undefined;
-                } | undefined;
-                policy?: {
-                    allowedMethods: ('GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS')[];
+                };
+                policy?: undefined | {
+                    allowedMethods: ('DELETE' | 'GET' | 'HEAD' | 'OPTIONS' | 'PATCH' | 'POST' | 'PUT')[];
                     cookiePolicy: 'drop' | 'isolate' | 'rewrite';
-                    compressionPolicy: 'identity' | 'decode_reencode';
+                    compressionPolicy: 'decode_reencode' | 'identity';
                     redirectPolicy: 'preserve_host_origin';
                     maxRequestBodyBytes: number;
                     maxResponseBodyBytes: number;
-                } | undefined;
-                browserTarget?: {
+                };
+                browserTarget?: undefined | {
                     targetId: string;
                     kind: 'localServicePreview';
                     machineId: string;
-                    display?: {
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sessionId?: string | undefined;
-                    serviceTarget?: {
-                        machineId: string;
+                    serviceTarget?: undefined | {
                         kind: 'managed_service';
-                        managedServiceId: string;
+                        machineId: string;
                         cwd: string;
+                        managedServiceId: string;
                         declaration: {
                             workspaceRefId: string;
                             selection: {
@@ -278,7 +278,7 @@ export type LocalServicesPreviewActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -293,26 +293,26 @@ export type LocalServicesPreviewActionResultById = {
                             };
                         };
                         workspaceId?: string | undefined;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             }[];
             diagnostics: Record<string, unknown>[];
-            previews?: {
+            previews?: undefined | {
                 previewId: string;
                 resource: {
                     previewId: string;
                     machineId: string;
                     owner: {
-                        kind: 'user';
-                        id: string;
-                    } | {
-                        kind: 'session';
+                        kind: 'agent';
                         id: string;
                     } | {
                         kind: 'plugin';
                         id: string;
                     } | {
-                        kind: 'agent';
+                        kind: 'session';
+                        id: string;
+                    } | {
+                        kind: 'user';
                         id: string;
                     };
                     target: {
@@ -330,16 +330,16 @@ export type LocalServicesPreviewActionResultById = {
                         label?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
                         diagnostics?: Record<string, unknown> | undefined;
                     };
                     originMode: 'host';
                     sessionId?: string | undefined;
-                    serviceTarget?: {
-                        machineId: string;
+                    serviceTarget?: undefined | {
                         kind: 'managed_service';
-                        managedServiceId: string;
+                        machineId: string;
                         cwd: string;
+                        managedServiceId: string;
                         declaration: {
                             workspaceRefId: string;
                             selection: {
@@ -349,7 +349,7 @@ export type LocalServicesPreviewActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -364,32 +364,32 @@ export type LocalServicesPreviewActionResultById = {
                             };
                         };
                         workspaceId?: string | undefined;
-                    } | undefined;
-                    policy?: {
-                        allowedMethods: ('GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS')[];
+                    };
+                    policy?: undefined | {
+                        allowedMethods: ('DELETE' | 'GET' | 'HEAD' | 'OPTIONS' | 'PATCH' | 'POST' | 'PUT')[];
                         cookiePolicy: 'drop' | 'isolate' | 'rewrite';
-                        compressionPolicy: 'identity' | 'decode_reencode';
+                        compressionPolicy: 'decode_reencode' | 'identity';
                         redirectPolicy: 'preserve_host_origin';
                         maxRequestBodyBytes: number;
                         maxResponseBodyBytes: number;
-                    } | undefined;
-                    browserTarget?: {
+                    };
+                    browserTarget?: undefined | {
                         targetId: string;
                         kind: 'localServicePreview';
                         machineId: string;
-                        display?: {
+                        display?: undefined | {
                             title: string;
                             addressLabel?: string | undefined;
                             folderLabel?: string | undefined;
                             iconToken?: string | undefined;
-                            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                        } | undefined;
+                            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                        };
                         sessionId?: string | undefined;
-                        serviceTarget?: {
-                            machineId: string;
+                        serviceTarget?: undefined | {
                             kind: 'managed_service';
-                            managedServiceId: string;
+                            machineId: string;
                             cwd: string;
+                            managedServiceId: string;
                             declaration: {
                                 workspaceRefId: string;
                                 selection: {
@@ -399,7 +399,7 @@ export type LocalServicesPreviewActionResultById = {
                                     kind: 'native';
                                     source: {
                                         kind: 'native';
-                                        tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                         file: string;
                                         target: string;
                                     } | {
@@ -414,29 +414,29 @@ export type LocalServicesPreviewActionResultById = {
                                 };
                             };
                             workspaceId?: string | undefined;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 };
-                accessUrl: string | null;
-                expiresAt: number | null;
+                accessUrl: null | string;
+                expiresAt: null | number;
                 diagnostics: {
                     v: 1;
-                    code: 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'expired' | 'not_yet_valid' | 'revoked' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'method_not_allowed' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
+                    code: 'binding_mismatch' | 'cookie_isolated' | 'cookie_stripped' | 'credentials_stripped' | 'dns_tls_not_ready' | 'expired' | 'host_origin_unavailable' | 'https_required' | 'invalid_preview_resource' | 'invalid_public_base_url' | 'invalid_upgrade_request' | 'method_not_allowed' | 'not_yet_valid' | 'path_mode_cookie_semantics_unsupported' | 'path_mode_degraded' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'preview_loop_detected' | 'preview_not_found' | 'preview_public_base_url_missing' | 'preview_registration_failed' | 'preview_token_missing' | 'preview_token_secret_missing' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'revoked' | 'service_worker_unavailable_in_path_mode' | 'token_mismatch' | 'upstream_header_stripped' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'web_socket_unavailable';
                     severity: 'error' | 'info' | 'warning';
-                    scope: 'privatePreview' | 'publicPreview' | 'previewProxy';
+                    scope: 'previewProxy' | 'privatePreview' | 'publicPreview';
                     details: Record<string, unknown>;
                     previewId?: string | undefined;
                     publicExposureId?: string | undefined;
                     emittedAtMs?: number | undefined;
                 }[];
                 accessUnavailableReasonCode?: 'preview_private_route_unavailable' | undefined;
-                nativeDirect?: {
+                nativeDirect?: undefined | {
                     v: 1;
                     kind: 'iroh_preview';
                     previewId: string;
                     machineId: string;
-                } | undefined;
-            }[] | undefined;
+                };
+            }[];
         };
     };
     readonly "localServices.preview.status": {
@@ -448,16 +448,16 @@ export type LocalServicesPreviewActionResultById = {
             previewId: string;
             machineId: string;
             owner: {
-                kind: 'user';
-                id: string;
-            } | {
-                kind: 'session';
+                kind: 'agent';
                 id: string;
             } | {
                 kind: 'plugin';
                 id: string;
             } | {
-                kind: 'agent';
+                kind: 'session';
+                id: string;
+            } | {
+                kind: 'user';
                 id: string;
             };
             target: {
@@ -475,16 +475,16 @@ export type LocalServicesPreviewActionResultById = {
                 label?: string | undefined;
                 folderLabel?: string | undefined;
                 iconToken?: string | undefined;
-                tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
+                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
                 diagnostics?: Record<string, unknown> | undefined;
             };
             originMode: 'host';
             sessionId?: string | undefined;
-            serviceTarget?: {
-                machineId: string;
+            serviceTarget?: undefined | {
                 kind: 'managed_service';
-                managedServiceId: string;
+                machineId: string;
                 cwd: string;
+                managedServiceId: string;
                 declaration: {
                     workspaceRefId: string;
                     selection: {
@@ -494,7 +494,7 @@ export type LocalServicesPreviewActionResultById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -509,32 +509,32 @@ export type LocalServicesPreviewActionResultById = {
                     };
                 };
                 workspaceId?: string | undefined;
-            } | undefined;
-            policy?: {
-                allowedMethods: ('GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS')[];
+            };
+            policy?: undefined | {
+                allowedMethods: ('DELETE' | 'GET' | 'HEAD' | 'OPTIONS' | 'PATCH' | 'POST' | 'PUT')[];
                 cookiePolicy: 'drop' | 'isolate' | 'rewrite';
-                compressionPolicy: 'identity' | 'decode_reencode';
+                compressionPolicy: 'decode_reencode' | 'identity';
                 redirectPolicy: 'preserve_host_origin';
                 maxRequestBodyBytes: number;
                 maxResponseBodyBytes: number;
-            } | undefined;
-            browserTarget?: {
+            };
+            browserTarget?: undefined | {
                 targetId: string;
                 kind: 'localServicePreview';
                 machineId: string;
-                display?: {
+                display?: undefined | {
                     title: string;
                     addressLabel?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                } | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                };
                 sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
+                serviceTarget?: undefined | {
                     kind: 'managed_service';
-                    managedServiceId: string;
+                    machineId: string;
                     cwd: string;
+                    managedServiceId: string;
                     declaration: {
                         workspaceRefId: string;
                         selection: {
@@ -544,7 +544,7 @@ export type LocalServicesPreviewActionResultById = {
                             kind: 'native';
                             source: {
                                 kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                 file: string;
                                 target: string;
                             } | {
@@ -559,26 +559,26 @@ export type LocalServicesPreviewActionResultById = {
                         };
                     };
                     workspaceId?: string | undefined;
-                } | undefined;
-            } | undefined;
+                };
+            };
         }[];
         diagnostics: Record<string, unknown>[];
-        previews?: {
+        previews?: undefined | {
             previewId: string;
             resource: {
                 previewId: string;
                 machineId: string;
                 owner: {
-                    kind: 'user';
-                    id: string;
-                } | {
-                    kind: 'session';
+                    kind: 'agent';
                     id: string;
                 } | {
                     kind: 'plugin';
                     id: string;
                 } | {
-                    kind: 'agent';
+                    kind: 'session';
+                    id: string;
+                } | {
+                    kind: 'user';
                     id: string;
                 };
                 target: {
@@ -596,16 +596,16 @@ export type LocalServicesPreviewActionResultById = {
                     label?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
                     diagnostics?: Record<string, unknown> | undefined;
                 };
                 originMode: 'host';
                 sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
+                serviceTarget?: undefined | {
                     kind: 'managed_service';
-                    managedServiceId: string;
+                    machineId: string;
                     cwd: string;
+                    managedServiceId: string;
                     declaration: {
                         workspaceRefId: string;
                         selection: {
@@ -615,7 +615,7 @@ export type LocalServicesPreviewActionResultById = {
                             kind: 'native';
                             source: {
                                 kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                 file: string;
                                 target: string;
                             } | {
@@ -630,32 +630,32 @@ export type LocalServicesPreviewActionResultById = {
                         };
                     };
                     workspaceId?: string | undefined;
-                } | undefined;
-                policy?: {
-                    allowedMethods: ('GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS')[];
+                };
+                policy?: undefined | {
+                    allowedMethods: ('DELETE' | 'GET' | 'HEAD' | 'OPTIONS' | 'PATCH' | 'POST' | 'PUT')[];
                     cookiePolicy: 'drop' | 'isolate' | 'rewrite';
-                    compressionPolicy: 'identity' | 'decode_reencode';
+                    compressionPolicy: 'decode_reencode' | 'identity';
                     redirectPolicy: 'preserve_host_origin';
                     maxRequestBodyBytes: number;
                     maxResponseBodyBytes: number;
-                } | undefined;
-                browserTarget?: {
+                };
+                browserTarget?: undefined | {
                     targetId: string;
                     kind: 'localServicePreview';
                     machineId: string;
-                    display?: {
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sessionId?: string | undefined;
-                    serviceTarget?: {
-                        machineId: string;
+                    serviceTarget?: undefined | {
                         kind: 'managed_service';
-                        managedServiceId: string;
+                        machineId: string;
                         cwd: string;
+                        managedServiceId: string;
                         declaration: {
                             workspaceRefId: string;
                             selection: {
@@ -665,7 +665,7 @@ export type LocalServicesPreviewActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -680,29 +680,29 @@ export type LocalServicesPreviewActionResultById = {
                             };
                         };
                         workspaceId?: string | undefined;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
-            accessUrl: string | null;
-            expiresAt: number | null;
+            accessUrl: null | string;
+            expiresAt: null | number;
             diagnostics: {
                 v: 1;
-                code: 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'expired' | 'not_yet_valid' | 'revoked' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'method_not_allowed' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
+                code: 'binding_mismatch' | 'cookie_isolated' | 'cookie_stripped' | 'credentials_stripped' | 'dns_tls_not_ready' | 'expired' | 'host_origin_unavailable' | 'https_required' | 'invalid_preview_resource' | 'invalid_public_base_url' | 'invalid_upgrade_request' | 'method_not_allowed' | 'not_yet_valid' | 'path_mode_cookie_semantics_unsupported' | 'path_mode_degraded' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'preview_loop_detected' | 'preview_not_found' | 'preview_public_base_url_missing' | 'preview_registration_failed' | 'preview_token_missing' | 'preview_token_secret_missing' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'revoked' | 'service_worker_unavailable_in_path_mode' | 'token_mismatch' | 'upstream_header_stripped' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'web_socket_unavailable';
                 severity: 'error' | 'info' | 'warning';
-                scope: 'privatePreview' | 'publicPreview' | 'previewProxy';
+                scope: 'previewProxy' | 'privatePreview' | 'publicPreview';
                 details: Record<string, unknown>;
                 previewId?: string | undefined;
                 publicExposureId?: string | undefined;
                 emittedAtMs?: number | undefined;
             }[];
             accessUnavailableReasonCode?: 'preview_private_route_unavailable' | undefined;
-            nativeDirect?: {
+            nativeDirect?: undefined | {
                 v: 1;
                 kind: 'iroh_preview';
                 previewId: string;
                 machineId: string;
-            } | undefined;
-        }[] | undefined;
+            };
+        }[];
     };
     readonly "localServices.preview.revoke": {
         protocolVersion: 1;
@@ -717,16 +717,16 @@ export type LocalServicesPreviewActionResultById = {
                 previewId: string;
                 machineId: string;
                 owner: {
-                    kind: 'user';
-                    id: string;
-                } | {
-                    kind: 'session';
+                    kind: 'agent';
                     id: string;
                 } | {
                     kind: 'plugin';
                     id: string;
                 } | {
-                    kind: 'agent';
+                    kind: 'session';
+                    id: string;
+                } | {
+                    kind: 'user';
                     id: string;
                 };
                 target: {
@@ -744,16 +744,16 @@ export type LocalServicesPreviewActionResultById = {
                     label?: string | undefined;
                     folderLabel?: string | undefined;
                     iconToken?: string | undefined;
-                    tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
+                    tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
                     diagnostics?: Record<string, unknown> | undefined;
                 };
                 originMode: 'host';
                 sessionId?: string | undefined;
-                serviceTarget?: {
-                    machineId: string;
+                serviceTarget?: undefined | {
                     kind: 'managed_service';
-                    managedServiceId: string;
+                    machineId: string;
                     cwd: string;
+                    managedServiceId: string;
                     declaration: {
                         workspaceRefId: string;
                         selection: {
@@ -763,7 +763,7 @@ export type LocalServicesPreviewActionResultById = {
                             kind: 'native';
                             source: {
                                 kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                 file: string;
                                 target: string;
                             } | {
@@ -778,32 +778,32 @@ export type LocalServicesPreviewActionResultById = {
                         };
                     };
                     workspaceId?: string | undefined;
-                } | undefined;
-                policy?: {
-                    allowedMethods: ('GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS')[];
+                };
+                policy?: undefined | {
+                    allowedMethods: ('DELETE' | 'GET' | 'HEAD' | 'OPTIONS' | 'PATCH' | 'POST' | 'PUT')[];
                     cookiePolicy: 'drop' | 'isolate' | 'rewrite';
-                    compressionPolicy: 'identity' | 'decode_reencode';
+                    compressionPolicy: 'decode_reencode' | 'identity';
                     redirectPolicy: 'preserve_host_origin';
                     maxRequestBodyBytes: number;
                     maxResponseBodyBytes: number;
-                } | undefined;
-                browserTarget?: {
+                };
+                browserTarget?: undefined | {
                     targetId: string;
                     kind: 'localServicePreview';
                     machineId: string;
-                    display?: {
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sessionId?: string | undefined;
-                    serviceTarget?: {
-                        machineId: string;
+                    serviceTarget?: undefined | {
                         kind: 'managed_service';
-                        managedServiceId: string;
+                        machineId: string;
                         cwd: string;
+                        managedServiceId: string;
                         declaration: {
                             workspaceRefId: string;
                             selection: {
@@ -813,7 +813,7 @@ export type LocalServicesPreviewActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -828,26 +828,26 @@ export type LocalServicesPreviewActionResultById = {
                             };
                         };
                         workspaceId?: string | undefined;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             }[];
             diagnostics: Record<string, unknown>[];
-            previews?: {
+            previews?: undefined | {
                 previewId: string;
                 resource: {
                     previewId: string;
                     machineId: string;
                     owner: {
-                        kind: 'user';
-                        id: string;
-                    } | {
-                        kind: 'session';
+                        kind: 'agent';
                         id: string;
                     } | {
                         kind: 'plugin';
                         id: string;
                     } | {
-                        kind: 'agent';
+                        kind: 'session';
+                        id: string;
+                    } | {
+                        kind: 'user';
                         id: string;
                     };
                     target: {
@@ -865,16 +865,16 @@ export type LocalServicesPreviewActionResultById = {
                         label?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
                         diagnostics?: Record<string, unknown> | undefined;
                     };
                     originMode: 'host';
                     sessionId?: string | undefined;
-                    serviceTarget?: {
-                        machineId: string;
+                    serviceTarget?: undefined | {
                         kind: 'managed_service';
-                        managedServiceId: string;
+                        machineId: string;
                         cwd: string;
+                        managedServiceId: string;
                         declaration: {
                             workspaceRefId: string;
                             selection: {
@@ -884,7 +884,7 @@ export type LocalServicesPreviewActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -899,32 +899,32 @@ export type LocalServicesPreviewActionResultById = {
                             };
                         };
                         workspaceId?: string | undefined;
-                    } | undefined;
-                    policy?: {
-                        allowedMethods: ('GET' | 'HEAD' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'OPTIONS')[];
+                    };
+                    policy?: undefined | {
+                        allowedMethods: ('DELETE' | 'GET' | 'HEAD' | 'OPTIONS' | 'PATCH' | 'POST' | 'PUT')[];
                         cookiePolicy: 'drop' | 'isolate' | 'rewrite';
-                        compressionPolicy: 'identity' | 'decode_reencode';
+                        compressionPolicy: 'decode_reencode' | 'identity';
                         redirectPolicy: 'preserve_host_origin';
                         maxRequestBodyBytes: number;
                         maxResponseBodyBytes: number;
-                    } | undefined;
-                    browserTarget?: {
+                    };
+                    browserTarget?: undefined | {
                         targetId: string;
                         kind: 'localServicePreview';
                         machineId: string;
-                        display?: {
+                        display?: undefined | {
                             title: string;
                             addressLabel?: string | undefined;
                             folderLabel?: string | undefined;
                             iconToken?: string | undefined;
-                            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-                        } | undefined;
+                            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                        };
                         sessionId?: string | undefined;
-                        serviceTarget?: {
-                            machineId: string;
+                        serviceTarget?: undefined | {
                             kind: 'managed_service';
-                            managedServiceId: string;
+                            machineId: string;
                             cwd: string;
+                            managedServiceId: string;
                             declaration: {
                                 workspaceRefId: string;
                                 selection: {
@@ -934,7 +934,7 @@ export type LocalServicesPreviewActionResultById = {
                                     kind: 'native';
                                     source: {
                                         kind: 'native';
-                                        tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                         file: string;
                                         target: string;
                                     } | {
@@ -949,29 +949,29 @@ export type LocalServicesPreviewActionResultById = {
                                 };
                             };
                             workspaceId?: string | undefined;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                 };
-                accessUrl: string | null;
-                expiresAt: number | null;
+                accessUrl: null | string;
+                expiresAt: null | number;
                 diagnostics: {
                     v: 1;
-                    code: 'invalid_preview_resource' | 'preview_registration_failed' | 'preview_token_secret_missing' | 'preview_public_base_url_missing' | 'preview_not_found' | 'preview_token_missing' | 'token_mismatch' | 'binding_mismatch' | 'expired' | 'not_yet_valid' | 'revoked' | 'host_origin_unavailable' | 'https_required' | 'invalid_public_base_url' | 'path_mode_degraded' | 'path_mode_cookie_semantics_unsupported' | 'service_worker_unavailable_in_path_mode' | 'cookie_isolated' | 'cookie_stripped' | 'upstream_header_stripped' | 'credentials_stripped' | 'method_not_allowed' | 'preview_loop_detected' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'invalid_upgrade_request' | 'web_socket_unavailable' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'dns_tls_not_ready' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked';
+                    code: 'binding_mismatch' | 'cookie_isolated' | 'cookie_stripped' | 'credentials_stripped' | 'dns_tls_not_ready' | 'expired' | 'host_origin_unavailable' | 'https_required' | 'invalid_preview_resource' | 'invalid_public_base_url' | 'invalid_upgrade_request' | 'method_not_allowed' | 'not_yet_valid' | 'path_mode_cookie_semantics_unsupported' | 'path_mode_degraded' | 'pms_observability_unavailable' | 'pms_relay_unavailable' | 'preview_loop_detected' | 'preview_not_found' | 'preview_public_base_url_missing' | 'preview_registration_failed' | 'preview_token_missing' | 'preview_token_secret_missing' | 'public_policy_denied' | 'public_preview_expired' | 'public_preview_rate_limited' | 'public_preview_revoked' | 'request_body_too_large' | 'response_body_too_large' | 'response_header_too_large' | 'revoked' | 'service_worker_unavailable_in_path_mode' | 'token_mismatch' | 'upstream_header_stripped' | 'upstream_response_invalid' | 'upstream_stream_failed' | 'web_socket_unavailable';
                     severity: 'error' | 'info' | 'warning';
-                    scope: 'privatePreview' | 'publicPreview' | 'previewProxy';
+                    scope: 'previewProxy' | 'privatePreview' | 'publicPreview';
                     details: Record<string, unknown>;
                     previewId?: string | undefined;
                     publicExposureId?: string | undefined;
                     emittedAtMs?: number | undefined;
                 }[];
                 accessUnavailableReasonCode?: 'preview_private_route_unavailable' | undefined;
-                nativeDirect?: {
+                nativeDirect?: undefined | {
                     v: 1;
                     kind: 'iroh_preview';
                     previewId: string;
                     machineId: string;
-                } | undefined;
-            }[] | undefined;
+                };
+            }[];
         };
     };
 };

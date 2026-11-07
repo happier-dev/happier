@@ -12,19 +12,19 @@ export type MachineRebootActionInputById = {
 };
 export type MachineRebootActionResultById = {
     readonly "machines.reboot": {
-        kind: 'blocked';
-        reasons: ('input' | 'session' | 'finite' | 'terminal' | 'service' | 'transfer' | 'handoff' | 'sync' | 'setup' | 'execution_run' | 'workflow_run' | 'agents' | 'attention' | 'coverage_unknown')[];
-    } | {
         kind: 'accepted';
         operation: {
             operationId: string;
         };
         bootedAt: number;
     } | {
+        kind: 'blocked';
+        reasons: ('agents' | 'attention' | 'coverage_unknown' | 'execution_run' | 'finite' | 'handoff' | 'input' | 'service' | 'session' | 'setup' | 'sync' | 'terminal' | 'transfer' | 'workflow_run')[];
+    } | {
         kind: 'failed';
-        reasonCode: 'denied' | 'mode_none' | 'not_preauthorized' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
+        reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
     } | {
         kind: 'unavailable';
-        reason: 'required_fact_unavailable' | 'needs_attendance' | 'admission_unavailable' | 'daemon_draining' | 'daemon_shutting_down';
+        reason: 'admission_unavailable' | 'daemon_draining' | 'daemon_shutting_down' | 'needs_attendance' | 'required_fact_unavailable';
     };
 };

@@ -6,8 +6,8 @@ import type { JsonValue } from '../../identity.js';
 export type MachineProcessesActionInputById = {
     readonly "machines.processes.list": {
         machineId: string;
-        scope?: 'happier' | 'all' | undefined;
-        view?: 'tree' | 'owners' | undefined;
+        scope?: 'all' | 'happier' | undefined;
+        view?: 'owners' | 'tree' | undefined;
         sessionId?: string | undefined;
         query?: string | undefined;
         serverId?: string | undefined;
@@ -26,20 +26,9 @@ export type MachineProcessesActionInputById = {
         targets: {
             ref: string;
             expect: {
-                level: 'unknown' | 'proven' | 'likely' | 'left_behind' | 'not_happier';
-                owner?: {
-                    kind: 'session';
-                    sessionId: string;
-                } | {
-                    kind: 'terminal';
-                    terminalId: string;
-                    sessionId?: string | undefined;
-                } | {
-                    kind: 'service';
-                    serviceId: string;
-                    pluginId?: string | undefined;
-                    sessionId?: string | undefined;
-                    workspaceId?: string | undefined;
+                level: 'left_behind' | 'likely' | 'not_happier' | 'proven' | 'unknown';
+                owner?: undefined | {
+                    kind: 'browser_sidecar';
                 } | {
                     kind: 'container';
                     serverId: string;
@@ -50,17 +39,28 @@ export type MachineProcessesActionInputById = {
                     composeService: string;
                     environmentId?: string | undefined;
                 } | {
+                    kind: 'happier';
+                    component?: 'device_helper' | 'plugin_database_worker' | 'recording_encoder' | 'voice_worker' | 'workspace_sync' | undefined;
+                } | {
                     kind: 'run';
                     runId: string;
                     sessionId?: string | undefined;
                 } | {
-                    kind: 'browser_sidecar';
+                    kind: 'service';
+                    serviceId: string;
+                    pluginId?: string | undefined;
+                    sessionId?: string | undefined;
+                    workspaceId?: string | undefined;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                } | {
+                    kind: 'terminal';
+                    terminalId: string;
+                    sessionId?: string | undefined;
                 } | {
                     kind: 'workspace_sync';
-                } | {
-                    kind: 'happier';
-                    component?: 'workspace_sync' | 'voice_worker' | 'device_helper' | 'recording_encoder' | 'plugin_database_worker' | undefined;
-                } | undefined;
+                };
             };
         }[];
         machineId: string;
@@ -75,20 +75,9 @@ export type MachineProcessesActionInputById = {
         targets: {
             ref: string;
             expect: {
-                level: 'unknown' | 'proven' | 'likely' | 'left_behind' | 'not_happier';
-                owner?: {
-                    kind: 'session';
-                    sessionId: string;
-                } | {
-                    kind: 'terminal';
-                    terminalId: string;
-                    sessionId?: string | undefined;
-                } | {
-                    kind: 'service';
-                    serviceId: string;
-                    pluginId?: string | undefined;
-                    sessionId?: string | undefined;
-                    workspaceId?: string | undefined;
+                level: 'left_behind' | 'likely' | 'not_happier' | 'proven' | 'unknown';
+                owner?: undefined | {
+                    kind: 'browser_sidecar';
                 } | {
                     kind: 'container';
                     serverId: string;
@@ -99,17 +88,28 @@ export type MachineProcessesActionInputById = {
                     composeService: string;
                     environmentId?: string | undefined;
                 } | {
+                    kind: 'happier';
+                    component?: 'device_helper' | 'plugin_database_worker' | 'recording_encoder' | 'voice_worker' | 'workspace_sync' | undefined;
+                } | {
                     kind: 'run';
                     runId: string;
                     sessionId?: string | undefined;
                 } | {
-                    kind: 'browser_sidecar';
+                    kind: 'service';
+                    serviceId: string;
+                    pluginId?: string | undefined;
+                    sessionId?: string | undefined;
+                    workspaceId?: string | undefined;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                } | {
+                    kind: 'terminal';
+                    terminalId: string;
+                    sessionId?: string | undefined;
                 } | {
                     kind: 'workspace_sync';
-                } | {
-                    kind: 'happier';
-                    component?: 'workspace_sync' | 'voice_worker' | 'device_helper' | 'recording_encoder' | 'plugin_database_worker' | undefined;
-                } | undefined;
+                };
             };
         }[];
         tree: boolean;
@@ -128,23 +128,12 @@ export type MachineProcessesActionResultById = {
         machineId: string;
         capturedAtMs: number;
         state: 'live' | 'unavailable';
-        platform: 'linux' | 'darwin' | 'win32';
+        platform: 'darwin' | 'linux' | 'win32';
         evidenceModel: 'fenced' | 'tree_and_marker';
         owners: {
             rowId: string;
             owner: {
-                kind: 'session';
-                sessionId: string;
-            } | {
-                kind: 'terminal';
-                terminalId: string;
-                sessionId?: string | undefined;
-            } | {
-                kind: 'service';
-                serviceId: string;
-                pluginId?: string | undefined;
-                sessionId?: string | undefined;
-                workspaceId?: string | undefined;
+                kind: 'browser_sidecar';
             } | {
                 kind: 'container';
                 serverId: string;
@@ -155,20 +144,31 @@ export type MachineProcessesActionResultById = {
                 composeService: string;
                 environmentId?: string | undefined;
             } | {
+                kind: 'happier';
+                component?: 'device_helper' | 'plugin_database_worker' | 'recording_encoder' | 'voice_worker' | 'workspace_sync' | undefined;
+            } | {
                 kind: 'run';
                 runId: string;
                 sessionId?: string | undefined;
             } | {
-                kind: 'browser_sidecar';
+                kind: 'service';
+                serviceId: string;
+                pluginId?: string | undefined;
+                sessionId?: string | undefined;
+                workspaceId?: string | undefined;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'terminal';
+                terminalId: string;
+                sessionId?: string | undefined;
             } | {
                 kind: 'workspace_sync';
-            } | {
-                kind: 'happier';
-                component?: 'workspace_sync' | 'voice_worker' | 'device_helper' | 'recording_encoder' | 'plugin_database_worker' | undefined;
             };
-            state: 'running' | 'stopping' | 'stopped';
+            state: 'running' | 'stopped' | 'stopping';
             totals: {
-                memoryBytes: number | null;
+                memoryBytes: null | number;
                 processCount: number;
                 cpuPercent?: number | undefined;
             };
@@ -178,61 +178,61 @@ export type MachineProcessesActionResultById = {
                 name: string;
                 pid: number;
                 startedAtMs: number;
-                memoryBytes: number | null;
-                memoryKind: 'rss' | 'footprint' | 'private' | 'working_set' | null;
-                level: 'unknown' | 'proven' | 'likely' | 'left_behind';
+                memoryBytes: null | number;
+                memoryKind: 'footprint' | 'private' | 'rss' | 'working_set' | null;
+                level: 'left_behind' | 'likely' | 'proven' | 'unknown';
                 parentRowId?: string | undefined;
                 displayName?: string | undefined;
-                role?: 'agent' | 'tool_shell' | 'test_runner' | 'type_checker' | 'dev_server' | 'language_server' | 'mcp_server' | 'browser' | 'database' | undefined;
+                role?: 'agent' | 'browser' | 'database' | 'dev_server' | 'language_server' | 'mcp_server' | 'test_runner' | 'tool_shell' | 'type_checker' | undefined;
                 browserEngine?: 'chromium' | 'firefox' | 'webkit' | undefined;
                 browserHelper?: boolean | undefined;
                 driverLabel?: string | undefined;
-                browserGroup?: {
+                browserGroup?: undefined | {
                     memberRefs: string[];
                     totals: {
-                        memoryBytes: number | null;
+                        memoryBytes: null | number;
                         processCount: number;
                         cpuPercent?: number | undefined;
                     };
-                } | undefined;
+                };
                 command?: string | undefined;
                 cwd?: string | undefined;
                 cpuPercent?: number | undefined;
-                ports?: {
+                ports?: undefined | {
                     port: number;
                     inventoryEntryId: string;
-                }[] | undefined;
-                evidence?: {
-                    kind: 'fence' | 'parent_chain' | 'marker' | 'group_and_port';
-                    state: 'met' | 'not_met' | 'not_available';
-                    reason: 'linux_scope' | 'windows_job' | 'macos_no_fence' | 'no_systemd_user_manager' | 'job_join_failed' | 'outside_fence' | 'live_root_chain' | 'chain_broken_at_exit' | 'no_live_root' | 'marker_matches' | 'marker_cleared' | 'foreign_home_marker' | 'marker_owner_unknown' | 'marker_predates_owner' | 'same_group_port_opened_while_running' | 'no_group_or_port_match' | 'principal_unreadable' | 'other_principal' | 'required_fields_unreadable';
-                    at?: {
+                }[];
+                evidence?: undefined | {
+                    kind: 'fence' | 'group_and_port' | 'marker' | 'parent_chain';
+                    state: 'met' | 'not_available' | 'not_met';
+                    reason: 'chain_broken_at_exit' | 'foreign_home_marker' | 'job_join_failed' | 'linux_container' | 'linux_scope' | 'live_root_chain' | 'macos_no_fence' | 'marker_cleared' | 'marker_matches' | 'marker_owner_unknown' | 'marker_predates_owner' | 'no_group_or_port_match' | 'no_live_root' | 'no_systemd_user_manager' | 'other_principal' | 'outside_fence' | 'principal_unreadable' | 'required_fields_unreadable' | 'same_group_port_opened_while_running' | 'windows_job';
+                    at?: undefined | {
                         pid: number;
                         exitedAtMs?: number | undefined;
-                    } | undefined;
-                }[] | undefined;
-                chain?: {
+                    };
+                }[];
+                chain?: undefined | {
                     pid: number;
                     name: string;
                     exitedAtMs?: number | undefined;
-                }[] | undefined;
+                }[];
                 principalName?: string | undefined;
             }[];
             canStartAgain?: boolean | undefined;
-            root?: {
+            root?: undefined | {
                 ref: string;
-                level: 'proven' | 'likely';
-            } | undefined;
-            requester?: {
+                level: 'likely' | 'proven';
+            };
+            requester?: undefined | {
                 accountId: string;
                 displayName: string;
-            } | undefined;
-            ceiling?: {
+            };
+            ceiling?: undefined | {
                 limitBytes: number;
                 usedBytes?: number | undefined;
                 observedAtMs?: number | undefined;
                 throttleCount5m?: number | undefined;
-            } | undefined;
+            };
         }[];
         leftBehind: {
             rowId: string;
@@ -240,22 +240,11 @@ export type MachineProcessesActionResultById = {
             name: string;
             pid: number;
             startedAtMs: number;
-            memoryBytes: number | null;
-            memoryKind: 'rss' | 'footprint' | 'private' | 'working_set' | null;
+            memoryBytes: null | number;
+            memoryKind: 'footprint' | 'private' | 'rss' | 'working_set' | null;
             level: 'left_behind';
             owner: {
-                kind: 'session';
-                sessionId: string;
-            } | {
-                kind: 'terminal';
-                terminalId: string;
-                sessionId?: string | undefined;
-            } | {
-                kind: 'service';
-                serviceId: string;
-                pluginId?: string | undefined;
-                sessionId?: string | undefined;
-                workspaceId?: string | undefined;
+                kind: 'browser_sidecar';
             } | {
                 kind: 'container';
                 serverId: string;
@@ -266,162 +255,162 @@ export type MachineProcessesActionResultById = {
                 composeService: string;
                 environmentId?: string | undefined;
             } | {
+                kind: 'happier';
+                component?: 'device_helper' | 'plugin_database_worker' | 'recording_encoder' | 'voice_worker' | 'workspace_sync' | undefined;
+            } | {
                 kind: 'run';
                 runId: string;
                 sessionId?: string | undefined;
             } | {
-                kind: 'browser_sidecar';
+                kind: 'service';
+                serviceId: string;
+                pluginId?: string | undefined;
+                sessionId?: string | undefined;
+                workspaceId?: string | undefined;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'terminal';
+                terminalId: string;
+                sessionId?: string | undefined;
             } | {
                 kind: 'workspace_sync';
-            } | {
-                kind: 'happier';
-                component?: 'workspace_sync' | 'voice_worker' | 'device_helper' | 'recording_encoder' | 'plugin_database_worker' | undefined;
             };
             confirmedAtMs: number;
             parentRowId?: string | undefined;
             displayName?: string | undefined;
-            role?: 'agent' | 'tool_shell' | 'test_runner' | 'type_checker' | 'dev_server' | 'language_server' | 'mcp_server' | 'browser' | 'database' | undefined;
+            role?: 'agent' | 'browser' | 'database' | 'dev_server' | 'language_server' | 'mcp_server' | 'test_runner' | 'tool_shell' | 'type_checker' | undefined;
             browserEngine?: 'chromium' | 'firefox' | 'webkit' | undefined;
             browserHelper?: boolean | undefined;
             driverLabel?: string | undefined;
-            browserGroup?: {
+            browserGroup?: undefined | {
                 memberRefs: string[];
                 totals: {
-                    memoryBytes: number | null;
+                    memoryBytes: null | number;
                     processCount: number;
                     cpuPercent?: number | undefined;
                 };
-            } | undefined;
+            };
             command?: string | undefined;
             cwd?: string | undefined;
             cpuPercent?: number | undefined;
-            ports?: {
+            ports?: undefined | {
                 port: number;
                 inventoryEntryId: string;
-            }[] | undefined;
-            evidence?: {
-                kind: 'fence' | 'parent_chain' | 'marker' | 'group_and_port';
-                state: 'met' | 'not_met' | 'not_available';
-                reason: 'linux_scope' | 'windows_job' | 'macos_no_fence' | 'no_systemd_user_manager' | 'job_join_failed' | 'outside_fence' | 'live_root_chain' | 'chain_broken_at_exit' | 'no_live_root' | 'marker_matches' | 'marker_cleared' | 'foreign_home_marker' | 'marker_owner_unknown' | 'marker_predates_owner' | 'same_group_port_opened_while_running' | 'no_group_or_port_match' | 'principal_unreadable' | 'other_principal' | 'required_fields_unreadable';
-                at?: {
+            }[];
+            evidence?: undefined | {
+                kind: 'fence' | 'group_and_port' | 'marker' | 'parent_chain';
+                state: 'met' | 'not_available' | 'not_met';
+                reason: 'chain_broken_at_exit' | 'foreign_home_marker' | 'job_join_failed' | 'linux_container' | 'linux_scope' | 'live_root_chain' | 'macos_no_fence' | 'marker_cleared' | 'marker_matches' | 'marker_owner_unknown' | 'marker_predates_owner' | 'no_group_or_port_match' | 'no_live_root' | 'no_systemd_user_manager' | 'other_principal' | 'outside_fence' | 'principal_unreadable' | 'required_fields_unreadable' | 'same_group_port_opened_while_running' | 'windows_job';
+                at?: undefined | {
                     pid: number;
                     exitedAtMs?: number | undefined;
-                } | undefined;
-            }[] | undefined;
-            chain?: {
+                };
+            }[];
+            chain?: undefined | {
                 pid: number;
                 name: string;
                 exitedAtMs?: number | undefined;
-            }[] | undefined;
+            }[];
             principalName?: string | undefined;
         }[];
         totals: {
             happier: {
-                memoryBytes: number | null;
+                memoryBytes: null | number;
                 processCount: number;
                 cpuPercent?: number | undefined;
             };
             leftBehind: {
-                memoryBytes: number | null;
+                memoryBytes: null | number;
                 processCount: number;
                 cpuPercent?: number | undefined;
             };
         };
-        reason?: 'helper_missing' | 'read_failed' | 'self_absent' | 'unsupported_platform' | 'all_processes_disabled' | 'permission_denied' | undefined;
-        notHappier?: {
+        reason?: 'all_processes_disabled' | 'helper_missing' | 'permission_denied' | 'read_failed' | 'self_absent' | 'unsupported_platform' | undefined;
+        notHappier?: undefined | {
             appGroup: string;
             members: {
                 name: string;
                 appGroup: string;
-                memoryBytes: number | null;
+                memoryBytes: null | number;
                 pid: number;
                 ref: string;
                 cpuPercent?: number | undefined;
             }[];
-        }[] | undefined;
-        otherPrincipals?: {
+        }[];
+        otherPrincipals?: undefined | {
             count: number;
-            memoryBytes: number | null;
+            memoryBytes: null | number;
             names: string[];
             cpuPercent?: number | undefined;
-        } | undefined;
-        othersWork?: {
+        };
+        othersWork?: undefined | {
             count: number;
-        } | undefined;
+        };
         unverifiableCount?: number | undefined;
         history?: Record<string, {
             capturedAtMs: number;
-            memoryBytes: number | null;
-            cpuPercent?: number | null | undefined;
+            memoryBytes: null | number;
+            cpuPercent?: null | number | undefined;
         }[]> | undefined;
     };
     readonly "machines.processes.get": {
-        row: {
+        row: null | {
+            name: string;
+            appGroup: string;
+            memoryBytes: null | number;
+            pid: number;
+            ref: string;
+            cpuPercent?: number | undefined;
+        } | {
             rowId: string;
             ref: string;
             name: string;
             pid: number;
             startedAtMs: number;
-            memoryBytes: number | null;
-            memoryKind: 'rss' | 'footprint' | 'private' | 'working_set' | null;
-            level: 'unknown' | 'proven' | 'likely' | 'left_behind';
+            memoryBytes: null | number;
+            memoryKind: 'footprint' | 'private' | 'rss' | 'working_set' | null;
+            level: 'left_behind' | 'likely' | 'proven' | 'unknown';
             parentRowId?: string | undefined;
             displayName?: string | undefined;
-            role?: 'agent' | 'tool_shell' | 'test_runner' | 'type_checker' | 'dev_server' | 'language_server' | 'mcp_server' | 'browser' | 'database' | undefined;
+            role?: 'agent' | 'browser' | 'database' | 'dev_server' | 'language_server' | 'mcp_server' | 'test_runner' | 'tool_shell' | 'type_checker' | undefined;
             browserEngine?: 'chromium' | 'firefox' | 'webkit' | undefined;
             browserHelper?: boolean | undefined;
             driverLabel?: string | undefined;
-            browserGroup?: {
+            browserGroup?: undefined | {
                 memberRefs: string[];
                 totals: {
-                    memoryBytes: number | null;
+                    memoryBytes: null | number;
                     processCount: number;
                     cpuPercent?: number | undefined;
                 };
-            } | undefined;
+            };
             command?: string | undefined;
             cwd?: string | undefined;
             cpuPercent?: number | undefined;
-            ports?: {
+            ports?: undefined | {
                 port: number;
                 inventoryEntryId: string;
-            }[] | undefined;
-            evidence?: {
-                kind: 'fence' | 'parent_chain' | 'marker' | 'group_and_port';
-                state: 'met' | 'not_met' | 'not_available';
-                reason: 'linux_scope' | 'windows_job' | 'macos_no_fence' | 'no_systemd_user_manager' | 'job_join_failed' | 'outside_fence' | 'live_root_chain' | 'chain_broken_at_exit' | 'no_live_root' | 'marker_matches' | 'marker_cleared' | 'foreign_home_marker' | 'marker_owner_unknown' | 'marker_predates_owner' | 'same_group_port_opened_while_running' | 'no_group_or_port_match' | 'principal_unreadable' | 'other_principal' | 'required_fields_unreadable';
-                at?: {
+            }[];
+            evidence?: undefined | {
+                kind: 'fence' | 'group_and_port' | 'marker' | 'parent_chain';
+                state: 'met' | 'not_available' | 'not_met';
+                reason: 'chain_broken_at_exit' | 'foreign_home_marker' | 'job_join_failed' | 'linux_container' | 'linux_scope' | 'live_root_chain' | 'macos_no_fence' | 'marker_cleared' | 'marker_matches' | 'marker_owner_unknown' | 'marker_predates_owner' | 'no_group_or_port_match' | 'no_live_root' | 'no_systemd_user_manager' | 'other_principal' | 'outside_fence' | 'principal_unreadable' | 'required_fields_unreadable' | 'same_group_port_opened_while_running' | 'windows_job';
+                at?: undefined | {
                     pid: number;
                     exitedAtMs?: number | undefined;
-                } | undefined;
-            }[] | undefined;
-            chain?: {
+                };
+            }[];
+            chain?: undefined | {
                 pid: number;
                 name: string;
                 exitedAtMs?: number | undefined;
-            }[] | undefined;
+            }[];
             principalName?: string | undefined;
-        } | {
-            name: string;
-            appGroup: string;
-            memoryBytes: number | null;
-            pid: number;
-            ref: string;
-            cpuPercent?: number | undefined;
-        } | null;
-        owner?: {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'terminal';
-            terminalId: string;
-            sessionId?: string | undefined;
-        } | {
-            kind: 'service';
-            serviceId: string;
-            pluginId?: string | undefined;
-            sessionId?: string | undefined;
-            workspaceId?: string | undefined;
+        };
+        owner?: undefined | {
+            kind: 'browser_sidecar';
         } | {
             kind: 'container';
             serverId: string;
@@ -432,42 +421,42 @@ export type MachineProcessesActionResultById = {
             composeService: string;
             environmentId?: string | undefined;
         } | {
+            kind: 'happier';
+            component?: 'device_helper' | 'plugin_database_worker' | 'recording_encoder' | 'voice_worker' | 'workspace_sync' | undefined;
+        } | {
             kind: 'run';
             runId: string;
             sessionId?: string | undefined;
         } | {
-            kind: 'browser_sidecar';
+            kind: 'service';
+            serviceId: string;
+            pluginId?: string | undefined;
+            sessionId?: string | undefined;
+            workspaceId?: string | undefined;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'terminal';
+            terminalId: string;
+            sessionId?: string | undefined;
         } | {
             kind: 'workspace_sync';
-        } | {
-            kind: 'happier';
-            component?: 'workspace_sync' | 'voice_worker' | 'device_helper' | 'recording_encoder' | 'plugin_database_worker' | undefined;
-        } | undefined;
-        history?: {
+        };
+        history?: undefined | {
             capturedAtMs: number;
-            memoryBytes: number | null;
-            cpuPercent?: number | null | undefined;
-        }[] | undefined;
+            memoryBytes: null | number;
+            cpuPercent?: null | number | undefined;
+        }[];
     };
     readonly "machines.processes.check": {
         checks: {
             ref: string;
             present: boolean;
             identityEqual: boolean;
-            level?: 'unknown' | 'proven' | 'likely' | 'left_behind' | 'not_happier' | undefined;
-            owner?: {
-                kind: 'session';
-                sessionId: string;
-            } | {
-                kind: 'terminal';
-                terminalId: string;
-                sessionId?: string | undefined;
-            } | {
-                kind: 'service';
-                serviceId: string;
-                pluginId?: string | undefined;
-                sessionId?: string | undefined;
-                workspaceId?: string | undefined;
+            level?: 'left_behind' | 'likely' | 'not_happier' | 'proven' | 'unknown' | undefined;
+            owner?: null | undefined | {
+                kind: 'browser_sidecar';
             } | {
                 kind: 'container';
                 serverId: string;
@@ -478,39 +467,103 @@ export type MachineProcessesActionResultById = {
                 composeService: string;
                 environmentId?: string | undefined;
             } | {
+                kind: 'happier';
+                component?: 'device_helper' | 'plugin_database_worker' | 'recording_encoder' | 'voice_worker' | 'workspace_sync' | undefined;
+            } | {
                 kind: 'run';
                 runId: string;
                 sessionId?: string | undefined;
             } | {
-                kind: 'browser_sidecar';
+                kind: 'service';
+                serviceId: string;
+                pluginId?: string | undefined;
+                sessionId?: string | undefined;
+                workspaceId?: string | undefined;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'terminal';
+                terminalId: string;
+                sessionId?: string | undefined;
             } | {
                 kind: 'workspace_sync';
+            };
+            memoryBytes?: null | number | undefined;
+            row?: undefined | {
+                name: string;
+                appGroup: string;
+                memoryBytes: null | number;
+                pid: number;
+                ref: string;
+                cpuPercent?: number | undefined;
             } | {
-                kind: 'happier';
-                component?: 'workspace_sync' | 'voice_worker' | 'device_helper' | 'recording_encoder' | 'plugin_database_worker' | undefined;
-            } | null | undefined;
-            memoryBytes?: number | null | undefined;
+                rowId: string;
+                ref: string;
+                name: string;
+                pid: number;
+                startedAtMs: number;
+                memoryBytes: null | number;
+                memoryKind: 'footprint' | 'private' | 'rss' | 'working_set' | null;
+                level: 'left_behind' | 'likely' | 'proven' | 'unknown';
+                parentRowId?: string | undefined;
+                displayName?: string | undefined;
+                role?: 'agent' | 'browser' | 'database' | 'dev_server' | 'language_server' | 'mcp_server' | 'test_runner' | 'tool_shell' | 'type_checker' | undefined;
+                browserEngine?: 'chromium' | 'firefox' | 'webkit' | undefined;
+                browserHelper?: boolean | undefined;
+                driverLabel?: string | undefined;
+                browserGroup?: undefined | {
+                    memberRefs: string[];
+                    totals: {
+                        memoryBytes: null | number;
+                        processCount: number;
+                        cpuPercent?: number | undefined;
+                    };
+                };
+                command?: string | undefined;
+                cwd?: string | undefined;
+                cpuPercent?: number | undefined;
+                ports?: undefined | {
+                    port: number;
+                    inventoryEntryId: string;
+                }[];
+                evidence?: undefined | {
+                    kind: 'fence' | 'group_and_port' | 'marker' | 'parent_chain';
+                    state: 'met' | 'not_available' | 'not_met';
+                    reason: 'chain_broken_at_exit' | 'foreign_home_marker' | 'job_join_failed' | 'linux_container' | 'linux_scope' | 'live_root_chain' | 'macos_no_fence' | 'marker_cleared' | 'marker_matches' | 'marker_owner_unknown' | 'marker_predates_owner' | 'no_group_or_port_match' | 'no_live_root' | 'no_systemd_user_manager' | 'other_principal' | 'outside_fence' | 'principal_unreadable' | 'required_fields_unreadable' | 'same_group_port_opened_while_running' | 'windows_job';
+                    at?: undefined | {
+                        pid: number;
+                        exitedAtMs?: number | undefined;
+                    };
+                }[];
+                chain?: undefined | {
+                    pid: number;
+                    name: string;
+                    exitedAtMs?: number | undefined;
+                }[];
+                principalName?: string | undefined;
+            };
         }[];
     };
     readonly "machines.processes.stop": {
-        status: 'ended' | 'partial' | 'refused' | 'failed';
+        status: 'ended' | 'failed' | 'partial' | 'refused';
         outcomes: {
             ref: string;
-            outcome: 'ended' | 'refused' | 'survived' | 'gone_before';
+            outcome: 'ended' | 'gone_before' | 'refused' | 'survived';
             reasonCode?: string | undefined;
             freedBytes?: number | undefined;
         }[];
     };
     readonly "machines.processes.startAgain": {
-        status: 'refused' | 'failed' | 'started' | 'already_wakes_on_next_message';
+        status: 'already_wakes_on_next_message' | 'failed' | 'refused' | 'started';
         reasonCode?: string | undefined;
-        serviceStart?: {
+        serviceStart?: undefined | {
             request: {
                 machineId: string;
                 targetId: string;
                 sessionId?: string | undefined;
                 workspaceId?: string | undefined;
-                choice?: {
+                choice?: undefined | {
                     kind: 'primary';
                 } | {
                     kind: 'workers';
@@ -520,16 +573,16 @@ export type MachineProcessesActionResultById = {
                     } | {
                         kind: 'pool';
                         poolId: string;
-                        selection: 'automatic' | 'ask';
+                        selection: 'ask' | 'automatic';
                     };
-                } | undefined;
-                workspace?: {
+                };
+                workspace?: undefined | {
                     serverId: string;
                     workspaceId: string;
                     machineId: string;
                     rootPath: string;
-                } | undefined;
-                declaration?: {
+                };
+                declaration?: undefined | {
                     workspaceRefId: string;
                     selection: {
                         kind: 'manifest';
@@ -538,7 +591,7 @@ export type MachineProcessesActionResultById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -551,39 +604,42 @@ export type MachineProcessesActionResultById = {
                             target: string;
                         };
                     };
-                } | undefined;
+                };
                 expectedEffectDigest?: string | undefined;
             };
             response: {
                 protocolVersion: 1;
                 machineId: string;
                 targetId: string;
-                status: 'failed' | 'succeeded' | 'denied';
+                status: 'denied' | 'failed' | 'succeeded';
                 snapshot: {
                     v: 1;
                     machineId: string;
                     updatedAt: number;
                     targets: {
                         id: string;
-                        source: 'package_script' | 'managed_service' | 'inventory_entry' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset' | 'recent';
+                        source: 'inventory_entry' | 'managed_service' | 'package_script' | 'recent' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset';
                         machineId: string;
                         title: string;
-                        confidence: 'high' | 'medium' | 'low';
-                        state: 'unavailable' | 'starting' | 'available' | 'stale';
-                        actions: ('start' | 'open' | 'open_preview' | 'register_preview' | 'manage' | 'terminate_detected')[];
-                        sourceClass?: {
+                        confidence: 'high' | 'low' | 'medium';
+                        state: 'available' | 'stale' | 'starting' | 'unavailable';
+                        actions: ('manage' | 'open' | 'open_preview' | 'register_preview' | 'start' | 'terminate_detected')[];
+                        sourceClass?: undefined | {
+                            kind: 'inventory_entry';
+                            inventoryEntryId: string;
+                        } | {
+                            kind: 'managed_service';
+                            managedServiceId: string;
+                            inventoryEntryId?: string | undefined;
+                        } | {
                             kind: 'package_script';
                             runTargetId: string;
                             packageName: string;
                             scriptName: string;
                             cwd?: string | undefined;
                         } | {
-                            kind: 'managed_service';
-                            managedServiceId: string;
-                            inventoryEntryId?: string | undefined;
-                        } | {
-                            kind: 'inventory_entry';
-                            inventoryEntryId: string;
+                            kind: 'recent';
+                            targetId: string;
                         } | {
                             kind: 'registered_preview';
                             previewId: string;
@@ -598,20 +654,17 @@ export type MachineProcessesActionResultById = {
                             sourceId: string;
                             assetRef: string;
                             mediaType?: string | undefined;
-                        } | {
-                            kind: 'recent';
-                            targetId: string;
-                        } | undefined;
+                        };
                         sessionId?: string | undefined;
                         workspaceId?: string | undefined;
-                        workspace?: {
+                        workspace?: undefined | {
                             serverId: string;
                             workspaceId: string;
                             machineId: string;
                             rootPath: string;
-                        } | undefined;
+                        };
                         cwd?: string | undefined;
-                        declaration?: {
+                        declaration?: undefined | {
                             workspaceRefId: string;
                             selection: {
                                 kind: 'manifest';
@@ -620,7 +673,7 @@ export type MachineProcessesActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -633,40 +686,86 @@ export type MachineProcessesActionResultById = {
                                     target: string;
                                 };
                             };
-                        } | undefined;
-                        execution?: 'primary' | 'portable' | undefined;
-                        serviceState?: 'running' | 'stopping' | 'stopped' | 'failed' | 'starting' | 'detecting' | 'healthy' | 'unhealthy' | undefined;
-                        diagnostics?: {
+                        };
+                        environment?: undefined | {
+                            environmentId: string;
+                            environmentInstanceId: string;
+                            deploymentId: string;
+                            composeService: string;
+                        };
+                        lifecyclePurpose?: 'deployment' | 'development' | 'infrastructure' | undefined;
+                        execution?: 'portable' | 'primary' | undefined;
+                        serviceState?: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | undefined;
+                        diagnostics?: undefined | {
                             code: string;
                             severity: 'error' | 'info' | 'warning';
                             message?: string | undefined;
-                        }[] | undefined;
-                        readiness?: 'ready' | 'not_ready' | 'not_reported' | undefined;
+                        }[];
+                        readiness?: 'not_ready' | 'not_reported' | 'ready' | undefined;
                         endpointUrl?: string | undefined;
                         startedAtMs?: number | undefined;
                         startedByAccountId?: string | undefined;
-                        endpointKind?: 'native' | 'none' | 'http' | undefined;
+                        endpointKind?: 'http' | 'native' | 'none' | undefined;
                         subtitle?: string | undefined;
                         kind?: string | undefined;
                         commandPreview?: string | undefined;
                         unavailableReason?: string | undefined;
                         unavailableMachineId?: string | undefined;
-                        browserTarget?: {
+                        browserTarget?: undefined | {
+                            kind: 'streamedBrowser';
                             targetId: string;
-                            kind: 'localServicePreview';
-                            machineId: string;
-                            display?: {
+                            streamId: string;
+                            display?: undefined | {
                                 title: string;
                                 addressLabel?: string | undefined;
                                 folderLabel?: string | undefined;
                                 iconToken?: string | undefined;
-                                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                            } | undefined;
+                                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                            };
+                            daemonView?: undefined | {
+                                browserSessionId: string;
+                                viewId: string;
+                            };
+                        } | {
+                            targetId: string;
+                            kind: 'externalUrl';
+                            url: string;
+                            display?: undefined | {
+                                title: string;
+                                addressLabel?: string | undefined;
+                                folderLabel?: string | undefined;
+                                iconToken?: string | undefined;
+                                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                            };
+                        } | {
+                            targetId: string;
+                            kind: 'hostedPluginWeb';
+                            pluginId: string;
+                            contributionId: string;
+                            display?: undefined | {
+                                title: string;
+                                addressLabel?: string | undefined;
+                                folderLabel?: string | undefined;
+                                iconToken?: string | undefined;
+                                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                            };
+                        } | {
+                            targetId: string;
+                            kind: 'localServicePreview';
+                            machineId: string;
+                            display?: undefined | {
+                                title: string;
+                                addressLabel?: string | undefined;
+                                folderLabel?: string | undefined;
+                                iconToken?: string | undefined;
+                                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                            };
                             sessionId?: string | undefined;
-                            serviceTarget?: {
-                                machineId: string;
+                            serviceTarget?: undefined | {
                                 kind: 'managed_service';
+                                machineId: string;
                                 cwd: string;
+                                managedServiceId: string;
                                 declaration: {
                                     workspaceRefId: string;
                                     selection: {
@@ -676,7 +775,7 @@ export type MachineProcessesActionResultById = {
                                         kind: 'native';
                                         source: {
                                             kind: 'native';
-                                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                             file: string;
                                             target: string;
                                         } | {
@@ -690,87 +789,48 @@ export type MachineProcessesActionResultById = {
                                         };
                                     };
                                 };
-                                managedServiceId: string;
                                 workspaceId?: string | undefined;
-                            } | undefined;
-                        } | {
-                            targetId: string;
-                            kind: 'hostedPluginWeb';
-                            pluginId: string;
-                            contributionId: string;
-                            display?: {
-                                title: string;
-                                addressLabel?: string | undefined;
-                                folderLabel?: string | undefined;
-                                iconToken?: string | undefined;
-                                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                            } | undefined;
-                        } | {
-                            targetId: string;
-                            kind: 'externalUrl';
-                            url: string;
-                            display?: {
-                                title: string;
-                                addressLabel?: string | undefined;
-                                folderLabel?: string | undefined;
-                                iconToken?: string | undefined;
-                                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                            } | undefined;
-                        } | {
-                            kind: 'streamedBrowser';
-                            targetId: string;
-                            streamId: string;
-                            display?: {
-                                title: string;
-                                addressLabel?: string | undefined;
-                                folderLabel?: string | undefined;
-                                iconToken?: string | undefined;
-                                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                            } | undefined;
-                            daemonView?: {
-                                browserSessionId: string;
-                                viewId: string;
-                            } | undefined;
+                            };
                         } | {
                             targetId: string;
                             kind: 'simulatorPreview';
                             deviceId: string;
-                            display?: {
+                            display?: undefined | {
                                 title: string;
                                 addressLabel?: string | undefined;
                                 folderLabel?: string | undefined;
                                 iconToken?: string | undefined;
-                                tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                            } | undefined;
+                                tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                            };
                             sourceId?: string | undefined;
-                        } | undefined;
+                        };
                     }[];
                     sessionId?: string | undefined;
                 };
                 reasonCode?: string | undefined;
-                prerequisite?: {
+                prerequisite?: undefined | {
                     tool: 'docker';
                     machineName: string;
-                    cause: 'unavailable' | 'permission_denied' | 'not_installed' | 'not_running';
-                } | undefined;
-                establishmentFailure?: {
-                    cause: 'process_exited' | 'port_in_use';
+                    cause: 'not_installed' | 'not_running' | 'permission_denied' | 'unavailable';
+                };
+                establishmentFailure?: undefined | {
+                    cause: 'port_in_use' | 'process_exited';
                     exitCode?: number | undefined;
                     signal?: string | undefined;
                     lastStderrLine?: string | undefined;
                     port?: number | undefined;
                     sameProject?: boolean | undefined;
-                } | undefined;
+                };
                 reviewedEffect?: JsonValue | undefined;
                 reviewedEffectDigest?: string | undefined;
-                currentTarget?: {
+                currentTarget?: undefined | {
                     kind: 'managed_service';
                     managedServiceId: string;
                     machineId: string;
                     sessionId?: string | undefined;
                     workspaceId?: string | undefined;
                     cwd?: string | undefined;
-                    declaration?: {
+                    declaration?: undefined | {
                         workspaceRefId: string;
                         selection: {
                             kind: 'manifest';
@@ -779,7 +839,7 @@ export type MachineProcessesActionResultById = {
                             kind: 'native';
                             source: {
                                 kind: 'native';
-                                tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                 file: string;
                                 target: string;
                             } | {
@@ -792,16 +852,16 @@ export type MachineProcessesActionResultById = {
                                 target: string;
                             };
                         };
-                    } | undefined;
-                } | undefined;
+                    };
+                };
             };
-        } | undefined;
+        };
     };
     readonly "machines.processes.kill": {
-        status: 'ended' | 'partial' | 'refused' | 'failed';
+        status: 'ended' | 'failed' | 'partial' | 'refused';
         outcomes: {
             ref: string;
-            outcome: 'ended' | 'refused' | 'survived' | 'gone_before';
+            outcome: 'ended' | 'gone_before' | 'refused' | 'survived';
             reasonCode?: string | undefined;
             freedBytes?: number | undefined;
         }[];

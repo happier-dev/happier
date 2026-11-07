@@ -11,6 +11,38 @@ export type ProjectDefinitionsActionInputById = {
             machineId: string;
             rootPath: string;
         };
+        read?: undefined | {
+            kind: 'create' | 'editor' | 'guidance' | 'imports' | 'placement' | 'scripts' | 'services' | 'setup' | 'tools';
+        } | {
+            kind: 'detail';
+            sources: {
+                source: {
+                    kind: 'native';
+                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                    file: string;
+                    target: string;
+                } | {
+                    kind: 'pluginNative';
+                    adapter: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    file: string;
+                    target: string;
+                };
+                usage: 'script' | 'service' | 'setup';
+            }[];
+        } | {
+            kind: 'execution';
+            command?: undefined | {
+                usage: 'script' | 'service' | 'setup';
+                name: string;
+            };
+        } | {
+            kind: 'overview' | 'rail';
+            detectedRows: number;
+        };
+        ifRevision?: string | undefined;
         reviewSetupConsent?: true | undefined;
     };
     readonly "projects.manifest.update": {
@@ -34,26 +66,27 @@ export type ProjectDefinitionsActionResultById = {
         definition: {
             basis: {
                 kind: 'absent';
-            };
-            document: null;
-        } | {
-            basis: {
+            } | {
                 kind: 'present';
                 hash: string;
             };
-            document: {
+            document: null | {
+                status: 'invalid';
+                diagnostics: {
+                    code: 'invalid_field' | 'invalid_json' | 'unrecognized_key';
+                    path: (number | string)[];
+                    message: string;
+                    offset?: number | undefined;
+                }[];
+                bytes?: string | undefined;
+                original?: unknown;
+            } | {
                 status: 'valid';
-                bytes: string;
-                original: Record<string, unknown>;
                 manifest: {
                     version: 1;
                     $schema?: string | undefined;
-                    environment?: {
+                    toolchain?: undefined | {
                         kind: 'host';
-                    } | {
-                        kind: 'toolchain';
-                        tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'nix_flake';
-                        configPath?: string | undefined;
                     } | {
                         kind: 'pluginToolchain';
                         adapter: {
@@ -61,19 +94,28 @@ export type ProjectDefinitionsActionResultById = {
                             localId: string;
                         };
                         configPath?: string | undefined;
-                    } | undefined;
-                    devcontainer?: {
+                    } | {
+                        kind: 'toolchain';
+                        tool: 'devbox' | 'devenv' | 'flox' | 'mise' | 'nix_flake';
                         configPath?: string | undefined;
-                    } | undefined;
-                    environmentVariables?: {
+                    };
+                    devcontainer?: undefined | {
+                        configPath?: string | undefined;
+                    };
+                    environmentVariables?: undefined | {
                         name: string;
-                        kind: 'secret' | 'config';
+                        kind: 'config' | 'secret';
                         required: boolean;
-                    }[] | undefined;
-                    workspace?: {
+                    }[];
+                    workspace?: undefined | {
                         setup?: ({
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
                             kind: 'native';
-                            tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -84,15 +126,15 @@ export type ProjectDefinitionsActionResultById = {
                             };
                             file: string;
                             target: string;
-                        } | {
-                            kind: 'command';
-                            command: string;
-                            cwd?: string | undefined;
-                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
                         })[] | undefined;
                         teardown?: ({
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
                             kind: 'native';
-                            tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -103,31 +145,31 @@ export type ProjectDefinitionsActionResultById = {
                             };
                             file: string;
                             target: string;
-                        } | {
-                            kind: 'command';
-                            command: string;
-                            cwd?: string | undefined;
-                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
                         })[] | undefined;
                         setupInputs?: string[] | undefined;
-                        memoryDemand?: {
+                        memoryDemand?: undefined | {
                             bytes: number;
                             basis: {
                                 kind: 'declared';
                             } | {
                                 kind: 'measured';
-                                operation?: {
+                                operation?: undefined | {
                                     serverId: string;
                                     machineId: string;
                                     operationId: string;
-                                } | undefined;
+                                };
                             };
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     scripts?: Record<string, {
                         source: {
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
                             kind: 'native';
-                            tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -138,31 +180,31 @@ export type ProjectDefinitionsActionResultById = {
                             };
                             file: string;
                             target: string;
-                        } | {
-                            kind: 'command';
-                            command: string;
-                            cwd?: string | undefined;
-                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
                         };
-                        execution?: 'primary' | 'portable' | undefined;
-                        memoryDemand?: {
+                        execution?: 'portable' | 'primary' | undefined;
+                        memoryDemand?: undefined | {
                             bytes: number;
                             basis: {
                                 kind: 'declared';
                             } | {
                                 kind: 'measured';
-                                operation?: {
+                                operation?: undefined | {
                                     serverId: string;
                                     machineId: string;
                                     operationId: string;
-                                } | undefined;
+                                };
                             };
-                        } | undefined;
+                        };
                     }> | undefined;
                     services?: Record<string, {
                         source: {
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
                             kind: 'native';
-                            tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -173,39 +215,26 @@ export type ProjectDefinitionsActionResultById = {
                             };
                             file: string;
                             target: string;
-                        } | {
-                            kind: 'command';
-                            command: string;
-                            cwd?: string | undefined;
-                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
                         };
-                        execution?: 'primary' | 'portable' | undefined;
+                        execution?: 'portable' | 'primary' | undefined;
                         port?: number | undefined;
                     }> | undefined;
                 };
                 diagnostics: {
-                    code: 'invalid_json' | 'invalid_field' | 'unrecognized_key';
-                    path: (string | number)[];
+                    code: 'invalid_field' | 'invalid_json' | 'unrecognized_key';
+                    path: (number | string)[];
                     message: string;
                     offset?: number | undefined;
                 }[];
-            } | {
-                status: 'invalid';
-                bytes: string;
-                diagnostics: {
-                    code: 'invalid_json' | 'invalid_field' | 'unrecognized_key';
-                    path: (string | number)[];
-                    message: string;
-                    offset?: number | undefined;
-                }[];
-                original?: unknown;
+                bytes?: string | undefined;
+                original?: Record<string, unknown> | undefined;
             };
         };
         detection: {
             entries: {
                 source: {
                     kind: 'native';
-                    tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                     file: string;
                     target: string;
                 } | {
@@ -217,20 +246,20 @@ export type ProjectDefinitionsActionResultById = {
                     file: string;
                     target: string;
                 };
-                usage: 'setup' | 'script' | 'service';
+                usage: 'script' | 'service' | 'setup';
             }[];
-            environments: ({
+            toolchains: ({
                 kind: 'host';
-            } | {
-                kind: 'toolchain';
-                tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'nix_flake';
-                configPath?: string | undefined;
             } | {
                 kind: 'pluginToolchain';
                 adapter: {
                     pluginId: string;
                     localId: string;
                 };
+                configPath?: string | undefined;
+            } | {
+                kind: 'toolchain';
+                tool: 'devbox' | 'devenv' | 'flox' | 'mise' | 'nix_flake';
                 configPath?: string | undefined;
             })[];
             devcontainers: {
@@ -241,16 +270,16 @@ export type ProjectDefinitionsActionResultById = {
                 file: string;
                 code: string;
             }[];
-            tools?: {
+            tools?: undefined | {
                 tool: string;
                 file: string;
                 requestedVersion?: string | undefined;
-            }[] | undefined;
+            }[];
         };
         importCandidates: {
             source: {
                 kind: 'native';
-                tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                 file: string;
                 target: string;
             } | {
@@ -262,27 +291,41 @@ export type ProjectDefinitionsActionResultById = {
                 file: string;
                 target: string;
             };
-            usage: 'setup' | 'script' | 'service';
-            availability: 'available' | 'unavailable' | 'unresolved' | 'ambiguous';
+            usage: 'script' | 'service' | 'setup';
+            availability: 'ambiguous' | 'available' | 'unavailable' | 'unresolved';
             preselected: boolean;
             code?: string | undefined;
-            invocation?: {
+            invocation?: undefined | {
                 tool: string;
                 args: readonly string[];
                 cwd: string;
                 requestedVersion?: string | undefined;
-            } | undefined;
-            executionInputs?: {
+            };
+            executionInputs?: undefined | {
                 file: string;
                 hash: string;
-            }[] | undefined;
+            }[];
         }[];
-        commands?: {
+        revision?: string | undefined;
+        definitionScope?: 'statusOnly' | undefined;
+        detectionSummary?: undefined | {
+            total: number;
+            scripts: number;
+            services: number;
+            files: {
+                file: string;
+                total: number;
+                scripts: number;
+                services: number;
+            }[];
+            sourceFiles?: string[] | undefined;
+        };
+        commands?: undefined | {
             name: string;
-            usage: 'setup' | 'script' | 'service';
+            usage: 'script' | 'service' | 'setup';
             source: {
                 kind: 'native';
-                tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                 file: string;
                 target: string;
             } | {
@@ -294,52 +337,52 @@ export type ProjectDefinitionsActionResultById = {
                 file: string;
                 target: string;
             };
-            availability: 'available' | 'unavailable' | 'unresolved' | 'ambiguous';
+            availability: 'ambiguous' | 'available' | 'unavailable' | 'unresolved';
             code?: string | undefined;
-            invocation?: {
+            invocation?: undefined | {
                 tool: string;
                 args: readonly string[];
                 cwd: string;
                 requestedVersion?: string | undefined;
-            } | undefined;
-            executionInputs?: {
+            };
+            executionInputs?: undefined | {
                 file: string;
                 hash: string;
-            }[] | undefined;
-        }[] | undefined;
-        environmentExecutionInputs?: {
+            }[];
+        }[];
+        toolchainExecutionInputs?: undefined | {
             file: string;
             hash: string;
-        }[] | undefined;
-        tools?: {
+        }[];
+        tools?: undefined | {
             tool: string;
             file: string;
             availability: 'available' | 'unavailable' | 'unresolved';
             requestedVersion?: string | undefined;
             version?: string | undefined;
-        }[] | undefined;
-        setupReadiness?: {
+        }[];
+        setupReadiness?: undefined | {
             kind: 'current';
             reviewedEffectDigest: string;
             completedAtMs: number;
         } | {
-            kind: 'unprepared';
-            reviewedEffectDigest: string;
+            kind: 'needsReview';
+            code: string;
         } | {
             kind: 'notRequired';
             reviewedEffectDigest: string;
         } | {
-            kind: 'needsReview';
-            code: string;
-        } | {
             kind: 'unknown';
             code: string;
-        } | undefined;
-        setupReview?: {
+        } | {
+            kind: 'unprepared';
+            reviewedEffectDigest: string;
+        };
+        setupReview?: undefined | {
             reviewedEffect: JsonValue;
             reviewedEffectDigest: string;
-        } | undefined;
-        setupConsent?: {
+        };
+        setupConsent?: undefined | {
             kind: 'admitted';
         } | {
             kind: 'required';
@@ -347,164 +390,12 @@ export type ProjectDefinitionsActionResultById = {
         } | {
             kind: 'unavailable';
             code: string;
-        } | undefined;
-    };
-    readonly "projects.manifest.update": {
-        status: 'saved';
-        basis: {
-            kind: 'present';
-            hash: string;
-        };
-        document: {
-            status: 'valid';
-            bytes: string;
-            original: Record<string, unknown>;
-            manifest: {
-                version: 1;
-                $schema?: string | undefined;
-                environment?: {
-                    kind: 'host';
-                } | {
-                    kind: 'toolchain';
-                    tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'nix_flake';
-                    configPath?: string | undefined;
-                } | {
-                    kind: 'pluginToolchain';
-                    adapter: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    configPath?: string | undefined;
-                } | undefined;
-                devcontainer?: {
-                    configPath?: string | undefined;
-                } | undefined;
-                environmentVariables?: {
-                    name: string;
-                    kind: 'secret' | 'config';
-                    required: boolean;
-                }[] | undefined;
-                workspace?: {
-                    setup?: ({
-                        kind: 'native';
-                        tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
-                        file: string;
-                        target: string;
-                    } | {
-                        kind: 'pluginNative';
-                        adapter: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        file: string;
-                        target: string;
-                    } | {
-                        kind: 'command';
-                        command: string;
-                        cwd?: string | undefined;
-                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
-                    })[] | undefined;
-                    teardown?: ({
-                        kind: 'native';
-                        tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
-                        file: string;
-                        target: string;
-                    } | {
-                        kind: 'pluginNative';
-                        adapter: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        file: string;
-                        target: string;
-                    } | {
-                        kind: 'command';
-                        command: string;
-                        cwd?: string | undefined;
-                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
-                    })[] | undefined;
-                    setupInputs?: string[] | undefined;
-                    memoryDemand?: {
-                        bytes: number;
-                        basis: {
-                            kind: 'declared';
-                        } | {
-                            kind: 'measured';
-                            operation?: {
-                                serverId: string;
-                                machineId: string;
-                                operationId: string;
-                            } | undefined;
-                        };
-                    } | undefined;
-                } | undefined;
-                scripts?: Record<string, {
-                    source: {
-                        kind: 'native';
-                        tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
-                        file: string;
-                        target: string;
-                    } | {
-                        kind: 'pluginNative';
-                        adapter: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        file: string;
-                        target: string;
-                    } | {
-                        kind: 'command';
-                        command: string;
-                        cwd?: string | undefined;
-                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
-                    };
-                    execution?: 'primary' | 'portable' | undefined;
-                    memoryDemand?: {
-                        bytes: number;
-                        basis: {
-                            kind: 'declared';
-                        } | {
-                            kind: 'measured';
-                            operation?: {
-                                serverId: string;
-                                machineId: string;
-                                operationId: string;
-                            } | undefined;
-                        };
-                    } | undefined;
-                }> | undefined;
-                services?: Record<string, {
-                    source: {
-                        kind: 'native';
-                        tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
-                        file: string;
-                        target: string;
-                    } | {
-                        kind: 'pluginNative';
-                        adapter: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        file: string;
-                        target: string;
-                    } | {
-                        kind: 'command';
-                        command: string;
-                        cwd?: string | undefined;
-                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
-                    };
-                    execution?: 'primary' | 'portable' | undefined;
-                    port?: number | undefined;
-                }> | undefined;
-            };
-            diagnostics: {
-                code: 'invalid_json' | 'invalid_field' | 'unrecognized_key';
-                path: (string | number)[];
-                message: string;
-                offset?: number | undefined;
-            }[];
         };
     } | {
+        unchanged: true;
+        revision: string;
+    };
+    readonly "projects.manifest.update": {
         status: 'conflict';
         current: {
             basis: {
@@ -517,18 +408,24 @@ export type ProjectDefinitionsActionResultById = {
                 hash: string;
             };
             document: {
+                status: 'invalid';
+                bytes: string;
+                diagnostics: {
+                    code: 'invalid_field' | 'invalid_json' | 'unrecognized_key';
+                    path: (number | string)[];
+                    message: string;
+                    offset?: number | undefined;
+                }[];
+                original?: unknown;
+            } | {
                 status: 'valid';
                 bytes: string;
                 original: Record<string, unknown>;
                 manifest: {
                     version: 1;
                     $schema?: string | undefined;
-                    environment?: {
+                    toolchain?: undefined | {
                         kind: 'host';
-                    } | {
-                        kind: 'toolchain';
-                        tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'nix_flake';
-                        configPath?: string | undefined;
                     } | {
                         kind: 'pluginToolchain';
                         adapter: {
@@ -536,19 +433,28 @@ export type ProjectDefinitionsActionResultById = {
                             localId: string;
                         };
                         configPath?: string | undefined;
-                    } | undefined;
-                    devcontainer?: {
+                    } | {
+                        kind: 'toolchain';
+                        tool: 'devbox' | 'devenv' | 'flox' | 'mise' | 'nix_flake';
                         configPath?: string | undefined;
-                    } | undefined;
-                    environmentVariables?: {
+                    };
+                    devcontainer?: undefined | {
+                        configPath?: string | undefined;
+                    };
+                    environmentVariables?: undefined | {
                         name: string;
-                        kind: 'secret' | 'config';
+                        kind: 'config' | 'secret';
                         required: boolean;
-                    }[] | undefined;
-                    workspace?: {
+                    }[];
+                    workspace?: undefined | {
                         setup?: ({
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
                             kind: 'native';
-                            tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -559,15 +465,15 @@ export type ProjectDefinitionsActionResultById = {
                             };
                             file: string;
                             target: string;
-                        } | {
-                            kind: 'command';
-                            command: string;
-                            cwd?: string | undefined;
-                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
                         })[] | undefined;
                         teardown?: ({
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
                             kind: 'native';
-                            tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -578,31 +484,31 @@ export type ProjectDefinitionsActionResultById = {
                             };
                             file: string;
                             target: string;
-                        } | {
-                            kind: 'command';
-                            command: string;
-                            cwd?: string | undefined;
-                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
                         })[] | undefined;
                         setupInputs?: string[] | undefined;
-                        memoryDemand?: {
+                        memoryDemand?: undefined | {
                             bytes: number;
                             basis: {
                                 kind: 'declared';
                             } | {
                                 kind: 'measured';
-                                operation?: {
+                                operation?: undefined | {
                                     serverId: string;
                                     machineId: string;
                                     operationId: string;
-                                } | undefined;
+                                };
                             };
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     scripts?: Record<string, {
                         source: {
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
                             kind: 'native';
-                            tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -613,31 +519,31 @@ export type ProjectDefinitionsActionResultById = {
                             };
                             file: string;
                             target: string;
-                        } | {
-                            kind: 'command';
-                            command: string;
-                            cwd?: string | undefined;
-                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
                         };
-                        execution?: 'primary' | 'portable' | undefined;
-                        memoryDemand?: {
+                        execution?: 'portable' | 'primary' | undefined;
+                        memoryDemand?: undefined | {
                             bytes: number;
                             basis: {
                                 kind: 'declared';
                             } | {
                                 kind: 'measured';
-                                operation?: {
+                                operation?: undefined | {
                                     serverId: string;
                                     machineId: string;
                                     operationId: string;
-                                } | undefined;
+                                };
                             };
-                        } | undefined;
+                        };
                     }> | undefined;
                     services?: Record<string, {
                         source: {
+                            kind: 'command';
+                            command: string;
+                            cwd?: string | undefined;
+                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                        } | {
                             kind: 'native';
-                            tool: 'mise' | 'devbox' | 'devenv' | 'flox' | 'package_script' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -648,43 +554,183 @@ export type ProjectDefinitionsActionResultById = {
                             };
                             file: string;
                             target: string;
-                        } | {
-                            kind: 'command';
-                            command: string;
-                            cwd?: string | undefined;
-                            platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
                         };
-                        execution?: 'primary' | 'portable' | undefined;
+                        execution?: 'portable' | 'primary' | undefined;
                         port?: number | undefined;
                     }> | undefined;
                 };
                 diagnostics: {
-                    code: 'invalid_json' | 'invalid_field' | 'unrecognized_key';
-                    path: (string | number)[];
+                    code: 'invalid_field' | 'invalid_json' | 'unrecognized_key';
+                    path: (number | string)[];
                     message: string;
                     offset?: number | undefined;
                 }[];
-            } | {
-                status: 'invalid';
-                bytes: string;
-                diagnostics: {
-                    code: 'invalid_json' | 'invalid_field' | 'unrecognized_key';
-                    path: (string | number)[];
-                    message: string;
-                    offset?: number | undefined;
-                }[];
-                original?: unknown;
             };
         };
     } | {
         status: 'refused';
-        code: 'invalid_manifest' | 'invalid_basis' | 'access_denied' | 'write_failed';
-        diagnostics?: {
-            code: 'invalid_json' | 'invalid_field' | 'unrecognized_key';
-            path: (string | number)[];
+        code: 'access_denied' | 'invalid_basis' | 'invalid_manifest' | 'write_failed';
+        diagnostics?: undefined | {
+            code: 'invalid_field' | 'invalid_json' | 'unrecognized_key';
+            path: (number | string)[];
             message: string;
             offset?: number | undefined;
-        }[] | undefined;
+        }[];
         message?: string | undefined;
+    } | {
+        status: 'saved';
+        basis: {
+            kind: 'present';
+            hash: string;
+        };
+        document: {
+            status: 'valid';
+            bytes: string;
+            original: Record<string, unknown>;
+            manifest: {
+                version: 1;
+                $schema?: string | undefined;
+                toolchain?: undefined | {
+                    kind: 'host';
+                } | {
+                    kind: 'pluginToolchain';
+                    adapter: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    configPath?: string | undefined;
+                } | {
+                    kind: 'toolchain';
+                    tool: 'devbox' | 'devenv' | 'flox' | 'mise' | 'nix_flake';
+                    configPath?: string | undefined;
+                };
+                devcontainer?: undefined | {
+                    configPath?: string | undefined;
+                };
+                environmentVariables?: undefined | {
+                    name: string;
+                    kind: 'config' | 'secret';
+                    required: boolean;
+                }[];
+                workspace?: undefined | {
+                    setup?: ({
+                        kind: 'command';
+                        command: string;
+                        cwd?: string | undefined;
+                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                    } | {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    })[] | undefined;
+                    teardown?: ({
+                        kind: 'command';
+                        command: string;
+                        cwd?: string | undefined;
+                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                    } | {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    })[] | undefined;
+                    setupInputs?: string[] | undefined;
+                    memoryDemand?: undefined | {
+                        bytes: number;
+                        basis: {
+                            kind: 'declared';
+                        } | {
+                            kind: 'measured';
+                            operation?: undefined | {
+                                serverId: string;
+                                machineId: string;
+                                operationId: string;
+                            };
+                        };
+                    };
+                };
+                scripts?: Record<string, {
+                    source: {
+                        kind: 'command';
+                        command: string;
+                        cwd?: string | undefined;
+                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                    } | {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    };
+                    execution?: 'portable' | 'primary' | undefined;
+                    memoryDemand?: undefined | {
+                        bytes: number;
+                        basis: {
+                            kind: 'declared';
+                        } | {
+                            kind: 'measured';
+                            operation?: undefined | {
+                                serverId: string;
+                                machineId: string;
+                                operationId: string;
+                            };
+                        };
+                    };
+                }> | undefined;
+                services?: Record<string, {
+                    source: {
+                        kind: 'command';
+                        command: string;
+                        cwd?: string | undefined;
+                        platforms?: ('darwin' | 'linux' | 'windows')[] | undefined;
+                    } | {
+                        kind: 'native';
+                        tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                        file: string;
+                        target: string;
+                    } | {
+                        kind: 'pluginNative';
+                        adapter: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        file: string;
+                        target: string;
+                    };
+                    execution?: 'portable' | 'primary' | undefined;
+                    port?: number | undefined;
+                }> | undefined;
+            };
+            diagnostics: {
+                code: 'invalid_field' | 'invalid_json' | 'unrecognized_key';
+                path: (number | string)[];
+                message: string;
+                offset?: number | undefined;
+            }[];
+        };
     };
 };

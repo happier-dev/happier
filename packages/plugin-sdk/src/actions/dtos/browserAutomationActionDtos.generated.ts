@@ -10,20 +10,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'getStatus';
@@ -34,20 +34,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'snapshot';
@@ -58,20 +58,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'semanticSnapshot';
@@ -82,20 +82,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'queryElements';
@@ -106,20 +106,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'waitFor';
@@ -130,20 +130,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'getActionTimeline';
@@ -158,20 +158,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'navigate';
@@ -182,20 +182,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'reload';
@@ -206,20 +206,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'goBack';
@@ -230,20 +230,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'goForward';
@@ -254,20 +254,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'click';
@@ -278,20 +278,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'tap';
@@ -302,20 +302,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'type';
@@ -326,20 +326,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'press';
@@ -350,20 +350,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'scroll';
@@ -374,20 +374,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'hover';
@@ -398,20 +398,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'focus';
@@ -422,20 +422,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'select';
@@ -446,20 +446,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'setValue';
@@ -481,12 +481,12 @@ export type BrowserAutomationActionInputById = {
             focusId: string;
             locator: string;
         };
-        submit?: {
+        submit?: undefined | {
             controlId: string;
             locator: string;
             label: string;
             consequence: string;
-        } | undefined;
+        };
     };
     readonly "browser.automation.upload": {
         v: 1;
@@ -494,23 +494,143 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'upload';
+    };
+    readonly "browser.automation.clipboardRead": {
+        v: 1;
+        automationRequestId: string;
+        browserSessionId: string;
+        viewId: string;
+        navigationGeneration: number;
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
+        requesterRef: {
+            kind: string;
+            id: string;
+        };
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
+        payload?: Record<string, unknown> | undefined;
+        dialogResponse?: undefined | {
+            kind: 'alert' | 'confirm' | 'prompt';
+            message: string;
+            accept: boolean;
+            promptText?: string | undefined;
+        };
+        timeoutMs?: number | undefined;
+    } & {
+        [x: string]: unknown;
+        actionKind: 'clipboardRead';
+    };
+    readonly "browser.automation.clipboardWrite": {
+        v: 1;
+        automationRequestId: string;
+        browserSessionId: string;
+        viewId: string;
+        navigationGeneration: number;
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
+        requesterRef: {
+            kind: string;
+            id: string;
+        };
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
+        payload?: Record<string, unknown> | undefined;
+        dialogResponse?: undefined | {
+            kind: 'alert' | 'confirm' | 'prompt';
+            message: string;
+            accept: boolean;
+            promptText?: string | undefined;
+        };
+        timeoutMs?: number | undefined;
+    } & {
+        [x: string]: unknown;
+        actionKind: 'clipboardWrite';
+    };
+    readonly "browser.automation.answerDialog": {
+        v: 1;
+        automationRequestId: string;
+        browserSessionId: string;
+        viewId: string;
+        navigationGeneration: number;
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
+        requesterRef: {
+            kind: string;
+            id: string;
+        };
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
+        payload?: Record<string, unknown> | undefined;
+        dialogResponse?: undefined | {
+            kind: 'alert' | 'confirm' | 'prompt';
+            message: string;
+            accept: boolean;
+            promptText?: string | undefined;
+        };
+        timeoutMs?: number | undefined;
+    } & {
+        [x: string]: unknown;
+        actionKind: 'answerDialog';
+    };
+    readonly "browser.automation.download": {
+        v: 1;
+        automationRequestId: string;
+        browserSessionId: string;
+        viewId: string;
+        navigationGeneration: number;
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
+        requesterRef: {
+            kind: string;
+            id: string;
+        };
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
+        payload?: Record<string, unknown> | undefined;
+        dialogResponse?: undefined | {
+            kind: 'alert' | 'confirm' | 'prompt';
+            message: string;
+            accept: boolean;
+            promptText?: string | undefined;
+        };
+        timeoutMs?: number | undefined;
+    } & {
+        [x: string]: unknown;
+        actionKind: 'download';
+    };
+    readonly "browser.automation.getInteractionState": {
+        v: 1;
+        automationRequestId: string;
+        browserSessionId: string;
+        viewId: string;
+        navigationGeneration: number;
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
+        requesterRef: {
+            kind: string;
+            id: string;
+        };
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
+        payload?: Record<string, unknown> | undefined;
+        dialogResponse?: undefined | {
+            kind: 'alert' | 'confirm' | 'prompt';
+            message: string;
+            accept: boolean;
+            promptText?: string | undefined;
+        };
+        timeoutMs?: number | undefined;
+    } & {
+        [x: string]: unknown;
+        actionKind: 'getInteractionState';
     };
     readonly "browser.automation.drag": {
         v: 1;
@@ -518,20 +638,20 @@ export type BrowserAutomationActionInputById = {
         browserSessionId: string;
         viewId: string;
         navigationGeneration: number;
-        requestedBy: 'user' | 'agent' | 'plugin' | 'system';
+        requestedBy: 'agent' | 'plugin' | 'system' | 'user';
         requesterRef: {
             kind: string;
             id: string;
         };
-        actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-        timeoutMs: number;
+        actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
         payload?: Record<string, unknown> | undefined;
-        dialogResponse?: {
+        dialogResponse?: undefined | {
             kind: 'alert' | 'confirm' | 'prompt';
             message: string;
             accept: boolean;
             promptText?: string | undefined;
-        } | undefined;
+        };
+        timeoutMs?: number | undefined;
     } & {
         [x: string]: unknown;
         actionKind: 'drag';
@@ -541,10 +661,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.status": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -552,7 +672,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -562,10 +693,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.snapshot": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -573,7 +704,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -583,10 +725,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.semanticSnapshot": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -594,7 +736,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -604,10 +757,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.queryElements": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -615,7 +768,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -625,10 +789,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.waitFor": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -636,7 +800,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -647,18 +822,17 @@ export type BrowserAutomationActionResultById = {
         v: 1;
         browserSessionId: string;
         viewId: string;
-        maxEntries: number;
         entries: {
             v: 1;
             timelineEntryId: string;
             automationRequestId: string;
             browserSessionId: string;
             viewId: string;
-            actionKind: 'getStatus' | 'snapshot' | 'semanticSnapshot' | 'queryElements' | 'getDiagnosticsSummary' | 'getActionTimeline' | 'waitFor' | 'navigate' | 'reload' | 'goBack' | 'goForward' | 'click' | 'tap' | 'type' | 'press' | 'scroll' | 'hover' | 'focus' | 'select' | 'setValue' | 'upload' | 'drag' | 'evaluate' | 'startElementPicker' | 'cancelElementPicker';
-            requesterKind: 'user' | 'agent' | 'plugin' | 'system';
-            status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
-            adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-            fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+            actionKind: 'answerDialog' | 'cancelElementPicker' | 'click' | 'clipboardCut' | 'clipboardRead' | 'clipboardWrite' | 'download' | 'drag' | 'evaluate' | 'focus' | 'getActionTimeline' | 'getDiagnosticsSummary' | 'getInteractionState' | 'getStatus' | 'goBack' | 'goForward' | 'hover' | 'navigate' | 'press' | 'queryElements' | 'reload' | 'scroll' | 'select' | 'semanticSnapshot' | 'setValue' | 'snapshot' | 'startElementPicker' | 'tap' | 'type' | 'upload' | 'waitFor';
+            requesterKind: 'agent' | 'plugin' | 'system' | 'user';
+            status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
+            adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+            fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
             trustedInput: boolean;
             queuedAtMs: number;
             navigationGenerationBefore: number;
@@ -670,15 +844,11 @@ export type BrowserAutomationActionResultById = {
             startedAtMs?: number | undefined;
             finishedAtMs?: number | undefined;
             durationMs?: number | undefined;
-            reasonCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+            reasonCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
         }[];
+        maxEntries?: number | undefined;
     };
     readonly "browser.automation.cancelActive": {
-        v: 1;
-        status: 'interrupted';
-        completion: 'unknown';
-        automationRequestId?: string | undefined;
-    } | {
         v: 1;
         outcome: 'canceled';
         canceledCount: number;
@@ -691,14 +861,19 @@ export type BrowserAutomationActionResultById = {
         v: 1;
         outcome: 'owner_mismatch';
         canceledCount: 0;
+    } | {
+        v: 1;
+        status: 'interrupted';
+        completion: 'unknown';
+        automationRequestId?: string | undefined;
     };
     readonly "browser.automation.navigate": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -706,7 +881,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -716,10 +902,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.reload": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -727,7 +913,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -737,10 +934,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.goBack": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -748,7 +945,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -758,10 +966,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.goForward": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -769,7 +977,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -779,10 +998,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.click": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -790,7 +1009,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -800,10 +1030,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.tap": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -811,7 +1041,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -821,10 +1062,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.type": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -832,7 +1073,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -842,10 +1094,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.press": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -853,7 +1105,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -863,10 +1126,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.scroll": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -874,7 +1137,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -884,10 +1158,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.hover": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -895,7 +1169,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -905,10 +1190,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.focus": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -916,7 +1201,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -926,10 +1222,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.select": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -937,7 +1233,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -947,10 +1254,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.setValue": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -958,7 +1265,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -966,24 +1284,24 @@ export type BrowserAutomationActionResultById = {
         automationRequestId?: string | undefined;
     };
     readonly "browser.automation.secret.fill": {
+        status: 'canceled';
+        code: 'canceled';
+    } | {
         status: 'filled';
         code: 'filled';
-        submit?: {
-            status: 'submitted';
-            code: 'submitted';
-        } | {
+        submit?: undefined | {
             status: 'refused';
             code: 'submit_refused';
         } | {
+            status: 'submitted';
+            code: 'submitted';
+        } | {
             status: 'unknown';
             code: 'submit_unknown';
-        } | undefined;
+        };
     } | {
         status: 'refused';
-        code: 'saved_secret_missing' | 'saved_secret_unavailable' | 'saved_secret_forbidden' | 'saved_secret_repair_required' | 'saved_secret_deleted' | 'saved_secret_mode_incompatible' | 'saved_secret_corrupt' | 'saved_secret_changed' | 'target_changed' | 'field_verification_unsupported' | 'observation_unavailable' | 'approval_required' | 'approval_changed' | 'target_unavailable';
-    } | {
-        status: 'canceled';
-        code: 'canceled';
+        code: 'approval_changed' | 'approval_required' | 'field_verification_unsupported' | 'observation_unavailable' | 'saved_secret_changed' | 'saved_secret_corrupt' | 'saved_secret_deleted' | 'saved_secret_forbidden' | 'saved_secret_missing' | 'saved_secret_mode_incompatible' | 'saved_secret_repair_required' | 'saved_secret_unavailable' | 'target_changed' | 'target_unavailable';
     } | {
         status: 'unknown';
         code: 'delivery_unknown';
@@ -991,10 +1309,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.upload": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -1002,7 +1320,178 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
+    } | {
+        v: 1;
+        status: 'interrupted';
+        completion: 'unknown';
+        automationRequestId?: string | undefined;
+    };
+    readonly "browser.automation.clipboardRead": {
+        v: 1;
+        automationRequestId: string;
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
+        durationMs: number;
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+        trustedInput: boolean;
+        navigationGenerationBefore: number;
+        navigationGenerationAfter: number;
+        controlEpochBefore: number;
+        controlEpochAfter: number;
+        diagnostics: Record<string, unknown>;
+        resultSummary: Record<string, unknown>;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
+    } | {
+        v: 1;
+        status: 'interrupted';
+        completion: 'unknown';
+        automationRequestId?: string | undefined;
+    };
+    readonly "browser.automation.clipboardWrite": {
+        v: 1;
+        automationRequestId: string;
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
+        durationMs: number;
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+        trustedInput: boolean;
+        navigationGenerationBefore: number;
+        navigationGenerationAfter: number;
+        controlEpochBefore: number;
+        controlEpochAfter: number;
+        diagnostics: Record<string, unknown>;
+        resultSummary: Record<string, unknown>;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
+    } | {
+        v: 1;
+        status: 'interrupted';
+        completion: 'unknown';
+        automationRequestId?: string | undefined;
+    };
+    readonly "browser.automation.answerDialog": {
+        v: 1;
+        automationRequestId: string;
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
+        durationMs: number;
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+        trustedInput: boolean;
+        navigationGenerationBefore: number;
+        navigationGenerationAfter: number;
+        controlEpochBefore: number;
+        controlEpochAfter: number;
+        diagnostics: Record<string, unknown>;
+        resultSummary: Record<string, unknown>;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
+    } | {
+        v: 1;
+        status: 'interrupted';
+        completion: 'unknown';
+        automationRequestId?: string | undefined;
+    };
+    readonly "browser.automation.download": {
+        v: 1;
+        automationRequestId: string;
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
+        durationMs: number;
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+        trustedInput: boolean;
+        navigationGenerationBefore: number;
+        navigationGenerationAfter: number;
+        controlEpochBefore: number;
+        controlEpochAfter: number;
+        diagnostics: Record<string, unknown>;
+        resultSummary: Record<string, unknown>;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
+    } | {
+        v: 1;
+        status: 'interrupted';
+        completion: 'unknown';
+        automationRequestId?: string | undefined;
+    };
+    readonly "browser.automation.getInteractionState": {
+        v: 1;
+        automationRequestId: string;
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
+        durationMs: number;
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
+        trustedInput: boolean;
+        navigationGenerationBefore: number;
+        navigationGenerationAfter: number;
+        controlEpochBefore: number;
+        controlEpochAfter: number;
+        diagnostics: Record<string, unknown>;
+        resultSummary: Record<string, unknown>;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';
@@ -1012,10 +1501,10 @@ export type BrowserAutomationActionResultById = {
     readonly "browser.automation.drag": {
         v: 1;
         automationRequestId: string;
-        status: 'succeeded' | 'failed' | 'interrupted' | 'canceled' | 'timed_out' | 'stale' | 'policy_denied' | 'unsupported';
+        status: 'canceled' | 'failed' | 'interrupted' | 'policy_denied' | 'stale' | 'succeeded' | 'timed_out' | 'unsupported';
         durationMs: number;
-        adapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'nativeWebView' | 'injectedPage' | 'previewProxy' | 'streamedSurface' | 'webIframe' | 'unavailable';
+        adapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeWebView' | 'previewProxy' | 'streamedSurface' | 'unavailable' | 'webIframe';
         trustedInput: boolean;
         navigationGenerationBefore: number;
         navigationGenerationAfter: number;
@@ -1023,7 +1512,18 @@ export type BrowserAutomationActionResultById = {
         controlEpochAfter: number;
         diagnostics: Record<string, unknown>;
         resultSummary: Record<string, unknown>;
-        errorCode?: 'timed_out' | 'policy_denied' | 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        errorCode?: 'automation_busy' | 'blocked_by_policy' | 'cross_origin_frame_unavailable' | 'human_interrupted' | 'navigation_mismatch' | 'not_implemented' | 'owner_conflict' | 'owner_disconnected' | 'owner_mismatch' | 'page_thread_blocked' | 'policy_denied' | 'runtime_unavailable' | 'selector_not_found' | 'stale_navigation' | 'timed_out' | 'unsupported_action' | 'user_canceled' | 'view_closed' | undefined;
+        interactionResult?: undefined | {
+            kind: 'clipboard';
+            text: string;
+        } | {
+            kind: 'download';
+            downloadId: string;
+            name: string;
+            offset: number;
+            dataBase64: string;
+            eof: boolean;
+        };
     } | {
         v: 1;
         status: 'interrupted';

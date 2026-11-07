@@ -6,11 +6,30 @@
 export type CapabilityRulesActionInputById = {
     readonly "mcp.rules.set": {
         items: ({
-            serverId: string;
-        } | {
             name: string;
+        } | {
+            serverId: string;
         })[];
         change: {
+            kind: 'replace';
+            rules: {
+                enabled: boolean;
+                target: {
+                    t: 'allMachines';
+                } | {
+                    t: 'machine';
+                    machineId: string;
+                } | {
+                    t: 'project';
+                    projectKey: string;
+                } | {
+                    t: 'workspace';
+                    machineId: string;
+                    workspaceRoot: string;
+                };
+                agentId?: string | undefined;
+            }[];
+        } | {
             kind: 'write';
             write: {
                 place: {
@@ -26,38 +45,38 @@ export type CapabilityRulesActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                state: 'on' | 'off' | 'inherit';
+                state: 'inherit' | 'off' | 'on';
                 agentId?: string | undefined;
             };
-        } | {
-            kind: 'replace';
-            rules: {
-                target: {
-                    t: 'allMachines';
-                } | {
-                    t: 'machine';
-                    machineId: string;
-                } | {
-                    t: 'project';
-                    projectKey: string;
-                } | {
-                    t: 'workspace';
-                    machineId: string;
-                    workspaceRoot: string;
-                };
-                enabled: boolean;
-                agentId?: string | undefined;
-            }[];
         };
         expectedRevision?: number | undefined;
     };
     readonly "skills.rules.set": {
         items: ({
-            skillId: string;
-        } | {
             name: string;
+        } | {
+            skillId: string;
         })[];
         change: {
+            kind: 'replace';
+            rules: {
+                enabled: boolean;
+                target: {
+                    t: 'allMachines';
+                } | {
+                    t: 'machine';
+                    machineId: string;
+                } | {
+                    t: 'project';
+                    projectKey: string;
+                } | {
+                    t: 'workspace';
+                    machineId: string;
+                    workspaceRoot: string;
+                };
+                agentId?: string | undefined;
+            }[];
+        } | {
             kind: 'write';
             write: {
                 place: {
@@ -73,33 +92,17 @@ export type CapabilityRulesActionInputById = {
                     machineId: string;
                     workspaceRoot: string;
                 };
-                state: 'on' | 'off' | 'inherit';
+                state: 'inherit' | 'off' | 'on';
                 agentId?: string | undefined;
             };
-        } | {
-            kind: 'replace';
-            rules: {
-                target: {
-                    t: 'allMachines';
-                } | {
-                    t: 'machine';
-                    machineId: string;
-                } | {
-                    t: 'project';
-                    projectKey: string;
-                } | {
-                    t: 'workspace';
-                    machineId: string;
-                    workspaceRoot: string;
-                };
-                enabled: boolean;
-                agentId?: string | undefined;
-            }[];
         };
     };
 };
 export type CapabilityRulesActionResultById = {
     readonly "mcp.rules.set": {
+        ok: false;
+        code: 'catalog_unavailable' | 'conflict' | 'not_found' | 'replace_needs_one_item';
+    } | {
         ok: true;
         items: {
             serverId: string;
@@ -145,11 +148,11 @@ export type CapabilityRulesActionResultById = {
             }[];
         }[];
         revision: number;
-    } | {
-        ok: false;
-        code: 'conflict' | 'not_found' | 'catalog_unavailable' | 'replace_needs_one_item';
     };
     readonly "skills.rules.set": {
+        ok: false;
+        code: 'catalog_unavailable' | 'conflict' | 'not_found' | 'replace_needs_one_item';
+    } | {
         ok: true;
         items: {
             skillId: string;
@@ -195,8 +198,5 @@ export type CapabilityRulesActionResultById = {
             }[];
         }[];
         revision: number;
-    } | {
-        ok: false;
-        code: 'conflict' | 'not_found' | 'catalog_unavailable' | 'replace_needs_one_item';
     };
 };

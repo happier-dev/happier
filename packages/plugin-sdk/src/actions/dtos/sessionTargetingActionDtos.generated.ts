@@ -6,70 +6,70 @@ import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type SessionTargetingActionInputById = {
     readonly "session.list": {
-        project?: {
+        project?: undefined | {
             serverId: string;
             projectKey: string;
-        } | undefined;
-        query?: {
-            scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
+        };
+        query?: undefined | {
+            scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
             attention: 'any' | 'needs_my_attention';
             audiences: ({
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
                 kind: 'outside_teams';
             } | {
                 kind: 'team';
                 teamId: string;
-            } | {
-                kind: 'group';
-                teamId: string;
-                groupId: string;
             })[];
             tagIds: string[];
             v: 1;
             storage: 'active' | 'archived';
             includeInactive: boolean;
             bot?: 'bot' | 'ordinary' | undefined;
-            membership?: {
+            membership?: undefined | {
                 mode: 'filter_or_manual' | 'manual_only';
                 tagIds: string[];
-                filter?: {
-                    scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
+                filter?: undefined | {
+                    scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
                     attention: 'any' | 'needs_my_attention';
                     audiences: ({
+                        kind: 'group';
+                        teamId: string;
+                        groupId: string;
+                    } | {
                         kind: 'outside_teams';
                     } | {
                         kind: 'team';
                         teamId: string;
-                    } | {
-                        kind: 'group';
-                        teamId: string;
-                        groupId: string;
                     })[];
                     tagIds: string[];
                     coordinator?: 'coordinator' | undefined;
                     folderIds?: string[] | undefined;
-                    projectKeys?: {
+                    projectKeys?: undefined | {
                         include: string[];
                         exclude: string[];
-                    } | undefined;
+                    };
                     underSessionId?: string | undefined;
-                } | undefined;
-            } | undefined;
+                };
+            };
             cursor?: string | undefined;
             attentionCursor?: string | undefined;
             limit?: number | undefined;
             includeAttention?: boolean | undefined;
             coordinator?: 'coordinator' | undefined;
             folderIds?: string[] | undefined;
-            projectKeys?: {
+            projectKeys?: undefined | {
                 include: string[];
                 exclude: string[];
-            } | undefined;
+            };
             underSessionId?: string | undefined;
-        } | undefined;
+        };
         underSessionId?: string | undefined;
-        view?: 'summary' | 'awareness' | undefined;
+        view?: 'awareness' | 'summary' | undefined;
         limit?: number | undefined;
-        cursor?: string | null | undefined;
+        cursor?: null | string | undefined;
         includeLastMessagePreview?: boolean | undefined;
         activeOnly?: boolean | undefined;
         archivedOnly?: boolean | undefined;
@@ -79,31 +79,35 @@ export type SessionTargetingActionInputById = {
     };
     readonly "session.activity.get": {
         sessionId: string;
-        view?: 'summary' | 'awareness' | undefined;
+        view?: 'awareness' | 'recap' | 'summary' | undefined;
         windowSeconds?: number | undefined;
     };
     readonly "session.messages.recent.get": {
         [x: string]: unknown;
         sessionId: SessionTargetV1<true>;
         limit?: number | undefined;
-        cursor?: string | null | undefined;
+        cursor?: null | string | undefined;
         includeUser?: boolean | undefined;
         includeAssistant?: boolean | undefined;
-        maxCharsPerMessage?: number | null | undefined;
+        maxCharsPerMessage?: null | number | undefined;
     };
-    readonly "session.target.primary.set": {
+    readonly "session.target.primary.set": ({
         serverId: string;
         sessionId: string;
     } | {
         sessionId: null;
+    }) & {
+        clientId?: string | undefined;
     };
-    readonly "session.target.tracked.set": {
+    readonly "session.target.tracked.set": ({
         sessionAddresses: {
             serverId: string;
             sessionId: string;
         }[];
     } | {
         sessionIds: string[];
+    }) & {
+        clientId?: string | undefined;
     };
     readonly "session.targets.resolve": {
         target: SessionTargetV1<true>;
@@ -111,76 +115,7 @@ export type SessionTargetingActionInputById = {
     };
 };
 export type SessionTargetingActionResultById = {
-    readonly "session.list": {
-        view: 'awareness';
-        projectionVersion: 1;
-        sessions: {
-            v: 1;
-            sessionId: string;
-            lifecycle: 'unknown' | 'active' | 'archived' | 'ready' | 'failed' | 'cancelled';
-            runtime: 'unknown' | 'working' | 'background_active' | 'waiting' | 'idle' | 'offline';
-            freshness: 'unknown' | 'offline' | 'live' | 'stale';
-            operational: {
-                primary: 'none' | 'ready' | 'failed' | 'working' | 'permission_required' | 'action_required' | 'usage_limited' | 'pending_input';
-                reasons: ('archived' | 'ready' | 'failed' | 'working' | 'permission_required' | 'action_required' | 'usage_limited' | 'pending_input' | 'blocked_input' | 'resuming' | 'background_activity' | 'runtime_offline' | 'runtime_stale' | 'runtime_unservable' | 'content_locked')[];
-            };
-            encryption: 'unknown' | 'ready' | 'plain' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable';
-            availability: 'complete' | 'locked' | 'partial';
-            origin?: {
-                kind: 'discussion' | 'none' | 'session' | 'execution_run' | 'run_step';
-                runId?: string | undefined;
-                discussionParticipant?: {
-                    discussionId: string;
-                    participantSlotId: string;
-                } | undefined;
-            } | undefined;
-            title?: string | undefined;
-            statusReason?: string | undefined;
-            processTerminalState?: 'stopped' | undefined;
-            workStatus?: 'waiting_for_startup_lock' | undefined;
-            currentWork?: {
-                title: string;
-                itemId?: string | undefined;
-                kind?: 'goal' | 'task' | 'todo' | undefined;
-                status?: 'unknown' | 'active' | 'cancelled' | 'pending' | 'paused' | 'blocked' | 'complete' | undefined;
-                activeWorkflowRunCount?: number | undefined;
-            } | undefined;
-            lineage?: {
-                relation: 'fork' | 'replay';
-                sourceSessionId?: string | undefined;
-            } | undefined;
-            workspace?: {
-                machineId?: string | undefined;
-                projectName?: string | undefined;
-                path?: string | undefined;
-                worktreeName?: string | undefined;
-            } | undefined;
-            manager?: {
-                sessionId: string;
-            } | undefined;
-            managedSessions?: {
-                total: number;
-                working: number;
-                needsYou: number;
-                stalled: number;
-                finished: number;
-                attentionPrimary: 'unknown' | 'archived' | 'ready' | 'failed' | 'stopped' | 'background_active' | 'waiting' | 'waiting_for_startup_lock' | 'stale' | 'permission_required' | 'action_required' | 'usage_limited' | 'pending_input' | 'resuming' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'finished_unseen' | 'mentioned' | 'unread' | 'archiving' | 'recoverable_unservable' | 'disconnected' | 'thinking' | null;
-                archived?: number | undefined;
-            } | undefined;
-            pendingReviewRuns?: number | undefined;
-        }[];
-        nextCursor: string | null;
-        hasNext: boolean;
-        attentionNextCursor?: string | null | undefined;
-        attentionHasNext?: boolean | undefined;
-        project?: {
-            serverId: string;
-            projectKey: string;
-        } | undefined;
-        projectFilterUnavailableCount?: number | undefined;
-        metadataUpgradeRequiredCount?: number | undefined;
-        botFilterUnavailableCount?: number | undefined;
-    } | (({
+    readonly "session.list": (({
         [x: string]: unknown;
         sessions: {
             [x: string]: unknown;
@@ -189,51 +124,78 @@ export type SessionTargetingActionResultById = {
             updatedAt: number;
             active: boolean;
             activeAt: number;
-            encryption: {
+            encryption: null | {
                 [x: string]: unknown;
-                type: 'legacy' | 'dataKey';
-            } | null;
-            manager?: {
+                type: 'dataKey' | 'legacy';
+            };
+            manager?: undefined | {
                 sessionId: string;
-            } | undefined;
-            managedSessions?: {
+            };
+            managedSessions?: undefined | {
                 total: number;
                 working: number;
                 needsYou: number;
                 stalled: number;
                 finished: number;
-                attentionPrimary: 'unknown' | 'archived' | 'ready' | 'failed' | 'stopped' | 'background_active' | 'waiting' | 'waiting_for_startup_lock' | 'stale' | 'permission_required' | 'action_required' | 'usage_limited' | 'pending_input' | 'resuming' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'finished_unseen' | 'mentioned' | 'unread' | 'archiving' | 'recoverable_unservable' | 'disconnected' | 'thinking' | null;
+                attentionPrimary: 'access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'content_unavailable' | 'disconnected' | 'failed' | 'finished_unseen' | 'locked' | 'mentioned' | 'pending_input' | 'permission_required' | 'preparing' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'setup_required' | 'stale' | 'stopped' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_startup_lock' | null;
                 archived?: number | undefined;
-            } | undefined;
-            archivedAt?: number | null | undefined;
+            };
+            archivedAt?: null | number | undefined;
             pendingCount?: number | undefined;
             pendingBlockedCount?: number | undefined;
             tag?: string | undefined;
             title?: string | undefined;
+            bot?: undefined | {
+                kind: 'bot';
+            };
+            botFace?: undefined | {
+                style?: 'dither' | 'dots' | 'pixel' | 'planet' | 'solid' | undefined;
+                body?: 'antlers' | 'bag' | 'bean' | 'beetle' | 'bracelegs' | 'brackets' | 'cat' | 'crab' | 'cursor' | 'cursortail' | 'drip' | 'drone' | 'feet' | 'ghost' | 'hopper' | 'jelly' | 'loaf' | 'octopus' | 'puddle' | 'pup' | 'robot' | 'rocket' | 'semi' | 'specter' | 'spider' | 'squat' | 'squid' | 'stilts' | 'tagclaws' | 'tail' | 'tall' | 'termbody' | 'tower' | 'ufo' | 'walker' | undefined;
+                palette?: 'aurora' | 'daybreak' | 'glacier' | 'indigo' | 'ink' | 'lagoon' | 'moss' | 'orchid' | 'sand' | undefined;
+                seed?: string | undefined;
+                shape?: undefined | {
+                    v: 1;
+                    fill: string[];
+                    mouth: [
+                        number,
+                        number,
+                        number
+                    ];
+                    stroke?: [
+                        string,
+                        number
+                    ][] | undefined;
+                    cut?: ([
+                        string,
+                        number
+                    ] | string)[] | undefined;
+                    origin?: 'custom' | 'surprise' | undefined;
+                };
+            };
             path?: string | undefined;
             host?: string | undefined;
             machineId?: string | undefined;
             permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
-            share?: {
+            share?: null | undefined | {
                 accessLevel: string;
                 canApprovePermissions: boolean;
-            } | null | undefined;
-            effectiveAccess?: {
+            };
+            effectiveAccess?: undefined | {
                 v: 1;
-                level: 'view' | 'edit' | 'admin' | 'owner';
+                level: 'admin' | 'edit' | 'owner' | 'view';
                 sources: ({
-                    kind: 'owner';
-                } | {
                     kind: 'direct';
                     shareId: string;
-                } | {
-                    kind: 'team';
-                    teamId: string;
-                    requiredByTeamPolicy: boolean;
                 } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'owner';
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                    requiredByTeamPolicy: boolean;
                 })[];
                 capabilities: {
                     readTranscript: boolean;
@@ -249,206 +211,143 @@ export type SessionTargetingActionResultById = {
                     stopSession: boolean;
                     deleteSession: boolean;
                 };
-                audienceContext?: {
-                    kind: 'team';
-                    teamId: string;
-                } | {
+                audienceContext?: null | undefined | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
-                } | null | undefined;
-                primaryTeamId?: string | null | undefined;
-            } | undefined;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                };
+                primaryTeamId?: null | string | undefined;
+            };
             isSystem?: boolean | undefined;
-            systemPurpose?: string | null | undefined;
-            encryptionMode?: 'plain' | 'e2ee' | undefined;
-            latestTurnId?: string | null | undefined;
-            latestTurnStatus?: 'failed' | 'cancelled' | 'waiting' | 'in_progress' | 'completed' | null | undefined;
-            latestTurnStatusObservedAt?: number | null | undefined;
+            systemPurpose?: null | string | undefined;
+            encryptionMode?: 'e2ee' | 'plain' | undefined;
+            latestTurnId?: null | string | undefined;
+            latestTurnStatus?: 'cancelled' | 'completed' | 'failed' | 'in_progress' | 'waiting' | null | undefined;
+            latestTurnStatusObservedAt?: null | number | undefined;
             lastRuntimeIssue?: Readonly<{
                 v: 1;
                 scope: 'primary_session';
                 status: 'failed';
                 code: string;
-                source: 'unknown' | 'agent_status_error' | 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'usage_limit' | 'team_credential' | 'auth_error' | 'dependency_failure' | 'stream_error' | 'permission_blocked';
+                source: 'agent_process_exit' | 'agent_process_exit_after_switch' | 'agent_session_error' | 'agent_status_error' | 'auth_error' | 'dependency_failure' | 'permission_blocked' | 'stream_error' | 'team_credential' | 'unknown' | 'usage_limit';
                 occurredAt: number;
                 sessionSeq?: number | undefined;
                 agentId?: string | undefined;
                 agentTurnId?: string | undefined;
                 sanitizedPreview?: string | undefined;
-                usageLimit?: {
+                usageLimit?: undefined | {
                     v: 1;
-                    resetAtMs: number | null;
-                    retryAfterMs: number | null;
-                    quotaScope: 'unknown' | 'workspace' | 'account' | 'organization' | 'model' | 'provider';
-                    recoverability: 'unknown' | 'wait' | 'switch_account' | 'manual';
+                    resetAtMs: null | number;
+                    retryAfterMs: null | number;
+                    quotaScope: 'account' | 'model' | 'organization' | 'provider' | 'unknown' | 'workspace';
+                    recoverability: 'manual' | 'switch_account' | 'unknown' | 'wait';
                     providerLimitId?: string | undefined;
-                    planType?: string | null | undefined;
-                    utilization?: number | null | undefined;
-                    limitCategory?: 'unknown' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_invalid' | 'plan_invalid' | 'validation_failed' | 'disabled' | undefined;
-                    quotaSnapshotRef?: {
+                    planType?: null | string | undefined;
+                    utilization?: null | number | undefined;
+                    limitCategory?: 'auth_invalid' | 'capacity' | 'disabled' | 'plan_invalid' | 'rate_limit' | 'temporary_throttle' | 'unknown' | 'usage_limit' | 'validation_failed' | undefined;
+                    quotaSnapshotRef?: undefined | {
                         serviceId: string;
                         profileId?: string | undefined;
                         groupId?: string | undefined;
                         fetchedAtMs?: number | undefined;
-                    } | undefined;
+                    };
                     effectiveMeterId?: string | undefined;
                     effectiveRemainingPct?: number | undefined;
-                    allWindows?: {
+                    allWindows?: undefined | {
                         meterId: string;
                         scope?: string | undefined;
                         remainingPct?: number | undefined;
                         resetAtMs?: number | undefined;
                         status?: string | undefined;
-                    }[] | undefined;
-                    recoveryDecision?: 'switching' | 'waiting_for_reset' | 'manual_intervention' | 'not_recoverable' | undefined;
-                    overage?: {
-                        status: 'unknown' | 'allowed' | 'allowed_warning' | 'rejected';
-                        resetAtMs: number | null;
-                        disabledReason?: string | null | undefined;
-                    } | null | undefined;
-                    action?: {
+                    }[];
+                    recoveryDecision?: 'manual_intervention' | 'not_recoverable' | 'switching' | 'waiting_for_reset' | undefined;
+                    overage?: null | undefined | {
+                        status: 'allowed' | 'allowed_warning' | 'rejected' | 'unknown';
+                        resetAtMs: null | number;
+                        disabledReason?: null | string | undefined;
+                    };
+                    action?: null | undefined | {
+                        kind: 'none';
+                    } | {
                         kind: 'open_url';
                         url: string;
                         labelKey?: string | undefined;
                     } | {
                         kind: 'settings';
-                    } | {
-                        kind: 'none';
-                    } | null | undefined;
-                    connectedService?: {
+                    };
+                    connectedService?: null | undefined | {
                         serviceId: string;
-                        profileId: string | null;
-                        groupId: string | null;
+                        profileId: null | string;
+                        groupId: null | string;
                         groupExhausted?: boolean | undefined;
-                    } | null | undefined;
-                } | undefined;
-                teamCredential?: {
+                    };
+                };
+                teamCredential?: undefined | {
                     v: 1;
                     resourceId: string;
-                    reasonCode: 'invalid_request' | 'resource_forbidden' | 'resource_unavailable' | 'resource_changed' | 'session_not_active' | 'operation_not_current' | 'execution_run_not_found' | 'execution_run_terminal' | 'execution_run_authority_unavailable' | 'broker_unavailable' | 'update_required' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'cost_limit_unavailable' | 'duplicate_request';
-                    usageLimit?: {
-                        metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                    reasonCode: 'broker_unavailable' | 'connected_service_credential_reconnect_required' | 'cost_limit_unavailable' | 'duplicate_request' | 'execution_run_authority_unavailable' | 'execution_run_not_found' | 'execution_run_terminal' | 'invalid_request' | 'operation_not_current' | 'resource_changed' | 'resource_forbidden' | 'resource_unavailable' | 'session_not_active' | 'team_credential_usage_limit' | 'token_limit_unavailable' | 'update_required';
+                    usageLimit?: undefined | {
+                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                         remaining: string;
                         resetsAtUtc: string;
-                    } | undefined;
-                } | undefined;
-                temporaryThrottle?: {
+                    };
+                };
+                temporaryThrottle?: undefined | {
                     v: 1;
-                    retryAfterMs: number | null;
-                    recoverability: 'unknown' | 'wait' | 'manual' | 'retry';
-                } | undefined;
-                failureCause?: {
-                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn_start' | 'turn';
-                    failureReason: 'unknown' | 'plan' | 'usage_limit' | 'rate_limit' | 'capacity' | 'temporary_throttle' | 'auth_expired' | 'account_changed' | 'refresh_failed' | 'permission_denied' | 'authentication_required' | 'workspace_routing_unauthorized' | 'context_window_exceeded' | 'auth_account_changed' | 'unclassified_provider_error';
+                    retryAfterMs: null | number;
+                    recoverability: 'manual' | 'retry' | 'unknown' | 'wait';
+                };
+                failureCause?: undefined | {
+                    phase: 'authentication' | 'client_start' | 'thread_open' | 'turn' | 'turn_start';
+                    failureReason: 'account_changed' | 'auth_account_changed' | 'auth_expired' | 'authentication_required' | 'capacity' | 'context_window_exceeded' | 'permission_denied' | 'plan' | 'rate_limit' | 'refresh_failed' | 'temporary_throttle' | 'unclassified_provider_error' | 'unknown' | 'usage_limit' | 'workspace_routing_unauthorized';
                     code?: string | undefined;
-                    preparationCause?: {
+                    retryable?: boolean | undefined;
+                    requestId?: string | undefined;
+                    preparationCause?: undefined | {
                         code: string;
-                        stage: 'dispatch' | 'runner_authority' | 'invocation_context' | 'registry_acquisition' | 'current_registration' | 'turn_authority' | 'managed_provider' | 'retained_agent_services' | 'invocation_projection';
-                    } | undefined;
-                    reason?: 'refresh_bridge_unavailable' | 'provider_account_identity_unavailable' | 'experimental_api_unavailable' | 'workspace_incompatible' | 'credential_family_mismatch' | 'live_hot_auth_failed' | undefined;
-                    providerErrorCode?: number | 'ContextWindowExceeded' | 'UsageLimitExceeded' | 'Unauthorized' | 'Other' | 'HttpConnectionFailed' | 'model_not_found' | undefined;
+                        stage: 'current_registration' | 'dispatch' | 'invocation_context' | 'invocation_projection' | 'managed_provider' | 'registry_acquisition' | 'retained_agent_services' | 'runner_authority' | 'turn_authority';
+                        requestId?: string | undefined;
+                    };
+                    connectedServicesDefault?: undefined | {
+                        v: 1;
+                        source: 'account_default';
+                        reason: 'connected_account_purpose_catalog_unavailable' | 'connected_services_default_settings_invalid';
+                        phase: 'purpose_binding';
+                        catalogReason?: 'account-inconsistent' | 'account-mode-mismatch' | 'account-not-found' | 'authority-not-confirmed' | 'cancelled' | 'database_transaction_conflict_exhausted' | 'encryption-material-unavailable' | 'forbidden' | 'invalid-reference' | 'invalid-stored-content' | 'scope-retired' | 'source-version-conflict' | 'unauthorized' | 'unreachable' | 'unsupported' | undefined;
+                    };
+                    reason?: 'credential_family_mismatch' | 'experimental_api_unavailable' | 'live_hot_auth_failed' | 'provider_account_identity_unavailable' | 'refresh_bridge_unavailable' | 'workspace_incompatible' | undefined;
+                    providerErrorCode?: 'ContextWindowExceeded' | 'HttpConnectionFailed' | 'Other' | 'Unauthorized' | 'UsageLimitExceeded' | 'model_not_found' | number | undefined;
                     httpStatus?: number | undefined;
                     providerErrorMessage?: string | undefined;
-                } | undefined;
-                agentProcessExitAfterSwitch?: {
-                    exitCode: number | null;
-                    signal: string | null;
-                    lastStderrLine: string | null;
-                    vendorResumeId: string | null;
-                    materializationRoot: string | null;
-                    effectiveStateMode: 'shared' | 'isolated' | null;
-                } | undefined;
+                };
+                agentProcessExitAfterSwitch?: undefined | {
+                    exitCode: null | number;
+                    signal: null | string;
+                    lastStderrLine: null | string;
+                    vendorResumeId: null | string;
+                    materializationRoot: null | string;
+                    effectiveStateMode: 'isolated' | 'shared' | null;
+                };
             }> | null | undefined;
-            runtimeActivityState?: 'unknown' | 'active' | 'idle' | undefined;
+            runtimeActivityState?: 'active' | 'idle' | 'unknown' | undefined;
             runtimeActivityActiveCount?: number | undefined;
-            runtimeActivityObservedAt?: number | null | undefined;
+            runtimeActivityObservedAt?: null | number | undefined;
             runtimeActivityRevision?: number | undefined;
             rollbackEligibleTurnStarts?: number[] | undefined;
-            pendingActivationAuthorization?: {
-                requestId: string;
-                requestedAt: number;
-                status: 'waiting';
-                managedWakeTargetV1?: {
-                    homeId: string;
-                    managedId: string;
-                    enrolledMachineId: string;
-                    expectedIntentRevision: number;
-                    controller: {
-                        machineId: string;
-                        installationId: string;
-                    };
-                    origin: {
-                        kind: 'session-input';
-                        session: {
-                            homeId: string;
-                            sessionId: string;
-                        };
-                        pendingRequestId: string;
-                        requestedAt: number;
-                    } | {
-                        kind: 'finite-command';
-                        actionRequestId: string;
-                    } | {
-                        kind: 'workflow-assignment';
-                        runId: string;
-                        revision: number;
-                        assignment: {
-                            machineId: string;
-                        };
-                    } | {
-                        kind: 'context-delivery';
-                        session: {
-                            homeId: string;
-                            sessionId: string;
-                        };
-                        delivery: {
-                            runId: string;
-                            revision: number;
-                        };
-                    };
-                    reason: 'admitted-work';
-                } | undefined;
-                admittedTarget?: {
-                    homeId: string;
-                    accountId: string;
-                    sessionId: string;
-                    machineId: string;
-                    installationId: string;
-                } | undefined;
-            } | {
+            pendingActivationAuthorization?: undefined | {
                 requestId: string;
                 requestedAt: number;
                 status: 'failed';
-                failureCode: 'runtime_start_failed' | 'managed_start_refused' | 'managed_start_denied' | 'managed_start_expired' | 'managed_start_failed';
-                managedWakeTargetV1?: {
+                failureCode: 'managed_start_denied' | 'managed_start_expired' | 'managed_start_failed' | 'managed_start_refused' | 'runtime_start_failed';
+                managedWakeTargetV1?: undefined | {
                     homeId: string;
                     managedId: string;
                     enrolledMachineId: string;
                     expectedIntentRevision: number;
-                    controller: {
-                        machineId: string;
-                        installationId: string;
-                    };
                     origin: {
-                        kind: 'session-input';
-                        session: {
-                            homeId: string;
-                            sessionId: string;
-                        };
-                        pendingRequestId: string;
-                        requestedAt: number;
-                    } | {
-                        kind: 'finite-command';
-                        actionRequestId: string;
-                    } | {
-                        kind: 'workflow-assignment';
-                        runId: string;
-                        revision: number;
-                        assignment: {
-                            machineId: string;
-                        };
-                    } | {
                         kind: 'context-delivery';
                         session: {
                             homeId: string;
@@ -458,19 +357,92 @@ export type SessionTargetingActionResultById = {
                             runId: string;
                             revision: number;
                         };
+                    } | {
+                        kind: 'finite-command';
+                        actionRequestId: string;
+                    } | {
+                        kind: 'session-input';
+                        session: {
+                            homeId: string;
+                            sessionId: string;
+                        };
+                        pendingRequestId: string;
+                        requestedAt: number;
+                    } | {
+                        kind: 'workflow-assignment';
+                        runId: string;
+                        revision: number;
+                        assignment: {
+                            machineId: string;
+                        };
                     };
                     reason: 'admitted-work';
-                } | undefined;
-                admittedTarget?: {
+                    controller?: undefined | {
+                        machineId: string;
+                        installationId: string;
+                    };
+                };
+                admittedTarget?: undefined | {
                     homeId: string;
                     accountId: string;
                     sessionId: string;
                     machineId: string;
                     installationId: string;
-                } | undefined;
-            } | undefined;
+                };
+            } | {
+                requestId: string;
+                requestedAt: number;
+                status: 'waiting';
+                managedWakeTargetV1?: undefined | {
+                    homeId: string;
+                    managedId: string;
+                    enrolledMachineId: string;
+                    expectedIntentRevision: number;
+                    origin: {
+                        kind: 'context-delivery';
+                        session: {
+                            homeId: string;
+                            sessionId: string;
+                        };
+                        delivery: {
+                            runId: string;
+                            revision: number;
+                        };
+                    } | {
+                        kind: 'finite-command';
+                        actionRequestId: string;
+                    } | {
+                        kind: 'session-input';
+                        session: {
+                            homeId: string;
+                            sessionId: string;
+                        };
+                        pendingRequestId: string;
+                        requestedAt: number;
+                    } | {
+                        kind: 'workflow-assignment';
+                        runId: string;
+                        revision: number;
+                        assignment: {
+                            machineId: string;
+                        };
+                    };
+                    reason: 'admitted-work';
+                    controller?: undefined | {
+                        machineId: string;
+                        installationId: string;
+                    };
+                };
+                admittedTarget?: undefined | {
+                    homeId: string;
+                    accountId: string;
+                    sessionId: string;
+                    machineId: string;
+                    installationId: string;
+                };
+            };
         }[];
-        nextCursor?: string | null | undefined;
+        nextCursor?: null | string | undefined;
         hasNext?: boolean | undefined;
         metadataUpgradeRequiredCount?: number | undefined;
         botFilterUnavailableCount?: number | undefined;
@@ -479,141 +451,231 @@ export type SessionTargetingActionResultById = {
         sessions: {
             id: string;
             active: boolean;
-            presence: string | null;
+            presence: null | string;
             updatedAt: number;
-            manager?: {
+            manager?: undefined | {
                 sessionId: string;
-            } | undefined;
+            };
             title?: string | undefined;
             locationLabel?: string | undefined;
             serverId?: string | undefined;
             serverName?: string | undefined;
-            lastMessagePreview?: {
+            lastMessagePreview?: undefined | {
                 role: string;
                 text: string;
-                createdAt: number | null;
-            } | undefined;
+                createdAt: null | number;
+            };
         }[];
-        nextCursor: string | null;
+        nextCursor: null | string;
         ok?: true | undefined;
         hasNext?: boolean | undefined;
     }) & {
         [x: string]: unknown;
-        attentionNextCursor?: string | null | undefined;
+        attentionNextCursor?: null | string | undefined;
         attentionHasNext?: boolean | undefined;
-        project?: {
+        project?: undefined | {
             serverId: string;
             projectKey: string;
-        } | undefined;
+        };
         projectFilterUnavailableCount?: number | undefined;
         queryVersion?: 1 | undefined;
         metadataUpgradeRequiredCount?: number | undefined;
         botFilterUnavailableCount?: number | undefined;
-    });
-    readonly "session.activity.get": {
-        v: 1;
-        sessionId: string;
-        lifecycle: 'unknown' | 'active' | 'archived' | 'ready' | 'failed' | 'cancelled';
-        runtime: 'unknown' | 'working' | 'background_active' | 'waiting' | 'idle' | 'offline';
-        freshness: 'unknown' | 'offline' | 'live' | 'stale';
-        operational: {
-            primary: 'none' | 'ready' | 'failed' | 'working' | 'permission_required' | 'action_required' | 'usage_limited' | 'pending_input';
-            reasons: ('archived' | 'ready' | 'failed' | 'working' | 'permission_required' | 'action_required' | 'usage_limited' | 'pending_input' | 'blocked_input' | 'resuming' | 'background_activity' | 'runtime_offline' | 'runtime_stale' | 'runtime_unservable' | 'content_locked')[];
-        };
-        encryption: 'unknown' | 'ready' | 'plain' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable';
-        availability: 'complete' | 'locked' | 'partial';
-        origin?: {
-            kind: 'discussion' | 'none' | 'session' | 'execution_run' | 'run_step';
-            runId?: string | undefined;
-            discussionParticipant?: {
-                discussionId: string;
-                participantSlotId: string;
-            } | undefined;
-        } | undefined;
-        title?: string | undefined;
-        statusReason?: string | undefined;
-        processTerminalState?: 'stopped' | undefined;
-        workStatus?: 'waiting_for_startup_lock' | undefined;
-        currentWork?: {
-            title: string;
-            itemId?: string | undefined;
-            kind?: 'goal' | 'task' | 'todo' | undefined;
-            status?: 'unknown' | 'active' | 'cancelled' | 'pending' | 'paused' | 'blocked' | 'complete' | undefined;
-            activeWorkflowRunCount?: number | undefined;
-        } | undefined;
-        lineage?: {
-            relation: 'fork' | 'replay';
-            sourceSessionId?: string | undefined;
-        } | undefined;
-        workspace?: {
-            machineId?: string | undefined;
-            projectName?: string | undefined;
-            path?: string | undefined;
-            worktreeName?: string | undefined;
-        } | undefined;
-        manager?: {
+    }) | {
+        view: 'awareness';
+        projectionVersion: 1;
+        sessions: {
+            v: 1;
             sessionId: string;
-        } | undefined;
-        managedSessions?: {
-            total: number;
-            working: number;
-            needsYou: number;
-            stalled: number;
-            finished: number;
-            attentionPrimary: 'unknown' | 'archived' | 'ready' | 'failed' | 'stopped' | 'background_active' | 'waiting' | 'waiting_for_startup_lock' | 'stale' | 'permission_required' | 'action_required' | 'usage_limited' | 'pending_input' | 'resuming' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'finished_unseen' | 'mentioned' | 'unread' | 'archiving' | 'recoverable_unservable' | 'disconnected' | 'thinking' | null;
-            archived?: number | undefined;
-        } | undefined;
-        pendingReviewRuns?: number | undefined;
+            lifecycle: 'active' | 'archived' | 'cancelled' | 'failed' | 'ready' | 'unknown';
+            runtime: 'background_active' | 'idle' | 'offline' | 'unknown' | 'waiting' | 'working';
+            freshness: 'live' | 'offline' | 'stale' | 'unknown';
+            operational: {
+                primary: 'action_required' | 'failed' | 'none' | 'pending_input' | 'permission_required' | 'ready' | 'usage_limited' | 'working';
+                reasons: ('action_required' | 'archived' | 'background_activity' | 'blocked_input' | 'content_locked' | 'failed' | 'pending_input' | 'permission_required' | 'ready' | 'resuming' | 'runtime_offline' | 'runtime_stale' | 'runtime_unservable' | 'usage_limited' | 'working')[];
+            };
+            encryption: 'access_pending' | 'content_unavailable' | 'locked' | 'plain' | 'preparing' | 'ready' | 'repair_needed' | 'setup_required' | 'unknown';
+            availability: 'complete' | 'locked' | 'partial';
+            origin?: undefined | {
+                kind: 'discussion' | 'execution_run' | 'none' | 'run_step' | 'session';
+                runId?: string | undefined;
+                discussionParticipant?: undefined | {
+                    discussionId: string;
+                    participantSlotId: string;
+                };
+            };
+            title?: string | undefined;
+            statusReason?: string | undefined;
+            processTerminalState?: 'stopped' | undefined;
+            workStatus?: 'waiting_for_startup_lock' | undefined;
+            currentWork?: undefined | {
+                title: string;
+                itemId?: string | undefined;
+                kind?: 'goal' | 'task' | 'todo' | undefined;
+                status?: 'active' | 'blocked' | 'cancelled' | 'complete' | 'paused' | 'pending' | 'unknown' | undefined;
+                activeWorkflowRunCount?: number | undefined;
+            };
+            lineage?: undefined | {
+                relation: 'fork' | 'replay';
+                sourceSessionId?: string | undefined;
+            };
+            workspace?: undefined | {
+                machineId?: string | undefined;
+                projectName?: string | undefined;
+                path?: string | undefined;
+                worktreeName?: string | undefined;
+            };
+            manager?: undefined | {
+                sessionId: string;
+            };
+            managedSessions?: undefined | {
+                total: number;
+                working: number;
+                needsYou: number;
+                stalled: number;
+                finished: number;
+                attentionPrimary: 'access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'content_unavailable' | 'disconnected' | 'failed' | 'finished_unseen' | 'locked' | 'mentioned' | 'pending_input' | 'permission_required' | 'preparing' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'setup_required' | 'stale' | 'stopped' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_startup_lock' | null;
+                archived?: number | undefined;
+            };
+            pendingReviewRuns?: number | undefined;
+        }[];
+        nextCursor: null | string;
+        hasNext: boolean;
+        attentionNextCursor?: null | string | undefined;
+        attentionHasNext?: boolean | undefined;
+        project?: undefined | {
+            serverId: string;
+            projectKey: string;
+        };
+        projectFilterUnavailableCount?: number | undefined;
+        metadataUpgradeRequiredCount?: number | undefined;
+        botFilterUnavailableCount?: number | undefined;
+    };
+    readonly "session.activity.get": {
+        ok: true;
+        sessionId: string;
+        active: boolean;
+        updatedAt: null | number;
+        pendingCount: number;
+        pendingPermissionRequestCount: number;
+        pendingUserActionRequestCount: number;
     } | {
         ok: true;
         sessionId: string;
-        presence: string | null;
+        presence: null | string;
         active: boolean;
         thinking: boolean;
         working: boolean;
         blocked: boolean;
         permissionRequired: boolean;
         actionRequired: boolean;
-        updatedAt: number | null;
+        updatedAt: null | number;
         permissionRequestIds?: string[] | undefined;
-        messageCounts?: {
+        messageCounts?: undefined | {
             total: number;
             assistant: number;
             user: number;
-        } | undefined;
+        };
         pendingCount?: number | undefined;
         pendingPermissionRequestCount?: number | undefined;
         pendingUserActionRequestCount?: number | undefined;
     } | {
-        ok: true;
+        v: 1;
         sessionId: string;
-        active: boolean;
-        updatedAt: number | null;
-        pendingCount: number;
-        pendingPermissionRequestCount: number;
-        pendingUserActionRequestCount: number;
+        lifecycle: 'active' | 'archived' | 'cancelled' | 'failed' | 'ready' | 'unknown';
+        runtime: 'background_active' | 'idle' | 'offline' | 'unknown' | 'waiting' | 'working';
+        freshness: 'live' | 'offline' | 'stale' | 'unknown';
+        operational: {
+            primary: 'action_required' | 'failed' | 'none' | 'pending_input' | 'permission_required' | 'ready' | 'usage_limited' | 'working';
+            reasons: ('action_required' | 'archived' | 'background_activity' | 'blocked_input' | 'content_locked' | 'failed' | 'pending_input' | 'permission_required' | 'ready' | 'resuming' | 'runtime_offline' | 'runtime_stale' | 'runtime_unservable' | 'usage_limited' | 'working')[];
+        };
+        encryption: 'access_pending' | 'content_unavailable' | 'locked' | 'plain' | 'preparing' | 'ready' | 'repair_needed' | 'setup_required' | 'unknown';
+        availability: 'complete' | 'locked' | 'partial';
+        origin?: undefined | {
+            kind: 'discussion' | 'execution_run' | 'none' | 'run_step' | 'session';
+            runId?: string | undefined;
+            discussionParticipant?: undefined | {
+                discussionId: string;
+                participantSlotId: string;
+            };
+        };
+        title?: string | undefined;
+        statusReason?: string | undefined;
+        processTerminalState?: 'stopped' | undefined;
+        workStatus?: 'waiting_for_startup_lock' | undefined;
+        currentWork?: undefined | {
+            title: string;
+            itemId?: string | undefined;
+            kind?: 'goal' | 'task' | 'todo' | undefined;
+            status?: 'active' | 'blocked' | 'cancelled' | 'complete' | 'paused' | 'pending' | 'unknown' | undefined;
+            activeWorkflowRunCount?: number | undefined;
+        };
+        lineage?: undefined | {
+            relation: 'fork' | 'replay';
+            sourceSessionId?: string | undefined;
+        };
+        workspace?: undefined | {
+            machineId?: string | undefined;
+            projectName?: string | undefined;
+            path?: string | undefined;
+            worktreeName?: string | undefined;
+        };
+        manager?: undefined | {
+            sessionId: string;
+        };
+        managedSessions?: undefined | {
+            total: number;
+            working: number;
+            needsYou: number;
+            stalled: number;
+            finished: number;
+            attentionPrimary: 'access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'content_unavailable' | 'disconnected' | 'failed' | 'finished_unseen' | 'locked' | 'mentioned' | 'pending_input' | 'permission_required' | 'preparing' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'setup_required' | 'stale' | 'stopped' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_startup_lock' | null;
+            archived?: number | undefined;
+        };
+        pendingReviewRuns?: number | undefined;
+    } | {
+        view: 'recap';
+        sessionId: string;
+        status: 'empty' | 'loading' | 'unavailable';
+        recap: null;
+    } | {
+        view: 'recap';
+        sessionId: string;
+        status: 'ready';
+        recap: {
+            source: 'synopsis';
+            text: string;
+            atMs: number;
+        } | {
+            source: 'worker_update';
+            text: string;
+            atMs: number;
+            body?: string | undefined;
+            workerSessionId?: string | undefined;
+        };
     };
     readonly "session.messages.recent.get": JsonValue;
     readonly "session.target.primary.set": JsonValue;
     readonly "session.target.tracked.set": {
-        sessionIds: string[];
-        sessionAddresses: {
-            serverId: string;
-            sessionId: string;
-        }[];
-        sessions: {
-            address: {
+        ok: false;
+        status: 'ambiguous' | 'incomplete' | 'not_found' | 'unavailable';
+        error: {
+            code: 'session_ambiguous' | 'session_follow_unavailable' | 'session_lookup_incomplete' | 'session_not_found';
+            message: string;
+            sessionTitle?: string | undefined;
+            sessionId?: string | undefined;
+            candidates?: undefined | {
+                address: {
+                    serverId: string;
+                    sessionId: string;
+                };
+                id: string;
                 serverId: string;
-                sessionId: string;
-            };
-            id: string;
-            serverId: string;
-            title?: string | undefined;
-            locationLabel?: string | undefined;
-            serverName?: string | undefined;
-        }[];
-        ok: true;
-        status: 'ok';
+                title?: string | undefined;
+                locationLabel?: string | undefined;
+                serverName?: string | undefined;
+            }[];
+        };
     } | {
         sessionIds: string[];
         sessionAddresses: {
@@ -636,33 +698,32 @@ export type SessionTargetingActionResultById = {
         error: {
             code: 'session_follow_partial';
             message: string;
-            operation: 'include' | 'exclude';
+            operation: 'exclude' | 'include';
             address: {
                 serverId: string;
                 sessionId: string;
             };
-            reason: 'invalid_parameters' | 'feature_unavailable' | 'session_not_found' | 'source_not_found' | 'source_unavailable' | 'account_inactive' | 'session_archived' | 'unavailable';
+            reason: 'account_inactive' | 'feature_unavailable' | 'invalid_parameters' | 'session_archived' | 'session_not_found' | 'source_not_found' | 'source_unavailable' | 'unavailable';
         };
     } | {
-        ok: false;
-        status: 'unavailable' | 'not_found' | 'ambiguous' | 'incomplete';
-        error: {
-            code: 'session_not_found' | 'session_ambiguous' | 'session_lookup_incomplete' | 'session_follow_unavailable';
-            message: string;
-            sessionTitle?: string | undefined;
-            sessionId?: string | undefined;
-            candidates?: {
-                address: {
-                    serverId: string;
-                    sessionId: string;
-                };
-                id: string;
+        sessionIds: string[];
+        sessionAddresses: {
+            serverId: string;
+            sessionId: string;
+        }[];
+        sessions: {
+            address: {
                 serverId: string;
-                title?: string | undefined;
-                locationLabel?: string | undefined;
-                serverName?: string | undefined;
-            }[] | undefined;
-        };
+                sessionId: string;
+            };
+            id: string;
+            serverId: string;
+            title?: string | undefined;
+            locationLabel?: string | undefined;
+            serverName?: string | undefined;
+        }[];
+        ok: true;
+        status: 'ok';
     };
     readonly "session.targets.resolve": {
         coverage: 'complete' | 'unavailable';
@@ -670,7 +731,7 @@ export type SessionTargetingActionResultById = {
             serverId: string;
             sessionId: string;
         }[];
-        error: string | null;
+        error: null | string;
         cause?: string | undefined;
     };
 };

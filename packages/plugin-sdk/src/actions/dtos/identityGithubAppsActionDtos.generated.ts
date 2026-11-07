@@ -27,9 +27,9 @@ export type IdentityGithubAppsActionInputById = {
             clientSecret?: string | undefined;
             webhookSecret?: string | undefined;
         };
-        githubAppSlug?: string | null | undefined;
-        githubOwnerId?: string | null | undefined;
-        githubOwnerLogin?: string | null | undefined;
+        githubAppSlug?: null | string | undefined;
+        githubOwnerId?: null | string | undefined;
+        githubOwnerLogin?: null | string | undefined;
     };
     readonly "identity.githubApps.manifestSetup.start": {
         owner: {
@@ -57,13 +57,13 @@ export type IdentityGithubAppsActionInputById = {
         expectedRevision: number;
         patch: {
             githubClientId?: string | undefined;
-            githubAppSlug?: string | null | undefined;
-            githubOwnerLogin?: string | null | undefined;
-            secrets?: {
-                clientSecret?: string | null | undefined;
-                privateKey?: string | null | undefined;
-                webhookSecret?: string | null | undefined;
-            } | undefined;
+            githubAppSlug?: null | string | undefined;
+            githubOwnerLogin?: null | string | undefined;
+            secrets?: undefined | {
+                clientSecret?: null | string | undefined;
+                privateKey?: null | string | undefined;
+                webhookSecret?: null | string | undefined;
+            };
         };
     };
     readonly "identity.githubApps.verifyInstallation": {
@@ -103,18 +103,18 @@ export type IdentityGithubAppsActionResultById = {
             githubHost: string;
             githubAppId: string;
             githubClientId: string;
-            githubAppSlug: string | null;
-            githubOwnerId: string | null;
-            githubOwnerLogin: string | null;
+            githubAppSlug: null | string;
+            githubOwnerId: null | string;
+            githubOwnerLogin: null | string;
             revision: number;
             securityRevision: number;
-            state: 'draft' | 'verified' | 'disabled' | 'needs_attention';
+            state: 'disabled' | 'draft' | 'needs_attention' | 'verified';
             secretHealth: {
                 clientSecretConfigured: boolean;
                 privateKeyConfigured: boolean;
                 webhookSecretConfigured: boolean;
             };
-            lastVerifiedAt: string | null;
+            lastVerifiedAt: null | string;
             createdAt: string;
             updatedAt: string;
             callbackUrl?: string | undefined;
@@ -130,25 +130,25 @@ export type IdentityGithubAppsActionResultById = {
             state: string;
             verifiedPermissions: Record<string, 'read' | 'write'>;
             verifiedEvents: string[];
-            suspendedAt: string | null;
-            lastVerifiedAt: string | null;
+            suspendedAt: null | string;
+            lastVerifiedAt: null | string;
             teamConsumers: {
                 team: {
                     id: string;
                     name: string;
                 };
                 binding: {
+                    kind: 'directory_source';
+                    id: string;
+                    state: 'active' | 'initializing' | 'needs_attention' | 'paused';
+                } | {
                     kind: 'identity_connection';
                     id: string;
                     providerInstanceId: string;
                     enabled: boolean;
-                } | {
-                    kind: 'directory_source';
-                    id: string;
-                    state: 'needs_attention' | 'initializing' | 'active' | 'paused';
                 };
             }[];
-            requirements?: {
+            requirements?: undefined | {
                 permissions: Record<string, 'read' | 'write'>;
                 events: string[];
                 missingPermissions: {
@@ -156,8 +156,8 @@ export type IdentityGithubAppsActionResultById = {
                     required: 'read' | 'write';
                 }[];
                 missingEvents: string[];
-            } | undefined;
-            prospectiveRequirements?: {
+            };
+            prospectiveRequirements?: undefined | {
                 permissions: Record<string, 'read' | 'write'>;
                 events: string[];
                 missingPermissions: {
@@ -165,7 +165,7 @@ export type IdentityGithubAppsActionResultById = {
                     required: 'read' | 'write';
                 }[];
                 missingEvents: string[];
-            } | undefined;
+            };
         }[];
     };
     readonly "identity.githubApps.create": {
@@ -180,18 +180,18 @@ export type IdentityGithubAppsActionResultById = {
             githubHost: string;
             githubAppId: string;
             githubClientId: string;
-            githubAppSlug: string | null;
-            githubOwnerId: string | null;
-            githubOwnerLogin: string | null;
+            githubAppSlug: null | string;
+            githubOwnerId: null | string;
+            githubOwnerLogin: null | string;
             revision: number;
             securityRevision: number;
-            state: 'draft' | 'verified' | 'disabled' | 'needs_attention';
+            state: 'disabled' | 'draft' | 'needs_attention' | 'verified';
             secretHealth: {
                 clientSecretConfigured: boolean;
                 privateKeyConfigured: boolean;
                 webhookSecretConfigured: boolean;
             };
-            lastVerifiedAt: string | null;
+            lastVerifiedAt: null | string;
             createdAt: string;
             updatedAt: string;
             callbackUrl?: string | undefined;
@@ -212,18 +212,18 @@ export type IdentityGithubAppsActionResultById = {
             githubHost: string;
             githubAppId: string;
             githubClientId: string;
-            githubAppSlug: string | null;
-            githubOwnerId: string | null;
-            githubOwnerLogin: string | null;
+            githubAppSlug: null | string;
+            githubOwnerId: null | string;
+            githubOwnerLogin: null | string;
             revision: number;
             securityRevision: number;
-            state: 'draft' | 'verified' | 'disabled' | 'needs_attention';
+            state: 'disabled' | 'draft' | 'needs_attention' | 'verified';
             secretHealth: {
                 clientSecretConfigured: boolean;
                 privateKeyConfigured: boolean;
                 webhookSecretConfigured: boolean;
             };
-            lastVerifiedAt: string | null;
+            lastVerifiedAt: null | string;
             createdAt: string;
             updatedAt: string;
             callbackUrl?: string | undefined;

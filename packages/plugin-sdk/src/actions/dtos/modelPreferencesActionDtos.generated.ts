@@ -20,16 +20,16 @@ export type ModelPreferencesActionInputById = {
                 updatedAt: number;
             };
             catalogAgentId?: string | undefined;
-            builtInAgentId?: string | null | undefined;
-            configuredBackendId?: string | null | undefined;
+            builtInAgentId?: null | string | undefined;
+            configuredBackendId?: null | string | undefined;
             backendLabel?: string | undefined;
             modelLabel?: string | undefined;
-            providerDisplaySnapshot?: {
+            providerDisplaySnapshot?: undefined | {
                 providerName: string;
                 connectionName: string;
                 connectionRole: 'default' | 'named';
-                connectionDisplayNameMode: 'custom' | 'automatic';
-            } | undefined;
+                connectionDisplayNameMode: 'automatic' | 'custom';
+            };
             addedAtMs?: number | undefined;
         };
         favorite: boolean;

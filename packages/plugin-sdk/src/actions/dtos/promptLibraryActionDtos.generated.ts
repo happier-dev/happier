@@ -12,7 +12,7 @@ export type PromptLibraryActionInputById = {
             kind: 'doc';
             serverId?: string | undefined;
         };
-        behavior?: 'insert' | 'insert_on_send' | 'insert_and_send' | undefined;
+        behavior?: 'insert' | 'insert_and_send' | 'insert_on_send' | undefined;
         allowArgs?: boolean | undefined;
         availableIn?: 'global' | 'session_only' | undefined;
     };
@@ -25,32 +25,32 @@ export type PromptLibraryActionInputById = {
             serverId?: string | undefined;
         };
         invocationId: string;
-        expectedRevision: number | 'absent';
-        behavior?: 'insert' | 'insert_on_send' | 'insert_and_send' | undefined;
+        expectedRevision: 'absent' | number;
+        behavior?: 'insert' | 'insert_and_send' | 'insert_on_send' | undefined;
         allowArgs?: boolean | undefined;
         availableIn?: 'global' | 'session_only' | undefined;
     };
     readonly "prompts.invocation.delete": {
         invocationId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
     };
     readonly "prompt_doc.get": {
         artifactId: string;
     };
     readonly "prompt_doc.create": {
+        starter: 'happier_guide';
+    } | {
         title: string;
         markdown: string;
         favorite?: boolean | undefined;
-        folderId?: string | null | undefined;
+        folderId?: null | string | undefined;
         tags?: string[] | undefined;
-        createFolder?: {
+        createFolder?: undefined | {
             id: string;
             name: string;
-            expectedRevision: number | 'absent';
-            parentId?: string | null | undefined;
-        } | undefined;
-    } | {
-        starter: 'happier_guide';
+            expectedRevision: 'absent' | number;
+            parentId?: null | string | undefined;
+        };
     };
     readonly "prompt_doc.favorite.set": {
         artifactId: string;
@@ -61,19 +61,19 @@ export type PromptLibraryActionInputById = {
     };
     readonly "prompts.stack.update": {
         surface: 'coding' | 'voice';
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         intent: {
             kind: 'attach';
             entry: {
-                id: string;
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
+                id: string;
                 enabled?: boolean | undefined;
-                maxChars?: number | undefined;
                 required?: boolean | undefined;
+                maxChars?: number | undefined;
                 placement?: 'system_append' | undefined;
             };
         } | {
@@ -83,11 +83,11 @@ export type PromptLibraryActionInputById = {
             kind: 'reorder';
             entryId: string;
             siblingId: string;
-            position: 'before' | 'after';
+            position: 'after' | 'before';
         } | {
             kind: 'set_budget';
             entryId: string;
-            maxChars: number | null;
+            maxChars: null | number;
         } | {
             kind: 'set_enabled';
             entryId: string;
@@ -98,41 +98,25 @@ export type PromptLibraryActionInputById = {
         artifactId: string;
         title: string;
         markdown: string;
-        folderId?: string | null | undefined;
+        folderId?: null | string | undefined;
         tags?: string[] | undefined;
-        createFolder?: {
+        createFolder?: undefined | {
             id: string;
             name: string;
-            expectedRevision: number | 'absent';
-            parentId?: string | null | undefined;
-        } | undefined;
-        expectedRevision?: {
+            expectedRevision: 'absent' | number;
+            parentId?: null | string | undefined;
+        };
+        expectedRevision?: undefined | {
             headerVersion: number;
             bodyVersion: number;
-        } | undefined;
+        };
     };
     readonly "prompt_bundle.update": {
-        skillMarkdown: string;
-        artifactId: string;
-        title: string;
-        expectedRevision?: {
-            headerVersion: number;
-            bodyVersion: number;
-        } | undefined;
-        folderId?: string | null | undefined;
-        tags?: string[] | undefined;
-        createFolder?: {
-            id: string;
-            name: string;
-            expectedRevision: number | 'absent';
-            parentId?: string | null | undefined;
-        } | undefined;
-    } | {
         entries: {
             path: string;
             contentBase64: string;
-            contentKind: 'utf8' | 'binary';
-            unixMode?: number | null | undefined;
+            contentKind: 'binary' | 'utf8';
+            unixMode?: null | number | undefined;
         }[];
         expectedRevision: {
             headerVersion: number;
@@ -140,75 +124,91 @@ export type PromptLibraryActionInputById = {
         };
         artifactId: string;
         title: string;
-        folderId?: string | null | undefined;
+        folderId?: null | string | undefined;
         tags?: string[] | undefined;
-        createFolder?: {
+        createFolder?: undefined | {
             id: string;
             name: string;
-            expectedRevision: number | 'absent';
-            parentId?: string | null | undefined;
-        } | undefined;
+            expectedRevision: 'absent' | number;
+            parentId?: null | string | undefined;
+        };
+    } | {
+        skillMarkdown: string;
+        artifactId: string;
+        title: string;
+        expectedRevision?: undefined | {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        folderId?: null | string | undefined;
+        tags?: string[] | undefined;
+        createFolder?: undefined | {
+            id: string;
+            name: string;
+            expectedRevision: 'absent' | number;
+            parentId?: null | string | undefined;
+        };
     };
     readonly "prompt_registry.install": {
         machineId: string;
         sourceId: string;
         itemId: string;
-        installTarget?: {
+        installTarget?: undefined | {
             assetTypeId: string;
-            scope: 'user' | 'project';
+            scope: 'project' | 'user';
             targetName: string;
             directory?: string | undefined;
             installMode?: 'copy' | 'symlink' | undefined;
-        } | undefined;
+        };
     };
 };
 export type PromptLibraryActionResultById = {
     readonly "prompts.invocation.create": {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'invalid';
+        reason: 'actionCollision' | 'duplicate' | 'invalid' | 'reserved';
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
         status: 'updated';
         invocationId: string;
         token: string;
         revision: number;
-    } | {
-        status: 'invalid';
-        reason: 'invalid' | 'reserved' | 'actionCollision' | 'duplicate';
-    } | {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
     };
     readonly "prompts.invocation.update": {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'invalid';
+        reason: 'actionCollision' | 'duplicate' | 'invalid' | 'reserved';
+    } | {
+        status: 'invalid';
+        reason: 'not_found';
+    } | {
+        status: 'unavailable';
+        reason: string;
+    } | {
         status: 'updated';
         invocationId: string;
         token: string;
         revision: number;
-    } | {
-        status: 'invalid';
-        reason: 'invalid' | 'reserved' | 'actionCollision' | 'duplicate';
-    } | {
+    };
+    readonly "prompts.invocation.delete": {
         status: 'conflict';
         revision: number;
+    } | {
+        status: 'invalid';
+        reason: 'not_found';
     } | {
         status: 'unavailable';
         reason: string;
     } | {
-        status: 'invalid';
-        reason: 'not_found';
-    };
-    readonly "prompts.invocation.delete": {
         status: 'updated';
         invocationId: string;
         revision: number;
-    } | {
-        status: 'invalid';
-        reason: 'not_found';
-    } | {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
     };
     readonly "prompt_doc.get": {
         ok: true;
@@ -219,16 +219,16 @@ export type PromptLibraryActionResultById = {
             headerVersion: number;
             bodyVersion: number;
         };
-        provenance?: {
+        provenance?: undefined | {
             savedBy: {
-                kind: 'person';
-                accountId: string;
-            } | {
                 kind: 'agent';
                 accountId: string;
                 sessionId?: string | undefined;
+            } | {
+                kind: 'person';
+                accountId: string;
             };
-        } | undefined;
+        };
     };
     readonly "prompt_doc.create": {
         ok: true;
@@ -239,44 +239,44 @@ export type PromptLibraryActionResultById = {
         artifactId: string;
     };
     readonly "prompts.library.list": {
-        coverage: 'unavailable' | 'complete' | 'partial';
+        coverage: 'complete' | 'partial' | 'unavailable';
         items: {
             artifactId: string;
             title: string;
-            folderId: string | null;
+            folderId: null | string;
             tags: string[];
             favorite: boolean;
             updatedAtMs: number;
         }[];
     };
     readonly "prompts.stack.update": {
-        status: 'updated';
-        revision: number;
-    } | {
         status: 'conflict';
         revision: number;
+    } | {
+        status: 'invalid';
+        reason: 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
     } | {
         status: 'unavailable';
         reason: string;
     } | {
-        status: 'invalid';
-        reason: 'entry_conflict' | 'entry_not_found' | 'invalid_parameters';
+        status: 'updated';
+        revision: number;
     };
     readonly "prompt_doc.update": {
         ok: true;
         artifactId: string;
-        revision?: {
+        revision?: undefined | {
             headerVersion: number;
             bodyVersion: number;
-        } | undefined;
+        };
     };
     readonly "prompt_bundle.update": {
         ok: true;
         artifactId: string;
-        revision?: {
+        revision?: undefined | {
             headerVersion: number;
             bodyVersion: number;
-        } | undefined;
+        };
     };
     readonly "prompt_registry.install": JsonValue;
 };

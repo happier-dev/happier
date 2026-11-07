@@ -96,7 +96,7 @@ export type CodeIntelligenceActionInputById = {
     };
     readonly "code.callHierarchy.get": {
         hierarchy: {
-            direction: 'prepare' | 'incoming' | 'outgoing';
+            direction: 'incoming' | 'outgoing' | 'prepare';
             itemId?: string | undefined;
         };
         machineId: string;
@@ -111,25 +111,6 @@ export type CodeIntelligenceActionInputById = {
     };
     readonly "code.format.apply": {
         operation: {
-            kind: 'preview';
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            formattingOptions?: {
-                tabSize: number;
-                insertSpaces: boolean;
-                trimTrailingWhitespace?: boolean | undefined;
-                insertFinalNewline?: boolean | undefined;
-                trimFinalNewlines?: boolean | undefined;
-            } | undefined;
-        } | {
             kind: 'apply';
             files: {
                 path: string;
@@ -149,6 +130,25 @@ export type CodeIntelligenceActionInputById = {
                 }[];
                 renameTo?: string | undefined;
             }[];
+        } | {
+            kind: 'preview';
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            formattingOptions?: undefined | {
+                tabSize: number;
+                insertSpaces: boolean;
+                trimTrailingWhitespace?: boolean | undefined;
+                insertFinalNewline?: boolean | undefined;
+                trimFinalNewlines?: boolean | undefined;
+            };
         };
         machineId: string;
         rootPath: string;
@@ -313,6 +313,18 @@ export type CodeIntelligenceActionInputById = {
 };
 export type CodeIntelligenceActionResultById = {
     readonly "code.hover.get": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -331,366 +343,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -766,130 +428,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -931,21 +469,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -965,11 +968,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.definition.get": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -988,366 +1006,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -1423,130 +1091,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -1588,21 +1132,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -1622,11 +1631,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.references.list": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -1645,366 +1669,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -2080,130 +1754,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -2245,21 +1795,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -2279,11 +2294,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.symbols.list": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -2302,366 +2332,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -2737,130 +2417,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -2902,21 +2458,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -2936,11 +2957,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.diagnostics.list": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -2959,366 +2995,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -3394,130 +3080,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -3559,21 +3121,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -3593,11 +3620,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.completion.list": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -3616,366 +3658,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -4051,130 +3743,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -4216,21 +3784,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -4250,11 +4283,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.signature.get": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -4273,366 +4321,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -4708,130 +4406,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -4873,21 +4447,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -4907,11 +4946,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.typeDefinition.get": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -4930,366 +4984,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -5365,130 +5069,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -5530,21 +5110,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -5564,11 +5609,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.implementation.get": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -5587,366 +5647,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -6022,130 +5732,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -6187,21 +5773,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -6221,11 +6272,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.symbols.workspace": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -6244,366 +6310,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -6679,130 +6395,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: "codeActions";
         actions: {
             serverId: string;
@@ -6844,21 +6436,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -6878,11 +6935,26 @@ export type CodeIntelligenceActionResultById = {
         }[];
         hasMore: boolean;
         coverage: "complete" | "partial";
+    } | {
+        status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
     } | {
         status: "unavailable";
         reason: string;
     };
     readonly "code.callHierarchy.get": {
+        kind: "ai.inlineSuggest";
+        text: string;
+        status: "ok";
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: "ai.nextEdit";
         version: number;
         edits: {
@@ -6901,366 +6973,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: "ok";
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "ai.inlineSuggest";
-        text: string;
-        status: "ok";
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "hover";
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "definition";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "typeDefinition" | "implementation";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completion";
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "completionResolve";
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: "ok";
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "signatureHelp";
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "formatting" | "rangeFormatting" | "organizeImports";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentHighlight";
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "selectionRange";
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "inlayHint";
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "semanticTokens";
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: "callHierarchy";
-        direction: "prepare" | "incoming" | "outgoing";
+        direction: "incoming" | "outgoing" | "prepare";
         items: {
             serverId: string;
             itemId: string;
@@ -7330,130 +7052,6 @@ export type CodeIntelligenceActionResultById = {
                     character: number;
                 };
             }[];
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "workspaceSymbol";
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "references";
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "documentSymbols";
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "diagnostics";
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: "error" | "warning" | "information" | "hint";
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "prepareRename";
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: "ok";
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: "rename" | "willRenameFiles";
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
         }[];
         status: "ok";
         fileHash?: string | undefined;
@@ -7501,21 +7099,486 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: "loading";
+        kind: "completion";
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: "unavailable";
-        reason: "no_capable_server" | "server_missing" | "start_failed" | "unsupported_root" | "session_unavailable" | "crashed" | "method_unavailable" | "update_required" | "transport_failed" | "invalid_response";
+        kind: "completionResolve";
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "definition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "diagnostics";
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: "error" | "hint" | "information" | "warning";
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentHighlight";
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "documentSymbols";
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "formatting" | "organizeImports" | "rangeFormatting";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "hover";
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "implementation" | "typeDefinition";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "inlayHint";
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "prepareRename";
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "references";
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "rename" | "willRenameFiles";
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "selectionRange";
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "semanticTokens";
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "signatureHelp";
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: "workspaceSymbol";
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: "ok";
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: "error";
-        errorCode: "session_unavailable" | "cancelled" | "document_out_of_sync" | "stale_query" | "request_failed" | "unsupported" | "invalid_position" | "invalid_request" | "path_not_allowed" | "root_not_found" | "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "model_unavailable" | "signed_out" | "rate_limited";
+        errorCode: "ai_disabled" | "ai_excluded" | "ai_language_disabled" | "cancelled" | "document_out_of_sync" | "invalid_position" | "invalid_request" | "model_unavailable" | "path_not_allowed" | "rate_limited" | "request_failed" | "root_not_found" | "session_unavailable" | "signed_out" | "stale_query" | "unsupported";
+    } | {
+        status: "error";
+        errorCode: "filesystem_identity_custody_unavailable";
+        details?: undefined | {
+            reason: "admission_not_current" | "admission_unavailable" | "requester_identity_unavailable";
+        };
+    } | {
+        status: "error";
+        errorCode: "symbol_not_found";
+        candidates: string[];
     } | {
         status: "error";
         errorCode: "unsaved_editor_changes";
         diskHash: string;
     } | {
-        status: "error";
-        errorCode: "symbol_not_found";
-        candidates: string[];
+        status: "loading";
     } | {
         status: "ok";
         source: "text_matches";
@@ -7537,9 +7600,24 @@ export type CodeIntelligenceActionResultById = {
         coverage: "complete" | "partial";
     } | {
         status: "unavailable";
+        reason: "crashed" | "invalid_response" | "method_unavailable" | "no_capable_server" | "server_missing" | "session_unavailable" | "start_failed" | "transport_failed" | "unsupported_root" | "update_required";
+    } | {
+        status: "unavailable";
         reason: string;
     };
     readonly "code.format.apply": {
+        kind: 'ai.inlineSuggest';
+        text: string;
+        status: 'ok';
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: 'ai.nextEdit';
         version: number;
         edits: {
@@ -7558,366 +7636,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: 'ok';
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'ai.inlineSuggest';
-        text: string;
-        status: 'ok';
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'hover';
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'definition';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'typeDefinition' | 'implementation';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completion';
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completionResolve';
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: 'ok';
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'signatureHelp';
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'formatting' | 'rangeFormatting' | 'organizeImports';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentHighlight';
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'selectionRange';
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'inlayHint';
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'semanticTokens';
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: 'callHierarchy';
-        direction: 'prepare' | 'incoming' | 'outgoing';
+        direction: 'incoming' | 'outgoing' | 'prepare';
         items: {
             serverId: string;
             itemId: string;
@@ -7993,130 +7721,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: 'workspaceSymbol';
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'references';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentSymbols';
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'diagnostics';
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: 'error' | 'warning' | 'information' | 'hint';
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'prepareRename';
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'rename' | 'willRenameFiles';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: 'codeActions';
         actions: {
             serverId: string;
@@ -8158,43 +7762,527 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: 'loading';
+        kind: 'completion';
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: 'unavailable';
-        reason: 'no_capable_server' | 'server_missing' | 'start_failed' | 'unsupported_root' | 'session_unavailable' | 'crashed' | 'method_unavailable' | 'update_required' | 'transport_failed' | 'invalid_response';
+        kind: 'completionResolve';
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'definition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'diagnostics';
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: 'error' | 'hint' | 'information' | 'warning';
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentHighlight';
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentSymbols';
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'formatting' | 'organizeImports' | 'rangeFormatting';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'hover';
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'implementation' | 'typeDefinition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'inlayHint';
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'prepareRename';
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'references';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'rename' | 'willRenameFiles';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'selectionRange';
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'semanticTokens';
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'signatureHelp';
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'workspaceSymbol';
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        ok: false;
+        code: 'filesystem_identity_custody_unavailable' | 'invalid_pattern' | 'invalid_request' | 'root_not_allowed';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
+        ok: true;
+        results: {
+            path: string;
+            status: 'changed' | 'failed' | 'replaced' | 'restored' | 'skipped';
+            hash?: string | undefined;
+            matchCount?: number | undefined;
+            edits?: undefined | {
+                startUtf16: number;
+                deleteLength: number;
+                insertText: string;
+                originalText: string;
+            }[];
+            reason?: string | undefined;
+            renameTo?: string | undefined;
+        }[];
+        cancelled?: string[] | undefined;
+        truncated?: boolean | undefined;
     } | {
         status: 'error';
-        errorCode: 'session_unavailable' | 'cancelled' | 'document_out_of_sync' | 'stale_query' | 'request_failed' | 'unsupported' | 'invalid_position' | 'invalid_request' | 'path_not_allowed' | 'root_not_found' | 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited';
+        errorCode: 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'cancelled' | 'document_out_of_sync' | 'invalid_position' | 'invalid_request' | 'model_unavailable' | 'path_not_allowed' | 'rate_limited' | 'request_failed' | 'root_not_found' | 'session_unavailable' | 'signed_out' | 'stale_query' | 'unsupported';
     } | {
         status: 'error';
-        errorCode: 'unsaved_editor_changes';
-        diskHash: string;
+        errorCode: 'filesystem_identity_custody_unavailable';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         status: 'error';
         errorCode: 'symbol_not_found';
         candidates: string[];
     } | {
-        ok: true;
-        results: {
-            path: string;
-            status: 'replaced' | 'restored' | 'changed' | 'skipped' | 'failed';
-            hash?: string | undefined;
-            matchCount?: number | undefined;
-            edits?: {
-                startUtf16: number;
-                deleteLength: number;
-                insertText: string;
-                originalText: string;
-            }[] | undefined;
-            reason?: string | undefined;
-            renameTo?: string | undefined;
-        }[];
-        cancelled?: string[] | undefined;
+        status: 'error';
+        errorCode: 'unsaved_editor_changes';
+        diskHash: string;
     } | {
-        ok: false;
-        code: 'invalid_request' | 'invalid_pattern' | 'root_not_allowed';
+        status: 'loading';
+    } | {
+        status: 'unavailable';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.imports.organize": {
+        kind: 'ai.inlineSuggest';
+        text: string;
+        status: 'ok';
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: 'ai.nextEdit';
         version: number;
         edits: {
@@ -8213,366 +8301,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: 'ok';
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'ai.inlineSuggest';
-        text: string;
-        status: 'ok';
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'hover';
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'definition';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'typeDefinition' | 'implementation';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completion';
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completionResolve';
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: 'ok';
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'signatureHelp';
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'formatting' | 'rangeFormatting' | 'organizeImports';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentHighlight';
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'selectionRange';
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'inlayHint';
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'semanticTokens';
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: 'callHierarchy';
-        direction: 'prepare' | 'incoming' | 'outgoing';
+        direction: 'incoming' | 'outgoing' | 'prepare';
         items: {
             serverId: string;
             itemId: string;
@@ -8648,130 +8386,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: 'workspaceSymbol';
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'references';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentSymbols';
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'diagnostics';
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: 'error' | 'warning' | 'information' | 'hint';
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'prepareRename';
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'rename' | 'willRenameFiles';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: 'codeActions';
         actions: {
             serverId: string;
@@ -8813,62 +8427,552 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: 'loading';
+        kind: 'completion';
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: 'unavailable';
-        reason: 'no_capable_server' | 'server_missing' | 'start_failed' | 'unsupported_root' | 'session_unavailable' | 'crashed' | 'method_unavailable' | 'update_required' | 'transport_failed' | 'invalid_response';
+        kind: 'completionResolve';
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'definition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'diagnostics';
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: 'error' | 'hint' | 'information' | 'warning';
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentHighlight';
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentSymbols';
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'formatting' | 'organizeImports' | 'rangeFormatting';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'hover';
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'implementation' | 'typeDefinition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'inlayHint';
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'prepareRename';
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'references';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'rename' | 'willRenameFiles';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'selectionRange';
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'semanticTokens';
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'signatureHelp';
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'workspaceSymbol';
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        ok: false;
+        code: 'filesystem_identity_custody_unavailable' | 'invalid_pattern' | 'invalid_request' | 'root_not_allowed';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
+        ok: true;
+        results: {
+            path: string;
+            status: 'changed' | 'failed' | 'replaced' | 'restored' | 'skipped';
+            hash?: string | undefined;
+            matchCount?: number | undefined;
+            edits?: undefined | {
+                startUtf16: number;
+                deleteLength: number;
+                insertText: string;
+                originalText: string;
+            }[];
+            reason?: string | undefined;
+            renameTo?: string | undefined;
+        }[];
+        cancelled?: string[] | undefined;
+        truncated?: boolean | undefined;
     } | {
         status: 'error';
-        errorCode: 'session_unavailable' | 'cancelled' | 'document_out_of_sync' | 'stale_query' | 'request_failed' | 'unsupported' | 'invalid_position' | 'invalid_request' | 'path_not_allowed' | 'root_not_found' | 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited';
+        errorCode: 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'cancelled' | 'document_out_of_sync' | 'invalid_position' | 'invalid_request' | 'model_unavailable' | 'path_not_allowed' | 'rate_limited' | 'request_failed' | 'root_not_found' | 'session_unavailable' | 'signed_out' | 'stale_query' | 'unsupported';
     } | {
         status: 'error';
-        errorCode: 'unsaved_editor_changes';
-        diskHash: string;
+        errorCode: 'filesystem_identity_custody_unavailable';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         status: 'error';
         errorCode: 'symbol_not_found';
         candidates: string[];
     } | {
-        ok: true;
-        results: {
-            path: string;
-            status: 'replaced' | 'restored' | 'changed' | 'skipped' | 'failed';
-            hash?: string | undefined;
-            matchCount?: number | undefined;
-            edits?: {
-                startUtf16: number;
-                deleteLength: number;
-                insertText: string;
-                originalText: string;
-            }[] | undefined;
-            reason?: string | undefined;
-            renameTo?: string | undefined;
-        }[];
-        cancelled?: string[] | undefined;
+        status: 'error';
+        errorCode: 'unsaved_editor_changes';
+        diskHash: string;
     } | {
-        ok: false;
-        code: 'invalid_request' | 'invalid_pattern' | 'root_not_allowed';
+        status: 'loading';
+    } | {
+        status: 'unavailable';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.restart": {
-        status: 'loading';
-    } | {
-        status: 'unavailable';
-        reason: 'no_capable_server' | 'server_missing' | 'start_failed' | 'unsupported_root' | 'session_unavailable' | 'crashed' | 'method_unavailable' | 'update_required' | 'transport_failed' | 'invalid_response';
+        status: 'error';
+        errorCode: 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'cancelled' | 'document_out_of_sync' | 'invalid_position' | 'invalid_request' | 'model_unavailable' | 'path_not_allowed' | 'rate_limited' | 'request_failed' | 'root_not_found' | 'session_unavailable' | 'signed_out' | 'stale_query' | 'unsupported';
     } | {
         status: 'error';
-        errorCode: 'session_unavailable' | 'cancelled' | 'document_out_of_sync' | 'stale_query' | 'request_failed' | 'unsupported' | 'invalid_position' | 'invalid_request' | 'path_not_allowed' | 'root_not_found' | 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited';
-    } | {
-        status: 'error';
-        errorCode: 'unsaved_editor_changes';
-        diskHash: string;
+        errorCode: 'filesystem_identity_custody_unavailable';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         status: 'error';
         errorCode: 'symbol_not_found';
         candidates: string[];
     } | {
+        status: 'error';
+        errorCode: 'unsaved_editor_changes';
+        diskHash: string;
+    } | {
+        status: 'loading';
+    } | {
         status: 'ok';
+    } | {
+        status: 'unavailable';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.rename.preview": {
+        kind: 'ai.inlineSuggest';
+        text: string;
+        status: 'ok';
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: 'ai.nextEdit';
         version: number;
         edits: {
@@ -8887,366 +8991,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: 'ok';
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'ai.inlineSuggest';
-        text: string;
-        status: 'ok';
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'hover';
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'definition';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'typeDefinition' | 'implementation';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completion';
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completionResolve';
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: 'ok';
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'signatureHelp';
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'formatting' | 'rangeFormatting' | 'organizeImports';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentHighlight';
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'selectionRange';
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'inlayHint';
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'semanticTokens';
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: 'callHierarchy';
-        direction: 'prepare' | 'incoming' | 'outgoing';
+        direction: 'incoming' | 'outgoing' | 'prepare';
         items: {
             serverId: string;
             itemId: string;
@@ -9322,130 +9076,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: 'workspaceSymbol';
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'references';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentSymbols';
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'diagnostics';
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: 'error' | 'warning' | 'information' | 'hint';
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'prepareRename';
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'rename' | 'willRenameFiles';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: 'codeActions';
         actions: {
             serverId: string;
@@ -9487,23 +9117,503 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: 'loading';
+        kind: 'completion';
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: 'unavailable';
-        reason: 'no_capable_server' | 'server_missing' | 'start_failed' | 'unsupported_root' | 'session_unavailable' | 'crashed' | 'method_unavailable' | 'update_required' | 'transport_failed' | 'invalid_response';
+        kind: 'completionResolve';
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'definition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'diagnostics';
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: 'error' | 'hint' | 'information' | 'warning';
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentHighlight';
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentSymbols';
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'formatting' | 'organizeImports' | 'rangeFormatting';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'hover';
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'implementation' | 'typeDefinition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'inlayHint';
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'prepareRename';
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'references';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'rename' | 'willRenameFiles';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'selectionRange';
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'semanticTokens';
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'signatureHelp';
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'workspaceSymbol';
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: 'error';
-        errorCode: 'session_unavailable' | 'cancelled' | 'document_out_of_sync' | 'stale_query' | 'request_failed' | 'unsupported' | 'invalid_position' | 'invalid_request' | 'path_not_allowed' | 'root_not_found' | 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited';
+        errorCode: 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'cancelled' | 'document_out_of_sync' | 'invalid_position' | 'invalid_request' | 'model_unavailable' | 'path_not_allowed' | 'rate_limited' | 'request_failed' | 'root_not_found' | 'session_unavailable' | 'signed_out' | 'stale_query' | 'unsupported';
+    } | {
+        status: 'error';
+        errorCode: 'filesystem_identity_custody_unavailable';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
+        status: 'error';
+        errorCode: 'symbol_not_found';
+        candidates: string[];
     } | {
         status: 'error';
         errorCode: 'unsaved_editor_changes';
         diskHash: string;
     } | {
-        status: 'error';
-        errorCode: 'symbol_not_found';
-        candidates: string[];
+        status: 'loading';
+    } | {
+        status: 'unavailable';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.file.rename.preview": {
+        kind: 'ai.inlineSuggest';
+        text: string;
+        status: 'ok';
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: 'ai.nextEdit';
         version: number;
         edits: {
@@ -9522,366 +9632,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: 'ok';
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'ai.inlineSuggest';
-        text: string;
-        status: 'ok';
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'hover';
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'definition';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'typeDefinition' | 'implementation';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completion';
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completionResolve';
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: 'ok';
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'signatureHelp';
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'formatting' | 'rangeFormatting' | 'organizeImports';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentHighlight';
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'selectionRange';
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'inlayHint';
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'semanticTokens';
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: 'callHierarchy';
-        direction: 'prepare' | 'incoming' | 'outgoing';
+        direction: 'incoming' | 'outgoing' | 'prepare';
         items: {
             serverId: string;
             itemId: string;
@@ -9957,130 +9717,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: 'workspaceSymbol';
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'references';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentSymbols';
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'diagnostics';
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: 'error' | 'warning' | 'information' | 'hint';
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'prepareRename';
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'rename' | 'willRenameFiles';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: 'codeActions';
         actions: {
             serverId: string;
@@ -10122,23 +9758,503 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: 'loading';
+        kind: 'completion';
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: 'unavailable';
-        reason: 'no_capable_server' | 'server_missing' | 'start_failed' | 'unsupported_root' | 'session_unavailable' | 'crashed' | 'method_unavailable' | 'update_required' | 'transport_failed' | 'invalid_response';
+        kind: 'completionResolve';
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'definition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'diagnostics';
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: 'error' | 'hint' | 'information' | 'warning';
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentHighlight';
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentSymbols';
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'formatting' | 'organizeImports' | 'rangeFormatting';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'hover';
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'implementation' | 'typeDefinition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'inlayHint';
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'prepareRename';
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'references';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'rename' | 'willRenameFiles';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'selectionRange';
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'semanticTokens';
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'signatureHelp';
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'workspaceSymbol';
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: 'error';
-        errorCode: 'session_unavailable' | 'cancelled' | 'document_out_of_sync' | 'stale_query' | 'request_failed' | 'unsupported' | 'invalid_position' | 'invalid_request' | 'path_not_allowed' | 'root_not_found' | 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited';
+        errorCode: 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'cancelled' | 'document_out_of_sync' | 'invalid_position' | 'invalid_request' | 'model_unavailable' | 'path_not_allowed' | 'rate_limited' | 'request_failed' | 'root_not_found' | 'session_unavailable' | 'signed_out' | 'stale_query' | 'unsupported';
+    } | {
+        status: 'error';
+        errorCode: 'filesystem_identity_custody_unavailable';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
+        status: 'error';
+        errorCode: 'symbol_not_found';
+        candidates: string[];
     } | {
         status: 'error';
         errorCode: 'unsaved_editor_changes';
         diskHash: string;
     } | {
-        status: 'error';
-        errorCode: 'symbol_not_found';
-        candidates: string[];
+        status: 'loading';
+    } | {
+        status: 'unavailable';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.codeActions.list": {
+        kind: 'ai.inlineSuggest';
+        text: string;
+        status: 'ok';
+        usage?: undefined | {
+            inputTokens?: number | undefined;
+            outputTokens?: number | undefined;
+            costUsd?: number | undefined;
+        };
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
         kind: 'ai.nextEdit';
         version: number;
         edits: {
@@ -10157,366 +10273,16 @@ export type CodeIntelligenceActionResultById = {
             newText: string;
         }[];
         status: 'ok';
-        usage?: {
+        usage?: undefined | {
             inputTokens?: number | undefined;
             outputTokens?: number | undefined;
             costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'ai.inlineSuggest';
-        text: string;
-        status: 'ok';
-        usage?: {
-            inputTokens?: number | undefined;
-            outputTokens?: number | undefined;
-            costUsd?: number | undefined;
-        } | undefined;
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'hover';
-        sections: {
-            serverId: string;
-            label: string;
-            markdown: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'definition';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'typeDefinition' | 'implementation';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            outsideWorkspace?: boolean | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completion';
-        items: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
-        }[];
-        isIncomplete: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'completionResolve';
-        item: {
-            serverId: string;
-            itemId: string;
-            label: string;
-            kind?: number | undefined;
-            detail?: string | undefined;
-            documentation?: string | undefined;
-            insertText?: string | undefined;
-            insertTextFormat?: 1 | 2 | undefined;
-            textEdit?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | {
-                insert: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                replace: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            } | undefined;
-            additionalTextEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-            sortText?: string | undefined;
-            filterText?: string | undefined;
-            preselect?: boolean | undefined;
-            commitCharacters?: string[] | undefined;
         };
-        status: 'ok';
         fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'signatureHelp';
-        help: {
-            signatures: {
-                label: string;
-                documentation?: string | undefined;
-                activeParameter?: number | undefined;
-                parameters?: {
-                    label: string | [
-                        number,
-                        number
-                    ];
-                    documentation?: string | undefined;
-                }[] | undefined;
-            }[];
-            activeSignature?: number | undefined;
-            activeParameter?: number | undefined;
-        } | null;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'formatting' | 'rangeFormatting' | 'organizeImports';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentHighlight';
-        highlights: {
-            serverId: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            kind?: 1 | 2 | 3 | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'selectionRange';
-        ranges: {
-            serverId: string;
-            ranges: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            }[];
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'inlayHint';
-        hints: {
-            serverId: string;
-            position: {
-                line: number;
-                character: number;
-            };
-            label: string;
-            kind?: 1 | 2 | undefined;
-            tooltip?: string | undefined;
-            paddingLeft?: boolean | undefined;
-            paddingRight?: boolean | undefined;
-            textEdits?: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                newText: string;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'semanticTokens';
-        tokens: {
-            serverId: string;
-            legend: {
-                tokenTypes: string[];
-                tokenModifiers: string[];
-            };
-            resultId?: string | undefined;
-            data?: number[] | undefined;
-            edits?: {
-                start: number;
-                deleteCount: number;
-                data?: number[] | undefined;
-            }[] | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
         generation?: string | undefined;
     } | {
         kind: 'callHierarchy';
-        direction: 'prepare' | 'incoming' | 'outgoing';
+        direction: 'incoming' | 'outgoing' | 'prepare';
         items: {
             serverId: string;
             itemId: string;
@@ -10592,130 +10358,6 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        kind: 'workspaceSymbol';
-        symbols: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            name: string;
-            kind: number;
-            outsideWorkspace?: boolean | undefined;
-            containerName?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'references';
-        locations: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            lineText: string;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'documentSymbols';
-        symbols: LanguageIntelligenceDocumentSymbol[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'diagnostics';
-        diagnostics: {
-            serverId: string;
-            path: string;
-            range: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            };
-            severity: 'error' | 'warning' | 'information' | 'hint';
-            message: string;
-            code?: string | number | undefined;
-            source?: string | undefined;
-        }[];
-        hasMore: boolean;
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'prepareRename';
-        targets: {
-            serverId: string;
-            range?: {
-                start: {
-                    line: number;
-                    character: number;
-                };
-                end: {
-                    line: number;
-                    character: number;
-                };
-            } | undefined;
-            placeholder?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
-        kind: 'rename' | 'willRenameFiles';
-        files: {
-            path: string;
-            expectedHash: string;
-            edits: {
-                range: {
-                    start: {
-                        line: number;
-                        character: number;
-                    };
-                    end: {
-                        line: number;
-                        character: number;
-                    };
-                };
-                text: string;
-            }[];
-            renameTo?: string | undefined;
-        }[];
-        status: 'ok';
-        fileHash?: string | undefined;
-        version?: number | undefined;
-        generation?: string | undefined;
-    } | {
         kind: 'codeActions';
         actions: {
             serverId: string;
@@ -10757,131 +10399,629 @@ export type CodeIntelligenceActionResultById = {
         version?: number | undefined;
         generation?: string | undefined;
     } | {
-        status: 'loading';
+        kind: 'completion';
+        items: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        }[];
+        isIncomplete: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
-        status: 'unavailable';
-        reason: 'no_capable_server' | 'server_missing' | 'start_failed' | 'unsupported_root' | 'session_unavailable' | 'crashed' | 'method_unavailable' | 'update_required' | 'transport_failed' | 'invalid_response';
+        kind: 'completionResolve';
+        item: {
+            serverId: string;
+            itemId: string;
+            label: string;
+            kind?: number | undefined;
+            detail?: string | undefined;
+            documentation?: string | undefined;
+            insertText?: string | undefined;
+            insertTextFormat?: 1 | 2 | undefined;
+            textEdit?: undefined | {
+                insert: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                replace: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            } | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            };
+            additionalTextEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+            sortText?: string | undefined;
+            filterText?: string | undefined;
+            preselect?: boolean | undefined;
+            commitCharacters?: string[] | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'definition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'diagnostics';
+        diagnostics: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            severity: 'error' | 'hint' | 'information' | 'warning';
+            message: string;
+            code?: number | string | undefined;
+            source?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentHighlight';
+        highlights: {
+            serverId: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            kind?: 1 | 2 | 3 | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'documentSymbols';
+        symbols: LanguageIntelligenceDocumentSymbol[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'formatting' | 'organizeImports' | 'rangeFormatting';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'hover';
+        sections: {
+            serverId: string;
+            label: string;
+            markdown: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'implementation' | 'typeDefinition';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            outsideWorkspace?: boolean | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'inlayHint';
+        hints: {
+            serverId: string;
+            position: {
+                line: number;
+                character: number;
+            };
+            label: string;
+            kind?: 1 | 2 | undefined;
+            tooltip?: string | undefined;
+            paddingLeft?: boolean | undefined;
+            paddingRight?: boolean | undefined;
+            textEdits?: undefined | {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                newText: string;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'prepareRename';
+        targets: {
+            serverId: string;
+            range?: undefined | {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            placeholder?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'references';
+        locations: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            lineText: string;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'rename' | 'willRenameFiles';
+        files: {
+            path: string;
+            expectedHash: string;
+            edits: {
+                range: {
+                    start: {
+                        line: number;
+                        character: number;
+                    };
+                    end: {
+                        line: number;
+                        character: number;
+                    };
+                };
+                text: string;
+            }[];
+            renameTo?: string | undefined;
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'selectionRange';
+        ranges: {
+            serverId: string;
+            ranges: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'semanticTokens';
+        tokens: {
+            serverId: string;
+            legend: {
+                tokenTypes: string[];
+                tokenModifiers: string[];
+            };
+            resultId?: string | undefined;
+            data?: number[] | undefined;
+            edits?: undefined | {
+                start: number;
+                deleteCount: number;
+                data?: number[] | undefined;
+            }[];
+        }[];
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'signatureHelp';
+        help: null | {
+            signatures: {
+                label: string;
+                documentation?: string | undefined;
+                activeParameter?: number | undefined;
+                parameters?: undefined | {
+                    label: [
+                        number,
+                        number
+                    ] | string;
+                    documentation?: string | undefined;
+                }[];
+            }[];
+            activeSignature?: number | undefined;
+            activeParameter?: number | undefined;
+        };
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
+    } | {
+        kind: 'workspaceSymbol';
+        symbols: {
+            serverId: string;
+            path: string;
+            range: {
+                start: {
+                    line: number;
+                    character: number;
+                };
+                end: {
+                    line: number;
+                    character: number;
+                };
+            };
+            name: string;
+            kind: number;
+            outsideWorkspace?: boolean | undefined;
+            containerName?: string | undefined;
+        }[];
+        hasMore: boolean;
+        status: 'ok';
+        fileHash?: string | undefined;
+        version?: number | undefined;
+        generation?: string | undefined;
     } | {
         status: 'error';
-        errorCode: 'session_unavailable' | 'cancelled' | 'document_out_of_sync' | 'stale_query' | 'request_failed' | 'unsupported' | 'invalid_position' | 'invalid_request' | 'path_not_allowed' | 'root_not_found' | 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited';
+        errorCode: 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'cancelled' | 'document_out_of_sync' | 'invalid_position' | 'invalid_request' | 'model_unavailable' | 'path_not_allowed' | 'rate_limited' | 'request_failed' | 'root_not_found' | 'session_unavailable' | 'signed_out' | 'stale_query' | 'unsupported';
+    } | {
+        status: 'error';
+        errorCode: 'filesystem_identity_custody_unavailable';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
+        status: 'error';
+        errorCode: 'symbol_not_found';
+        candidates: string[];
     } | {
         status: 'error';
         errorCode: 'unsaved_editor_changes';
         diskHash: string;
     } | {
-        status: 'error';
-        errorCode: 'symbol_not_found';
-        candidates: string[];
+        status: 'loading';
+    } | {
+        status: 'unavailable';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.rename.apply": {
-        status: 'loading';
+        ok: false;
+        code: 'filesystem_identity_custody_unavailable' | 'invalid_pattern' | 'invalid_request' | 'root_not_allowed';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
-        status: 'unavailable';
-        reason: 'no_capable_server' | 'server_missing' | 'start_failed' | 'unsupported_root' | 'session_unavailable' | 'crashed' | 'method_unavailable' | 'update_required' | 'transport_failed' | 'invalid_response';
+        ok: true;
+        results: {
+            path: string;
+            status: 'changed' | 'failed' | 'replaced' | 'restored' | 'skipped';
+            hash?: string | undefined;
+            matchCount?: number | undefined;
+            edits?: undefined | {
+                startUtf16: number;
+                deleteLength: number;
+                insertText: string;
+                originalText: string;
+            }[];
+            reason?: string | undefined;
+            renameTo?: string | undefined;
+        }[];
+        cancelled?: string[] | undefined;
+        truncated?: boolean | undefined;
     } | {
         status: 'error';
-        errorCode: 'session_unavailable' | 'cancelled' | 'document_out_of_sync' | 'stale_query' | 'request_failed' | 'unsupported' | 'invalid_position' | 'invalid_request' | 'path_not_allowed' | 'root_not_found' | 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited';
+        errorCode: 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'cancelled' | 'document_out_of_sync' | 'invalid_position' | 'invalid_request' | 'model_unavailable' | 'path_not_allowed' | 'rate_limited' | 'request_failed' | 'root_not_found' | 'session_unavailable' | 'signed_out' | 'stale_query' | 'unsupported';
     } | {
         status: 'error';
-        errorCode: 'unsaved_editor_changes';
-        diskHash: string;
+        errorCode: 'filesystem_identity_custody_unavailable';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         status: 'error';
         errorCode: 'symbol_not_found';
         candidates: string[];
     } | {
-        ok: true;
-        results: {
-            path: string;
-            status: 'replaced' | 'restored' | 'changed' | 'skipped' | 'failed';
-            hash?: string | undefined;
-            matchCount?: number | undefined;
-            edits?: {
-                startUtf16: number;
-                deleteLength: number;
-                insertText: string;
-                originalText: string;
-            }[] | undefined;
-            reason?: string | undefined;
-            renameTo?: string | undefined;
-        }[];
-        cancelled?: string[] | undefined;
+        status: 'error';
+        errorCode: 'unsaved_editor_changes';
+        diskHash: string;
     } | {
-        ok: false;
-        code: 'invalid_request' | 'invalid_pattern' | 'root_not_allowed';
+        status: 'loading';
+    } | {
+        status: 'unavailable';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.file.rename.apply": {
-        status: 'loading';
+        ok: false;
+        code: 'filesystem_identity_custody_unavailable' | 'invalid_pattern' | 'invalid_request' | 'root_not_allowed';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
-        status: 'unavailable';
-        reason: 'no_capable_server' | 'server_missing' | 'start_failed' | 'unsupported_root' | 'session_unavailable' | 'crashed' | 'method_unavailable' | 'update_required' | 'transport_failed' | 'invalid_response';
+        ok: true;
+        results: {
+            path: string;
+            status: 'changed' | 'failed' | 'replaced' | 'restored' | 'skipped';
+            hash?: string | undefined;
+            matchCount?: number | undefined;
+            edits?: undefined | {
+                startUtf16: number;
+                deleteLength: number;
+                insertText: string;
+                originalText: string;
+            }[];
+            reason?: string | undefined;
+            renameTo?: string | undefined;
+        }[];
+        cancelled?: string[] | undefined;
+        truncated?: boolean | undefined;
     } | {
         status: 'error';
-        errorCode: 'session_unavailable' | 'cancelled' | 'document_out_of_sync' | 'stale_query' | 'request_failed' | 'unsupported' | 'invalid_position' | 'invalid_request' | 'path_not_allowed' | 'root_not_found' | 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited';
+        errorCode: 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'cancelled' | 'document_out_of_sync' | 'invalid_position' | 'invalid_request' | 'model_unavailable' | 'path_not_allowed' | 'rate_limited' | 'request_failed' | 'root_not_found' | 'session_unavailable' | 'signed_out' | 'stale_query' | 'unsupported';
     } | {
         status: 'error';
-        errorCode: 'unsaved_editor_changes';
-        diskHash: string;
+        errorCode: 'filesystem_identity_custody_unavailable';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         status: 'error';
         errorCode: 'symbol_not_found';
         candidates: string[];
     } | {
-        ok: true;
-        results: {
-            path: string;
-            status: 'replaced' | 'restored' | 'changed' | 'skipped' | 'failed';
-            hash?: string | undefined;
-            matchCount?: number | undefined;
-            edits?: {
-                startUtf16: number;
-                deleteLength: number;
-                insertText: string;
-                originalText: string;
-            }[] | undefined;
-            reason?: string | undefined;
-            renameTo?: string | undefined;
-        }[];
-        cancelled?: string[] | undefined;
+        status: 'error';
+        errorCode: 'unsaved_editor_changes';
+        diskHash: string;
     } | {
-        ok: false;
-        code: 'invalid_request' | 'invalid_pattern' | 'root_not_allowed';
+        status: 'loading';
+    } | {
+        status: 'unavailable';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
     readonly "code.codeAction.apply": {
-        status: 'loading';
+        ok: false;
+        code: 'filesystem_identity_custody_unavailable' | 'invalid_pattern' | 'invalid_request' | 'root_not_allowed';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
-        status: 'unavailable';
-        reason: 'no_capable_server' | 'server_missing' | 'start_failed' | 'unsupported_root' | 'session_unavailable' | 'crashed' | 'method_unavailable' | 'update_required' | 'transport_failed' | 'invalid_response';
+        ok: true;
+        results: {
+            path: string;
+            status: 'changed' | 'failed' | 'replaced' | 'restored' | 'skipped';
+            hash?: string | undefined;
+            matchCount?: number | undefined;
+            edits?: undefined | {
+                startUtf16: number;
+                deleteLength: number;
+                insertText: string;
+                originalText: string;
+            }[];
+            reason?: string | undefined;
+            renameTo?: string | undefined;
+        }[];
+        cancelled?: string[] | undefined;
+        truncated?: boolean | undefined;
     } | {
         status: 'error';
-        errorCode: 'session_unavailable' | 'cancelled' | 'document_out_of_sync' | 'stale_query' | 'request_failed' | 'unsupported' | 'invalid_position' | 'invalid_request' | 'path_not_allowed' | 'root_not_found' | 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'model_unavailable' | 'signed_out' | 'rate_limited';
+        errorCode: 'ai_disabled' | 'ai_excluded' | 'ai_language_disabled' | 'cancelled' | 'document_out_of_sync' | 'invalid_position' | 'invalid_request' | 'model_unavailable' | 'path_not_allowed' | 'rate_limited' | 'request_failed' | 'root_not_found' | 'session_unavailable' | 'signed_out' | 'stale_query' | 'unsupported';
     } | {
         status: 'error';
-        errorCode: 'unsaved_editor_changes';
-        diskHash: string;
+        errorCode: 'filesystem_identity_custody_unavailable';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
     } | {
         status: 'error';
         errorCode: 'symbol_not_found';
         candidates: string[];
     } | {
-        ok: true;
-        results: {
-            path: string;
-            status: 'replaced' | 'restored' | 'changed' | 'skipped' | 'failed';
-            hash?: string | undefined;
-            matchCount?: number | undefined;
-            edits?: {
-                startUtf16: number;
-                deleteLength: number;
-                insertText: string;
-                originalText: string;
-            }[] | undefined;
-            reason?: string | undefined;
-            renameTo?: string | undefined;
-        }[];
-        cancelled?: string[] | undefined;
+        status: 'error';
+        errorCode: 'unsaved_editor_changes';
+        diskHash: string;
     } | {
-        ok: false;
-        code: 'invalid_request' | 'invalid_pattern' | 'root_not_allowed';
+        status: 'loading';
+    } | {
+        status: 'unavailable';
+        reason: 'crashed' | 'invalid_response' | 'method_unavailable' | 'no_capable_server' | 'server_missing' | 'session_unavailable' | 'start_failed' | 'transport_failed' | 'unsupported_root' | 'update_required';
     };
 };

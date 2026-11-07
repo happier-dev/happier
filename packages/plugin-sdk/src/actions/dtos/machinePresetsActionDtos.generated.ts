@@ -2,17 +2,19 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { PluginJsonValueV2 } from '../../identity.js';
+import type { MachinePresetItemV1 } from '../../machineSetup.js';
+import type { InputPredicate, PluginJsonSchemaV2 } from './pluginActionDtoSupport.generated.js';
 
 export type MachinePresetsActionInputById = {
     readonly "machines.presets.list": {
         homeId: string;
-        owner?: {
+        owner?: undefined | {
             kind: 'account';
             accountId: string;
         } | {
             kind: 'team';
             teamId: string;
-        } | undefined;
+        };
         search?: string | undefined;
         includeArchived?: boolean | undefined;
         cursor?: string | undefined;
@@ -22,7 +24,8 @@ export type MachinePresetsActionInputById = {
         id: string;
     };
     readonly "machines.presets.create": {
-        homeId: string;
+        id: string;
+        name: string;
         owner: {
             kind: 'account';
             accountId: string;
@@ -30,9 +33,8 @@ export type MachinePresetsActionInputById = {
             kind: 'team';
             teamId: string;
         };
-        id: string;
-        name: string;
-        recipe: {
+        homeId: string;
+        launch?: undefined | {
             provider: {
                 pluginId: string;
                 localId: string;
@@ -40,7 +42,7 @@ export type MachinePresetsActionInputById = {
             schemaVersion: number;
             name: string;
             choices: unknown;
-            credentials?: {
+            credentials?: undefined | {
                 purpose: {
                     consumer: {
                         pluginId: string;
@@ -55,37 +57,26 @@ export type MachinePresetsActionInputById = {
                     };
                     accountId: string;
                 };
-            }[] | undefined;
+            }[];
         };
-        controller: {
+        controller?: undefined | {
             machineId: string;
             installationId: string;
         };
-        environment?: {
-            toolchain?: {
-                adapterId: string;
-                config: string;
-            } | undefined;
-            setupScript?: string | undefined;
-            secretRefs?: {
-                v: 1;
-                bindings: Record<string, {
-                    ref: string;
-                    revision?: number | undefined;
-                }>;
-            } | undefined;
-        } | undefined;
-        retention?: {
+        retention?: undefined | {
             kind: 'until-delete';
         } | {
             kind: 'unused';
             afterMs: number;
-            effect: 'stop' | 'delete';
-        } | undefined;
+            effect: 'delete' | 'stop';
+        };
+        setup?: unknown;
         wakeOnAcceptedMessage?: boolean | undefined;
-        simultaneousLimit?: {
+        controllerDisplayName?: string | undefined;
+        teamAcquireDelegated?: boolean | undefined;
+        simultaneousLimit?: undefined | {
             maximum: number;
-        } | undefined;
+        };
     };
     readonly "machines.presets.update": {
         homeId: string;
@@ -93,7 +84,7 @@ export type MachinePresetsActionInputById = {
         expectedRevision: number;
         patch: {
             name?: string | undefined;
-            recipe?: {
+            launch?: null | undefined | {
                 provider: {
                     pluginId: string;
                     localId: string;
@@ -101,7 +92,7 @@ export type MachinePresetsActionInputById = {
                 schemaVersion: number;
                 name: string;
                 choices: unknown;
-                credentials?: {
+                credentials?: undefined | {
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -116,37 +107,26 @@ export type MachinePresetsActionInputById = {
                         };
                         accountId: string;
                     };
-                }[] | undefined;
-            } | undefined;
-            controller?: {
+                }[];
+            };
+            controller?: null | undefined | {
                 machineId: string;
                 installationId: string;
-            } | undefined;
-            environment?: {
-                toolchain?: {
-                    adapterId: string;
-                    config: string;
-                } | undefined;
-                setupScript?: string | undefined;
-                secretRefs?: {
-                    v: 1;
-                    bindings: Record<string, {
-                        ref: string;
-                        revision?: number | undefined;
-                    }>;
-                } | undefined;
-            } | null | undefined;
-            retention?: {
+            };
+            controllerDisplayName?: null | string | undefined;
+            setup?: unknown;
+            retention?: null | undefined | {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
-                effect: 'stop' | 'delete';
-            } | null | undefined;
+                effect: 'delete' | 'stop';
+            };
             wakeOnAcceptedMessage?: boolean | null | undefined;
-            simultaneousLimit?: {
+            teamAcquireDelegated?: boolean | undefined;
+            simultaneousLimit?: null | undefined | {
                 maximum: number;
-            } | null | undefined;
+            };
         };
     };
     readonly "machines.presets.archive": {
@@ -175,7 +155,7 @@ export type MachinePresetsActionResultById = {
                 kind: 'team';
                 teamId: string;
             };
-            recipe: {
+            launch?: undefined | {
                 provider: {
                     pluginId: string;
                     localId: string;
@@ -183,7 +163,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: {
+                credentials?: undefined | {
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -198,48 +178,581 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[] | undefined;
+                }[];
             };
-            controller: {
+            controller?: undefined | {
                 machineId: string;
                 installationId: string;
             };
-            environment?: {
-                toolchain?: {
+            controllerDisplayName?: string | undefined;
+            setup?: Readonly<{
+                toolchain?: undefined | {
                     adapterId: string;
                     config: string;
-                } | undefined;
-                setupScript?: string | undefined;
-                secretRefs?: {
+                };
+                items?: MachinePresetItemV1[] | undefined;
+                scripts?: Readonly<{
+                    body: string;
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    check?: undefined | {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        removal?: undefined | {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: InputPredicate | undefined;
+                        };
+                    };
+                }>[] | undefined;
+                secretRefs?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-            } | undefined;
-            retention?: {
+                };
+            }> | undefined;
+            retention?: undefined | {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
-                effect: 'stop' | 'delete';
-            } | undefined;
+                effect: 'delete' | 'stop';
+            };
             wakeOnAcceptedMessage?: boolean | undefined;
-            simultaneousLimit?: {
+            teamAcquireDelegated?: boolean | undefined;
+            delegatedAcquire?: undefined | {
+                kind: 'ready';
+                controller: {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
+                    };
+                };
+                provisioner: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    icon: string;
+                    resourceKind: string;
+                    launchSchema: PluginJsonSchemaV2;
+                    resourceSchema: PluginJsonSchemaV2;
+                    schemaVersion: number;
+                    platforms: ('darwin' | 'linux' | 'win32')[];
+                    prerequisites: ({
+                        kind: 'managedDependency';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    } | {
+                        kind: 'systemTool';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    })[];
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    retention: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    actions: {
+                        check: string;
+                        acquire: string;
+                        bootstrap: string;
+                        inspect: string;
+                        destroy: string;
+                        options?: string | undefined;
+                        power?: string | undefined;
+                        rebuild?: string | undefined;
+                        renew?: string | undefined;
+                    };
+                    enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                    kindTitle?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    browserReachable?: boolean | undefined;
+                    nativeDurationInput?: undefined | {
+                        path: string;
+                        unit: 'milliseconds' | 'seconds';
+                    };
+                    resourceIdPath?: string | undefined;
+                    bootstrapTransport?: undefined | {
+                        kind: 'native';
+                        exec: string;
+                        putFile: string;
+                    };
+                    bootstrapCredential?: undefined | {
+                        kind: 'native-token' | 'ssh';
+                    };
+                    nativeCredentialDelivery?: undefined | {
+                        apply: string;
+                        transports: [
+                            'https_headers'
+                        ];
+                        preservesEndpoint: true;
+                        perBindingMatching: true;
+                    };
+                    credentialPurposeRequirements?: undefined | {
+                        purpose: string;
+                        optionalWhen: InputPredicate;
+                    }[];
+                    reconciliation?: undefined | {
+                        nativeOperationSchema: PluginJsonSchemaV2;
+                        action: string;
+                        cleanup?: string | undefined;
+                        continueAcquire?: true | undefined;
+                    };
+                };
+                reviewedFacts: {
+                    launch: {
+                        provider: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        schemaVersion: number;
+                        name: string;
+                        choices: PluginJsonValueV2;
+                        credentials?: undefined | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        }[];
+                    };
+                    optionStatus: 'current' | 'loading' | 'unavailable';
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    prerequisites: {
+                        requirement: {
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        status: 'available' | 'unavailable' | 'unknown';
+                        reason?: string | undefined;
+                        repairAction?: undefined | {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: PluginJsonValueV2;
+                        };
+                    }[];
+                    retentionCapabilities: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    retention: {
+                        kind: 'deadline';
+                        at: number;
+                        effect: 'delete' | 'stop';
+                    } | {
+                        kind: 'until-delete';
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                        effect: 'delete' | 'stop';
+                    };
+                    wakeOnAcceptedMessage: boolean;
+                    controller?: undefined | {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    provisioner?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        icon: string;
+                        resourceKind: string;
+                        launchSchema: PluginJsonSchemaV2;
+                        resourceSchema: PluginJsonSchemaV2;
+                        schemaVersion: number;
+                        platforms: ('darwin' | 'linux' | 'win32')[];
+                        prerequisites: ({
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        })[];
+                        billing: {
+                            location: 'cloud' | 'local' | 'unknown';
+                            stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                            storageCharges?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        };
+                        retention: {
+                            supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                            guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                            finiteOnly?: boolean | undefined;
+                            deletionNotices?: undefined | {
+                                kind: 'stopped-storage';
+                                rule: {
+                                    kind: 'after-stop';
+                                    afterMs: number;
+                                };
+                                consequence: 'disk-deleted';
+                                at?: number | undefined;
+                            }[];
+                            nativeExpiry?: undefined | {
+                                kind: 'deadline';
+                                at: number;
+                            } | {
+                                kind: 'unused';
+                                afterMs: number;
+                            };
+                        };
+                        actions: {
+                            check: string;
+                            acquire: string;
+                            bootstrap: string;
+                            inspect: string;
+                            destroy: string;
+                            options?: string | undefined;
+                            power?: string | undefined;
+                            rebuild?: string | undefined;
+                            renew?: string | undefined;
+                        };
+                        enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                        kindTitle?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        browserReachable?: boolean | undefined;
+                        nativeDurationInput?: undefined | {
+                            path: string;
+                            unit: 'milliseconds' | 'seconds';
+                        };
+                        resourceIdPath?: string | undefined;
+                        bootstrapTransport?: undefined | {
+                            kind: 'native';
+                            exec: string;
+                            putFile: string;
+                        };
+                        bootstrapCredential?: undefined | {
+                            kind: 'native-token' | 'ssh';
+                        };
+                        nativeCredentialDelivery?: undefined | {
+                            apply: string;
+                            transports: [
+                                'https_headers'
+                            ];
+                            preservesEndpoint: true;
+                            perBindingMatching: true;
+                        };
+                        credentialPurposeRequirements?: undefined | {
+                            purpose: string;
+                            optionalWhen: InputPredicate;
+                        }[];
+                        reconciliation?: undefined | {
+                            nativeOperationSchema: PluginJsonSchemaV2;
+                            action: string;
+                            cleanup?: string | undefined;
+                            continueAcquire?: true | undefined;
+                        };
+                    };
+                    prices?: undefined | {
+                        amount: string;
+                        currency: string;
+                        unit: string;
+                        source: string;
+                        observedAt: number;
+                        label?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    }[];
+                    localResources?: undefined | {
+                        observedAt: number;
+                        availableCpuCores?: number | undefined;
+                        availableMemoryBytes?: number | undefined;
+                        availableDiskBytes?: number | undefined;
+                    };
+                    nativeFacts?: undefined | {
+                        size?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            cpuCores?: number | undefined;
+                            memoryBytes?: number | undefined;
+                            diskBytes?: number | undefined;
+                        };
+                        image?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            preview?: undefined | {
+                                resource: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accessibilityLabel?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                        location?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            countryCode?: string | undefined;
+                        };
+                        network?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                        duration?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            afterMs: number;
+                        };
+                        monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                    };
+                    setup?: Readonly<{
+                        toolchain?: undefined | {
+                            adapterId: string;
+                            config: string;
+                        };
+                        items?: MachinePresetItemV1[] | undefined;
+                        scripts?: Readonly<{
+                            body: string;
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            check?: undefined | {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                removal?: undefined | {
+                                    executable: string;
+                                    args: string[];
+                                    unsatisfiedExitCodes: number[];
+                                    stdoutJson?: InputPredicate | undefined;
+                                };
+                            };
+                        }>[] | undefined;
+                        secretRefs?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                    }> | undefined;
+                    preset?: undefined | {
+                        id: string;
+                        revision: number;
+                        name?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'unavailable';
+                code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+            };
+            simultaneousLimit?: undefined | {
                 maximum: number;
-            } | undefined;
+            };
             archivedAt?: number | undefined;
         }[];
         cursor?: string | undefined;
     } | {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
     };
     readonly "machines.presets.get": {
-        kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
-    } | {
         kind: 'found';
         preset: {
             id: string;
@@ -253,7 +766,7 @@ export type MachinePresetsActionResultById = {
                 kind: 'team';
                 teamId: string;
             };
-            recipe: {
+            launch?: undefined | {
                 provider: {
                     pluginId: string;
                     localId: string;
@@ -261,7 +774,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: {
+                credentials?: undefined | {
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -276,43 +789,585 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[] | undefined;
+                }[];
             };
-            controller: {
+            controller?: undefined | {
                 machineId: string;
                 installationId: string;
             };
-            environment?: {
-                toolchain?: {
+            controllerDisplayName?: string | undefined;
+            setup?: Readonly<{
+                toolchain?: undefined | {
                     adapterId: string;
                     config: string;
-                } | undefined;
-                setupScript?: string | undefined;
-                secretRefs?: {
+                };
+                items?: MachinePresetItemV1[] | undefined;
+                scripts?: Readonly<{
+                    body: string;
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    check?: undefined | {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        removal?: undefined | {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: InputPredicate | undefined;
+                        };
+                    };
+                }>[] | undefined;
+                secretRefs?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-            } | undefined;
-            retention?: {
+                };
+            }> | undefined;
+            retention?: undefined | {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
-                effect: 'stop' | 'delete';
-            } | undefined;
+                effect: 'delete' | 'stop';
+            };
             wakeOnAcceptedMessage?: boolean | undefined;
-            simultaneousLimit?: {
+            teamAcquireDelegated?: boolean | undefined;
+            delegatedAcquire?: undefined | {
+                kind: 'ready';
+                controller: {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
+                    };
+                };
+                provisioner: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    icon: string;
+                    resourceKind: string;
+                    launchSchema: PluginJsonSchemaV2;
+                    resourceSchema: PluginJsonSchemaV2;
+                    schemaVersion: number;
+                    platforms: ('darwin' | 'linux' | 'win32')[];
+                    prerequisites: ({
+                        kind: 'managedDependency';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    } | {
+                        kind: 'systemTool';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    })[];
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    retention: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    actions: {
+                        check: string;
+                        acquire: string;
+                        bootstrap: string;
+                        inspect: string;
+                        destroy: string;
+                        options?: string | undefined;
+                        power?: string | undefined;
+                        rebuild?: string | undefined;
+                        renew?: string | undefined;
+                    };
+                    enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                    kindTitle?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    browserReachable?: boolean | undefined;
+                    nativeDurationInput?: undefined | {
+                        path: string;
+                        unit: 'milliseconds' | 'seconds';
+                    };
+                    resourceIdPath?: string | undefined;
+                    bootstrapTransport?: undefined | {
+                        kind: 'native';
+                        exec: string;
+                        putFile: string;
+                    };
+                    bootstrapCredential?: undefined | {
+                        kind: 'native-token' | 'ssh';
+                    };
+                    nativeCredentialDelivery?: undefined | {
+                        apply: string;
+                        transports: [
+                            'https_headers'
+                        ];
+                        preservesEndpoint: true;
+                        perBindingMatching: true;
+                    };
+                    credentialPurposeRequirements?: undefined | {
+                        purpose: string;
+                        optionalWhen: InputPredicate;
+                    }[];
+                    reconciliation?: undefined | {
+                        nativeOperationSchema: PluginJsonSchemaV2;
+                        action: string;
+                        cleanup?: string | undefined;
+                        continueAcquire?: true | undefined;
+                    };
+                };
+                reviewedFacts: {
+                    launch: {
+                        provider: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        schemaVersion: number;
+                        name: string;
+                        choices: PluginJsonValueV2;
+                        credentials?: undefined | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        }[];
+                    };
+                    optionStatus: 'current' | 'loading' | 'unavailable';
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    prerequisites: {
+                        requirement: {
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        status: 'available' | 'unavailable' | 'unknown';
+                        reason?: string | undefined;
+                        repairAction?: undefined | {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: PluginJsonValueV2;
+                        };
+                    }[];
+                    retentionCapabilities: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    retention: {
+                        kind: 'deadline';
+                        at: number;
+                        effect: 'delete' | 'stop';
+                    } | {
+                        kind: 'until-delete';
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                        effect: 'delete' | 'stop';
+                    };
+                    wakeOnAcceptedMessage: boolean;
+                    controller?: undefined | {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    provisioner?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        icon: string;
+                        resourceKind: string;
+                        launchSchema: PluginJsonSchemaV2;
+                        resourceSchema: PluginJsonSchemaV2;
+                        schemaVersion: number;
+                        platforms: ('darwin' | 'linux' | 'win32')[];
+                        prerequisites: ({
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        })[];
+                        billing: {
+                            location: 'cloud' | 'local' | 'unknown';
+                            stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                            storageCharges?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        };
+                        retention: {
+                            supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                            guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                            finiteOnly?: boolean | undefined;
+                            deletionNotices?: undefined | {
+                                kind: 'stopped-storage';
+                                rule: {
+                                    kind: 'after-stop';
+                                    afterMs: number;
+                                };
+                                consequence: 'disk-deleted';
+                                at?: number | undefined;
+                            }[];
+                            nativeExpiry?: undefined | {
+                                kind: 'deadline';
+                                at: number;
+                            } | {
+                                kind: 'unused';
+                                afterMs: number;
+                            };
+                        };
+                        actions: {
+                            check: string;
+                            acquire: string;
+                            bootstrap: string;
+                            inspect: string;
+                            destroy: string;
+                            options?: string | undefined;
+                            power?: string | undefined;
+                            rebuild?: string | undefined;
+                            renew?: string | undefined;
+                        };
+                        enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                        kindTitle?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        browserReachable?: boolean | undefined;
+                        nativeDurationInput?: undefined | {
+                            path: string;
+                            unit: 'milliseconds' | 'seconds';
+                        };
+                        resourceIdPath?: string | undefined;
+                        bootstrapTransport?: undefined | {
+                            kind: 'native';
+                            exec: string;
+                            putFile: string;
+                        };
+                        bootstrapCredential?: undefined | {
+                            kind: 'native-token' | 'ssh';
+                        };
+                        nativeCredentialDelivery?: undefined | {
+                            apply: string;
+                            transports: [
+                                'https_headers'
+                            ];
+                            preservesEndpoint: true;
+                            perBindingMatching: true;
+                        };
+                        credentialPurposeRequirements?: undefined | {
+                            purpose: string;
+                            optionalWhen: InputPredicate;
+                        }[];
+                        reconciliation?: undefined | {
+                            nativeOperationSchema: PluginJsonSchemaV2;
+                            action: string;
+                            cleanup?: string | undefined;
+                            continueAcquire?: true | undefined;
+                        };
+                    };
+                    prices?: undefined | {
+                        amount: string;
+                        currency: string;
+                        unit: string;
+                        source: string;
+                        observedAt: number;
+                        label?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    }[];
+                    localResources?: undefined | {
+                        observedAt: number;
+                        availableCpuCores?: number | undefined;
+                        availableMemoryBytes?: number | undefined;
+                        availableDiskBytes?: number | undefined;
+                    };
+                    nativeFacts?: undefined | {
+                        size?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            cpuCores?: number | undefined;
+                            memoryBytes?: number | undefined;
+                            diskBytes?: number | undefined;
+                        };
+                        image?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            preview?: undefined | {
+                                resource: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accessibilityLabel?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                        location?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            countryCode?: string | undefined;
+                        };
+                        network?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                        duration?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            afterMs: number;
+                        };
+                        monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                    };
+                    setup?: Readonly<{
+                        toolchain?: undefined | {
+                            adapterId: string;
+                            config: string;
+                        };
+                        items?: MachinePresetItemV1[] | undefined;
+                        scripts?: Readonly<{
+                            body: string;
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            check?: undefined | {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                removal?: undefined | {
+                                    executable: string;
+                                    args: string[];
+                                    unsatisfiedExitCodes: number[];
+                                    stdoutJson?: InputPredicate | undefined;
+                                };
+                            };
+                        }>[] | undefined;
+                        secretRefs?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                    }> | undefined;
+                    preset?: undefined | {
+                        id: string;
+                        revision: number;
+                        name?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'unavailable';
+                code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+            };
+            simultaneousLimit?: undefined | {
                 maximum: number;
-            } | undefined;
+            };
             archivedAt?: number | undefined;
         };
+    } | {
+        kind: 'refused';
+        code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
     };
     readonly "machines.presets.create": {
+        kind: 'conflict';
+        currentRevision: number;
+    } | {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
     } | {
         kind: 'saved';
         preset: {
@@ -327,7 +1382,7 @@ export type MachinePresetsActionResultById = {
                 kind: 'team';
                 teamId: string;
             };
-            recipe: {
+            launch?: undefined | {
                 provider: {
                     pluginId: string;
                     localId: string;
@@ -335,7 +1390,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: {
+                credentials?: undefined | {
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -350,46 +1405,582 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[] | undefined;
+                }[];
             };
-            controller: {
+            controller?: undefined | {
                 machineId: string;
                 installationId: string;
             };
-            environment?: {
-                toolchain?: {
+            controllerDisplayName?: string | undefined;
+            setup?: Readonly<{
+                toolchain?: undefined | {
                     adapterId: string;
                     config: string;
-                } | undefined;
-                setupScript?: string | undefined;
-                secretRefs?: {
+                };
+                items?: MachinePresetItemV1[] | undefined;
+                scripts?: Readonly<{
+                    body: string;
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    check?: undefined | {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        removal?: undefined | {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: InputPredicate | undefined;
+                        };
+                    };
+                }>[] | undefined;
+                secretRefs?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-            } | undefined;
-            retention?: {
+                };
+            }> | undefined;
+            retention?: undefined | {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
-                effect: 'stop' | 'delete';
-            } | undefined;
+                effect: 'delete' | 'stop';
+            };
             wakeOnAcceptedMessage?: boolean | undefined;
-            simultaneousLimit?: {
+            teamAcquireDelegated?: boolean | undefined;
+            delegatedAcquire?: undefined | {
+                kind: 'ready';
+                controller: {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
+                    };
+                };
+                provisioner: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    icon: string;
+                    resourceKind: string;
+                    launchSchema: PluginJsonSchemaV2;
+                    resourceSchema: PluginJsonSchemaV2;
+                    schemaVersion: number;
+                    platforms: ('darwin' | 'linux' | 'win32')[];
+                    prerequisites: ({
+                        kind: 'managedDependency';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    } | {
+                        kind: 'systemTool';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    })[];
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    retention: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    actions: {
+                        check: string;
+                        acquire: string;
+                        bootstrap: string;
+                        inspect: string;
+                        destroy: string;
+                        options?: string | undefined;
+                        power?: string | undefined;
+                        rebuild?: string | undefined;
+                        renew?: string | undefined;
+                    };
+                    enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                    kindTitle?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    browserReachable?: boolean | undefined;
+                    nativeDurationInput?: undefined | {
+                        path: string;
+                        unit: 'milliseconds' | 'seconds';
+                    };
+                    resourceIdPath?: string | undefined;
+                    bootstrapTransport?: undefined | {
+                        kind: 'native';
+                        exec: string;
+                        putFile: string;
+                    };
+                    bootstrapCredential?: undefined | {
+                        kind: 'native-token' | 'ssh';
+                    };
+                    nativeCredentialDelivery?: undefined | {
+                        apply: string;
+                        transports: [
+                            'https_headers'
+                        ];
+                        preservesEndpoint: true;
+                        perBindingMatching: true;
+                    };
+                    credentialPurposeRequirements?: undefined | {
+                        purpose: string;
+                        optionalWhen: InputPredicate;
+                    }[];
+                    reconciliation?: undefined | {
+                        nativeOperationSchema: PluginJsonSchemaV2;
+                        action: string;
+                        cleanup?: string | undefined;
+                        continueAcquire?: true | undefined;
+                    };
+                };
+                reviewedFacts: {
+                    launch: {
+                        provider: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        schemaVersion: number;
+                        name: string;
+                        choices: PluginJsonValueV2;
+                        credentials?: undefined | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        }[];
+                    };
+                    optionStatus: 'current' | 'loading' | 'unavailable';
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    prerequisites: {
+                        requirement: {
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        status: 'available' | 'unavailable' | 'unknown';
+                        reason?: string | undefined;
+                        repairAction?: undefined | {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: PluginJsonValueV2;
+                        };
+                    }[];
+                    retentionCapabilities: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    retention: {
+                        kind: 'deadline';
+                        at: number;
+                        effect: 'delete' | 'stop';
+                    } | {
+                        kind: 'until-delete';
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                        effect: 'delete' | 'stop';
+                    };
+                    wakeOnAcceptedMessage: boolean;
+                    controller?: undefined | {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    provisioner?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        icon: string;
+                        resourceKind: string;
+                        launchSchema: PluginJsonSchemaV2;
+                        resourceSchema: PluginJsonSchemaV2;
+                        schemaVersion: number;
+                        platforms: ('darwin' | 'linux' | 'win32')[];
+                        prerequisites: ({
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        })[];
+                        billing: {
+                            location: 'cloud' | 'local' | 'unknown';
+                            stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                            storageCharges?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        };
+                        retention: {
+                            supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                            guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                            finiteOnly?: boolean | undefined;
+                            deletionNotices?: undefined | {
+                                kind: 'stopped-storage';
+                                rule: {
+                                    kind: 'after-stop';
+                                    afterMs: number;
+                                };
+                                consequence: 'disk-deleted';
+                                at?: number | undefined;
+                            }[];
+                            nativeExpiry?: undefined | {
+                                kind: 'deadline';
+                                at: number;
+                            } | {
+                                kind: 'unused';
+                                afterMs: number;
+                            };
+                        };
+                        actions: {
+                            check: string;
+                            acquire: string;
+                            bootstrap: string;
+                            inspect: string;
+                            destroy: string;
+                            options?: string | undefined;
+                            power?: string | undefined;
+                            rebuild?: string | undefined;
+                            renew?: string | undefined;
+                        };
+                        enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                        kindTitle?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        browserReachable?: boolean | undefined;
+                        nativeDurationInput?: undefined | {
+                            path: string;
+                            unit: 'milliseconds' | 'seconds';
+                        };
+                        resourceIdPath?: string | undefined;
+                        bootstrapTransport?: undefined | {
+                            kind: 'native';
+                            exec: string;
+                            putFile: string;
+                        };
+                        bootstrapCredential?: undefined | {
+                            kind: 'native-token' | 'ssh';
+                        };
+                        nativeCredentialDelivery?: undefined | {
+                            apply: string;
+                            transports: [
+                                'https_headers'
+                            ];
+                            preservesEndpoint: true;
+                            perBindingMatching: true;
+                        };
+                        credentialPurposeRequirements?: undefined | {
+                            purpose: string;
+                            optionalWhen: InputPredicate;
+                        }[];
+                        reconciliation?: undefined | {
+                            nativeOperationSchema: PluginJsonSchemaV2;
+                            action: string;
+                            cleanup?: string | undefined;
+                            continueAcquire?: true | undefined;
+                        };
+                    };
+                    prices?: undefined | {
+                        amount: string;
+                        currency: string;
+                        unit: string;
+                        source: string;
+                        observedAt: number;
+                        label?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    }[];
+                    localResources?: undefined | {
+                        observedAt: number;
+                        availableCpuCores?: number | undefined;
+                        availableMemoryBytes?: number | undefined;
+                        availableDiskBytes?: number | undefined;
+                    };
+                    nativeFacts?: undefined | {
+                        size?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            cpuCores?: number | undefined;
+                            memoryBytes?: number | undefined;
+                            diskBytes?: number | undefined;
+                        };
+                        image?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            preview?: undefined | {
+                                resource: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accessibilityLabel?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                        location?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            countryCode?: string | undefined;
+                        };
+                        network?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                        duration?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            afterMs: number;
+                        };
+                        monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                    };
+                    setup?: Readonly<{
+                        toolchain?: undefined | {
+                            adapterId: string;
+                            config: string;
+                        };
+                        items?: MachinePresetItemV1[] | undefined;
+                        scripts?: Readonly<{
+                            body: string;
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            check?: undefined | {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                removal?: undefined | {
+                                    executable: string;
+                                    args: string[];
+                                    unsatisfiedExitCodes: number[];
+                                    stdoutJson?: InputPredicate | undefined;
+                                };
+                            };
+                        }>[] | undefined;
+                        secretRefs?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                    }> | undefined;
+                    preset?: undefined | {
+                        id: string;
+                        revision: number;
+                        name?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'unavailable';
+                code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+            };
+            simultaneousLimit?: undefined | {
                 maximum: number;
-            } | undefined;
+            };
             archivedAt?: number | undefined;
         };
-    } | {
-        kind: 'conflict';
-        currentRevision: number;
     };
     readonly "machines.presets.update": {
+        kind: 'conflict';
+        currentRevision: number;
+    } | {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
     } | {
         kind: 'saved';
         preset: {
@@ -404,7 +1995,7 @@ export type MachinePresetsActionResultById = {
                 kind: 'team';
                 teamId: string;
             };
-            recipe: {
+            launch?: undefined | {
                 provider: {
                     pluginId: string;
                     localId: string;
@@ -412,7 +2003,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: {
+                credentials?: undefined | {
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -427,46 +2018,582 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[] | undefined;
+                }[];
             };
-            controller: {
+            controller?: undefined | {
                 machineId: string;
                 installationId: string;
             };
-            environment?: {
-                toolchain?: {
+            controllerDisplayName?: string | undefined;
+            setup?: Readonly<{
+                toolchain?: undefined | {
                     adapterId: string;
                     config: string;
-                } | undefined;
-                setupScript?: string | undefined;
-                secretRefs?: {
+                };
+                items?: MachinePresetItemV1[] | undefined;
+                scripts?: Readonly<{
+                    body: string;
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    check?: undefined | {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        removal?: undefined | {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: InputPredicate | undefined;
+                        };
+                    };
+                }>[] | undefined;
+                secretRefs?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-            } | undefined;
-            retention?: {
+                };
+            }> | undefined;
+            retention?: undefined | {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
-                effect: 'stop' | 'delete';
-            } | undefined;
+                effect: 'delete' | 'stop';
+            };
             wakeOnAcceptedMessage?: boolean | undefined;
-            simultaneousLimit?: {
+            teamAcquireDelegated?: boolean | undefined;
+            delegatedAcquire?: undefined | {
+                kind: 'ready';
+                controller: {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
+                    };
+                };
+                provisioner: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    icon: string;
+                    resourceKind: string;
+                    launchSchema: PluginJsonSchemaV2;
+                    resourceSchema: PluginJsonSchemaV2;
+                    schemaVersion: number;
+                    platforms: ('darwin' | 'linux' | 'win32')[];
+                    prerequisites: ({
+                        kind: 'managedDependency';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    } | {
+                        kind: 'systemTool';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    })[];
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    retention: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    actions: {
+                        check: string;
+                        acquire: string;
+                        bootstrap: string;
+                        inspect: string;
+                        destroy: string;
+                        options?: string | undefined;
+                        power?: string | undefined;
+                        rebuild?: string | undefined;
+                        renew?: string | undefined;
+                    };
+                    enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                    kindTitle?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    browserReachable?: boolean | undefined;
+                    nativeDurationInput?: undefined | {
+                        path: string;
+                        unit: 'milliseconds' | 'seconds';
+                    };
+                    resourceIdPath?: string | undefined;
+                    bootstrapTransport?: undefined | {
+                        kind: 'native';
+                        exec: string;
+                        putFile: string;
+                    };
+                    bootstrapCredential?: undefined | {
+                        kind: 'native-token' | 'ssh';
+                    };
+                    nativeCredentialDelivery?: undefined | {
+                        apply: string;
+                        transports: [
+                            'https_headers'
+                        ];
+                        preservesEndpoint: true;
+                        perBindingMatching: true;
+                    };
+                    credentialPurposeRequirements?: undefined | {
+                        purpose: string;
+                        optionalWhen: InputPredicate;
+                    }[];
+                    reconciliation?: undefined | {
+                        nativeOperationSchema: PluginJsonSchemaV2;
+                        action: string;
+                        cleanup?: string | undefined;
+                        continueAcquire?: true | undefined;
+                    };
+                };
+                reviewedFacts: {
+                    launch: {
+                        provider: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        schemaVersion: number;
+                        name: string;
+                        choices: PluginJsonValueV2;
+                        credentials?: undefined | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        }[];
+                    };
+                    optionStatus: 'current' | 'loading' | 'unavailable';
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    prerequisites: {
+                        requirement: {
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        status: 'available' | 'unavailable' | 'unknown';
+                        reason?: string | undefined;
+                        repairAction?: undefined | {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: PluginJsonValueV2;
+                        };
+                    }[];
+                    retentionCapabilities: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    retention: {
+                        kind: 'deadline';
+                        at: number;
+                        effect: 'delete' | 'stop';
+                    } | {
+                        kind: 'until-delete';
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                        effect: 'delete' | 'stop';
+                    };
+                    wakeOnAcceptedMessage: boolean;
+                    controller?: undefined | {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    provisioner?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        icon: string;
+                        resourceKind: string;
+                        launchSchema: PluginJsonSchemaV2;
+                        resourceSchema: PluginJsonSchemaV2;
+                        schemaVersion: number;
+                        platforms: ('darwin' | 'linux' | 'win32')[];
+                        prerequisites: ({
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        })[];
+                        billing: {
+                            location: 'cloud' | 'local' | 'unknown';
+                            stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                            storageCharges?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        };
+                        retention: {
+                            supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                            guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                            finiteOnly?: boolean | undefined;
+                            deletionNotices?: undefined | {
+                                kind: 'stopped-storage';
+                                rule: {
+                                    kind: 'after-stop';
+                                    afterMs: number;
+                                };
+                                consequence: 'disk-deleted';
+                                at?: number | undefined;
+                            }[];
+                            nativeExpiry?: undefined | {
+                                kind: 'deadline';
+                                at: number;
+                            } | {
+                                kind: 'unused';
+                                afterMs: number;
+                            };
+                        };
+                        actions: {
+                            check: string;
+                            acquire: string;
+                            bootstrap: string;
+                            inspect: string;
+                            destroy: string;
+                            options?: string | undefined;
+                            power?: string | undefined;
+                            rebuild?: string | undefined;
+                            renew?: string | undefined;
+                        };
+                        enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                        kindTitle?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        browserReachable?: boolean | undefined;
+                        nativeDurationInput?: undefined | {
+                            path: string;
+                            unit: 'milliseconds' | 'seconds';
+                        };
+                        resourceIdPath?: string | undefined;
+                        bootstrapTransport?: undefined | {
+                            kind: 'native';
+                            exec: string;
+                            putFile: string;
+                        };
+                        bootstrapCredential?: undefined | {
+                            kind: 'native-token' | 'ssh';
+                        };
+                        nativeCredentialDelivery?: undefined | {
+                            apply: string;
+                            transports: [
+                                'https_headers'
+                            ];
+                            preservesEndpoint: true;
+                            perBindingMatching: true;
+                        };
+                        credentialPurposeRequirements?: undefined | {
+                            purpose: string;
+                            optionalWhen: InputPredicate;
+                        }[];
+                        reconciliation?: undefined | {
+                            nativeOperationSchema: PluginJsonSchemaV2;
+                            action: string;
+                            cleanup?: string | undefined;
+                            continueAcquire?: true | undefined;
+                        };
+                    };
+                    prices?: undefined | {
+                        amount: string;
+                        currency: string;
+                        unit: string;
+                        source: string;
+                        observedAt: number;
+                        label?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    }[];
+                    localResources?: undefined | {
+                        observedAt: number;
+                        availableCpuCores?: number | undefined;
+                        availableMemoryBytes?: number | undefined;
+                        availableDiskBytes?: number | undefined;
+                    };
+                    nativeFacts?: undefined | {
+                        size?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            cpuCores?: number | undefined;
+                            memoryBytes?: number | undefined;
+                            diskBytes?: number | undefined;
+                        };
+                        image?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            preview?: undefined | {
+                                resource: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accessibilityLabel?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                        location?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            countryCode?: string | undefined;
+                        };
+                        network?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                        duration?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            afterMs: number;
+                        };
+                        monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                    };
+                    setup?: Readonly<{
+                        toolchain?: undefined | {
+                            adapterId: string;
+                            config: string;
+                        };
+                        items?: MachinePresetItemV1[] | undefined;
+                        scripts?: Readonly<{
+                            body: string;
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            check?: undefined | {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                removal?: undefined | {
+                                    executable: string;
+                                    args: string[];
+                                    unsatisfiedExitCodes: number[];
+                                    stdoutJson?: InputPredicate | undefined;
+                                };
+                            };
+                        }>[] | undefined;
+                        secretRefs?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                    }> | undefined;
+                    preset?: undefined | {
+                        id: string;
+                        revision: number;
+                        name?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'unavailable';
+                code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+            };
+            simultaneousLimit?: undefined | {
                 maximum: number;
-            } | undefined;
+            };
             archivedAt?: number | undefined;
         };
-    } | {
-        kind: 'conflict';
-        currentRevision: number;
     };
     readonly "machines.presets.archive": {
+        kind: 'conflict';
+        currentRevision: number;
+    } | {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
     } | {
         kind: 'saved';
         preset: {
@@ -481,7 +2608,7 @@ export type MachinePresetsActionResultById = {
                 kind: 'team';
                 teamId: string;
             };
-            recipe: {
+            launch?: undefined | {
                 provider: {
                     pluginId: string;
                     localId: string;
@@ -489,7 +2616,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: {
+                credentials?: undefined | {
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -504,46 +2631,582 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[] | undefined;
+                }[];
             };
-            controller: {
+            controller?: undefined | {
                 machineId: string;
                 installationId: string;
             };
-            environment?: {
-                toolchain?: {
+            controllerDisplayName?: string | undefined;
+            setup?: Readonly<{
+                toolchain?: undefined | {
                     adapterId: string;
                     config: string;
-                } | undefined;
-                setupScript?: string | undefined;
-                secretRefs?: {
+                };
+                items?: MachinePresetItemV1[] | undefined;
+                scripts?: Readonly<{
+                    body: string;
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    check?: undefined | {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        removal?: undefined | {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: InputPredicate | undefined;
+                        };
+                    };
+                }>[] | undefined;
+                secretRefs?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-            } | undefined;
-            retention?: {
+                };
+            }> | undefined;
+            retention?: undefined | {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
-                effect: 'stop' | 'delete';
-            } | undefined;
+                effect: 'delete' | 'stop';
+            };
             wakeOnAcceptedMessage?: boolean | undefined;
-            simultaneousLimit?: {
+            teamAcquireDelegated?: boolean | undefined;
+            delegatedAcquire?: undefined | {
+                kind: 'ready';
+                controller: {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
+                    };
+                };
+                provisioner: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    icon: string;
+                    resourceKind: string;
+                    launchSchema: PluginJsonSchemaV2;
+                    resourceSchema: PluginJsonSchemaV2;
+                    schemaVersion: number;
+                    platforms: ('darwin' | 'linux' | 'win32')[];
+                    prerequisites: ({
+                        kind: 'managedDependency';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    } | {
+                        kind: 'systemTool';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    })[];
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    retention: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    actions: {
+                        check: string;
+                        acquire: string;
+                        bootstrap: string;
+                        inspect: string;
+                        destroy: string;
+                        options?: string | undefined;
+                        power?: string | undefined;
+                        rebuild?: string | undefined;
+                        renew?: string | undefined;
+                    };
+                    enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                    kindTitle?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    browserReachable?: boolean | undefined;
+                    nativeDurationInput?: undefined | {
+                        path: string;
+                        unit: 'milliseconds' | 'seconds';
+                    };
+                    resourceIdPath?: string | undefined;
+                    bootstrapTransport?: undefined | {
+                        kind: 'native';
+                        exec: string;
+                        putFile: string;
+                    };
+                    bootstrapCredential?: undefined | {
+                        kind: 'native-token' | 'ssh';
+                    };
+                    nativeCredentialDelivery?: undefined | {
+                        apply: string;
+                        transports: [
+                            'https_headers'
+                        ];
+                        preservesEndpoint: true;
+                        perBindingMatching: true;
+                    };
+                    credentialPurposeRequirements?: undefined | {
+                        purpose: string;
+                        optionalWhen: InputPredicate;
+                    }[];
+                    reconciliation?: undefined | {
+                        nativeOperationSchema: PluginJsonSchemaV2;
+                        action: string;
+                        cleanup?: string | undefined;
+                        continueAcquire?: true | undefined;
+                    };
+                };
+                reviewedFacts: {
+                    launch: {
+                        provider: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        schemaVersion: number;
+                        name: string;
+                        choices: PluginJsonValueV2;
+                        credentials?: undefined | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        }[];
+                    };
+                    optionStatus: 'current' | 'loading' | 'unavailable';
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    prerequisites: {
+                        requirement: {
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        status: 'available' | 'unavailable' | 'unknown';
+                        reason?: string | undefined;
+                        repairAction?: undefined | {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: PluginJsonValueV2;
+                        };
+                    }[];
+                    retentionCapabilities: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    retention: {
+                        kind: 'deadline';
+                        at: number;
+                        effect: 'delete' | 'stop';
+                    } | {
+                        kind: 'until-delete';
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                        effect: 'delete' | 'stop';
+                    };
+                    wakeOnAcceptedMessage: boolean;
+                    controller?: undefined | {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    provisioner?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        icon: string;
+                        resourceKind: string;
+                        launchSchema: PluginJsonSchemaV2;
+                        resourceSchema: PluginJsonSchemaV2;
+                        schemaVersion: number;
+                        platforms: ('darwin' | 'linux' | 'win32')[];
+                        prerequisites: ({
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        })[];
+                        billing: {
+                            location: 'cloud' | 'local' | 'unknown';
+                            stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                            storageCharges?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        };
+                        retention: {
+                            supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                            guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                            finiteOnly?: boolean | undefined;
+                            deletionNotices?: undefined | {
+                                kind: 'stopped-storage';
+                                rule: {
+                                    kind: 'after-stop';
+                                    afterMs: number;
+                                };
+                                consequence: 'disk-deleted';
+                                at?: number | undefined;
+                            }[];
+                            nativeExpiry?: undefined | {
+                                kind: 'deadline';
+                                at: number;
+                            } | {
+                                kind: 'unused';
+                                afterMs: number;
+                            };
+                        };
+                        actions: {
+                            check: string;
+                            acquire: string;
+                            bootstrap: string;
+                            inspect: string;
+                            destroy: string;
+                            options?: string | undefined;
+                            power?: string | undefined;
+                            rebuild?: string | undefined;
+                            renew?: string | undefined;
+                        };
+                        enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                        kindTitle?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        browserReachable?: boolean | undefined;
+                        nativeDurationInput?: undefined | {
+                            path: string;
+                            unit: 'milliseconds' | 'seconds';
+                        };
+                        resourceIdPath?: string | undefined;
+                        bootstrapTransport?: undefined | {
+                            kind: 'native';
+                            exec: string;
+                            putFile: string;
+                        };
+                        bootstrapCredential?: undefined | {
+                            kind: 'native-token' | 'ssh';
+                        };
+                        nativeCredentialDelivery?: undefined | {
+                            apply: string;
+                            transports: [
+                                'https_headers'
+                            ];
+                            preservesEndpoint: true;
+                            perBindingMatching: true;
+                        };
+                        credentialPurposeRequirements?: undefined | {
+                            purpose: string;
+                            optionalWhen: InputPredicate;
+                        }[];
+                        reconciliation?: undefined | {
+                            nativeOperationSchema: PluginJsonSchemaV2;
+                            action: string;
+                            cleanup?: string | undefined;
+                            continueAcquire?: true | undefined;
+                        };
+                    };
+                    prices?: undefined | {
+                        amount: string;
+                        currency: string;
+                        unit: string;
+                        source: string;
+                        observedAt: number;
+                        label?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    }[];
+                    localResources?: undefined | {
+                        observedAt: number;
+                        availableCpuCores?: number | undefined;
+                        availableMemoryBytes?: number | undefined;
+                        availableDiskBytes?: number | undefined;
+                    };
+                    nativeFacts?: undefined | {
+                        size?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            cpuCores?: number | undefined;
+                            memoryBytes?: number | undefined;
+                            diskBytes?: number | undefined;
+                        };
+                        image?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            preview?: undefined | {
+                                resource: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accessibilityLabel?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                        location?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            countryCode?: string | undefined;
+                        };
+                        network?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                        duration?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            afterMs: number;
+                        };
+                        monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                    };
+                    setup?: Readonly<{
+                        toolchain?: undefined | {
+                            adapterId: string;
+                            config: string;
+                        };
+                        items?: MachinePresetItemV1[] | undefined;
+                        scripts?: Readonly<{
+                            body: string;
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            check?: undefined | {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                removal?: undefined | {
+                                    executable: string;
+                                    args: string[];
+                                    unsatisfiedExitCodes: number[];
+                                    stdoutJson?: InputPredicate | undefined;
+                                };
+                            };
+                        }>[] | undefined;
+                        secretRefs?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                    }> | undefined;
+                    preset?: undefined | {
+                        id: string;
+                        revision: number;
+                        name?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'unavailable';
+                code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+            };
+            simultaneousLimit?: undefined | {
                 maximum: number;
-            } | undefined;
+            };
             archivedAt?: number | undefined;
         };
-    } | {
-        kind: 'conflict';
-        currentRevision: number;
     };
     readonly "machines.presets.restore": {
+        kind: 'conflict';
+        currentRevision: number;
+    } | {
         kind: 'refused';
-        code: 'invalid_request' | 'permission_denied' | 'managed_power_required' | 'admission_unavailable' | 'acquisition_disabled' | 'controller_unavailable' | 'controller_retired' | 'credential_unavailable' | 'provider_unavailable' | 'request_conflict' | 'intent_changed' | 'managed_not_found' | 'enrollment_retired' | 'resource_mismatch' | 'preset_not_found' | 'preset_archived' | 'preset_limit_reached';
+        code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
     } | {
         kind: 'saved';
         preset: {
@@ -558,7 +3221,7 @@ export type MachinePresetsActionResultById = {
                 kind: 'team';
                 teamId: string;
             };
-            recipe: {
+            launch?: undefined | {
                 provider: {
                     pluginId: string;
                     localId: string;
@@ -566,7 +3229,7 @@ export type MachinePresetsActionResultById = {
                 schemaVersion: number;
                 name: string;
                 choices: PluginJsonValueV2;
-                credentials?: {
+                credentials?: undefined | {
                     purpose: {
                         consumer: {
                             pluginId: string;
@@ -581,41 +3244,574 @@ export type MachinePresetsActionResultById = {
                         };
                         accountId: string;
                     };
-                }[] | undefined;
+                }[];
             };
-            controller: {
+            controller?: undefined | {
                 machineId: string;
                 installationId: string;
             };
-            environment?: {
-                toolchain?: {
+            controllerDisplayName?: string | undefined;
+            setup?: Readonly<{
+                toolchain?: undefined | {
                     adapterId: string;
                     config: string;
-                } | undefined;
-                setupScript?: string | undefined;
-                secretRefs?: {
+                };
+                items?: MachinePresetItemV1[] | undefined;
+                scripts?: Readonly<{
+                    body: string;
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    check?: undefined | {
+                        executable: string;
+                        args: string[];
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicate | undefined;
+                        requiredFacts?: ({
+                            kind: 'administrator';
+                        } | {
+                            kind: 'command';
+                            executable: string;
+                        } | {
+                            kind: 'init';
+                            system: 'launchd' | 'systemd' | 'windowsScm';
+                        } | {
+                            kind: 'journalReadGroup';
+                            group: string;
+                        } | {
+                            kind: 'kernel';
+                            capability: string;
+                            architectures?: string[] | undefined;
+                        } | {
+                            kind: 'packageManager';
+                            manager: string;
+                        } | {
+                            kind: 'path';
+                            path: string;
+                        })[] | undefined;
+                        removal?: undefined | {
+                            executable: string;
+                            args: string[];
+                            unsatisfiedExitCodes: number[];
+                            stdoutJson?: InputPredicate | undefined;
+                        };
+                    };
+                }>[] | undefined;
+                secretRefs?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-            } | undefined;
-            retention?: {
+                };
+            }> | undefined;
+            retention?: undefined | {
                 kind: 'until-delete';
             } | {
                 kind: 'unused';
                 afterMs: number;
-                effect: 'stop' | 'delete';
-            } | undefined;
+                effect: 'delete' | 'stop';
+            };
             wakeOnAcceptedMessage?: boolean | undefined;
-            simultaneousLimit?: {
+            teamAcquireDelegated?: boolean | undefined;
+            delegatedAcquire?: undefined | {
+                kind: 'ready';
+                controller: {
+                    installationPublicKey: string;
+                    custodian: {
+                        accountId: string;
+                    };
+                };
+                provisioner: {
+                    id: string;
+                    title: string | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    icon: string;
+                    resourceKind: string;
+                    launchSchema: PluginJsonSchemaV2;
+                    resourceSchema: PluginJsonSchemaV2;
+                    schemaVersion: number;
+                    platforms: ('darwin' | 'linux' | 'win32')[];
+                    prerequisites: ({
+                        kind: 'managedDependency';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    } | {
+                        kind: 'systemTool';
+                        id: string | {
+                            pluginId: string;
+                            localId: string;
+                        };
+                    })[];
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    retention: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    actions: {
+                        check: string;
+                        acquire: string;
+                        bootstrap: string;
+                        inspect: string;
+                        destroy: string;
+                        options?: string | undefined;
+                        power?: string | undefined;
+                        rebuild?: string | undefined;
+                        renew?: string | undefined;
+                    };
+                    enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                    kindTitle?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
+                        key: string;
+                        fallback: string;
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    browserReachable?: boolean | undefined;
+                    nativeDurationInput?: undefined | {
+                        path: string;
+                        unit: 'milliseconds' | 'seconds';
+                    };
+                    resourceIdPath?: string | undefined;
+                    bootstrapTransport?: undefined | {
+                        kind: 'native';
+                        exec: string;
+                        putFile: string;
+                    };
+                    bootstrapCredential?: undefined | {
+                        kind: 'native-token' | 'ssh';
+                    };
+                    nativeCredentialDelivery?: undefined | {
+                        apply: string;
+                        transports: [
+                            'https_headers'
+                        ];
+                        preservesEndpoint: true;
+                        perBindingMatching: true;
+                    };
+                    credentialPurposeRequirements?: undefined | {
+                        purpose: string;
+                        optionalWhen: InputPredicate;
+                    }[];
+                    reconciliation?: undefined | {
+                        nativeOperationSchema: PluginJsonSchemaV2;
+                        action: string;
+                        cleanup?: string | undefined;
+                        continueAcquire?: true | undefined;
+                    };
+                };
+                reviewedFacts: {
+                    launch: {
+                        provider: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        schemaVersion: number;
+                        name: string;
+                        choices: PluginJsonValueV2;
+                        credentials?: undefined | {
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                            account: {
+                                service: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accountId: string;
+                            };
+                        }[];
+                    };
+                    optionStatus: 'current' | 'loading' | 'unavailable';
+                    billing: {
+                        location: 'cloud' | 'local' | 'unknown';
+                        stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                        storageCharges?: undefined | {
+                            amount: string;
+                            currency: string;
+                            unit: string;
+                            source: string;
+                            observedAt: number;
+                            label?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        }[];
+                    };
+                    prerequisites: {
+                        requirement: {
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        };
+                        status: 'available' | 'unavailable' | 'unknown';
+                        reason?: string | undefined;
+                        repairAction?: undefined | {
+                            action: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            input: PluginJsonValueV2;
+                        };
+                    }[];
+                    retentionCapabilities: {
+                        supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                        guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                        finiteOnly?: boolean | undefined;
+                        deletionNotices?: undefined | {
+                            kind: 'stopped-storage';
+                            rule: {
+                                kind: 'after-stop';
+                                afterMs: number;
+                            };
+                            consequence: 'disk-deleted';
+                            at?: number | undefined;
+                        }[];
+                        nativeExpiry?: undefined | {
+                            kind: 'deadline';
+                            at: number;
+                        } | {
+                            kind: 'unused';
+                            afterMs: number;
+                        };
+                    };
+                    retention: {
+                        kind: 'deadline';
+                        at: number;
+                        effect: 'delete' | 'stop';
+                    } | {
+                        kind: 'until-delete';
+                    } | {
+                        kind: 'unused';
+                        afterMs: number;
+                        effect: 'delete' | 'stop';
+                    };
+                    wakeOnAcceptedMessage: boolean;
+                    controller?: undefined | {
+                        machineId: string;
+                        installationId: string;
+                    };
+                    provisioner?: undefined | {
+                        id: string;
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        icon: string;
+                        resourceKind: string;
+                        launchSchema: PluginJsonSchemaV2;
+                        resourceSchema: PluginJsonSchemaV2;
+                        schemaVersion: number;
+                        platforms: ('darwin' | 'linux' | 'win32')[];
+                        prerequisites: ({
+                            kind: 'managedDependency';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        } | {
+                            kind: 'systemTool';
+                            id: string | {
+                                pluginId: string;
+                                localId: string;
+                            };
+                        })[];
+                        billing: {
+                            location: 'cloud' | 'local' | 'unknown';
+                            stoppedBilling: 'billed' | 'not-billed' | 'unknown';
+                            storageCharges?: undefined | {
+                                amount: string;
+                                currency: string;
+                                unit: string;
+                                source: string;
+                                observedAt: number;
+                                label?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            }[];
+                        };
+                        retention: {
+                            supportedIntents: ('delete' | 'rebuild' | 'resume' | 'start' | 'stop' | 'suspend')[];
+                            guestLocalStop?: 'poweroff' | 'process-exit' | undefined;
+                            finiteOnly?: boolean | undefined;
+                            deletionNotices?: undefined | {
+                                kind: 'stopped-storage';
+                                rule: {
+                                    kind: 'after-stop';
+                                    afterMs: number;
+                                };
+                                consequence: 'disk-deleted';
+                                at?: number | undefined;
+                            }[];
+                            nativeExpiry?: undefined | {
+                                kind: 'deadline';
+                                at: number;
+                            } | {
+                                kind: 'unused';
+                                afterMs: number;
+                            };
+                        };
+                        actions: {
+                            check: string;
+                            acquire: string;
+                            bootstrap: string;
+                            inspect: string;
+                            destroy: string;
+                            options?: string | undefined;
+                            power?: string | undefined;
+                            rebuild?: string | undefined;
+                            renew?: string | undefined;
+                        };
+                        enrollmentRole?: 'personal' | 'sandbox' | 'server' | undefined;
+                        kindTitle?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        browserReachable?: boolean | undefined;
+                        nativeDurationInput?: undefined | {
+                            path: string;
+                            unit: 'milliseconds' | 'seconds';
+                        };
+                        resourceIdPath?: string | undefined;
+                        bootstrapTransport?: undefined | {
+                            kind: 'native';
+                            exec: string;
+                            putFile: string;
+                        };
+                        bootstrapCredential?: undefined | {
+                            kind: 'native-token' | 'ssh';
+                        };
+                        nativeCredentialDelivery?: undefined | {
+                            apply: string;
+                            transports: [
+                                'https_headers'
+                            ];
+                            preservesEndpoint: true;
+                            perBindingMatching: true;
+                        };
+                        credentialPurposeRequirements?: undefined | {
+                            purpose: string;
+                            optionalWhen: InputPredicate;
+                        }[];
+                        reconciliation?: undefined | {
+                            nativeOperationSchema: PluginJsonSchemaV2;
+                            action: string;
+                            cleanup?: string | undefined;
+                            continueAcquire?: true | undefined;
+                        };
+                    };
+                    prices?: undefined | {
+                        amount: string;
+                        currency: string;
+                        unit: string;
+                        source: string;
+                        observedAt: number;
+                        label?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    }[];
+                    localResources?: undefined | {
+                        observedAt: number;
+                        availableCpuCores?: number | undefined;
+                        availableMemoryBytes?: number | undefined;
+                        availableDiskBytes?: number | undefined;
+                    };
+                    nativeFacts?: undefined | {
+                        size?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            cpuCores?: number | undefined;
+                            memoryBytes?: number | undefined;
+                            diskBytes?: number | undefined;
+                        };
+                        image?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            description?: string | undefined | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            preview?: undefined | {
+                                resource: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                accessibilityLabel?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                        };
+                        location?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            countryCode?: string | undefined;
+                        };
+                        network?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                        };
+                        duration?: undefined | {
+                            id: string;
+                            title: string | {
+                                key: string;
+                                fallback: string;
+                                params?: Record<string, number | string> | undefined;
+                            };
+                            afterMs: number;
+                        };
+                        monthlyCapStatus?: 'none' | 'unknown' | undefined;
+                    };
+                    setup?: Readonly<{
+                        toolchain?: undefined | {
+                            adapterId: string;
+                            config: string;
+                        };
+                        items?: MachinePresetItemV1[] | undefined;
+                        scripts?: Readonly<{
+                            body: string;
+                            affects?: 'dockerEngine' | 'none' | undefined | {
+                                services: string[];
+                            };
+                            check?: undefined | {
+                                executable: string;
+                                args: string[];
+                                unsatisfiedExitCodes: number[];
+                                stdoutJson?: InputPredicate | undefined;
+                                requiredFacts?: ({
+                                    kind: 'administrator';
+                                } | {
+                                    kind: 'command';
+                                    executable: string;
+                                } | {
+                                    kind: 'init';
+                                    system: 'launchd' | 'systemd' | 'windowsScm';
+                                } | {
+                                    kind: 'journalReadGroup';
+                                    group: string;
+                                } | {
+                                    kind: 'kernel';
+                                    capability: string;
+                                    architectures?: string[] | undefined;
+                                } | {
+                                    kind: 'packageManager';
+                                    manager: string;
+                                } | {
+                                    kind: 'path';
+                                    path: string;
+                                })[] | undefined;
+                                removal?: undefined | {
+                                    executable: string;
+                                    args: string[];
+                                    unsatisfiedExitCodes: number[];
+                                    stdoutJson?: InputPredicate | undefined;
+                                };
+                            };
+                        }>[] | undefined;
+                        secretRefs?: undefined | {
+                            v: 1;
+                            bindings: Record<string, {
+                                ref: string;
+                                revision?: number | undefined;
+                            }>;
+                        };
+                    }> | undefined;
+                    preset?: undefined | {
+                        id: string;
+                        revision: number;
+                        name?: string | undefined;
+                    };
+                };
+            } | {
+                kind: 'unavailable';
+                code: 'acquisition_disabled' | 'admission_unavailable' | 'controller_retired' | 'controller_unavailable' | 'credential_unavailable' | 'enrollment_attendance_required' | 'enrollment_identity_review_required' | 'enrollment_retired' | 'intent_changed' | 'invalid_request' | 'managed_not_found' | 'managed_power_required' | 'permission_denied' | 'preset_archived' | 'preset_limit_reached' | 'preset_not_found' | 'provider_unavailable' | 'request_conflict' | 'resource_mismatch';
+            };
+            simultaneousLimit?: undefined | {
                 maximum: number;
-            } | undefined;
+            };
             archivedAt?: number | undefined;
         };
-    } | {
-        kind: 'conflict';
-        currentRevision: number;
     };
 };

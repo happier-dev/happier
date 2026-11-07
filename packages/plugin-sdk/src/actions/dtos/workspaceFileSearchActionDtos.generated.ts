@@ -20,9 +20,9 @@ export type WorkspaceFileSearchActionInputById = {
         replacement: string;
         includeHidden?: boolean | undefined;
         contextLines?: number | undefined;
-        cursor?: {
+        cursor?: undefined | {
             path: string;
-        } | undefined;
+        };
         matchCase?: boolean | undefined;
         regex?: boolean | undefined;
     };
@@ -38,10 +38,10 @@ export type WorkspaceFileSearchActionInputById = {
             files: {
                 path: string;
                 expectedHash: string;
-                excludedMatches?: {
+                excludedMatches?: undefined | {
                     line: number;
                     column16: number;
-                }[] | undefined;
+                }[];
             }[];
         } | {
             kind: 'restore';
@@ -63,6 +63,13 @@ export type WorkspaceFileSearchActionInputById = {
 };
 export type WorkspaceFileSearchActionResultById = {
     readonly "workspace.files.search": {
+        ok: false;
+        code: 'filesystem_identity_custody_unavailable' | 'invalid_pattern' | 'ripgrep_failed' | 'ripgrep_unavailable' | 'root_not_allowed' | 'root_not_found';
+        message?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
         ok: true;
         files: {
             path: string;
@@ -77,12 +84,15 @@ export type WorkspaceFileSearchActionResultById = {
         }[];
         hasMore: boolean;
         coverage: 'complete' | 'partial';
-    } | {
-        ok: false;
-        code: 'invalid_pattern' | 'root_not_allowed' | 'root_not_found' | 'ripgrep_unavailable' | 'ripgrep_failed';
-        message?: string | undefined;
     };
     readonly "workspace.files.replace.preview": {
+        ok: false;
+        code: 'filesystem_identity_custody_unavailable' | 'invalid_pattern' | 'ripgrep_failed' | 'ripgrep_unavailable' | 'root_not_allowed' | 'root_not_found';
+        message?: string | undefined;
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
         ok: true;
         files: {
             path: string;
@@ -103,34 +113,34 @@ export type WorkspaceFileSearchActionResultById = {
         };
         hasMore: boolean;
         coverage: 'complete' | 'partial';
-        cursor?: {
+        cursor?: undefined | {
             path: string;
-        } | undefined;
-    } | {
-        ok: false;
-        code: 'invalid_pattern' | 'root_not_allowed' | 'root_not_found' | 'ripgrep_unavailable' | 'ripgrep_failed';
-        message?: string | undefined;
+        };
     };
     readonly "workspace.files.replace": {
+        ok: false;
+        code: 'filesystem_identity_custody_unavailable' | 'invalid_pattern' | 'invalid_request' | 'root_not_allowed';
+        details?: undefined | {
+            reason: 'admission_not_current' | 'admission_unavailable' | 'requester_identity_unavailable';
+        };
+    } | {
         ok: true;
         results: {
             path: string;
-            status: 'skipped' | 'replaced' | 'restored' | 'changed' | 'failed';
+            status: 'changed' | 'failed' | 'replaced' | 'restored' | 'skipped';
             hash?: string | undefined;
             matchCount?: number | undefined;
-            edits?: {
+            edits?: undefined | {
                 startUtf16: number;
                 deleteLength: number;
                 insertText: string;
                 originalText: string;
-            }[] | undefined;
+            }[];
             reason?: string | undefined;
             renameTo?: string | undefined;
         }[];
         cancelled?: string[] | undefined;
-    } | {
-        ok: false;
-        code: 'invalid_pattern' | 'root_not_allowed' | 'invalid_request';
+        truncated?: boolean | undefined;
     } | {
         operation: {
             operationId: string;

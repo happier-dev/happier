@@ -9,6 +9,8 @@ export type NpmRegistryProfilesActionInputById = {
             serverIdentityId: string;
             machineId: string;
         };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.npm_registry_profiles.add": {
         profile: {
@@ -25,6 +27,8 @@ export type NpmRegistryProfilesActionInputById = {
         expectedRevision: number;
         mutationId: string;
         profileId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.npm_registry_profiles.update": {
         profile: {
@@ -41,6 +45,8 @@ export type NpmRegistryProfilesActionInputById = {
         expectedRevision: number;
         mutationId: string;
         profileId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.npm_registry_profiles.remove": {
         target: {
@@ -50,6 +56,8 @@ export type NpmRegistryProfilesActionInputById = {
         expectedRevision: number;
         mutationId: string;
         profileId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.npm_registry_profiles.login": {
         target: {
@@ -59,6 +67,19 @@ export type NpmRegistryProfilesActionInputById = {
         expectedRevision: number;
         mutationId: string;
         profileId: string;
+        login?: undefined | {
+            kind: 'browser';
+            step: 'cancel' | 'complete';
+            loginId: string;
+        } | {
+            kind: 'browser';
+            step: 'start';
+        } | {
+            kind: 'machine';
+            projectDir?: string | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.npm_registry_profiles.logout": {
         target: {
@@ -68,6 +89,8 @@ export type NpmRegistryProfilesActionInputById = {
         expectedRevision: number;
         mutationId: string;
         profileId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "plugins.npm_registry_profiles.test": {
         target: {
@@ -77,10 +100,17 @@ export type NpmRegistryProfilesActionInputById = {
         expectedRevision: number;
         mutationId: string;
         profileId: string;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type NpmRegistryProfilesActionResultById = {
     readonly "plugins.npm_registry_profiles.list": {
+        status: 'error';
+        code: 'authentication_failed' | 'authentication_required' | 'invalid_request' | 'not_found' | 'offline' | 'profile_conflict' | 'revision_conflict' | 'unavailable' | 'web_login_unsupported';
+        retryable: boolean;
+        currentRevision?: number | undefined;
+    } | {
         status: 'success';
         snapshot: {
             protocolVersion: 1;
@@ -94,27 +124,30 @@ export type NpmRegistryProfilesActionResultById = {
                 profileId: string;
                 hasCredentials: boolean;
                 authenticationState: 'configured' | 'missing';
-                availability: 'unknown' | 'available' | 'sign_in_required' | 'offline';
-                lastSuccessfulCheckAtMs: number | null;
+                availability: 'available' | 'offline' | 'sign_in_required' | 'unknown';
+                lastSuccessfulCheckAtMs: null | number;
                 updatedAtMs: number;
             }[];
             pausedSources: {
                 origin: string;
-                reason: 'offline' | 'credentials_missing' | 'authentication_failed' | 'profile_removed';
+                reason: 'authentication_failed' | 'credentials_missing' | 'offline' | 'profile_removed';
                 updatedAtMs: number;
             }[];
         };
-    } | {
-        status: 'error';
-        code: 'offline' | 'authentication_failed' | 'invalid_request' | 'not_found' | 'revision_conflict' | 'profile_conflict' | 'authentication_required' | 'unavailable';
-        retryable: boolean;
-        currentRevision?: number | undefined;
     };
     readonly "plugins.npm_registry_profiles.add": {
+        status: 'browser_login_required';
+        loginId: string;
+        loginUrl: string;
+    } | {
+        status: 'cancelled';
+    } | {
         status: 'error';
-        code: 'offline' | 'authentication_failed' | 'invalid_request' | 'not_found' | 'revision_conflict' | 'profile_conflict' | 'authentication_required' | 'unavailable';
+        code: 'authentication_failed' | 'authentication_required' | 'invalid_request' | 'not_found' | 'offline' | 'profile_conflict' | 'revision_conflict' | 'unavailable' | 'web_login_unsupported';
         retryable: boolean;
         currentRevision?: number | undefined;
+    } | {
+        status: 'outcomeUnknown';
     } | {
         status: 'success';
         snapshot: {
@@ -129,24 +162,30 @@ export type NpmRegistryProfilesActionResultById = {
                 profileId: string;
                 hasCredentials: boolean;
                 authenticationState: 'configured' | 'missing';
-                availability: 'unknown' | 'available' | 'sign_in_required' | 'offline';
-                lastSuccessfulCheckAtMs: number | null;
+                availability: 'available' | 'offline' | 'sign_in_required' | 'unknown';
+                lastSuccessfulCheckAtMs: null | number;
                 updatedAtMs: number;
             }[];
             pausedSources: {
                 origin: string;
-                reason: 'offline' | 'credentials_missing' | 'authentication_failed' | 'profile_removed';
+                reason: 'authentication_failed' | 'credentials_missing' | 'offline' | 'profile_removed';
                 updatedAtMs: number;
             }[];
         };
-    } | {
-        status: 'outcomeUnknown';
     };
     readonly "plugins.npm_registry_profiles.update": {
+        status: 'browser_login_required';
+        loginId: string;
+        loginUrl: string;
+    } | {
+        status: 'cancelled';
+    } | {
         status: 'error';
-        code: 'offline' | 'authentication_failed' | 'invalid_request' | 'not_found' | 'revision_conflict' | 'profile_conflict' | 'authentication_required' | 'unavailable';
+        code: 'authentication_failed' | 'authentication_required' | 'invalid_request' | 'not_found' | 'offline' | 'profile_conflict' | 'revision_conflict' | 'unavailable' | 'web_login_unsupported';
         retryable: boolean;
         currentRevision?: number | undefined;
+    } | {
+        status: 'outcomeUnknown';
     } | {
         status: 'success';
         snapshot: {
@@ -161,24 +200,30 @@ export type NpmRegistryProfilesActionResultById = {
                 profileId: string;
                 hasCredentials: boolean;
                 authenticationState: 'configured' | 'missing';
-                availability: 'unknown' | 'available' | 'sign_in_required' | 'offline';
-                lastSuccessfulCheckAtMs: number | null;
+                availability: 'available' | 'offline' | 'sign_in_required' | 'unknown';
+                lastSuccessfulCheckAtMs: null | number;
                 updatedAtMs: number;
             }[];
             pausedSources: {
                 origin: string;
-                reason: 'offline' | 'credentials_missing' | 'authentication_failed' | 'profile_removed';
+                reason: 'authentication_failed' | 'credentials_missing' | 'offline' | 'profile_removed';
                 updatedAtMs: number;
             }[];
         };
-    } | {
-        status: 'outcomeUnknown';
     };
     readonly "plugins.npm_registry_profiles.remove": {
+        status: 'browser_login_required';
+        loginId: string;
+        loginUrl: string;
+    } | {
+        status: 'cancelled';
+    } | {
         status: 'error';
-        code: 'offline' | 'authentication_failed' | 'invalid_request' | 'not_found' | 'revision_conflict' | 'profile_conflict' | 'authentication_required' | 'unavailable';
+        code: 'authentication_failed' | 'authentication_required' | 'invalid_request' | 'not_found' | 'offline' | 'profile_conflict' | 'revision_conflict' | 'unavailable' | 'web_login_unsupported';
         retryable: boolean;
         currentRevision?: number | undefined;
+    } | {
+        status: 'outcomeUnknown';
     } | {
         status: 'success';
         snapshot: {
@@ -193,24 +238,30 @@ export type NpmRegistryProfilesActionResultById = {
                 profileId: string;
                 hasCredentials: boolean;
                 authenticationState: 'configured' | 'missing';
-                availability: 'unknown' | 'available' | 'sign_in_required' | 'offline';
-                lastSuccessfulCheckAtMs: number | null;
+                availability: 'available' | 'offline' | 'sign_in_required' | 'unknown';
+                lastSuccessfulCheckAtMs: null | number;
                 updatedAtMs: number;
             }[];
             pausedSources: {
                 origin: string;
-                reason: 'offline' | 'credentials_missing' | 'authentication_failed' | 'profile_removed';
+                reason: 'authentication_failed' | 'credentials_missing' | 'offline' | 'profile_removed';
                 updatedAtMs: number;
             }[];
         };
-    } | {
-        status: 'outcomeUnknown';
     };
     readonly "plugins.npm_registry_profiles.login": {
+        status: 'browser_login_required';
+        loginId: string;
+        loginUrl: string;
+    } | {
+        status: 'cancelled';
+    } | {
         status: 'error';
-        code: 'offline' | 'authentication_failed' | 'invalid_request' | 'not_found' | 'revision_conflict' | 'profile_conflict' | 'authentication_required' | 'unavailable';
+        code: 'authentication_failed' | 'authentication_required' | 'invalid_request' | 'not_found' | 'offline' | 'profile_conflict' | 'revision_conflict' | 'unavailable' | 'web_login_unsupported';
         retryable: boolean;
         currentRevision?: number | undefined;
+    } | {
+        status: 'outcomeUnknown';
     } | {
         status: 'success';
         snapshot: {
@@ -225,24 +276,30 @@ export type NpmRegistryProfilesActionResultById = {
                 profileId: string;
                 hasCredentials: boolean;
                 authenticationState: 'configured' | 'missing';
-                availability: 'unknown' | 'available' | 'sign_in_required' | 'offline';
-                lastSuccessfulCheckAtMs: number | null;
+                availability: 'available' | 'offline' | 'sign_in_required' | 'unknown';
+                lastSuccessfulCheckAtMs: null | number;
                 updatedAtMs: number;
             }[];
             pausedSources: {
                 origin: string;
-                reason: 'offline' | 'credentials_missing' | 'authentication_failed' | 'profile_removed';
+                reason: 'authentication_failed' | 'credentials_missing' | 'offline' | 'profile_removed';
                 updatedAtMs: number;
             }[];
         };
-    } | {
-        status: 'outcomeUnknown';
     };
     readonly "plugins.npm_registry_profiles.logout": {
+        status: 'browser_login_required';
+        loginId: string;
+        loginUrl: string;
+    } | {
+        status: 'cancelled';
+    } | {
         status: 'error';
-        code: 'offline' | 'authentication_failed' | 'invalid_request' | 'not_found' | 'revision_conflict' | 'profile_conflict' | 'authentication_required' | 'unavailable';
+        code: 'authentication_failed' | 'authentication_required' | 'invalid_request' | 'not_found' | 'offline' | 'profile_conflict' | 'revision_conflict' | 'unavailable' | 'web_login_unsupported';
         retryable: boolean;
         currentRevision?: number | undefined;
+    } | {
+        status: 'outcomeUnknown';
     } | {
         status: 'success';
         snapshot: {
@@ -257,24 +314,30 @@ export type NpmRegistryProfilesActionResultById = {
                 profileId: string;
                 hasCredentials: boolean;
                 authenticationState: 'configured' | 'missing';
-                availability: 'unknown' | 'available' | 'sign_in_required' | 'offline';
-                lastSuccessfulCheckAtMs: number | null;
+                availability: 'available' | 'offline' | 'sign_in_required' | 'unknown';
+                lastSuccessfulCheckAtMs: null | number;
                 updatedAtMs: number;
             }[];
             pausedSources: {
                 origin: string;
-                reason: 'offline' | 'credentials_missing' | 'authentication_failed' | 'profile_removed';
+                reason: 'authentication_failed' | 'credentials_missing' | 'offline' | 'profile_removed';
                 updatedAtMs: number;
             }[];
         };
-    } | {
-        status: 'outcomeUnknown';
     };
     readonly "plugins.npm_registry_profiles.test": {
+        status: 'browser_login_required';
+        loginId: string;
+        loginUrl: string;
+    } | {
+        status: 'cancelled';
+    } | {
         status: 'error';
-        code: 'offline' | 'authentication_failed' | 'invalid_request' | 'not_found' | 'revision_conflict' | 'profile_conflict' | 'authentication_required' | 'unavailable';
+        code: 'authentication_failed' | 'authentication_required' | 'invalid_request' | 'not_found' | 'offline' | 'profile_conflict' | 'revision_conflict' | 'unavailable' | 'web_login_unsupported';
         retryable: boolean;
         currentRevision?: number | undefined;
+    } | {
+        status: 'outcomeUnknown';
     } | {
         status: 'success';
         snapshot: {
@@ -289,17 +352,15 @@ export type NpmRegistryProfilesActionResultById = {
                 profileId: string;
                 hasCredentials: boolean;
                 authenticationState: 'configured' | 'missing';
-                availability: 'unknown' | 'available' | 'sign_in_required' | 'offline';
-                lastSuccessfulCheckAtMs: number | null;
+                availability: 'available' | 'offline' | 'sign_in_required' | 'unknown';
+                lastSuccessfulCheckAtMs: null | number;
                 updatedAtMs: number;
             }[];
             pausedSources: {
                 origin: string;
-                reason: 'offline' | 'credentials_missing' | 'authentication_failed' | 'profile_removed';
+                reason: 'authentication_failed' | 'credentials_missing' | 'offline' | 'profile_removed';
                 updatedAtMs: number;
             }[];
         };
-    } | {
-        status: 'outcomeUnknown';
     };
 };

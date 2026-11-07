@@ -7,15 +7,12 @@ import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import { ACTION_DTO_BUILTINS, captureActionSchemaInputs, deriveActionDtoSchemas, readActionCatalog } from './deriveActionDtos.mjs';
 
-import {
-  resolveWorkspaceBundleLockPath,
-  withWorkspaceBundleLock,
-} from '../../../scripts/workspaces/workspaceBundleLock.mjs';
+import { withWorkspaceBundleLock } from '../../../scripts/workspaces/workspaceBundleLock.mjs';
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(SCRIPT_PATH), '../../..');
 const PACKAGE_ROOT = resolve(REPO_ROOT, 'packages/plugin-sdk');
-const WORKSPACE_BUILD_LOCK_PATH = resolveWorkspaceBundleLockPath(REPO_ROOT);
+const ACTION_MAP_LOCK_PATH = resolve(REPO_ROOT, '.project/tmp/plugin-sdk-action-type-map.lock');
 const OUTPUT_PATH = resolve(REPO_ROOT, 'packages/plugin-sdk/src/actions/actionTypeMap.generated.ts');
 const printer = ts.createPrinter({ newLine: ts.NewLineKind.LineFeed });
 const FORBIDDEN_PUBLIC_VALIDATOR_IDENTIFIER = /^(?:Zod[A-Za-z0-9_]*|\$(?:brand|Zod[A-Za-z0-9_]*))$/u;
@@ -59,11 +56,11 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
     return sources.get(path);
   };
   const resolveImport = (path, specifier) => {
-    if (!specifier.startsWith('.')) throw new ActionTypeProjectionValidationError(`Private DTO dependency: ${specifier}`);
+    if (!specifier.startsWith('.')) throw new Error(`Private DTO dependency: ${specifier}`);
     const target = resolve(dirname(path), specifier.replace(/\.js$/u, '.ts'));
     const fromRoot = relative(declarationRoot, target);
     if (isAbsolute(fromRoot) || fromRoot === '..' || fromRoot.startsWith('../') || fromRoot.startsWith('..\\')
-      || resolve(declarationRoot, fromRoot) !== target) throw new ActionTypeProjectionValidationError(`DTO dependency outside declaration closure: ${target}`);
+      || resolve(declarationRoot, fromRoot) !== target) throw new Error(`DTO dependency outside declaration closure: ${target}`);
     return target;
   };
   const declaration = (path, name) => {
@@ -81,14 +78,14 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
         if (binding) return declaration(resolveImport(path, node.moduleSpecifier.text), (binding.propertyName ?? binding.name).text);
       }
     }
-    throw new ActionTypeProjectionValidationError(`Unresolved DTO declaration ${name} in ${relative(repoRoot, path)}`);
+    throw new Error(`Unresolved DTO declaration ${name} in ${relative(repoRoot, path)}`);
   };
   const references = (node) => {
     const names = new Set();
     const parameters = new Set(node.typeParameters?.map((item) => item.name.text));
     const visit = (child, bound = parameters) => {
       if (ts.isImportTypeNode(child) || ts.isTypeQueryNode(child)) {
-        throw new ActionTypeProjectionValidationError('DTO declarations must not depend on values or private import types.');
+        throw new Error('DTO declarations must not depend on values or private import types.');
       }
       if (ts.isMappedTypeNode(child)) {
         // The constraint can reference an outer declaration with the same name;
@@ -101,7 +98,7 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
       }
       if (ts.isTypeReferenceNode(child) || ts.isExpressionWithTypeArguments(child)) {
         const name = child.typeName ?? child.expression;
-        if (!ts.isIdentifier(name)) throw new ActionTypeProjectionValidationError('DTO declarations must not contain qualified validator types.');
+        if (!ts.isIdentifier(name)) throw new Error('DTO declarations must not contain qualified validator types.');
         if (!bound.has(name.text) && !ACTION_DTO_BUILTINS.has(name.text)) names.add(name.text);
       }
       ts.forEachChild(child, nested => visit(nested, bound));
@@ -133,11 +130,11 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
     const { path: owner, node } = declaration(path, name);
     if (ts.isTypeLiteralNode(node.type)) return node.type.members.map((member) => member.name.text);
     if (ts.isIntersectionTypeNode(node.type)) return node.type.types.flatMap((member) => {
-      if (!ts.isTypeReferenceNode(member) || !ts.isIdentifier(member.typeName)) throw new ActionTypeProjectionValidationError('DTO map index must name family maps.');
+      if (!ts.isTypeReferenceNode(member) || !ts.isIdentifier(member.typeName)) throw new Error('DTO map index must name family maps.');
       return mapKeysFrom(owner, member.typeName.text);
     });
     if (ts.isTypeReferenceNode(node.type) && ts.isIdentifier(node.type.typeName)) return mapKeysFrom(owner, node.type.typeName.text);
-    throw new ActionTypeProjectionValidationError(`DTO map must retain literal keys: ${name}`);
+    throw new Error(`DTO map must retain literal keys: ${name}`);
   };
   const { families, excluded } = readActionCatalog(repoRoot, recordInput, readSource);
   const canonicalKeys = Object.values(families).flat().filter((id) => !Object.hasOwn(excluded, id)).sort();
@@ -147,7 +144,7 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
   assertSameKeys(canonicalKeys, resultKeys, 'Canonical/DTO Action result maps');
   for (const path of selected.keys()) {
     const name = path === indexPath ? 'actionTypeMap.generated.ts' : `dtos/${basename(path, '.ts')}${virtual ? '.generated' : ''}.ts`;
-    if ([...outputNames.values()].includes(name)) throw new ActionTypeProjectionValidationError(`Duplicate DTO module name: ${name}`);
+    if ([...outputNames.values()].includes(name)) throw new Error(`Duplicate DTO module name: ${name}`);
     outputNames.set(path, name);
   }
   const outputs = new Map();
@@ -171,6 +168,24 @@ export function projectActionDtoDeclarations({ repoRoot = REPO_ROOT, recordInput
     validateGeneratedModuleSyntax(output);
     outputs.set(`packages/plugin-sdk/src/actions/${outputNames.get(path)}`, output);
   }
+  // Public family names follow the same selected declarations as the aggregate
+  // maps. The authored /actions spec consumes this list without repeating it.
+  const familyExports = [...selected]
+    .filter(([path]) => path !== indexPath)
+    .flatMap(([path, declarations]) => {
+      const names = [...declarations.keys()].filter(name => /Action(?:Input|Result)ById$/u.test(name)).sort();
+      return names.length === 0 ? [] : [{ module: basename(outputNames.get(path), '.ts'), names }];
+    })
+    .sort((left, right) => left.module.localeCompare(right.module));
+  const familyExportSource = [
+    GENERATED_HEADER,
+    '',
+    ...familyExports.map(({ module, names }) => `export type { ${names.join(', ')} } from './${module}.js';`),
+    ...(familyExports.length === 0 ? ['export {};'] : []),
+    '',
+  ].join('\n');
+  validateGeneratedModuleSyntax(familyExportSource);
+  outputs.set('packages/plugin-sdk/src/actions/dtos/familyExports.generated.ts', familyExportSource);
   return { inputKeys, resultKeys, outputs, inputPaths: [...sources.keys()],
     inputDigests: [...sourceTexts].map(([path, text]) => [path, digest(text)]) };
 }
@@ -187,11 +202,6 @@ function fingerprintInputPaths(paths) {
   return hash.digest('hex');
 }
 
-// Compiler diagnostics, unresolved modules and unavailable inputs can recover outside a
-// previously successful program's inputs. Only our own projection validation is memoizable.
-export class ActionTypeProjectionValidationError extends Error {
-}
-
 async function inspectActionTypeMapCache({ cachePath, outputPath }) {
   let record;
   try {
@@ -199,21 +209,12 @@ async function inspectActionTypeMapCache({ cachePath, outputPath }) {
   } catch {
     record = null;
   }
-  let failureFingerprint = null;
   if (record?.version === 1 && Array.isArray(record.inputPaths)) {
     let currentFingerprint = null;
-    let currentFailureScope = null;
     try {
       currentFingerprint = fingerprintInputPaths(record.inputPaths);
-      currentFailureScope = fingerprintInputPaths(record.failure?.inputPaths ?? record.inputPaths);
     } catch {
       // Deleted inputs invalidate the cache and enter real derivation.
-    }
-    // Explicit generate/check callers reuse unchanged projection failures;
-    // dependency preparation and internal builds never invoke derivation.
-    if (currentFailureScope !== null && record.failure?.kind === 'projection-validation'
-      && record.failure.fingerprint === currentFailureScope) {
-      throw new ActionTypeProjectionValidationError(record.failure.message);
     }
     try {
       if (
@@ -221,16 +222,15 @@ async function inspectActionTypeMapCache({ cachePath, outputPath }) {
         && digest(await readFile(outputPath)) === record.outputDigest
       ) {
         for (const [path, expected] of record.outputDigests ?? []) {
-          if (digest(await readFile(path)) !== expected) return { hit: false, record, failureFingerprint: currentFailureScope };
+          if (digest(await readFile(path)) !== expected) return { hit: false };
         }
         return { hit: true };
       }
     } catch {
       // A deleted output invalidates the cache and enters real derivation.
     }
-    failureFingerprint = currentFailureScope;
   }
-  return { hit: false, record, failureFingerprint };
+  return { hit: false };
 }
 
 /** One input-currentness rule for every preparation path. */
@@ -248,40 +248,10 @@ export async function runCachedActionTypeMap({ cachePath, outputPath, derive, pu
   if ((await inspectActionTypeMapCache({ cachePath, outputPath })).hit) return false;
   return await withDerivationLock(async (lockContext) => {
     // Waiters consume the preceding owner's result before constructing another program.
-    const { hit, record, failureFingerprint } = await inspectActionTypeMapCache({ cachePath, outputPath });
+    const { hit } = await inspectActionTypeMapCache({ cachePath, outputPath });
     if (hit) return false;
 
-    let prepared;
-    try {
-      prepared = await derive();
-    } catch (error) {
-      // A concurrent edit must re-derive; compiler and unavailable-input errors are never memos.
-      if (failureFingerprint !== null && error instanceof ActionTypeProjectionValidationError) {
-        const failureInputPaths = error.inputDigests?.map(([path]) => path) ?? record.inputPaths;
-        let unchanged = false;
-        let failedScope;
-        try {
-          unchanged = fingerprintInputPaths(record.failure?.inputPaths ?? record.inputPaths) === failureFingerprint
-            && (error.inputDigests ?? []).every(([path, expected]) => digest(readFileSync(path)) === expected);
-          failedScope = fingerprintInputPaths(failureInputPaths);
-        } catch {
-          unchanged = false;
-        }
-        if (unchanged) {
-          await mkdir(dirname(cachePath), { recursive: true });
-          await writeFile(cachePath, JSON.stringify({
-            ...record,
-            failure: {
-              kind: 'projection-validation',
-              inputPaths: failureInputPaths,
-              fingerprint: failedScope,
-              message: error.message,
-            },
-          }) + '\n');
-        }
-      }
-      throw error;
-    }
+    const prepared = await derive();
     // Writers complete one coherent snapshot before checking live currentness.
     // Checks and cache admission still reject stale results.
     const inputsUnchanged = () => preparedInputsUnchanged(prepared);
@@ -304,7 +274,7 @@ export async function runCachedActionTypeMap({ cachePath, outputPath, derive, pu
         throw new Error(`Action type map publication did not leave the derived output current: ${path}`);
       }
     }
-    assertInputsCurrent();
+    if (mode === '--check') assertInputsCurrent();
     await mkdir(dirname(cachePath), { recursive: true });
     await writeFile(cachePath, JSON.stringify({
       version: 1,
@@ -375,13 +345,13 @@ function describeFirstDifference(current, expected) {
 
 function assertSameKeys(left, right, description) {
   if (left.length !== right.length || left.some((key, index) => key !== right[index])) {
-    throw new ActionTypeProjectionValidationError(`${description} key mismatch: ${JSON.stringify({ left, right })}`);
+    throw new Error(`${description} key mismatch: ${JSON.stringify({ left, right })}`);
   }
 }
 
 export function validateGeneratedModuleSyntax(output) {
   if (PRIVATE_OR_ABSOLUTE_IMPORT.test(output)) {
-    throw new ActionTypeProjectionValidationError('Generated Action type map contains a private or absolute import.');
+    throw new Error('Generated Action type map contains a private or absolute import.');
   }
   const sourceFile = ts.createSourceFile(
     OUTPUT_PATH,
@@ -410,41 +380,38 @@ export function validateGeneratedModuleSyntax(output) {
     return ts.forEachChild(node, referencesValidator);
   };
   if (referencesValidator(sourceFile)) {
-    throw new ActionTypeProjectionValidationError('Generated Action type map contains a validator-library implementation reference.');
+    throw new Error('Generated Action type map contains a validator-library implementation reference.');
   }
 }
 
 export async function prepareActionTypeMap() {
   const timing = createActionTypeMapTimingReporter();
   const inputDigests = new Map();
-  for (const path of [SCRIPT_PATH, fileURLToPath(new URL('./deriveActionDtos.mjs', import.meta.url)), COMPILER_PATH]) {
+  for (const path of [SCRIPT_PATH, fileURLToPath(new URL('./deriveActionDtos.mjs', import.meta.url)),
+    fileURLToPath(new URL('./readActionCatalog.mjs', import.meta.url)),
+    fileURLToPath(new URL('./shareWorkflowDtoStructures.mjs', import.meta.url)),
+    fileURLToPath(new URL('./projectCatalogMetadata.mjs', import.meta.url)), COMPILER_PATH]) {
     const source = ts.sys.readFile(path);
     if (source === undefined) throw new Error(`Action type map input is unavailable: ${path}`);
     inputDigests.set(path, digest(source));
   }
-  let projection;
-  let schemaProjection;
-  try {
-    const inputSnapshot = captureActionSchemaInputs(REPO_ROOT);
-    const recordDigest = (path, current) => {
-      if (inputDigests.has(path) && inputDigests.get(path) !== current) throw new Error(`Action schema inputs changed between families: ${path}`);
-      inputDigests.set(path, current);
-    };
-    const recordInput = (path, text) => recordDigest(path, digest(text));
-    schemaProjection = await deriveActionDtoSchemas({ repoRoot: REPO_ROOT, recordInput, recordDigest, inputSnapshot });
-    projection = projectActionDtoDeclarations({
-      recordInput, declarations: schemaProjection.outputs, readSource: path => inputSnapshot.get(resolve(path)),
-    });
-  } catch (error) {
-    if (error instanceof ActionTypeProjectionValidationError) {
-      error.inputDigests = [...inputDigests];
-    }
-    throw error;
-  }
+  const inputSnapshot = captureActionSchemaInputs(REPO_ROOT);
+  timing('input-snapshot');
+  const recordDigest = (path, current) => {
+    if (inputDigests.has(path) && inputDigests.get(path) !== current) throw new Error(`Action schema inputs changed between families: ${path}`);
+    inputDigests.set(path, current);
+  };
+  const recordInput = (path, text) => recordDigest(path, digest(text));
+  const schemaProjection = await deriveActionDtoSchemas({ repoRoot: REPO_ROOT, recordInput, recordDigest, inputSnapshot });
+  timing('schema-derivation');
+  const projection = projectActionDtoDeclarations({
+    recordInput, declarations: schemaProjection.outputs, readSource: path => inputSnapshot.get(resolve(path)),
+  });
   const { inputKeys, resultKeys } = projection;
-  const outputs = new Map([...projection.outputs].map(([path, text]) => [resolve(REPO_ROOT, path), text]));
+  const outputs = new Map([...schemaProjection.catalogOutputs,
+    ...[...projection.outputs].map(([path, text]) => [resolve(REPO_ROOT, path), text])]);
   const output = outputs.get(OUTPUT_PATH);
-  if (output === undefined) throw new ActionTypeProjectionValidationError('Action DTO projection is missing its public index.');
+  if (output === undefined) throw new Error('Action DTO projection is missing its public index.');
   timing('dto-declaration-projection');
   return Object.freeze({
     inputKeys,
@@ -452,7 +419,8 @@ export async function prepareActionTypeMap() {
     inputDigests: [...inputDigests],
     output,
     outputs,
-    obsoleteOutputs: ['strictJsonValue.generated.ts', 'jsonSchema.generated.ts', 'sessionDiscussionActionDtos.generated.ts'].map((name) =>
+    obsoleteOutputs: ['strictJsonValue.generated.ts', 'jsonSchema.generated.ts', 'sessionDiscussionActionDtos.generated.ts',
+      'sessionTargetInspectionActionDtos.generated.ts'].map((name) =>
       resolve(PACKAGE_ROOT, 'src/actions/dtos', name)),
     resultKeys,
     stale: false,
@@ -496,8 +464,8 @@ export async function runActionTypeMapWithWorkspaceLock({
   run,
   prepare = prepareActionTypeMap,
   publish = publishPreparedActionTypeMap,
-  lockPath = WORKSPACE_BUILD_LOCK_PATH,
-  derivationLockPath = resolve(dirname(lockPath), 'plugin-sdk-action-type-map.lock'),
+  lockPath = ACTION_MAP_LOCK_PATH,
+  derivationLockPath = lockPath,
   env = process.env,
   lockOptions = {},
 } = {}) {
@@ -505,35 +473,22 @@ export async function runActionTypeMapWithWorkspaceLock({
     throw new Error('Action type map mode must be --check or --write');
   }
   const heldLockValue = lockOptions.heldLockValue ?? env.HAPPIER_WORKSPACE_DIST_BUILD_LOCK_HELD;
-  const withWorkspaceOwnerLock = async (operation) => await withWorkspaceBundleLock(operation, {
+  const withDerivationLock = async (operation) => await withWorkspaceBundleLock(operation, {
     ...lockOptions,
-    lockPath,
+    lockPath: derivationLockPath,
+    env,
     heldLockValue,
     errorLabel: lockOptions.errorLabel
       ?? '@happier-dev/plugin-sdk generated Action map lock',
   });
-  // An inherited check or writer must not wait for a derivation owner waiting for it.
-  // Authenticate/reenter that lease through the canonical lock owner; all other
-  // derivations hold their own single-flight lock across publication.
-  const withDerivationLock = heldLockValue
-    ? withWorkspaceOwnerLock
-    : (operation) => withWorkspaceBundleLock(operation, {
-      ...lockOptions, lockPath: derivationLockPath, heldLockValue: undefined, heldLockPath: undefined,
-      errorLabel: '@happier-dev/plugin-sdk Action map derivation lock',
-    });
-  // Standalone checks retain single-flight derivation and source fencing without
-  // acquiring publication; inherited checks authenticate their parent's lease.
-  if (run) return await (mode === '--write' ? withWorkspaceOwnerLock : withDerivationLock)((context) => run(mode, context));
-  const publishWithWorkspaceLock = (prepared, derivationContext) => {
+  // Source DTO modules and their cache share this one lease from derivation
+  // through publication. CLI dist and bundled dependency publication write
+  // different paths; their inherited leases never substitute for DTO custody.
+  if (run) return await withDerivationLock((context) => run(mode, context));
+  const publishUnderActionMapLock = (prepared, derivationContext) => {
     derivationContext.assertOwned();
-    if (mode === '--check') {
-      derivationContext.assertInputsCurrent?.();
-      return publish(mode, prepared, derivationContext);
-    }
-    return withWorkspaceOwnerLock((publicationContext) => {
-      derivationContext.assertOwned();
-      return publish(mode, prepared, { ...publicationContext, assertInputsCurrent: derivationContext.assertInputsCurrent });
-    });
+    if (mode === '--check') derivationContext.assertInputsCurrent?.();
+    return publish(mode, prepared, derivationContext);
   };
   if (prepare !== prepareActionTypeMap || publish !== publishPreparedActionTypeMap) {
     return await withDerivationLock(async (lockContext) => {
@@ -543,7 +498,7 @@ export async function runActionTypeMapWithWorkspaceLock({
           throw new Error('Action type map inputs changed; generation is stale relative to current source. Run generation again.');
         }
       };
-      return await publishWithWorkspaceLock(prepared, { ...lockContext, assertInputsCurrent });
+      return await publishUnderActionMapLock(prepared, { ...lockContext, assertInputsCurrent });
     });
   }
   return await runCachedActionTypeMap({
@@ -551,7 +506,7 @@ export async function runActionTypeMapWithWorkspaceLock({
     cachePath: CACHE_PATH,
     outputPath: OUTPUT_PATH,
     derive: () => prepare(mode),
-    publish: publishWithWorkspaceLock,
+    publish: publishUnderActionMapLock,
     withDerivationLock,
   });
 }

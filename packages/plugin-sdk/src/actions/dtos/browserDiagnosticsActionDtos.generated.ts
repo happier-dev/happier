@@ -35,6 +35,8 @@ export type BrowserDiagnosticsActionInputById = {
         objectGroupId: string;
         diagnosticsInteractionEnabled: true;
         action?: 'cancel' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "browser.diagnostics.getProperties": {
         browserSessionId: string;
@@ -46,6 +48,8 @@ export type BrowserDiagnosticsActionInputById = {
         objectId: string;
         objectGroupId: string;
         diagnosticsInteractionEnabled: true;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "browser.diagnostics.releaseObjectGroup": {
         browserSessionId: string;
@@ -56,6 +60,8 @@ export type BrowserDiagnosticsActionInputById = {
         tier: 'cdp' | 'injectedPage';
         objectGroupId: string;
         diagnosticsInteractionEnabled: true;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "browser.diagnostics.elementPicker.start": {
         browserSessionId: string;
@@ -66,10 +72,12 @@ export type BrowserDiagnosticsActionInputById = {
         navigationGeneration: number;
         tier: 'cdp' | 'injectedPage';
         diagnosticsInteractionEnabled: true;
-        point?: {
+        point?: undefined | {
             x: number;
             y: number;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "browser.diagnostics.elementPicker.cancel": {
         browserSessionId: string;
@@ -80,10 +88,12 @@ export type BrowserDiagnosticsActionInputById = {
         navigationGeneration: number;
         tier: 'cdp' | 'injectedPage';
         diagnosticsInteractionEnabled: true;
-        point?: {
+        point?: undefined | {
             x: number;
             y: number;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type BrowserDiagnosticsActionResultById = {
@@ -91,7 +101,7 @@ export type BrowserDiagnosticsActionResultById = {
         v: 1;
         machineId: string;
         generatedAt: number;
-        refreshState: 'idle' | 'refreshing' | 'error';
+        refreshState: 'error' | 'idle' | 'refreshing';
         events: {
             v: 1;
             eventId: string;
@@ -99,23 +109,23 @@ export type BrowserDiagnosticsActionResultById = {
             viewId: string;
             navigationGeneration: number;
             capturedAtMs: number;
-            family: 'console' | 'pageError' | 'network' | 'elements' | 'resources' | 'storage' | 'pageInfo' | 'performance' | 'screenshot' | 'proxyTunnel';
-            kind: 'console.entry' | 'pageError.thrown' | 'network.requestStarted' | 'network.response' | 'network.finished' | 'network.failed' | 'network.redirect' | 'network.websocketOpened' | 'network.websocketSummary' | 'network.websocketClosed' | 'network.eventSourceOpened' | 'network.eventSourceSummary' | 'network.eventSourceClosed' | 'network.sendBeacon' | 'elements.snapshot' | 'elements.pickerState' | 'resources.snapshot' | 'storage.availability' | 'storage.keyInventory' | 'pageInfo.snapshot' | 'pageInfo.capabilities' | 'pageInfo.domSnapshot' | 'performance.vitals' | 'screenshot.metadata' | 'proxyTunnel.snapshot' | 'diagnostics.unavailable' | 'diagnostics.available' | 'eval.requested' | 'eval.completed' | 'eval.failed' | 'eval.timedOut' | 'collector.degraded';
-            fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+            family: 'console' | 'elements' | 'network' | 'pageError' | 'pageInfo' | 'performance' | 'proxyTunnel' | 'resources' | 'screenshot' | 'storage';
+            kind: 'collector.degraded' | 'console.entry' | 'diagnostics.available' | 'diagnostics.unavailable' | 'elements.pickerState' | 'elements.snapshot' | 'eval.completed' | 'eval.failed' | 'eval.requested' | 'eval.timedOut' | 'network.eventSourceClosed' | 'network.eventSourceOpened' | 'network.eventSourceSummary' | 'network.failed' | 'network.finished' | 'network.redirect' | 'network.requestStarted' | 'network.response' | 'network.sendBeacon' | 'network.websocketClosed' | 'network.websocketOpened' | 'network.websocketSummary' | 'pageError.thrown' | 'pageInfo.capabilities' | 'pageInfo.domSnapshot' | 'pageInfo.snapshot' | 'performance.vitals' | 'proxyTunnel.snapshot' | 'resources.snapshot' | 'screenshot.metadata' | 'storage.availability' | 'storage.keyInventory';
+            fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
             trusted: boolean;
             data: Record<string, unknown>;
             redaction: {
-                level: 'unavailable' | 'none' | 'metadataOnly' | 'valuesRedacted';
+                level: 'metadataOnly' | 'none' | 'unavailable' | 'valuesRedacted';
                 queryRedacted: boolean;
                 headersRedacted: boolean;
                 truncated: boolean;
             };
-            collector?: {
+            collector?: undefined | {
                 collectorId: string;
                 nonce: string;
                 version: string;
-            } | undefined;
-            unavailableReason?: 'feature_disabled' | 'adapter_unavailable' | 'policy_denied' | 'collector_denied' | 'collector_unavailable' | 'collector_degraded' | 'navigation_stale' | 'target_detached' | 'page_crashed' | 'unsupported_fidelity' | undefined;
+            };
+            unavailableReason?: 'adapter_unavailable' | 'collector_degraded' | 'collector_denied' | 'collector_unavailable' | 'feature_disabled' | 'navigation_stale' | 'page_crashed' | 'policy_denied' | 'target_detached' | 'unsupported_fidelity' | undefined;
         }[];
         diagnostics: Record<string, unknown>[];
     };
@@ -140,20 +150,20 @@ export type BrowserDiagnosticsActionResultById = {
         status: 'blocked' | 'cancelled' | 'collectorDegraded' | 'completed' | 'failed' | 'timedOut';
         tier: 'cdp' | 'injectedPage';
         audited: true;
-        result?: {
-            type: 'string' | 'number' | 'bigint' | 'boolean' | 'symbol' | 'undefined' | 'object' | 'function' | 'null';
+        result?: undefined | {
+            type: 'bigint' | 'boolean' | 'function' | 'null' | 'number' | 'object' | 'string' | 'symbol' | 'undefined';
             preview: {
                 name: string;
                 valuePreview: string;
                 truncated: boolean;
             }[];
-            value?: string | number | boolean | null | undefined;
+            value?: boolean | null | number | string | undefined;
             objectId?: string | undefined;
             className?: string | undefined;
             description?: string | undefined;
             previewTruncated?: boolean | undefined;
-        } | undefined;
-        errorCode?: 'feature_disabled' | 'adapter_unavailable' | 'policy_denied' | 'collector_denied' | 'collector_unavailable' | 'collector_degraded' | 'navigation_stale' | 'target_detached' | 'page_crashed' | 'unsupported_fidelity' | undefined;
+        };
+        errorCode?: 'adapter_unavailable' | 'collector_degraded' | 'collector_denied' | 'collector_unavailable' | 'feature_disabled' | 'navigation_stale' | 'page_crashed' | 'policy_denied' | 'target_detached' | 'unsupported_fidelity' | undefined;
     };
     readonly "browser.diagnostics.getProperties": {
         v: 1;
@@ -161,19 +171,19 @@ export type BrowserDiagnosticsActionResultById = {
         viewId: string;
         navigationGeneration: number;
         tier: 'cdp' | 'injectedPage';
-        status: 'completed' | 'failed' | 'blocked' | 'collectorDegraded';
+        status: 'blocked' | 'collectorDegraded' | 'completed' | 'failed';
         audited: true;
         objectId: string;
         properties: {
             name: string;
             value: {
-                type: 'string' | 'number' | 'bigint' | 'boolean' | 'symbol' | 'undefined' | 'object' | 'function' | 'null';
+                type: 'bigint' | 'boolean' | 'function' | 'null' | 'number' | 'object' | 'string' | 'symbol' | 'undefined';
                 preview: {
                     name: string;
                     valuePreview: string;
                     truncated: boolean;
                 }[];
-                value?: string | number | boolean | null | undefined;
+                value?: boolean | null | number | string | undefined;
                 objectId?: string | undefined;
                 className?: string | undefined;
                 description?: string | undefined;
@@ -181,7 +191,7 @@ export type BrowserDiagnosticsActionResultById = {
             };
             enumerable: boolean;
         }[];
-        errorCode?: 'feature_disabled' | 'adapter_unavailable' | 'policy_denied' | 'collector_denied' | 'collector_unavailable' | 'collector_degraded' | 'navigation_stale' | 'target_detached' | 'page_crashed' | 'unsupported_fidelity' | undefined;
+        errorCode?: 'adapter_unavailable' | 'collector_degraded' | 'collector_denied' | 'collector_unavailable' | 'feature_disabled' | 'navigation_stale' | 'page_crashed' | 'policy_denied' | 'target_detached' | 'unsupported_fidelity' | undefined;
     };
     readonly "browser.diagnostics.releaseObjectGroup": {
         v: 1;
@@ -189,10 +199,10 @@ export type BrowserDiagnosticsActionResultById = {
         viewId: string;
         navigationGeneration: number;
         tier: 'cdp' | 'injectedPage';
-        status: 'completed' | 'failed' | 'blocked' | 'collectorDegraded';
+        status: 'blocked' | 'collectorDegraded' | 'completed' | 'failed';
         audited: true;
         objectGroupId: string;
-        errorCode?: 'feature_disabled' | 'adapter_unavailable' | 'policy_denied' | 'collector_denied' | 'collector_unavailable' | 'collector_degraded' | 'navigation_stale' | 'target_detached' | 'page_crashed' | 'unsupported_fidelity' | undefined;
+        errorCode?: 'adapter_unavailable' | 'collector_degraded' | 'collector_denied' | 'collector_unavailable' | 'feature_disabled' | 'navigation_stale' | 'page_crashed' | 'policy_denied' | 'target_detached' | 'unsupported_fidelity' | undefined;
     };
     readonly "browser.diagnostics.elementPicker.start": {
         v: 1;
@@ -200,24 +210,24 @@ export type BrowserDiagnosticsActionResultById = {
         viewId: string;
         navigationGeneration: number;
         tier: 'cdp' | 'injectedPage';
-        status: 'failed' | 'blocked' | 'collectorDegraded' | 'selected' | 'cancelled';
+        status: 'blocked' | 'cancelled' | 'collectorDegraded' | 'failed' | 'selected';
         audited: true;
         backendNodeRef?: string | undefined;
         selectorPath?: string | undefined;
-        rect?: {
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        errorCode?: 'feature_disabled' | 'adapter_unavailable' | 'policy_denied' | 'collector_denied' | 'collector_unavailable' | 'collector_degraded' | 'navigation_stale' | 'target_detached' | 'page_crashed' | 'unsupported_fidelity' | undefined;
+        };
+        errorCode?: 'adapter_unavailable' | 'collector_degraded' | 'collector_denied' | 'collector_unavailable' | 'feature_disabled' | 'navigation_stale' | 'page_crashed' | 'policy_denied' | 'target_detached' | 'unsupported_fidelity' | undefined;
     };
     readonly "browser.diagnostics.elementPicker.cancel": {
         v: 1;
@@ -225,23 +235,23 @@ export type BrowserDiagnosticsActionResultById = {
         viewId: string;
         navigationGeneration: number;
         tier: 'cdp' | 'injectedPage';
-        status: 'failed' | 'blocked' | 'collectorDegraded' | 'selected' | 'cancelled';
+        status: 'blocked' | 'cancelled' | 'collectorDegraded' | 'failed' | 'selected';
         audited: true;
         backendNodeRef?: string | undefined;
         selectorPath?: string | undefined;
-        rect?: {
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        errorCode?: 'feature_disabled' | 'adapter_unavailable' | 'policy_denied' | 'collector_denied' | 'collector_unavailable' | 'collector_degraded' | 'navigation_stale' | 'target_detached' | 'page_crashed' | 'unsupported_fidelity' | undefined;
+        };
+        errorCode?: 'adapter_unavailable' | 'collector_degraded' | 'collector_denied' | 'collector_unavailable' | 'feature_disabled' | 'navigation_stale' | 'page_crashed' | 'policy_denied' | 'target_detached' | 'unsupported_fidelity' | undefined;
     };
 };

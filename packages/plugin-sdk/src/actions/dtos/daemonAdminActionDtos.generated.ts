@@ -10,10 +10,16 @@ export type DaemonAdminActionInputById = {
         path: string;
         includeFiles?: boolean | undefined;
         includeGitIgnore?: boolean | undefined;
-        maxEntries?: number | null | undefined;
+        maxEntries?: null | number | undefined;
     };
     readonly "bugreport.collectDiagnostics": {
         [x: string]: unknown;
+        sessionId?: string | undefined;
+        logSelection?: undefined | {
+            daemon?: boolean | undefined;
+            session?: boolean | undefined;
+            provider?: boolean | undefined;
+        };
     };
     readonly "bugreport.getLogTail": {
         [x: string]: unknown;

@@ -8,8 +8,205 @@ export type ComposerIngressActionInputById = {
         transaction: {
             expectedRevision: number;
             operations: ({
-                kind: 'text.set';
-                text: string;
+                kind: 'attachment.add';
+                attachmentLocalId: string;
+                value: {
+                    key: string;
+                    value: unknown;
+                    presentation: {
+                        label: string;
+                        description?: string | undefined;
+                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                        tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                        source?: undefined | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                };
+                content?: undefined | {
+                    kind: 'stagedMedia';
+                    handle: {
+                        v: 1;
+                        id: string;
+                        executionTarget: {
+                            serverId: string;
+                            machineId: string;
+                        };
+                        owner: {
+                            pluginId: string;
+                            localId: string;
+                        };
+                        mediaKind: 'image' | 'video';
+                        mimeType: 'image/gif' | 'image/jpeg' | 'image/png' | 'image/webp' | 'video/mp4' | 'video/webm';
+                        name: string;
+                        sizeBytes: number;
+                        sha256: string;
+                    };
+                };
+                mentionAt?: undefined | {
+                    start: number;
+                    end: number;
+                };
+            } | {
+                kind: 'attachment.remove';
+                instanceId: string;
+            } | {
+                kind: 'attachment.update';
+                instanceId: string;
+                update: {
+                    value: unknown;
+                    presentation?: undefined | {
+                        label: string;
+                        description?: string | undefined;
+                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                        tone?: 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                        source?: undefined | {
+                            kind: 'session';
+                            session: {
+                                serverId: string;
+                                sessionId: string;
+                            };
+                            messageId: string;
+                        };
+                    };
+                };
+            } | {
+                kind: 'reference.insert';
+                reference: {
+                    kind: string;
+                    ref: string;
+                    token: string;
+                    start: number;
+                    end: number;
+                    label?: string | undefined;
+                    composerReference?: undefined | {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    composerReferenceTrigger?: '$' | '/' | '@' | undefined;
+                };
+            } | {
+                kind: 'reference.remove';
+                reference: {
+                    ref: string;
+                    start: number;
+                    end: number;
+                };
+            } | {
+                kind: 'reviewComment.add';
+                comment: {
+                    id: string;
+                    filePath: string;
+                    source: 'diff' | 'file';
+                    anchor: {
+                        kind: 'diffLine';
+                        startLine: number;
+                        side: 'after' | 'before';
+                        oldLine: null | number;
+                        newLine: null | number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'fileLine';
+                        startLine: number;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'line';
+                        filePath: string;
+                        line: number;
+                        side?: 'after' | 'before' | undefined;
+                        lineHash?: `lh1:${string}` | undefined;
+                    } | {
+                        kind: 'range';
+                        filePath: string;
+                        startLine: number;
+                        endLine: number;
+                        side?: 'after' | 'before' | undefined;
+                        startLineHash?: `lh1:${string}` | undefined;
+                        endLineHash?: `lh1:${string}` | undefined;
+                        selectedTextHash?: `lh1:${string}` | undefined;
+                    };
+                    snapshot: {
+                        selectedLines: string[];
+                        beforeContext: string[];
+                        afterContext: string[];
+                    };
+                    body: string;
+                    createdAt: number;
+                    anchorResolution?: undefined | {
+                        filePath: string;
+                        originalAnchor: {
+                            kind: 'diffLine';
+                            startLine: number;
+                            side: 'after' | 'before';
+                            oldLine: null | number;
+                            newLine: null | number;
+                            lineHash?: `lh1:${string}` | undefined;
+                        } | {
+                            kind: 'fileLine';
+                            startLine: number;
+                            lineHash?: `lh1:${string}` | undefined;
+                        } | {
+                            kind: 'line';
+                            filePath: string;
+                            line: number;
+                            side?: 'after' | 'before' | undefined;
+                            lineHash?: `lh1:${string}` | undefined;
+                        } | {
+                            kind: 'range';
+                            filePath: string;
+                            startLine: number;
+                            endLine: number;
+                            side?: 'after' | 'before' | undefined;
+                            startLineHash?: `lh1:${string}` | undefined;
+                            endLineHash?: `lh1:${string}` | undefined;
+                            selectedTextHash?: `lh1:${string}` | undefined;
+                        };
+                        status: 'ambiguous' | 'context' | 'exact' | 'hash' | 'missing' | 'stale' | 'unsupported';
+                        confidence: number;
+                        id?: string | undefined;
+                        resolvedAnchor?: undefined | {
+                            kind: 'diffLine';
+                            startLine: number;
+                            side: 'after' | 'before';
+                            oldLine: null | number;
+                            newLine: null | number;
+                            lineHash?: `lh1:${string}` | undefined;
+                        } | {
+                            kind: 'fileLine';
+                            startLine: number;
+                            lineHash?: `lh1:${string}` | undefined;
+                        } | {
+                            kind: 'line';
+                            filePath: string;
+                            line: number;
+                            side?: 'after' | 'before' | undefined;
+                            lineHash?: `lh1:${string}` | undefined;
+                        } | {
+                            kind: 'range';
+                            filePath: string;
+                            startLine: number;
+                            endLine: number;
+                            side?: 'after' | 'before' | undefined;
+                            startLineHash?: `lh1:${string}` | undefined;
+                            endLineHash?: `lh1:${string}` | undefined;
+                            selectedTextHash?: `lh1:${string}` | undefined;
+                        };
+                        reason?: string | undefined;
+                        preview?: undefined | {
+                            selectedLines: string[];
+                            beforeContext: string[];
+                            afterContext: string[];
+                        };
+                    };
+                    includeInPrompt?: boolean | undefined;
+                };
+            } | {
+                kind: 'text.clear';
             } | {
                 kind: 'text.insert';
                 position: {
@@ -24,189 +221,8 @@ export type ComposerIngressActionInputById = {
                 };
                 text: string;
             } | {
-                kind: 'text.clear';
-            } | {
-                kind: 'reference.insert';
-                reference: {
-                    kind: string;
-                    ref: string;
-                    token: string;
-                    start: number;
-                    end: number;
-                    label?: string | undefined;
-                    composerReference?: {
-                        pluginId: string;
-                        localId: string;
-                    } | undefined;
-                    composerReferenceTrigger?: '@' | '$' | '/' | undefined;
-                };
-            } | {
-                kind: 'reference.remove';
-                reference: {
-                    ref: string;
-                    start: number;
-                    end: number;
-                };
-            } | {
-                kind: 'reviewComment.add';
-                comment: {
-                    id: string;
-                    filePath: string;
-                    source: 'file' | 'diff';
-                    anchor: {
-                        kind: 'fileLine';
-                        startLine: number;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'diffLine';
-                        startLine: number;
-                        side: 'before' | 'after';
-                        oldLine: number | null;
-                        newLine: number | null;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'line';
-                        filePath: string;
-                        line: number;
-                        side?: 'before' | 'after' | undefined;
-                        lineHash?: `lh1:${string}` | undefined;
-                    } | {
-                        kind: 'range';
-                        filePath: string;
-                        startLine: number;
-                        endLine: number;
-                        side?: 'before' | 'after' | undefined;
-                        startLineHash?: `lh1:${string}` | undefined;
-                        endLineHash?: `lh1:${string}` | undefined;
-                        selectedTextHash?: `lh1:${string}` | undefined;
-                    };
-                    snapshot: {
-                        selectedLines: string[];
-                        beforeContext: string[];
-                        afterContext: string[];
-                    };
-                    body: string;
-                    createdAt: number;
-                    anchorResolution?: {
-                        filePath: string;
-                        originalAnchor: {
-                            kind: 'fileLine';
-                            startLine: number;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'diffLine';
-                            startLine: number;
-                            side: 'before' | 'after';
-                            oldLine: number | null;
-                            newLine: number | null;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'line';
-                            filePath: string;
-                            line: number;
-                            side?: 'before' | 'after' | undefined;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'range';
-                            filePath: string;
-                            startLine: number;
-                            endLine: number;
-                            side?: 'before' | 'after' | undefined;
-                            startLineHash?: `lh1:${string}` | undefined;
-                            endLineHash?: `lh1:${string}` | undefined;
-                            selectedTextHash?: `lh1:${string}` | undefined;
-                        };
-                        status: 'exact' | 'hash' | 'context' | 'ambiguous' | 'stale' | 'missing' | 'unsupported';
-                        confidence: number;
-                        id?: string | undefined;
-                        resolvedAnchor?: {
-                            kind: 'fileLine';
-                            startLine: number;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'diffLine';
-                            startLine: number;
-                            side: 'before' | 'after';
-                            oldLine: number | null;
-                            newLine: number | null;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'line';
-                            filePath: string;
-                            line: number;
-                            side?: 'before' | 'after' | undefined;
-                            lineHash?: `lh1:${string}` | undefined;
-                        } | {
-                            kind: 'range';
-                            filePath: string;
-                            startLine: number;
-                            endLine: number;
-                            side?: 'before' | 'after' | undefined;
-                            startLineHash?: `lh1:${string}` | undefined;
-                            endLineHash?: `lh1:${string}` | undefined;
-                            selectedTextHash?: `lh1:${string}` | undefined;
-                        } | undefined;
-                        reason?: string | undefined;
-                        preview?: {
-                            selectedLines: string[];
-                            beforeContext: string[];
-                            afterContext: string[];
-                        } | undefined;
-                    } | undefined;
-                    includeInPrompt?: boolean | undefined;
-                };
-            } | {
-                kind: 'attachment.add';
-                attachmentLocalId: string;
-                value: {
-                    key: string;
-                    value: unknown;
-                    presentation: {
-                        label: string;
-                        description?: string | undefined;
-                        icon?: 'file' | 'error' | 'check' | 'preview' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'workflow' | 'neutral' | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
-                    };
-                };
-                content?: {
-                    kind: 'stagedMedia';
-                    handle: {
-                        v: 1;
-                        id: string;
-                        executionTarget: {
-                            serverId: string;
-                            machineId: string;
-                        };
-                        owner: {
-                            pluginId: string;
-                            localId: string;
-                        };
-                        mediaKind: 'image' | 'video';
-                        mimeType: 'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif' | 'video/webm' | 'video/mp4';
-                        name: string;
-                        sizeBytes: number;
-                        sha256: string;
-                    };
-                } | undefined;
-                mentionAt?: {
-                    start: number;
-                    end: number;
-                } | undefined;
-            } | {
-                kind: 'attachment.update';
-                instanceId: string;
-                update: {
-                    value: unknown;
-                    presentation?: {
-                        label: string;
-                        description?: string | undefined;
-                        icon?: 'file' | 'error' | 'check' | 'preview' | 'action' | 'browser' | 'copy' | 'globe' | 'info' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'close' | 'external' | 'forward' | 'more' | 'search' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'link' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'workflow' | 'neutral' | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | undefined;
-                    } | undefined;
-                };
-            } | {
-                kind: 'attachment.remove';
-                instanceId: string;
+                kind: 'text.set';
+                text: string;
             })[];
         };
         scope: {
@@ -214,8 +230,9 @@ export type ComposerIngressActionInputById = {
             accountId: string;
         };
         ref: {
-            kind: 'session';
+            kind: 'automationAuthoring';
             sessionId: string;
+            instanceId: string;
         } | {
             kind: 'discussion';
             discussionId: string;
@@ -223,27 +240,28 @@ export type ComposerIngressActionInputById = {
             kind: 'newSession';
             instanceId: string;
         } | {
-            kind: 'pendingMessage';
-            sessionId: string;
-            localId: string;
-        } | {
             kind: 'participantMessage';
             sessionId: string;
             instanceId: string;
         } | {
-            kind: 'automationAuthoring';
+            kind: 'pendingMessage';
             sessionId: string;
-            instanceId: string;
+            localId: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
         } | {
             kind: 'workflowAuthoring';
             draftId: string;
             blockId: string;
             instanceId: string;
         };
-        attachmentContributor?: {
+        attachmentContributor?: undefined | {
             pluginId: string;
             localId: string;
-        } | undefined;
+        };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "composer.attachments.pick": {
         scope: {
@@ -251,8 +269,9 @@ export type ComposerIngressActionInputById = {
             accountId: string;
         };
         ref: {
-            kind: 'session';
+            kind: 'automationAuthoring';
             sessionId: string;
+            instanceId: string;
         } | {
             kind: 'discussion';
             discussionId: string;
@@ -260,23 +279,24 @@ export type ComposerIngressActionInputById = {
             kind: 'newSession';
             instanceId: string;
         } | {
-            kind: 'pendingMessage';
-            sessionId: string;
-            localId: string;
-        } | {
             kind: 'participantMessage';
             sessionId: string;
             instanceId: string;
         } | {
-            kind: 'automationAuthoring';
+            kind: 'pendingMessage';
             sessionId: string;
-            instanceId: string;
+            localId: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
         } | {
             kind: 'workflowAuthoring';
             draftId: string;
             blockId: string;
             instanceId: string;
         };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "repository.upload.pick": {
         scope: {
@@ -290,6 +310,8 @@ export type ComposerIngressActionInputById = {
         };
         destinationDir: string;
         kind: 'files' | 'folder';
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type ComposerIngressActionResultById = {
@@ -298,12 +320,10 @@ export type ComposerIngressActionResultById = {
         revision: number;
         attachmentInstanceIds?: string[] | undefined;
     } | {
-        status: 'conflict';
-        currentRevision: number;
-    } | {
         status: 'composerUnavailable';
     } | {
-        status: 'notEditable';
+        status: 'conflict';
+        currentRevision: number;
     } | {
         status: 'invalidOperation';
         operationIndex: number;
@@ -314,12 +334,14 @@ export type ComposerIngressActionResultById = {
         limit: string;
         maximum: number;
         actual: number;
+    } | {
+        status: 'notEditable';
     };
     readonly "composer.attachments.pick": {
-        status: 'unavailable' | 'notEditable' | 'opened';
+        status: 'notEditable' | 'opened' | 'unavailable';
     };
     readonly "repository.upload.pick": {
-        status: 'unavailable' | 'requested' | 'cancelled';
+        status: 'cancelled' | 'requested' | 'unavailable';
     } | {
         status: 'refused';
         reason: string;

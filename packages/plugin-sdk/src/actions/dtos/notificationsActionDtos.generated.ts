@@ -7,13 +7,13 @@ export type NotificationsActionInputById = {
     readonly "notifications.notify_me": {
         message: string;
         title?: string | undefined;
-        open?: {
+        open?: undefined | {
             kind: 'session';
             sessionId: string;
         } | {
             kind: 'workflow_run';
             runId: string;
-        } | undefined;
+        };
         channels?: string[] | undefined;
     };
 };

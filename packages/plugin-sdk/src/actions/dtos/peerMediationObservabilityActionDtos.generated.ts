@@ -18,21 +18,21 @@ export type PeerMediationObservabilityActionInputById = {
             accountId: string;
             machineId: string;
         } | {
-            kind: 'session';
-            accountId: string;
-            sessionId: string;
-        } | {
-            kind: 'publicPreview';
-            publicExposureId: string;
-        } | {
             kind: 'pluginSurface';
             accountId: string;
             pluginId: string;
             surfaceId: string;
+        } | {
+            kind: 'publicPreview';
+            publicExposureId: string;
+        } | {
+            kind: 'session';
+            accountId: string;
+            sessionId: string;
         };
     };
     readonly "peerMediation.observability.unsubscribe": {
-        scope?: {
+        scope?: undefined | {
             kind: 'account';
             accountId: string;
         } | {
@@ -40,18 +40,18 @@ export type PeerMediationObservabilityActionInputById = {
             accountId: string;
             machineId: string;
         } | {
-            kind: 'session';
-            accountId: string;
-            sessionId: string;
-        } | {
-            kind: 'publicPreview';
-            publicExposureId: string;
-        } | {
             kind: 'pluginSurface';
             accountId: string;
             pluginId: string;
             surfaceId: string;
-        } | undefined;
+        } | {
+            kind: 'publicPreview';
+            publicExposureId: string;
+        } | {
+            kind: 'session';
+            accountId: string;
+            sessionId: string;
+        };
     };
 };
 export type PeerMediationObservabilityActionResultById = {
@@ -67,30 +67,38 @@ export type PeerMediationObservabilityActionResultById = {
                 accountId: string;
                 machineId: string;
             } | {
-                kind: 'session';
-                accountId: string;
-                sessionId: string;
-            } | {
-                kind: 'publicPreview';
-                publicExposureId: string;
-            } | {
                 kind: 'pluginSurface';
                 accountId: string;
                 pluginId: string;
                 surfaceId: string;
+            } | {
+                kind: 'publicPreview';
+                publicExposureId: string;
+            } | {
+                kind: 'session';
+                accountId: string;
+                sessionId: string;
             };
             sequence: number;
             capturedAtMs: number;
             flows: {
                 flow: {
                     flowId: string;
-                    flowKind: 'bounded_transfer' | 'tcp_tunnel' | 'voice_media' | 'live_stream' | 'machine_rpc';
-                    routeKind?: 'loopback_direct' | 'lan_direct' | 'tailscale_serve_direct' | 'server_relay' | 'iroh_peer' | undefined;
+                    flowKind: 'bounded_transfer' | 'live_stream' | 'machine_rpc' | 'tcp_tunnel' | 'voice_media';
+                    routeKind?: 'iroh_peer' | 'lan_direct' | 'loopback_direct' | 'server_relay' | 'tailscale_serve_direct' | undefined;
                     tunnelId?: string | undefined;
                     substreamId?: string | undefined;
                     streamId?: string | undefined;
                     routeGrantId?: string | undefined;
-                    productRef?: {
+                    productRef?: undefined | {
+                        kind: 'browserView';
+                        id: string;
+                        redacted: boolean;
+                    } | {
+                        kind: 'pluginSurface';
+                        id: string;
+                        redacted: boolean;
+                    } | {
                         kind: 'preview';
                         id: string;
                         redacted: boolean;
@@ -99,20 +107,12 @@ export type PeerMediationObservabilityActionResultById = {
                         id: string;
                         redacted: boolean;
                     } | {
-                        kind: 'browserView';
-                        id: string;
-                        redacted: boolean;
-                    } | {
                         kind: 'simulatorSource';
                         id: string;
                         redacted: boolean;
-                    } | {
-                        kind: 'pluginSurface';
-                        id: string;
-                        redacted: boolean;
-                    } | undefined;
+                    };
                 };
-                lifecycleState: 'starting' | 'ready' | 'active' | 'closed' | 'aborted' | 'errored' | 'denied';
+                lifecycleState: 'aborted' | 'active' | 'closed' | 'denied' | 'errored' | 'ready' | 'starting';
                 startedAtMs: number;
                 lastActivityAtMs: number;
                 bytesIn: number;
@@ -147,30 +147,38 @@ export type PeerMediationObservabilityActionResultById = {
                 accountId: string;
                 machineId: string;
             } | {
-                kind: 'session';
-                accountId: string;
-                sessionId: string;
-            } | {
-                kind: 'publicPreview';
-                publicExposureId: string;
-            } | {
                 kind: 'pluginSurface';
                 accountId: string;
                 pluginId: string;
                 surfaceId: string;
+            } | {
+                kind: 'publicPreview';
+                publicExposureId: string;
+            } | {
+                kind: 'session';
+                accountId: string;
+                sessionId: string;
             };
             sequence: number;
             capturedAtMs: number;
             flows: {
                 flow: {
                     flowId: string;
-                    flowKind: 'bounded_transfer' | 'tcp_tunnel' | 'voice_media' | 'live_stream' | 'machine_rpc';
-                    routeKind?: 'loopback_direct' | 'lan_direct' | 'tailscale_serve_direct' | 'server_relay' | 'iroh_peer' | undefined;
+                    flowKind: 'bounded_transfer' | 'live_stream' | 'machine_rpc' | 'tcp_tunnel' | 'voice_media';
+                    routeKind?: 'iroh_peer' | 'lan_direct' | 'loopback_direct' | 'server_relay' | 'tailscale_serve_direct' | undefined;
                     tunnelId?: string | undefined;
                     substreamId?: string | undefined;
                     streamId?: string | undefined;
                     routeGrantId?: string | undefined;
-                    productRef?: {
+                    productRef?: undefined | {
+                        kind: 'browserView';
+                        id: string;
+                        redacted: boolean;
+                    } | {
+                        kind: 'pluginSurface';
+                        id: string;
+                        redacted: boolean;
+                    } | {
                         kind: 'preview';
                         id: string;
                         redacted: boolean;
@@ -179,20 +187,12 @@ export type PeerMediationObservabilityActionResultById = {
                         id: string;
                         redacted: boolean;
                     } | {
-                        kind: 'browserView';
-                        id: string;
-                        redacted: boolean;
-                    } | {
                         kind: 'simulatorSource';
                         id: string;
                         redacted: boolean;
-                    } | {
-                        kind: 'pluginSurface';
-                        id: string;
-                        redacted: boolean;
-                    } | undefined;
+                    };
                 };
-                lifecycleState: 'starting' | 'ready' | 'active' | 'closed' | 'aborted' | 'errored' | 'denied';
+                lifecycleState: 'aborted' | 'active' | 'closed' | 'denied' | 'errored' | 'ready' | 'starting';
                 startedAtMs: number;
                 lastActivityAtMs: number;
                 bytesIn: number;

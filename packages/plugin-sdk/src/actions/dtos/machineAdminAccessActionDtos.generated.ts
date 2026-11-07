@@ -8,22 +8,22 @@ export type MachineAdminAccessActionInputById = {
         expectedMetadataVersion: number;
         expectedAdminAccess: {
             version: 1;
-            mode: 'none';
-        } | {
-            version: 1;
             mode: 'ask';
             administratorUsername: string;
+        } | {
+            version: 1;
+            mode: 'none';
         } | {
             version: 1;
             mode: 'preauthorized';
         };
         adminAccess: {
             version: 1;
-            mode: 'none';
-        } | {
-            version: 1;
             mode: 'ask';
             administratorUsername: string;
+        } | {
+            version: 1;
+            mode: 'none';
         } | {
             version: 1;
             mode: 'preauthorized';
@@ -42,32 +42,40 @@ export type MachineAdminAccessActionResultById = {
         status: 'applied' | 'satisfied' | 'unchanged';
         policy: {
             version: 1;
-            mode: 'none';
-        } | {
-            version: 1;
             mode: 'ask';
             administratorUsername: string;
+        } | {
+            version: 1;
+            mode: 'none';
         } | {
             version: 1;
             mode: 'preauthorized';
         };
         metadataVersion: number;
-        effect?: {
+        effect?: undefined | {
             outcome: 'applied';
             observation: {
                 version: 1;
                 observedAt: number;
-                daemonUid: number | null;
-                daemonUsername: string | null;
-                daemonIdentity: 'unknown' | 'root' | 'nonRoot';
-                rootEquivalentGroups: string[] | null;
-                passwordlessSudoToRoot: 'unknown' | 'allowed' | 'denied' | 'unavailable';
-                managedDropIn: 'unknown' | 'absent' | 'valid' | 'invalid';
+                daemonUid: null | number;
+                daemonUsername: null | string;
+                daemonIdentity: 'nonRoot' | 'root' | 'unknown';
+                rootEquivalentGroups: null | string[];
+                passwordlessSudoToRoot: 'allowed' | 'denied' | 'unavailable' | 'unknown';
+                managedDropIn: 'absent' | 'invalid' | 'unknown' | 'valid';
                 tailscaledOperator: {
-                    authorization: 'unknown' | 'allowed' | 'denied' | 'unavailable';
+                    authorization: 'allowed' | 'denied' | 'unavailable' | 'unknown';
                 };
-                daemonPrimaryGroup?: string | null | undefined;
-                groupMembership?: {
+                daemonPrimaryGroup?: null | string | undefined;
+                daemonAccount?: undefined | {
+                    passwordLocked: boolean | null;
+                    loginShell: null | string;
+                };
+                daemonService?: undefined | {
+                    mode: 'system' | 'user' | null;
+                    startsAtBoot: boolean | null;
+                };
+                groupMembership?: undefined | {
                     state: 'current';
                 } | {
                     state: 'pendingRestart';
@@ -75,45 +83,9 @@ export type MachineAdminAccessActionResultById = {
                     removedGroups: string[];
                 } | {
                     state: 'unknown';
-                } | undefined;
-                reasonCode?: 'sudoUnavailable' | 'dropInInvalid' | 'needs_admin_to_check' | 'platformUnsupported' | 'daemonRunningAsRoot' | 'observationFailed' | undefined;
-            };
-        } | {
-            outcome: 'not_applied';
-            reasonCode: 'denied' | 'mode_none' | 'not_preauthorized' | 'platform_unsupported' | 'plan_stale' | 'cancelled' | 'managed_cli_unavailable' | 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-            failure?: {
-                kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                reason?: 'needs_admin_to_check' | 'native_effect_failed' | 'required_fact_unavailable' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
-                requiredFact?: string | undefined;
-                remedy?: string | undefined;
-            } | undefined;
-            recovery?: {
-                kind: 'install_managed_cli';
-                executablePath: string;
-            } | undefined;
-            restoration?: {
-                status: 'verified';
-                recovery: {
-                    rules: {
-                        kind: 'absent';
-                    } | {
-                        kind: 'file';
-                        content: string;
-                    };
-                    unit: {
-                        kind: 'absent';
-                    } | {
-                        kind: 'file';
-                        content: string;
-                    };
-                    table: string | null;
-                    boot: {
-                        present: boolean;
-                        enabled: boolean;
-                        running: boolean;
-                    };
                 };
-            } | undefined;
+                reasonCode?: 'daemonRunningAsRoot' | 'dropInInvalid' | 'needs_admin_to_check' | 'observationFailed' | 'platformUnsupported' | 'sudoUnavailable' | undefined;
+            };
         } | {
             outcome: 'needs_attendance';
             operationId: string;
@@ -122,14 +94,30 @@ export type MachineAdminAccessActionResultById = {
                 adminUsername: string;
             };
         } | {
-            outcome: 'outcome_unknown';
-            failure?: {
-                kind: 'native_protocol_invalid' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed';
-                reason?: 'needs_admin_to_check' | 'native_effect_failed' | 'required_fact_unavailable' | 'package_manager_busy' | 'foreign_effect_conflict' | 'private_scope_unenforceable' | 'remove_unsupported' | 'plan_changed' | 'validation_failed' | 'admin_access_unavailable' | undefined;
+            outcome: 'not_applied';
+            reasonCode: 'cancelled' | 'denied' | 'managed_cli_unavailable' | 'mode_none' | 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid' | 'not_preauthorized' | 'plan_stale' | 'platform_unsupported';
+            failure?: undefined | {
+                kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                stepId?: string | undefined;
+                phase?: 'apply' | 'check' | undefined;
                 requiredFact?: string | undefined;
                 remedy?: string | undefined;
-            } | undefined;
-            restoration?: {
+                nativeCommand?: undefined | {
+                    command: 'apt-get';
+                    phase: 'install' | 'update';
+                    exitCode: null | number;
+                    category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                };
+            };
+            recovery?: undefined | {
+                kind: 'configure_admin_access';
+                mode: 'preauthorized';
+            } | {
+                kind: 'install_managed_cli';
+                executablePath: string;
+            };
+            restoration?: undefined | {
                 status: 'verified';
                 recovery: {
                     rules: {
@@ -144,29 +132,76 @@ export type MachineAdminAccessActionResultById = {
                         kind: 'file';
                         content: string;
                     };
-                    table: string | null;
+                    table: null | string;
                     boot: {
                         present: boolean;
                         enabled: boolean;
                         running: boolean;
                     };
                 };
-            } | undefined;
-        } | undefined;
-        observation?: {
+            };
+        } | {
+            outcome: 'outcome_unknown';
+            failure?: undefined | {
+                kind: 'native_check_unavailable' | 'native_check_unsupported' | 'native_effect_failed' | 'native_protocol_invalid';
+                reason?: 'admin_access_unavailable' | 'foreign_effect_conflict' | 'native_effect_failed' | 'needs_admin_to_check' | 'package_manager_busy' | 'plan_changed' | 'private_scope_unenforceable' | 'remove_unsupported' | 'required_fact_unavailable' | 'validation_failed' | undefined;
+                stepId?: string | undefined;
+                phase?: 'apply' | 'check' | undefined;
+                requiredFact?: string | undefined;
+                remedy?: string | undefined;
+                nativeCommand?: undefined | {
+                    command: 'apt-get';
+                    phase: 'install' | 'update';
+                    exitCode: null | number;
+                    category: 'command_failed' | 'package_configuration_failed' | 'package_manager_busy' | 'package_unavailable';
+                };
+            };
+            restoration?: undefined | {
+                status: 'verified';
+                recovery: {
+                    rules: {
+                        kind: 'absent';
+                    } | {
+                        kind: 'file';
+                        content: string;
+                    };
+                    unit: {
+                        kind: 'absent';
+                    } | {
+                        kind: 'file';
+                        content: string;
+                    };
+                    table: null | string;
+                    boot: {
+                        present: boolean;
+                        enabled: boolean;
+                        running: boolean;
+                    };
+                };
+            };
+        };
+        observation?: undefined | {
             version: 1;
             observedAt: number;
-            daemonUid: number | null;
-            daemonUsername: string | null;
-            daemonIdentity: 'unknown' | 'root' | 'nonRoot';
-            rootEquivalentGroups: string[] | null;
-            passwordlessSudoToRoot: 'unknown' | 'allowed' | 'denied' | 'unavailable';
-            managedDropIn: 'unknown' | 'absent' | 'valid' | 'invalid';
+            daemonUid: null | number;
+            daemonUsername: null | string;
+            daemonIdentity: 'nonRoot' | 'root' | 'unknown';
+            rootEquivalentGroups: null | string[];
+            passwordlessSudoToRoot: 'allowed' | 'denied' | 'unavailable' | 'unknown';
+            managedDropIn: 'absent' | 'invalid' | 'unknown' | 'valid';
             tailscaledOperator: {
-                authorization: 'unknown' | 'allowed' | 'denied' | 'unavailable';
+                authorization: 'allowed' | 'denied' | 'unavailable' | 'unknown';
             };
-            daemonPrimaryGroup?: string | null | undefined;
-            groupMembership?: {
+            daemonPrimaryGroup?: null | string | undefined;
+            daemonAccount?: undefined | {
+                passwordLocked: boolean | null;
+                loginShell: null | string;
+            };
+            daemonService?: undefined | {
+                mode: 'system' | 'user' | null;
+                startsAtBoot: boolean | null;
+            };
+            groupMembership?: undefined | {
                 state: 'current';
             } | {
                 state: 'pendingRestart';
@@ -174,41 +209,49 @@ export type MachineAdminAccessActionResultById = {
                 removedGroups: string[];
             } | {
                 state: 'unknown';
-            } | undefined;
-            reasonCode?: 'sudoUnavailable' | 'dropInInvalid' | 'needs_admin_to_check' | 'platformUnsupported' | 'daemonRunningAsRoot' | 'observationFailed' | undefined;
-        } | undefined;
+            };
+            reasonCode?: 'daemonRunningAsRoot' | 'dropInInvalid' | 'needs_admin_to_check' | 'observationFailed' | 'platformUnsupported' | 'sudoUnavailable' | undefined;
+        };
+    } | {
+        status: 'cancelled' | 'invalid' | 'locked' | 'outcomeUnknown' | 'unavailable';
     } | {
         status: 'conflict';
         policy: {
-            version: 1;
-            mode: 'none';
-        } | {
             version: 1;
             mode: 'ask';
             administratorUsername: string;
         } | {
             version: 1;
+            mode: 'none';
+        } | {
+            version: 1;
             mode: 'preauthorized';
         };
         metadataVersion: number;
-    } | {
-        status: 'unavailable' | 'invalid' | 'cancelled' | 'outcomeUnknown' | 'locked';
     };
     readonly "machines.setup.adminAccess.inspect": {
         observation: {
             version: 1;
             observedAt: number;
-            daemonUid: number | null;
-            daemonUsername: string | null;
-            daemonIdentity: 'unknown' | 'root' | 'nonRoot';
-            rootEquivalentGroups: string[] | null;
-            passwordlessSudoToRoot: 'unknown' | 'allowed' | 'denied' | 'unavailable';
-            managedDropIn: 'unknown' | 'absent' | 'valid' | 'invalid';
+            daemonUid: null | number;
+            daemonUsername: null | string;
+            daemonIdentity: 'nonRoot' | 'root' | 'unknown';
+            rootEquivalentGroups: null | string[];
+            passwordlessSudoToRoot: 'allowed' | 'denied' | 'unavailable' | 'unknown';
+            managedDropIn: 'absent' | 'invalid' | 'unknown' | 'valid';
             tailscaledOperator: {
-                authorization: 'unknown' | 'allowed' | 'denied' | 'unavailable';
+                authorization: 'allowed' | 'denied' | 'unavailable' | 'unknown';
             };
-            daemonPrimaryGroup?: string | null | undefined;
-            groupMembership?: {
+            daemonPrimaryGroup?: null | string | undefined;
+            daemonAccount?: undefined | {
+                passwordLocked: boolean | null;
+                loginShell: null | string;
+            };
+            daemonService?: undefined | {
+                mode: 'system' | 'user' | null;
+                startsAtBoot: boolean | null;
+            };
+            groupMembership?: undefined | {
                 state: 'current';
             } | {
                 state: 'pendingRestart';
@@ -216,11 +259,11 @@ export type MachineAdminAccessActionResultById = {
                 removedGroups: string[];
             } | {
                 state: 'unknown';
-            } | undefined;
-            reasonCode?: 'sudoUnavailable' | 'dropInInvalid' | 'needs_admin_to_check' | 'platformUnsupported' | 'daemonRunningAsRoot' | 'observationFailed' | undefined;
+            };
+            reasonCode?: 'daemonRunningAsRoot' | 'dropInInvalid' | 'needs_admin_to_check' | 'observationFailed' | 'platformUnsupported' | 'sudoUnavailable' | undefined;
         };
         checkedAt: number;
     } | {
-        status: 'unavailable' | 'invalid' | 'locked';
+        status: 'invalid' | 'locked' | 'unavailable';
     };
 };

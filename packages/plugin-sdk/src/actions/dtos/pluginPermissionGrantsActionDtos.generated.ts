@@ -7,8 +7,8 @@ export type PluginPermissionGrantsActionInputById = {
     readonly "plugins.permissions.grants.list": {
         pluginId?: string | undefined;
         grantId?: string | undefined;
-        capability?: 'reviews.comments.write.direct' | 'credentials.materialize.raw' | undefined;
-        targetScope?: {
+        capability?: 'credentials.materialize.raw' | 'reviews.comments.write.direct' | undefined;
+        targetScope?: undefined | {
             kind: 'account';
         } | {
             kind: 'project';
@@ -16,10 +16,8 @@ export type PluginPermissionGrantsActionInputById = {
         } | {
             kind: 'workspace';
             workspaceId: string;
-        } | undefined;
-        subject?: {
-            kind: 'general';
-        } | {
+        };
+        subject?: undefined | {
             kind: 'credential_access_disclosure';
             contribution: {
                 pluginId: string;
@@ -30,19 +28,21 @@ export type PluginPermissionGrantsActionInputById = {
             accessDeclarationDigest: string;
             selectedAuthorityDigest: string;
             selectedRawAccessDigest: string;
-        } | undefined;
-        caller?: {
+        } | {
+            kind: 'general';
+        };
+        caller?: undefined | {
             machineId: string;
             materializationId: string;
             pluginId: string;
-        } | undefined;
+        };
         includeRevoked?: boolean | undefined;
         includeResolvedRequests?: boolean | undefined;
         limit?: number | undefined;
     };
     readonly "plugins.permissions.grants.request": {
         pluginId: string;
-        capability: 'reviews.comments.write.direct' | 'credentials.materialize.raw';
+        capability: 'credentials.materialize.raw' | 'reviews.comments.write.direct';
         targetScope: {
             kind: 'account';
         } | {
@@ -53,8 +53,6 @@ export type PluginPermissionGrantsActionInputById = {
             workspaceId: string;
         };
         subject: {
-            kind: 'general';
-        } | {
             kind: 'credential_access_disclosure';
             contribution: {
                 pluginId: string;
@@ -65,25 +63,27 @@ export type PluginPermissionGrantsActionInputById = {
             accessDeclarationDigest: string;
             selectedAuthorityDigest: string;
             selectedRawAccessDigest: string;
+        } | {
+            kind: 'general';
         };
         requester: {
-            kind: 'user';
-            userId: string;
+            kind: 'host';
+            label?: string | undefined;
         } | {
             kind: 'plugin';
             pluginId: string;
             sessionId?: string | undefined;
             requestId?: string | undefined;
         } | {
-            kind: 'host';
-            label?: string | undefined;
+            kind: 'user';
+            userId: string;
         };
         reason: string;
-        caller?: {
+        caller?: undefined | {
             machineId: string;
             materializationId: string;
             pluginId: string;
-        } | undefined;
+        };
     };
     readonly "plugins.permissions.grants.grant": {
         requestId: string;
@@ -92,11 +92,11 @@ export type PluginPermissionGrantsActionInputById = {
     readonly "plugins.permissions.grants.revoke": {
         grantId: string;
         reason?: string | undefined;
-        caller?: {
+        caller?: undefined | {
             machineId: string;
             materializationId: string;
             pluginId: string;
-        } | undefined;
+        };
     };
     readonly "plugins.permissions.grants.dismissRequest": {
         requestId: string;
@@ -110,7 +110,7 @@ export type PluginPermissionGrantsActionResultById = {
             id: string;
             accountId: string;
             pluginId: string;
-            capability: 'reviews.comments.write.direct' | 'credentials.materialize.raw';
+            capability: 'credentials.materialize.raw' | 'reviews.comments.write.direct';
             targetScope: {
                 kind: 'account';
             } | {
@@ -121,8 +121,6 @@ export type PluginPermissionGrantsActionResultById = {
                 workspaceId: string;
             };
             subject: {
-                kind: 'general';
-            } | {
                 kind: 'credential_access_disclosure';
                 contribution: {
                     pluginId: string;
@@ -133,6 +131,8 @@ export type PluginPermissionGrantsActionResultById = {
                 accessDeclarationDigest: string;
                 selectedAuthorityDigest: string;
                 selectedRawAccessDigest: string;
+            } | {
+                kind: 'general';
             };
             authoritySource: {
                 kind: 'bundled';
@@ -155,7 +155,7 @@ export type PluginPermissionGrantsActionResultById = {
             id: string;
             accountId: string;
             pluginId: string;
-            capability: 'reviews.comments.write.direct' | 'credentials.materialize.raw';
+            capability: 'credentials.materialize.raw' | 'reviews.comments.write.direct';
             targetScope: {
                 kind: 'account';
             } | {
@@ -166,8 +166,6 @@ export type PluginPermissionGrantsActionResultById = {
                 workspaceId: string;
             };
             subject: {
-                kind: 'general';
-            } | {
                 kind: 'credential_access_disclosure';
                 contribution: {
                     pluginId: string;
@@ -178,6 +176,8 @@ export type PluginPermissionGrantsActionResultById = {
                 accessDeclarationDigest: string;
                 selectedAuthorityDigest: string;
                 selectedRawAccessDigest: string;
+            } | {
+                kind: 'general';
             };
             authoritySource: {
                 kind: 'bundled';
@@ -187,19 +187,19 @@ export type PluginPermissionGrantsActionResultById = {
                 installationId: string;
             };
             requester: {
-                kind: 'user';
-                userId: string;
+                kind: 'host';
+                label?: string | undefined;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 sessionId?: string | undefined;
                 requestId?: string | undefined;
             } | {
-                kind: 'host';
-                label?: string | undefined;
+                kind: 'user';
+                userId: string;
             };
             reason: string;
-            status: 'pending' | 'granted' | 'dismissed';
+            status: 'dismissed' | 'granted' | 'pending';
             createdAt: number;
             updatedAt: number;
             grantId?: string | undefined;
@@ -214,7 +214,7 @@ export type PluginPermissionGrantsActionResultById = {
             id: string;
             accountId: string;
             pluginId: string;
-            capability: 'reviews.comments.write.direct' | 'credentials.materialize.raw';
+            capability: 'credentials.materialize.raw' | 'reviews.comments.write.direct';
             targetScope: {
                 kind: 'account';
             } | {
@@ -225,8 +225,6 @@ export type PluginPermissionGrantsActionResultById = {
                 workspaceId: string;
             };
             subject: {
-                kind: 'general';
-            } | {
                 kind: 'credential_access_disclosure';
                 contribution: {
                     pluginId: string;
@@ -237,6 +235,8 @@ export type PluginPermissionGrantsActionResultById = {
                 accessDeclarationDigest: string;
                 selectedAuthorityDigest: string;
                 selectedRawAccessDigest: string;
+            } | {
+                kind: 'general';
             };
             authoritySource: {
                 kind: 'bundled';
@@ -246,19 +246,19 @@ export type PluginPermissionGrantsActionResultById = {
                 installationId: string;
             };
             requester: {
-                kind: 'user';
-                userId: string;
+                kind: 'host';
+                label?: string | undefined;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 sessionId?: string | undefined;
                 requestId?: string | undefined;
             } | {
-                kind: 'host';
-                label?: string | undefined;
+                kind: 'user';
+                userId: string;
             };
             reason: string;
-            status: 'pending' | 'granted' | 'dismissed';
+            status: 'dismissed' | 'granted' | 'pending';
             createdAt: number;
             updatedAt: number;
             grantId?: string | undefined;
@@ -273,7 +273,7 @@ export type PluginPermissionGrantsActionResultById = {
             id: string;
             accountId: string;
             pluginId: string;
-            capability: 'reviews.comments.write.direct' | 'credentials.materialize.raw';
+            capability: 'credentials.materialize.raw' | 'reviews.comments.write.direct';
             targetScope: {
                 kind: 'account';
             } | {
@@ -284,8 +284,6 @@ export type PluginPermissionGrantsActionResultById = {
                 workspaceId: string;
             };
             subject: {
-                kind: 'general';
-            } | {
                 kind: 'credential_access_disclosure';
                 contribution: {
                     pluginId: string;
@@ -296,6 +294,8 @@ export type PluginPermissionGrantsActionResultById = {
                 accessDeclarationDigest: string;
                 selectedAuthorityDigest: string;
                 selectedRawAccessDigest: string;
+            } | {
+                kind: 'general';
             };
             authoritySource: {
                 kind: 'bundled';
@@ -318,7 +318,7 @@ export type PluginPermissionGrantsActionResultById = {
             id: string;
             accountId: string;
             pluginId: string;
-            capability: 'reviews.comments.write.direct' | 'credentials.materialize.raw';
+            capability: 'credentials.materialize.raw' | 'reviews.comments.write.direct';
             targetScope: {
                 kind: 'account';
             } | {
@@ -329,8 +329,6 @@ export type PluginPermissionGrantsActionResultById = {
                 workspaceId: string;
             };
             subject: {
-                kind: 'general';
-            } | {
                 kind: 'credential_access_disclosure';
                 contribution: {
                     pluginId: string;
@@ -341,6 +339,8 @@ export type PluginPermissionGrantsActionResultById = {
                 accessDeclarationDigest: string;
                 selectedAuthorityDigest: string;
                 selectedRawAccessDigest: string;
+            } | {
+                kind: 'general';
             };
             authoritySource: {
                 kind: 'bundled';
@@ -350,19 +350,19 @@ export type PluginPermissionGrantsActionResultById = {
                 installationId: string;
             };
             requester: {
-                kind: 'user';
-                userId: string;
+                kind: 'host';
+                label?: string | undefined;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 sessionId?: string | undefined;
                 requestId?: string | undefined;
             } | {
-                kind: 'host';
-                label?: string | undefined;
+                kind: 'user';
+                userId: string;
             };
             reason: string;
-            status: 'pending' | 'granted' | 'dismissed';
+            status: 'dismissed' | 'granted' | 'pending';
             createdAt: number;
             updatedAt: number;
             grantId?: string | undefined;
@@ -377,7 +377,7 @@ export type PluginPermissionGrantsActionResultById = {
             id: string;
             accountId: string;
             pluginId: string;
-            capability: 'reviews.comments.write.direct' | 'credentials.materialize.raw';
+            capability: 'credentials.materialize.raw' | 'reviews.comments.write.direct';
             targetScope: {
                 kind: 'account';
             } | {
@@ -388,8 +388,6 @@ export type PluginPermissionGrantsActionResultById = {
                 workspaceId: string;
             };
             subject: {
-                kind: 'general';
-            } | {
                 kind: 'credential_access_disclosure';
                 contribution: {
                     pluginId: string;
@@ -400,6 +398,8 @@ export type PluginPermissionGrantsActionResultById = {
                 accessDeclarationDigest: string;
                 selectedAuthorityDigest: string;
                 selectedRawAccessDigest: string;
+            } | {
+                kind: 'general';
             };
             authoritySource: {
                 kind: 'bundled';
@@ -424,7 +424,7 @@ export type PluginPermissionGrantsActionResultById = {
             id: string;
             accountId: string;
             pluginId: string;
-            capability: 'reviews.comments.write.direct' | 'credentials.materialize.raw';
+            capability: 'credentials.materialize.raw' | 'reviews.comments.write.direct';
             targetScope: {
                 kind: 'account';
             } | {
@@ -435,8 +435,6 @@ export type PluginPermissionGrantsActionResultById = {
                 workspaceId: string;
             };
             subject: {
-                kind: 'general';
-            } | {
                 kind: 'credential_access_disclosure';
                 contribution: {
                     pluginId: string;
@@ -447,6 +445,8 @@ export type PluginPermissionGrantsActionResultById = {
                 accessDeclarationDigest: string;
                 selectedAuthorityDigest: string;
                 selectedRawAccessDigest: string;
+            } | {
+                kind: 'general';
             };
             authoritySource: {
                 kind: 'bundled';
@@ -456,19 +456,19 @@ export type PluginPermissionGrantsActionResultById = {
                 installationId: string;
             };
             requester: {
-                kind: 'user';
-                userId: string;
+                kind: 'host';
+                label?: string | undefined;
             } | {
                 kind: 'plugin';
                 pluginId: string;
                 sessionId?: string | undefined;
                 requestId?: string | undefined;
             } | {
-                kind: 'host';
-                label?: string | undefined;
+                kind: 'user';
+                userId: string;
             };
             reason: string;
-            status: 'pending' | 'granted' | 'dismissed';
+            status: 'dismissed' | 'granted' | 'pending';
             createdAt: number;
             updatedAt: number;
             grantId?: string | undefined;

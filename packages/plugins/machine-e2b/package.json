@@ -3,6 +3,38 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    "./happier-plugin-ui/account-runtime": {
+      "happier-source": "./src/manifest.ts",
+      "default": "./dist/manifest.js"
+    },
+    "./happier-plugin-ui/connected-account-authentication": {
+      "happier-source": "./src/account.ts",
+      "default": "./dist/account.js"
+    },
+    ".": {
+      "happier-source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./manifest": {
+      "happier-source": "./src/manifest.ts",
+      "types": "./dist/manifest.d.ts",
+      "default": "./dist/manifest.js"
+    }
+  },
+  "files": [
+    "dist",
+    ".happier-plugin",
+    "package.json"
+  ],
+  "scripts": {
+    "build": "node ../../../scripts/workspaces/buildTypeScriptPackageDist.mjs -p tsconfig.json",
+    "test": "../../../apps/stack/bin/hstack-exec -- pnpm exec vitest run",
+    "typecheck": "../../../apps/stack/bin/hstack-exec -- node ../../../scripts/workspaces/runTypeScriptCli.mjs --noEmit -p tsconfig.json"
+  },
   "dependencies": {
     "@happier-dev/plugin-sdk": "0.0.0"
   },
@@ -10,10 +42,5 @@
     "@happier-dev/protocol": "0.0.0",
     "@types/node": "^22.15.3",
     "vitest": "^3.2.4"
-  },
-  "happier": {
-    "pluginScaffold": {
-      "shipping": "reservation_only"
-    }
   }
 }

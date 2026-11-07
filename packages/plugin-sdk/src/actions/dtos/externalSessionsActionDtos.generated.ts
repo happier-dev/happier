@@ -49,20 +49,26 @@ export type ExternalSessionsActionInputById = {
 };
 export type ExternalSessionsActionResultById = {
     readonly "sessions.external.materialize.start": {
+        ok: false;
+        error: {
+            code: 'internal_error' | 'invalid_state' | 'not_allowed' | 'operation_conflict' | 'operation_not_found' | 'reconciliation_required' | 'source_unavailable' | 'stale_revision' | 'upgrade_required';
+            message: string;
+        };
+    } | {
         ok: true;
         operation: {
             sessionId: string;
             operationId: string;
             revision: number;
-        };
-    } | {
-        ok: false;
-        error: {
-            code: 'upgrade_required' | 'operation_not_found' | 'operation_conflict' | 'stale_revision' | 'invalid_state' | 'not_allowed' | 'reconciliation_required' | 'source_unavailable' | 'internal_error';
-            message: string;
         };
     };
     readonly "sessions.external.operation.status.get": {
+        ok: false;
+        error: {
+            code: 'internal_error' | 'invalid_state' | 'not_allowed' | 'operation_conflict' | 'operation_not_found' | 'reconciliation_required' | 'source_unavailable' | 'stale_revision' | 'upgrade_required';
+            message: string;
+        };
+    } | {
         ok: true;
         operation: {
             sessionId: string;
@@ -74,17 +80,17 @@ export type ExternalSessionsActionResultById = {
             operationId: string;
             revision: number;
             kind: 'materialize' | 'takeover_external_linked' | 'takeover_persisted';
-            status: 'reconciliation_required' | 'running' | 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'failed' | 'completed' | 'discarded';
-            phase: 'validating' | 'quiescing' | 'staging' | 'importing' | 'final_catch_up' | 'admitting' | 'spawning' | 'finalizing' | 'publishing';
-        };
-    } | {
-        ok: false;
-        error: {
-            code: 'upgrade_required' | 'operation_not_found' | 'operation_conflict' | 'stale_revision' | 'invalid_state' | 'not_allowed' | 'reconciliation_required' | 'source_unavailable' | 'internal_error';
-            message: string;
+            status: 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'completed' | 'discarded' | 'failed' | 'reconciliation_required' | 'running';
+            phase: 'admitting' | 'final_catch_up' | 'finalizing' | 'importing' | 'publishing' | 'quiescing' | 'spawning' | 'staging' | 'validating';
         };
     };
     readonly "sessions.external.operation.cancel": {
+        ok: false;
+        error: {
+            code: 'internal_error' | 'invalid_state' | 'not_allowed' | 'operation_conflict' | 'operation_not_found' | 'reconciliation_required' | 'source_unavailable' | 'stale_revision' | 'upgrade_required';
+            message: string;
+        };
+    } | {
         ok: true;
         operation: {
             sessionId: string;
@@ -96,17 +102,17 @@ export type ExternalSessionsActionResultById = {
             operationId: string;
             revision: number;
             kind: 'materialize' | 'takeover_external_linked' | 'takeover_persisted';
-            status: 'reconciliation_required' | 'running' | 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'failed' | 'completed' | 'discarded';
-            phase: 'validating' | 'quiescing' | 'staging' | 'importing' | 'final_catch_up' | 'admitting' | 'spawning' | 'finalizing' | 'publishing';
-        };
-    } | {
-        ok: false;
-        error: {
-            code: 'upgrade_required' | 'operation_not_found' | 'operation_conflict' | 'stale_revision' | 'invalid_state' | 'not_allowed' | 'reconciliation_required' | 'source_unavailable' | 'internal_error';
-            message: string;
+            status: 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'completed' | 'discarded' | 'failed' | 'reconciliation_required' | 'running';
+            phase: 'admitting' | 'final_catch_up' | 'finalizing' | 'importing' | 'publishing' | 'quiescing' | 'spawning' | 'staging' | 'validating';
         };
     };
     readonly "sessions.external.operation.resume": {
+        ok: false;
+        error: {
+            code: 'internal_error' | 'invalid_state' | 'not_allowed' | 'operation_conflict' | 'operation_not_found' | 'reconciliation_required' | 'source_unavailable' | 'stale_revision' | 'upgrade_required';
+            message: string;
+        };
+    } | {
         ok: true;
         operation: {
             sessionId: string;
@@ -118,17 +124,17 @@ export type ExternalSessionsActionResultById = {
             operationId: string;
             revision: number;
             kind: 'materialize' | 'takeover_external_linked' | 'takeover_persisted';
-            status: 'reconciliation_required' | 'running' | 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'failed' | 'completed' | 'discarded';
-            phase: 'validating' | 'quiescing' | 'staging' | 'importing' | 'final_catch_up' | 'admitting' | 'spawning' | 'finalizing' | 'publishing';
-        };
-    } | {
-        ok: false;
-        error: {
-            code: 'upgrade_required' | 'operation_not_found' | 'operation_conflict' | 'stale_revision' | 'invalid_state' | 'not_allowed' | 'reconciliation_required' | 'source_unavailable' | 'internal_error';
-            message: string;
+            status: 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'completed' | 'discarded' | 'failed' | 'reconciliation_required' | 'running';
+            phase: 'admitting' | 'final_catch_up' | 'finalizing' | 'importing' | 'publishing' | 'quiescing' | 'spawning' | 'staging' | 'validating';
         };
     };
     readonly "sessions.external.operation.retry": {
+        ok: false;
+        error: {
+            code: 'internal_error' | 'invalid_state' | 'not_allowed' | 'operation_conflict' | 'operation_not_found' | 'reconciliation_required' | 'source_unavailable' | 'stale_revision' | 'upgrade_required';
+            message: string;
+        };
+    } | {
         ok: true;
         operation: {
             sessionId: string;
@@ -140,17 +146,17 @@ export type ExternalSessionsActionResultById = {
             operationId: string;
             revision: number;
             kind: 'materialize' | 'takeover_external_linked' | 'takeover_persisted';
-            status: 'reconciliation_required' | 'running' | 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'failed' | 'completed' | 'discarded';
-            phase: 'validating' | 'quiescing' | 'staging' | 'importing' | 'final_catch_up' | 'admitting' | 'spawning' | 'finalizing' | 'publishing';
-        };
-    } | {
-        ok: false;
-        error: {
-            code: 'upgrade_required' | 'operation_not_found' | 'operation_conflict' | 'stale_revision' | 'invalid_state' | 'not_allowed' | 'reconciliation_required' | 'source_unavailable' | 'internal_error';
-            message: string;
+            status: 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'completed' | 'discarded' | 'failed' | 'reconciliation_required' | 'running';
+            phase: 'admitting' | 'final_catch_up' | 'finalizing' | 'importing' | 'publishing' | 'quiescing' | 'spawning' | 'staging' | 'validating';
         };
     };
     readonly "sessions.external.operation.discard": {
+        ok: false;
+        error: {
+            code: 'internal_error' | 'invalid_state' | 'not_allowed' | 'operation_conflict' | 'operation_not_found' | 'reconciliation_required' | 'source_unavailable' | 'stale_revision' | 'upgrade_required';
+            message: string;
+        };
+    } | {
         ok: true;
         operation: {
             sessionId: string;
@@ -162,35 +168,29 @@ export type ExternalSessionsActionResultById = {
             operationId: string;
             revision: number;
             kind: 'materialize' | 'takeover_external_linked' | 'takeover_persisted';
-            status: 'reconciliation_required' | 'running' | 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'failed' | 'completed' | 'discarded';
-            phase: 'validating' | 'quiescing' | 'staging' | 'importing' | 'final_catch_up' | 'admitting' | 'spawning' | 'finalizing' | 'publishing';
-        };
-    } | {
-        ok: false;
-        error: {
-            code: 'upgrade_required' | 'operation_not_found' | 'operation_conflict' | 'stale_revision' | 'invalid_state' | 'not_allowed' | 'reconciliation_required' | 'source_unavailable' | 'internal_error';
-            message: string;
+            status: 'awaiting_user_resume' | 'cancel_requested' | 'cancelled' | 'completed' | 'discarded' | 'failed' | 'reconciliation_required' | 'running';
+            phase: 'admitting' | 'final_catch_up' | 'finalizing' | 'importing' | 'publishing' | 'quiescing' | 'spawning' | 'staging' | 'validating';
         };
     };
     readonly "sessions.external.backgroundFollow.set": {
+        ok: false;
+        errorCode: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
+        error: string;
+    } | {
         ok: true;
         enabled: boolean;
         leaseActive: boolean;
         updatedAtMs: number;
-    } | {
-        ok: false;
-        errorCode: 'internal_error' | 'invalid_request' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error';
-        error: string;
     };
     readonly "sessions.external.status.get": {
         ok: false;
-        errorCode: 'internal_error' | 'invalid_request' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error';
+        errorCode: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
         error: string;
     } | {
         ok: true;
         machineOnline: boolean;
         runnerActive: boolean;
-        activity: 'unknown' | 'running' | 'active_recently' | 'idle';
+        activity: 'active_recently' | 'idle' | 'running' | 'unknown';
         canTakeOverDirect: boolean;
         canTakeOverPersist: boolean;
         canForceStop: boolean;

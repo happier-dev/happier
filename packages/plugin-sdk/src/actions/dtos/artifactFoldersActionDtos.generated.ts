@@ -11,27 +11,27 @@ export type ArtifactFoldersActionInputById = {
     readonly "artifact.folders.create": {
         id: string;
         name: string;
-        expectedRevision: number | 'absent';
-        parentId?: string | null | undefined;
+        expectedRevision: 'absent' | number;
+        parentId?: null | string | undefined;
     };
     readonly "artifact.folders.rename": {
         folderId: string;
         name: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
     };
     readonly "artifact.folders.move": {
         folderId: string;
-        parentId: string | null;
-        expectedRevision: number | 'absent';
+        parentId: null | string;
+        expectedRevision: 'absent' | number;
     };
     readonly "artifact.folders.delete": {
         folderId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
     };
     readonly "artifact.folder.set": {
         artifactId: string;
-        expectedRevision: number | 'absent';
-        folderId?: string | null | undefined;
+        expectedRevision: 'absent' | number;
+        folderId?: null | string | undefined;
         tags?: string[] | undefined;
     };
 };
@@ -41,9 +41,9 @@ export type ArtifactFoldersActionResultById = {
         items: {
             id: string;
             name: string;
-            parentId: string | null;
+            parentId: null | string;
         }[];
-        revision: number | 'absent';
+        revision: 'absent' | number;
         coverage: 'complete';
         nextCursor: null;
     } | {
@@ -51,70 +51,70 @@ export type ArtifactFoldersActionResultById = {
         reason: string;
     };
     readonly "artifact.folders.read": {
-        status: 'unavailable';
-        reason: string;
+        status: 'not_found';
+        revision: 'absent' | number;
+        coverage: 'complete';
     } | {
         status: 'ready';
         item: {
             id: string;
             name: string;
-            parentId: string | null;
+            parentId: null | string;
         };
-        revision: number | 'absent';
+        revision: 'absent' | number;
         coverage: 'complete';
     } | {
-        status: 'not_found';
-        revision: number | 'absent';
-        coverage: 'complete';
+        status: 'unavailable';
+        reason: string;
     };
     readonly "artifact.folders.create": {
+        status: 'conflict';
+        revision: number;
+    } | {
         status: 'unavailable';
         reason: string;
     } | {
         status: 'updated';
-        revision: number;
-    } | {
-        status: 'conflict';
         revision: number;
     };
     readonly "artifact.folders.rename": {
+        status: 'conflict';
+        revision: number;
+    } | {
         status: 'unavailable';
         reason: string;
     } | {
         status: 'updated';
-        revision: number;
-    } | {
-        status: 'conflict';
         revision: number;
     };
     readonly "artifact.folders.move": {
+        status: 'conflict';
+        revision: number;
+    } | {
         status: 'unavailable';
         reason: string;
     } | {
         status: 'updated';
-        revision: number;
-    } | {
-        status: 'conflict';
         revision: number;
     };
     readonly "artifact.folders.delete": {
+        status: 'conflict';
+        revision: number;
+    } | {
         status: 'unavailable';
         reason: string;
     } | {
         status: 'updated';
-        revision: number;
-    } | {
-        status: 'conflict';
         revision: number;
     };
     readonly "artifact.folder.set": {
+        status: 'conflict';
+        revision: number;
+    } | {
         status: 'unavailable';
         reason: string;
     } | {
         status: 'updated';
-        revision: number;
-    } | {
-        status: 'conflict';
         revision: number;
     };
 };

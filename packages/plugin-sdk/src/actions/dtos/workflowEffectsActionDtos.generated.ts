@@ -14,7 +14,7 @@ export type WorkflowEffectsActionInputById = {
     };
     readonly "workflow.discussion.round.project": {
         collections: string[];
-        phase?: 'prepare' | 'complete' | undefined;
+        phase?: 'complete' | 'prepare' | undefined;
         rosterInput?: string | undefined;
         previousProjectionBlockId?: string | undefined;
         preparationBlockId?: string | undefined;
@@ -36,12 +36,6 @@ export type WorkflowEffectsActionResultById = {
         allPassed: boolean;
         hasNext: boolean;
         nextParticipants: ({
-            kind: 'session';
-            session: {
-                serverId: string;
-                sessionId: string;
-            };
-        } | {
             kind: 'model';
             launch: {
                 executionTarget: {
@@ -49,10 +43,10 @@ export type WorkflowEffectsActionResultById = {
                     machineId: string;
                 };
                 directory: {
+                    kind: 'managed';
+                } | {
                     kind: 'path';
                     path: string;
-                } | {
-                    kind: 'managed';
                 };
                 agentTarget: {
                     kind: 'agent';
@@ -62,16 +56,16 @@ export type WorkflowEffectsActionResultById = {
                     };
                     definitionId?: string | undefined;
                 };
-                placementOrigin?: {
+                placementOrigin?: undefined | {
                     kind: 'machine_pool';
                     poolId: string;
-                } | undefined;
-                organizationPlacement?: {
-                    folderId: string | null;
+                };
+                organizationPlacement?: undefined | {
+                    folderId: null | string;
                     tagIds: string[];
-                } | undefined;
+                };
                 roleId?: string | undefined;
-                modelSelection?: {
+                modelSelection?: undefined | {
                     v: 1;
                     ref: {
                         agentTargetKey: string;
@@ -83,55 +77,62 @@ export type WorkflowEffectsActionResultById = {
                         modelId: string;
                     };
                     updatedAt: number;
-                } | undefined;
+                };
                 profileId?: string | undefined;
-                secretReferenceOverlay?: {
+                approvalProfileId?: null | string | undefined;
+                secretReferenceOverlay?: undefined | {
                     v: 1;
                     bindings: Record<string, {
                         ref: string;
                         revision?: number | undefined;
                     }>;
-                } | undefined;
-                permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                };
+                permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                 agentModeId?: string | undefined;
-                configuration?: {
+                configuration?: undefined | {
                     mode: {
-                        value: string | null;
+                        value: null | string;
                         updatedAtMs: number;
                     };
                     model: {
-                        value: string | null;
+                        value: null | string;
                         updatedAtMs: number;
+                        selectionSource?: 'explicit' | 'inherited' | undefined;
                     };
                     permissionIntent: {
-                        value: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | null;
+                        value: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null;
                         updatedAtMs: number;
                     };
                     options: Record<string, {
-                        value: string | number | boolean | null;
+                        value: boolean | null | number | string;
                         updatedAtMs: number;
                     }>;
-                    workspaceWrites?: 'deny' | 'allow' | undefined;
-                    providerSessionResume?: {
+                    workspaceWrites?: 'allow' | 'deny' | undefined;
+                    providerSessionResume?: undefined | {
                         kind: 'provider_session.v1';
                         providerSessionId: string;
-                    } | undefined;
+                    };
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
-                } | undefined;
-                connectedServices?: {
+                };
+                connectedServices?: undefined | {
                     v: 2;
                     bindingsByServiceId: Record<string, {
-                        source: 'native';
-                    } | {
                         source: 'connected';
                         selection: 'group';
                         groupId: string;
                         profileId?: string | undefined;
+                        appliedProfileId?: string | undefined;
                     } | {
                         source: 'connected';
                         selection: 'profile';
                         profileId: string;
+                    } | {
+                        source: 'native';
+                    } | {
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
                     } | {
                         source: 'team_resource';
                         resourceId: string;
@@ -143,59 +144,52 @@ export type WorkflowEffectsActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     }>;
-                } | undefined;
-                capabilitySelection?: {
-                    mcp?: {
+                };
+                capabilitySelection?: undefined | {
+                    mcp?: undefined | {
                         forceIncludeServerIds: string[];
                         forceExcludeServerIds: string[];
                         v: 1;
                         managedServersEnabled: boolean;
                         happierToolsEnabled?: boolean | undefined;
-                    } | undefined;
-                    skills?: {
+                    };
+                    skills?: undefined | {
                         forceIncludeSkillIds: string[];
                         forceExcludeSkillIds: string[];
                         excludeNativeSkillNames: string[];
                         v: 1;
-                    } | undefined;
-                } | undefined;
+                    };
+                };
                 transcriptStorage?: 'direct' | 'persisted' | undefined;
-                terminal?: {
-                    mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                    tmux?: {
+                terminal?: undefined | {
+                    mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                    tmux?: undefined | {
                         sessionName?: string | undefined;
                         isolated?: boolean | undefined;
-                        tmpDir?: string | null | undefined;
-                    } | undefined;
-                    herdr?: {
+                        tmpDir?: null | string | undefined;
+                    };
+                    herdr?: undefined | {
                         sessionName?: string | undefined;
-                    } | undefined;
-                    windows?: {
-                        launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                    };
+                    windows?: undefined | {
+                        launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                         console?: 'hidden' | 'visible' | undefined;
                         windowName?: string | undefined;
-                    } | undefined;
-                } | undefined;
-                checkoutCreationDraft?: {
+                    };
+                };
+                checkoutCreationDraft?: null | undefined | {
                     kind: 'git_worktree';
                     displayName: string;
-                    baseRef: string | null;
-                    branchMode?: 'new' | 'existing' | undefined;
-                } | null | undefined;
+                    baseRef: null | string;
+                    branchMode?: 'existing' | 'new' | undefined;
+                };
                 title?: string | undefined;
                 memoryEnabled?: boolean | undefined;
-                primaryTeamId?: string | null | undefined;
+                primaryTeamId?: null | string | undefined;
                 teamCredentialBindings?: ({
                     v: 1;
                     slot: {
-                        kind: 'provider_model';
-                    } | {
                         kind: 'connected_service_purpose';
                         purpose: {
                             consumer: {
@@ -204,30 +198,47 @@ export type WorkflowEffectsActionResultById = {
                             };
                             purpose: string;
                         };
+                    } | {
+                        kind: 'provider_model';
+                    };
+                    resourceId: null;
+                } | {
+                    v: 1;
+                    slot: {
+                        kind: 'connected_service_purpose';
+                        purpose: {
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            purpose: string;
+                        };
+                    } | {
+                        kind: 'provider_model';
                     };
                     resourceId: string;
                     expectedResourceRevision: number;
-                    deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                    deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                     teamId?: string | undefined;
-                    providerModelSelection?: {
+                    providerModelSelection?: undefined | {
                         agentTargetKey: string;
                         modelId: string;
-                        application?: {
-                            agentTargetKey: string;
+                        application?: undefined | {
                             implementationIdentity: {
                                 pluginId: string;
                                 localId: string;
                             };
                             endpointTemplateId: string;
                             protocol: string;
-                        } | undefined;
+                            agentTargetKey: string;
+                        };
                         executionMachineId?: string | undefined;
-                        nativeSource?: {
+                        nativeSource?: undefined | {
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | undefined;
-                    nativeDelivery?: {
+                        };
+                    };
+                    nativeDelivery?: undefined | {
                         managedId: string;
                         controllerInstallationId: string;
                         guestInstallationId: string;
@@ -235,37 +246,22 @@ export type WorkflowEffectsActionResultById = {
                         placeholderRef: string;
                         sourceRevision: string;
                         providerTicket: string;
-                    } | undefined;
-                } | {
-                    v: 1;
-                    slot: {
-                        kind: 'provider_model';
-                    } | {
-                        kind: 'connected_service_purpose';
-                        purpose: {
-                            consumer: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            purpose: string;
-                        };
                     };
-                    resourceId: null;
                 })[] | undefined;
                 allowedTools?: string[] | undefined;
                 unlistedTools?: 'ask' | 'deny' | undefined;
+            };
+        } | {
+            kind: 'session';
+            session: {
+                serverId: string;
+                sessionId: string;
             };
         })[];
         outcomeReferences: {
             runId: string;
             invocationRecordId: string;
             participant: {
-                kind: 'session';
-                session: {
-                    serverId: string;
-                    sessionId: string;
-                };
-            } | {
                 kind: 'model';
                 launch: {
                     executionTarget: {
@@ -273,10 +269,10 @@ export type WorkflowEffectsActionResultById = {
                         machineId: string;
                     };
                     directory: {
+                        kind: 'managed';
+                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'managed';
                     };
                     agentTarget: {
                         kind: 'agent';
@@ -286,16 +282,16 @@ export type WorkflowEffectsActionResultById = {
                         };
                         definitionId?: string | undefined;
                     };
-                    placementOrigin?: {
+                    placementOrigin?: undefined | {
                         kind: 'machine_pool';
                         poolId: string;
-                    } | undefined;
-                    organizationPlacement?: {
-                        folderId: string | null;
+                    };
+                    organizationPlacement?: undefined | {
+                        folderId: null | string;
                         tagIds: string[];
-                    } | undefined;
+                    };
                     roleId?: string | undefined;
-                    modelSelection?: {
+                    modelSelection?: undefined | {
                         v: 1;
                         ref: {
                             agentTargetKey: string;
@@ -307,55 +303,62 @@ export type WorkflowEffectsActionResultById = {
                             modelId: string;
                         };
                         updatedAt: number;
-                    } | undefined;
+                    };
                     profileId?: string | undefined;
-                    secretReferenceOverlay?: {
+                    approvalProfileId?: null | string | undefined;
+                    secretReferenceOverlay?: undefined | {
                         v: 1;
                         bindings: Record<string, {
                             ref: string;
                             revision?: number | undefined;
                         }>;
-                    } | undefined;
-                    permissionMode?: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | undefined;
+                    };
+                    permissionMode?: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | undefined;
                     agentModeId?: string | undefined;
-                    configuration?: {
+                    configuration?: undefined | {
                         mode: {
-                            value: string | null;
+                            value: null | string;
                             updatedAtMs: number;
                         };
                         model: {
-                            value: string | null;
+                            value: null | string;
                             updatedAtMs: number;
+                            selectionSource?: 'explicit' | 'inherited' | undefined;
                         };
                         permissionIntent: {
-                            value: 'default' | 'read-only' | 'safe-yolo' | 'yolo' | 'plan' | null;
+                            value: 'default' | 'plan' | 'read-only' | 'safe-yolo' | 'yolo' | null;
                             updatedAtMs: number;
                         };
                         options: Record<string, {
-                            value: string | number | boolean | null;
+                            value: boolean | null | number | string;
                             updatedAtMs: number;
                         }>;
-                        workspaceWrites?: 'deny' | 'allow' | undefined;
-                        providerSessionResume?: {
+                        workspaceWrites?: 'allow' | 'deny' | undefined;
+                        providerSessionResume?: undefined | {
                             kind: 'provider_session.v1';
                             providerSessionId: string;
-                        } | undefined;
+                        };
                         allowedTools?: string[] | undefined;
                         unlistedTools?: 'ask' | 'deny' | undefined;
-                    } | undefined;
-                    connectedServices?: {
+                    };
+                    connectedServices?: undefined | {
                         v: 2;
                         bindingsByServiceId: Record<string, {
-                            source: 'native';
-                        } | {
                             source: 'connected';
                             selection: 'group';
                             groupId: string;
                             profileId?: string | undefined;
+                            appliedProfileId?: string | undefined;
                         } | {
                             source: 'connected';
                             selection: 'profile';
                             profileId: string;
+                        } | {
+                            source: 'native';
+                        } | {
+                            source: 'team_resource';
+                            resourceId: string;
+                            deliveryMode: 'brokered';
                         } | {
                             source: 'team_resource';
                             resourceId: string;
@@ -367,59 +370,52 @@ export type WorkflowEffectsActionResultById = {
                                 };
                                 accountId: string;
                             };
-                        } | {
-                            source: 'team_resource';
-                            resourceId: string;
-                            deliveryMode: 'brokered';
-                            disclosedMember?: undefined;
                         }>;
-                    } | undefined;
-                    capabilitySelection?: {
-                        mcp?: {
+                    };
+                    capabilitySelection?: undefined | {
+                        mcp?: undefined | {
                             forceIncludeServerIds: string[];
                             forceExcludeServerIds: string[];
                             v: 1;
                             managedServersEnabled: boolean;
                             happierToolsEnabled?: boolean | undefined;
-                        } | undefined;
-                        skills?: {
+                        };
+                        skills?: undefined | {
                             forceIncludeSkillIds: string[];
                             forceExcludeSkillIds: string[];
                             excludeNativeSkillNames: string[];
                             v: 1;
-                        } | undefined;
-                    } | undefined;
+                        };
+                    };
                     transcriptStorage?: 'direct' | 'persisted' | undefined;
-                    terminal?: {
-                        mode?: 'integrated' | 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console' | undefined;
-                        tmux?: {
+                    terminal?: undefined | {
+                        mode?: 'herdr' | 'integrated' | 'plain' | 'tmux' | 'windows_console' | 'windows_terminal' | 'zellij' | undefined;
+                        tmux?: undefined | {
                             sessionName?: string | undefined;
                             isolated?: boolean | undefined;
-                            tmpDir?: string | null | undefined;
-                        } | undefined;
-                        herdr?: {
+                            tmpDir?: null | string | undefined;
+                        };
+                        herdr?: undefined | {
                             sessionName?: string | undefined;
-                        } | undefined;
-                        windows?: {
-                            launchMode?: 'windows_terminal' | 'hidden' | 'console' | undefined;
+                        };
+                        windows?: undefined | {
+                            launchMode?: 'console' | 'hidden' | 'windows_terminal' | undefined;
                             console?: 'hidden' | 'visible' | undefined;
                             windowName?: string | undefined;
-                        } | undefined;
-                    } | undefined;
-                    checkoutCreationDraft?: {
+                        };
+                    };
+                    checkoutCreationDraft?: null | undefined | {
                         kind: 'git_worktree';
                         displayName: string;
-                        baseRef: string | null;
-                        branchMode?: 'new' | 'existing' | undefined;
-                    } | null | undefined;
+                        baseRef: null | string;
+                        branchMode?: 'existing' | 'new' | undefined;
+                    };
                     title?: string | undefined;
                     memoryEnabled?: boolean | undefined;
-                    primaryTeamId?: string | null | undefined;
+                    primaryTeamId?: null | string | undefined;
                     teamCredentialBindings?: ({
                         v: 1;
                         slot: {
-                            kind: 'provider_model';
-                        } | {
                             kind: 'connected_service_purpose';
                             purpose: {
                                 consumer: {
@@ -428,30 +424,47 @@ export type WorkflowEffectsActionResultById = {
                                 };
                                 purpose: string;
                             };
+                        } | {
+                            kind: 'provider_model';
+                        };
+                        resourceId: null;
+                    } | {
+                        v: 1;
+                        slot: {
+                            kind: 'connected_service_purpose';
+                            purpose: {
+                                consumer: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                purpose: string;
+                            };
+                        } | {
+                            kind: 'provider_model';
                         };
                         resourceId: string;
                         expectedResourceRevision: number;
-                        deliveryMode: 'direct' | 'brokered' | 'vendor-native';
+                        deliveryMode: 'brokered' | 'direct' | 'vendor-native';
                         teamId?: string | undefined;
-                        providerModelSelection?: {
+                        providerModelSelection?: undefined | {
                             agentTargetKey: string;
                             modelId: string;
-                            application?: {
-                                agentTargetKey: string;
+                            application?: undefined | {
                                 implementationIdentity: {
                                     pluginId: string;
                                     localId: string;
                                 };
                                 endpointTemplateId: string;
                                 protocol: string;
-                            } | undefined;
+                                agentTargetKey: string;
+                            };
                             executionMachineId?: string | undefined;
-                            nativeSource?: {
+                            nativeSource?: undefined | {
                                 sourceRevision: string;
                                 providerTicket: string;
-                            } | undefined;
-                        } | undefined;
-                        nativeDelivery?: {
+                            };
+                        };
+                        nativeDelivery?: undefined | {
                             managedId: string;
                             controllerInstallationId: string;
                             guestInstallationId: string;
@@ -459,28 +472,19 @@ export type WorkflowEffectsActionResultById = {
                             placeholderRef: string;
                             sourceRevision: string;
                             providerTicket: string;
-                        } | undefined;
-                    } | {
-                        v: 1;
-                        slot: {
-                            kind: 'provider_model';
-                        } | {
-                            kind: 'connected_service_purpose';
-                            purpose: {
-                                consumer: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                purpose: string;
-                            };
                         };
-                        resourceId: null;
                     })[] | undefined;
                     allowedTools?: string[] | undefined;
                     unlistedTools?: 'ask' | 'deny' | undefined;
                 };
+            } | {
+                kind: 'session';
+                session: {
+                    serverId: string;
+                    sessionId: string;
+                };
             };
-            kind: 'answer' | 'pass' | 'failed' | 'cancelled' | 'declined' | 'terminal_no_result';
+            kind: 'answer' | 'cancelled' | 'declined' | 'failed' | 'pass' | 'terminal_no_result';
             executionSessionId?: string | undefined;
             result?: JsonValue | undefined;
             reply?: JsonValue | undefined;

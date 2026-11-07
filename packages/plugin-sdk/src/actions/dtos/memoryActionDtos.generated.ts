@@ -17,108 +17,58 @@ export type MemoryActionInputById = {
         text: string;
         reason: string;
         sourceMessageRef: {
-            kind: 'session';
-            session: {
-                serverId: string;
-                sessionId: string;
-            };
-            messageId: string;
-        } | {
             kind: 'discussion';
             discussion: {
                 serverId: string;
                 discussionId: string;
             };
             messageId: string;
-        };
-        topic?: string | undefined;
-        expiresAtMs?: number | undefined;
-        duplicateChoice?: {
-            kind: 'replace' | 'update';
-            factId: string;
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
         } | {
-            kind: 'keep_both';
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | undefined;
-    } | {
-        sessionRef: {
-            serverId: string;
-            sessionId: string;
-        };
-        expectedMetadataRevision: number;
-        text: string;
-        reason: string;
-        sourceMessageRef: {
             kind: 'session';
             session: {
                 serverId: string;
                 sessionId: string;
             };
             messageId: string;
-        } | {
-            kind: 'discussion';
-            discussion: {
-                serverId: string;
-                discussionId: string;
-            };
-            messageId: string;
         };
-        expiresAtMs?: number | undefined;
         topic?: string | undefined;
-        reviewedTarget?: {
-            ref: {
-                artifactId: string;
-                kind: 'doc';
-                serverId?: string | undefined;
-            };
+        expiresAtMs?: number | undefined;
+        duplicateChoice?: undefined | {
+            kind: 'keep_both';
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | null | undefined;
-        duplicateChoice?: {
+        } | {
             kind: 'replace' | 'update';
             factId: string;
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | {
-            kind: 'keep_both';
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | undefined;
+        };
     } | {
         scope: 'account';
         text: string;
         reason: string;
         sourceMessageRef: {
-            kind: 'session';
-            session: {
-                serverId: string;
-                sessionId: string;
-            };
-            messageId: string;
-        } | {
             kind: 'discussion';
             discussion: {
                 serverId: string;
                 discussionId: string;
             };
             messageId: string;
+        } | {
+            kind: 'session';
+            session: {
+                serverId: string;
+                sessionId: string;
+            };
+            messageId: string;
         };
         expiresAtMs?: number | undefined;
         topic?: string | undefined;
-        reviewedTarget?: {
+        reviewedTarget?: null | undefined | {
             ref: {
                 artifactId: string;
                 kind: 'doc';
@@ -128,21 +78,21 @@ export type MemoryActionInputById = {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | null | undefined;
-        duplicateChoice?: {
+        };
+        duplicateChoice?: undefined | {
+            kind: 'keep_both';
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | {
             kind: 'replace' | 'update';
             factId: string;
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | {
-            kind: 'keep_both';
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | undefined;
+        };
     } | {
         scope: 'project';
         projectRef: {
@@ -152,23 +102,23 @@ export type MemoryActionInputById = {
         text: string;
         reason: string;
         sourceMessageRef: {
-            kind: 'session';
-            session: {
-                serverId: string;
-                sessionId: string;
-            };
-            messageId: string;
-        } | {
             kind: 'discussion';
             discussion: {
                 serverId: string;
                 discussionId: string;
             };
             messageId: string;
+        } | {
+            kind: 'session';
+            session: {
+                serverId: string;
+                sessionId: string;
+            };
+            messageId: string;
         };
         expiresAtMs?: number | undefined;
         topic?: string | undefined;
-        reviewedTarget?: {
+        reviewedTarget?: null | undefined | {
             ref: {
                 artifactId: string;
                 kind: 'doc';
@@ -178,21 +128,71 @@ export type MemoryActionInputById = {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | null | undefined;
-        duplicateChoice?: {
+        };
+        duplicateChoice?: undefined | {
+            kind: 'keep_both';
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | {
             kind: 'replace' | 'update';
             factId: string;
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
+        };
+    } | {
+        sessionRef: {
+            serverId: string;
+            sessionId: string;
+        };
+        expectedMetadataRevision: number;
+        text: string;
+        reason: string;
+        sourceMessageRef: {
+            kind: 'discussion';
+            discussion: {
+                serverId: string;
+                discussionId: string;
+            };
+            messageId: string;
         } | {
+            kind: 'session';
+            session: {
+                serverId: string;
+                sessionId: string;
+            };
+            messageId: string;
+        };
+        expiresAtMs?: number | undefined;
+        topic?: string | undefined;
+        reviewedTarget?: null | undefined | {
+            ref: {
+                artifactId: string;
+                kind: 'doc';
+                serverId?: string | undefined;
+            };
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        };
+        duplicateChoice?: undefined | {
             kind: 'keep_both';
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | undefined;
+        } | {
+            kind: 'replace' | 'update';
+            factId: string;
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        };
     };
     readonly "memory.remember": {
         ref: {
@@ -207,60 +207,26 @@ export type MemoryActionInputById = {
         text: string;
         topic?: string | undefined;
         expiresAtMs?: number | undefined;
-        duplicateChoice?: {
+        duplicateChoice?: undefined | {
+            kind: 'keep_both';
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | {
             kind: 'replace' | 'update';
             factId: string;
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | {
-            kind: 'keep_both';
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | undefined;
-    } | {
-        sessionRef: {
-            serverId: string;
-            sessionId: string;
         };
-        expectedMetadataRevision: number;
-        text: string;
-        expiresAtMs?: number | undefined;
-        topic?: string | undefined;
-        reviewedTarget?: {
-            ref: {
-                artifactId: string;
-                kind: 'doc';
-                serverId?: string | undefined;
-            };
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | null | undefined;
-        duplicateChoice?: {
-            kind: 'replace' | 'update';
-            factId: string;
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | {
-            kind: 'keep_both';
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | undefined;
     } | {
         scope: 'account';
         text: string;
         expiresAtMs?: number | undefined;
         topic?: string | undefined;
-        reviewedTarget?: {
+        reviewedTarget?: null | undefined | {
             ref: {
                 artifactId: string;
                 kind: 'doc';
@@ -270,21 +236,21 @@ export type MemoryActionInputById = {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | null | undefined;
-        duplicateChoice?: {
+        };
+        duplicateChoice?: undefined | {
+            kind: 'keep_both';
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | {
             kind: 'replace' | 'update';
             factId: string;
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | {
-            kind: 'keep_both';
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | undefined;
+        };
     } | {
         scope: 'project';
         projectRef: {
@@ -294,7 +260,7 @@ export type MemoryActionInputById = {
         text: string;
         expiresAtMs?: number | undefined;
         topic?: string | undefined;
-        reviewedTarget?: {
+        reviewedTarget?: null | undefined | {
             ref: {
                 artifactId: string;
                 kind: 'doc';
@@ -304,21 +270,55 @@ export type MemoryActionInputById = {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | null | undefined;
-        duplicateChoice?: {
+        };
+        duplicateChoice?: undefined | {
+            kind: 'keep_both';
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | {
             kind: 'replace' | 'update';
             factId: string;
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | {
+        };
+    } | {
+        sessionRef: {
+            serverId: string;
+            sessionId: string;
+        };
+        expectedMetadataRevision: number;
+        text: string;
+        expiresAtMs?: number | undefined;
+        topic?: string | undefined;
+        reviewedTarget?: null | undefined | {
+            ref: {
+                artifactId: string;
+                kind: 'doc';
+                serverId?: string | undefined;
+            };
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        };
+        duplicateChoice?: undefined | {
             kind: 'keep_both';
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | undefined;
+        } | {
+            kind: 'replace' | 'update';
+            factId: string;
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        };
     };
     readonly "memory.update": {
         ref: {
@@ -333,21 +333,21 @@ export type MemoryActionInputById = {
         factId: string;
         text: string;
         topic?: string | undefined;
-        expiresAtMs?: number | null | undefined;
-        duplicateChoice?: {
+        expiresAtMs?: null | number | undefined;
+        duplicateChoice?: undefined | {
+            kind: 'keep_both';
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | {
             kind: 'replace' | 'update';
             factId: string;
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | {
-            kind: 'keep_both';
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | undefined;
+        };
     } | {
         ref: {
             artifactId: string;
@@ -362,20 +362,20 @@ export type MemoryActionInputById = {
         factId: string;
         restore: true;
         restoreTopic?: string | undefined;
-        duplicateChoice?: {
+        duplicateChoice?: undefined | {
+            kind: 'keep_both';
+            expectedRevision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+        } | {
             kind: 'replace' | 'update';
             factId: string;
             expectedRevision: {
                 headerVersion: number;
                 bodyVersion: number;
             };
-        } | {
-            kind: 'keep_both';
-            expectedRevision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-        } | undefined;
+        };
     };
     readonly "memory.forget": {
         ref: {
@@ -424,13 +424,13 @@ export type MemoryActionInputById = {
                     projectKey: string;
                 };
             };
-            mode: 'hints' | 'deep' | 'auto';
-            corpora?: ('sessions' | 'documents' | 'external_transcripts')[] | undefined;
+            mode: 'auto' | 'deep' | 'hints';
+            corpora?: ('documents' | 'external_transcripts' | 'sessions')[] | undefined;
             eligibleSessionIds?: string[] | undefined;
-            externalSource?: {
+            externalSource?: undefined | {
                 agentId: string;
                 sourceKey: string;
-            } | undefined;
+            };
             maxResults?: number | undefined;
             minScore?: number | undefined;
             cursor?: string | undefined;
@@ -456,7 +456,7 @@ export type MemoryActionInputById = {
             [x: string]: unknown;
             v: 1;
             query: string;
-            mode: 'hints' | 'deep' | 'auto';
+            mode: 'auto' | 'deep' | 'hints';
             scope: {
                 [x: string]: unknown;
                 type: 'global';
@@ -465,12 +465,12 @@ export type MemoryActionInputById = {
                 type: 'session';
                 sessionId: string;
             };
-            corpora?: ('sessions' | 'documents' | 'external_transcripts')[] | undefined;
+            corpora?: ('documents' | 'external_transcripts' | 'sessions')[] | undefined;
             eligibleSessionIds?: string[] | undefined;
-            externalSource?: {
+            externalSource?: undefined | {
                 agentId: string;
                 sourceKey: string;
-            } | undefined;
+            };
             maxResults?: number | undefined;
             minScore?: number | undefined;
             cursor?: string | undefined;
@@ -480,8 +480,18 @@ export type MemoryActionInputById = {
         machineIds?: string[] | undefined;
         mode?: 'auto' | 'indexed' | 'standard' | undefined;
         retryUnreachableMachines?: boolean | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "memory.get_window": {
+        [x: string]: unknown;
+        sessionId: string;
+        seqFrom: number;
+        seqTo: number;
+        machineId: string;
+        source?: undefined;
+        v?: 1 | undefined;
+    } | {
         source: {
             type: 'external_transcript';
             agentId: string;
@@ -492,14 +502,6 @@ export type MemoryActionInputById = {
         machineId: string;
         cursor?: string | undefined;
         v?: 1 | undefined;
-    } | {
-        [x: string]: unknown;
-        sessionId: string;
-        seqFrom: number;
-        seqTo: number;
-        machineId: string;
-        source?: undefined;
-        v?: 1 | undefined;
     };
     readonly "memory.ensure_up_to_date": {
         [x: string]: unknown;
@@ -509,23 +511,6 @@ export type MemoryActionInputById = {
 };
 export type MemoryActionResultById = {
     readonly "memory.decision.save": {
-        ok: true;
-        artifactId: string;
-        factId: string;
-        revision?: {
-            headerVersion: number;
-            bodyVersion: number;
-        } | undefined;
-        ref?: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        } | undefined;
-        attachment?: 'attached' | 'conflict' | undefined;
-        attachmentFailure?: {
-            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
-        } | undefined;
-    } | {
         ok: false;
         errorCode: 'memory_duplicate_choice_required';
         ref: {
@@ -542,48 +527,48 @@ export type MemoryActionResultById = {
             text: string;
             match: 'exact' | 'related';
             topic?: string | undefined;
-            decision?: {
+            decision?: undefined | {
                 reason: string;
                 sourceMessageRef: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
                     kind: 'discussion';
                     discussion: {
                         serverId: string;
                         discussionId: string;
                     };
                     messageId: string;
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
                 };
-                approvedBy: {
+                approvedBy: null | {
                     accountId: string;
                     atMs: number;
-                } | null;
-            } | undefined;
+                };
+            };
         }[];
+    } | {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        revision?: undefined | {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        ref?: undefined | {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        attachment?: 'attached' | 'conflict' | undefined;
+        attachmentFailure?: undefined | {
+            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        };
     };
     readonly "memory.remember": {
-        ok: true;
-        artifactId: string;
-        factId: string;
-        revision?: {
-            headerVersion: number;
-            bodyVersion: number;
-        } | undefined;
-        ref?: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        } | undefined;
-        attachment?: 'attached' | 'conflict' | undefined;
-        attachmentFailure?: {
-            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
-        } | undefined;
-    } | {
         ok: false;
         errorCode: 'memory_duplicate_choice_required';
         ref: {
@@ -600,48 +585,48 @@ export type MemoryActionResultById = {
             text: string;
             match: 'exact' | 'related';
             topic?: string | undefined;
-            decision?: {
+            decision?: undefined | {
                 reason: string;
                 sourceMessageRef: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
                     kind: 'discussion';
                     discussion: {
                         serverId: string;
                         discussionId: string;
                     };
                     messageId: string;
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
                 };
-                approvedBy: {
+                approvedBy: null | {
                     accountId: string;
                     atMs: number;
-                } | null;
-            } | undefined;
+                };
+            };
         }[];
+    } | {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        revision?: undefined | {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        ref?: undefined | {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        attachment?: 'attached' | 'conflict' | undefined;
+        attachmentFailure?: undefined | {
+            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        };
     };
     readonly "memory.update": {
-        ok: true;
-        artifactId: string;
-        factId: string;
-        revision?: {
-            headerVersion: number;
-            bodyVersion: number;
-        } | undefined;
-        ref?: {
-            artifactId: string;
-            kind: 'doc';
-            serverId?: string | undefined;
-        } | undefined;
-        attachment?: 'attached' | 'conflict' | undefined;
-        attachmentFailure?: {
-            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
-        } | undefined;
-    } | {
         ok: false;
         errorCode: 'memory_duplicate_choice_required';
         ref: {
@@ -658,47 +643,64 @@ export type MemoryActionResultById = {
             text: string;
             match: 'exact' | 'related';
             topic?: string | undefined;
-            decision?: {
+            decision?: undefined | {
                 reason: string;
                 sourceMessageRef: {
-                    kind: 'session';
-                    session: {
-                        serverId: string;
-                        sessionId: string;
-                    };
-                    messageId: string;
-                } | {
                     kind: 'discussion';
                     discussion: {
                         serverId: string;
                         discussionId: string;
                     };
                     messageId: string;
+                } | {
+                    kind: 'session';
+                    session: {
+                        serverId: string;
+                        sessionId: string;
+                    };
+                    messageId: string;
                 };
-                approvedBy: {
+                approvedBy: null | {
                     accountId: string;
                     atMs: number;
-                } | null;
-            } | undefined;
+                };
+            };
         }[];
+    } | {
+        ok: true;
+        artifactId: string;
+        factId: string;
+        revision?: undefined | {
+            headerVersion: number;
+            bodyVersion: number;
+        };
+        ref?: undefined | {
+            artifactId: string;
+            kind: 'doc';
+            serverId?: string | undefined;
+        };
+        attachment?: 'attached' | 'conflict' | undefined;
+        attachmentFailure?: undefined | {
+            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        };
     };
     readonly "memory.forget": {
         ok: true;
         artifactId: string;
         factId: string;
-        revision?: {
+        revision?: undefined | {
             headerVersion: number;
             bodyVersion: number;
-        } | undefined;
-        ref?: {
+        };
+        ref?: undefined | {
             artifactId: string;
             kind: 'doc';
             serverId?: string | undefined;
-        } | undefined;
+        };
         attachment?: 'attached' | 'conflict' | undefined;
-        attachmentFailure?: {
-            errorCode: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable' | 'project_context_unavailable' | 'project_context_access_denied' | 'action_account_scope_changed' | 'cancelled' | 'outcome_unknown' | 'home_unreachable' | 'memory_target_unavailable';
-        } | undefined;
+        attachmentFailure?: undefined | {
+            errorCode: 'action_account_scope_changed' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'cancelled' | 'home_unreachable' | 'memory_target_unavailable' | 'outcome_unknown' | 'project_context_access_denied' | 'project_context_unavailable' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        };
     };
     readonly "memory.read": {
         body: {
@@ -707,34 +709,34 @@ export type MemoryActionResultById = {
                 id: string;
                 text: string;
                 createdAtMs: number;
-                sourceSessionRef: {
+                sourceSessionRef: null | {
                     serverId: string;
                     sessionId: string;
-                } | null;
+                };
                 expiresAtMs?: number | undefined;
                 supersedes?: string | undefined;
-                decision?: {
+                decision?: undefined | {
                     reason: string;
                     sourceMessageRef: {
-                        kind: 'session';
-                        session: {
-                            serverId: string;
-                            sessionId: string;
-                        };
-                        messageId: string;
-                    } | {
                         kind: 'discussion';
                         discussion: {
                             serverId: string;
                             discussionId: string;
                         };
                         messageId: string;
+                    } | {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
                     };
-                    approvedBy: {
+                    approvedBy: null | {
                         accountId: string;
                         atMs: number;
-                    } | null;
-                } | undefined;
+                    };
+                };
             }[];
             topics: {
                 title: string;
@@ -758,35 +760,35 @@ export type MemoryActionResultById = {
                 id: string;
                 text: string;
                 createdAtMs: number;
-                sourceSessionRef: {
+                sourceSessionRef: null | {
                     serverId: string;
                     sessionId: string;
-                } | null;
+                };
                 archivedByMutation?: boolean | undefined;
                 expiresAtMs?: number | undefined;
                 supersedes?: string | undefined;
-                decision?: {
+                decision?: undefined | {
                     reason: string;
                     sourceMessageRef: {
-                        kind: 'session';
-                        session: {
-                            serverId: string;
-                            sessionId: string;
-                        };
-                        messageId: string;
-                    } | {
                         kind: 'discussion';
                         discussion: {
                             serverId: string;
                             discussionId: string;
                         };
                         messageId: string;
+                    } | {
+                        kind: 'session';
+                        session: {
+                            serverId: string;
+                            sessionId: string;
+                        };
+                        messageId: string;
                     };
-                    approvedBy: {
+                    approvedBy: null | {
                         accountId: string;
                         atMs: number;
-                    } | null;
-                } | undefined;
+                    };
+                };
             }[];
             title: string;
             summary: string;
@@ -815,6 +817,12 @@ export type MemoryActionResultById = {
     readonly "memory.search": {
         [x: string]: unknown;
         v: 1;
+        ok: false;
+        errorCode: 'memory_disabled' | 'memory_failed' | 'memory_index_missing' | 'memory_invalid_query' | 'memory_key_unavailable' | 'memory_project_scope_unsupported';
+        error: string;
+    } | {
+        [x: string]: unknown;
+        v: 1;
         ok: true;
         hits: ({
             [x: string]: unknown;
@@ -826,6 +834,24 @@ export type MemoryActionResultById = {
             summary: string;
             score: number;
             type?: undefined;
+        } | {
+            type: 'artifact';
+            ref: {
+                artifactId: string;
+                kind: 'doc';
+                serverId: string;
+            };
+            revision: {
+                headerVersion: number;
+                bodyVersion: number;
+            };
+            location: 'archive' | 'document' | 'facts' | {
+                type: 'topic';
+                title: string;
+            };
+            summary: string;
+            score: number;
+            factId?: string | undefined;
         } | {
             type: 'external_transcript';
             source: {
@@ -840,46 +866,22 @@ export type MemoryActionResultById = {
             summary: string;
             score: number;
             cursor?: string | undefined;
-        } | {
-            type: 'artifact';
-            ref: {
-                artifactId: string;
-                kind: 'doc';
-                serverId: string;
-            };
-            revision: {
-                headerVersion: number;
-                bodyVersion: number;
-            };
-            location: 'archive' | 'facts' | 'document' | {
-                type: 'topic';
-                title: string;
-            };
-            summary: string;
-            score: number;
-            factId?: string | undefined;
         })[];
-        documents?: {
-            state: 'partial' | 'unavailable' | 'ready' | 'pending';
-        } | undefined;
-        project?: {
-            state: 'partial' | 'unavailable' | 'ready';
-        } | undefined;
+        documents?: undefined | {
+            state: 'partial' | 'pending' | 'ready' | 'unavailable';
+        };
+        project?: undefined | {
+            state: 'partial' | 'ready' | 'unavailable';
+        };
         nextCursor?: string | undefined;
         hasMore?: boolean | undefined;
-    } | {
-        [x: string]: unknown;
-        v: 1;
-        ok: false;
-        errorCode: 'memory_disabled' | 'memory_key_unavailable' | 'memory_index_missing' | 'memory_invalid_query' | 'memory_project_scope_unsupported' | 'memory_failed';
-        error: string;
     };
     readonly "search.settings.get": {
         [x: string]: unknown;
         v: 1;
         enabled: boolean;
         enabledAtMs: number;
-        indexMode: 'hints' | 'deep';
+        indexMode: 'deep' | 'hints';
         defaultScope: {
             [x: string]: unknown;
             type: 'global';
@@ -887,7 +889,7 @@ export type MemoryActionResultById = {
             [x: string]: unknown;
             type: 'session';
         };
-        backfillPolicy: 'new_only' | 'last_30_days' | 'all_history';
+        backfillPolicy: 'all_history' | 'last_30_days' | 'new_only';
         includeArchivedSessions: boolean;
         conversationSearch: {
             standardSearch: {
@@ -896,7 +898,7 @@ export type MemoryActionResultById = {
             indexExternal: {
                 enabled: boolean;
                 agents: string[];
-                historyDays: number | null;
+                historyDays: null | number;
                 includeToolOutput: boolean;
             };
         };
@@ -905,12 +907,12 @@ export type MemoryActionResultById = {
             type: 'full';
         } | {
             [x: string]: unknown;
-            type: 'latest_messages';
-            maxSemanticMessagesPerSession: number;
-        } | {
-            [x: string]: unknown;
             type: 'latest_days';
             days: number;
+        } | {
+            [x: string]: unknown;
+            type: 'latest_messages';
+            maxSemanticMessagesPerSession: number;
         } | {
             [x: string]: unknown;
             type: 'since_enabled';
@@ -937,7 +939,7 @@ export type MemoryActionResultById = {
             maxShardChars: number;
             maxSummaryChars: number;
             paddingMessagesOnVerify: number;
-            updateMode: 'onIdle' | 'continuous';
+            updateMode: 'continuous' | 'onIdle';
             idleDelayMs: number;
             maxRunsPerHour: number;
             failureBackoffBaseMs: number;
@@ -965,27 +967,27 @@ export type MemoryActionResultById = {
             [x: string]: unknown;
             mode: 'custom' | 'disabled' | 'preset';
             presetId: 'balanced' | 'long_context' | 'quality';
-            custom: {
+            custom: null | {
                 [x: string]: unknown;
                 kind: 'local_transformers';
                 modelId: string;
-                queryPrefix: string | null;
-                documentPrefix: string | null;
+                queryPrefix: null | string;
+                documentPrefix: null | string;
             } | {
                 [x: string]: unknown;
                 kind: 'openai_compatible';
-                baseUrl: string | null;
-                apiKey: {
+                baseUrl: null | string;
+                apiKey: null | {
                     _isSecretValue: true;
                     value?: string | undefined;
-                    encryptedValue?: {
+                    encryptedValue?: undefined | {
                         t: 'enc-v1';
                         c: string;
-                    } | undefined;
-                } | null;
+                    };
+                };
                 model: string;
-                dimensions: number | null;
-            } | null;
+                dimensions: null | number;
+            };
             blend: {
                 [x: string]: unknown;
                 ftsWeight: number;
@@ -1010,7 +1012,7 @@ export type MemoryActionResultById = {
         v: 1;
         enabled: boolean;
         enabledAtMs: number;
-        indexMode: 'hints' | 'deep';
+        indexMode: 'deep' | 'hints';
         defaultScope: {
             [x: string]: unknown;
             type: 'global';
@@ -1018,7 +1020,7 @@ export type MemoryActionResultById = {
             [x: string]: unknown;
             type: 'session';
         };
-        backfillPolicy: 'new_only' | 'last_30_days' | 'all_history';
+        backfillPolicy: 'all_history' | 'last_30_days' | 'new_only';
         includeArchivedSessions: boolean;
         conversationSearch: {
             standardSearch: {
@@ -1027,7 +1029,7 @@ export type MemoryActionResultById = {
             indexExternal: {
                 enabled: boolean;
                 agents: string[];
-                historyDays: number | null;
+                historyDays: null | number;
                 includeToolOutput: boolean;
             };
         };
@@ -1036,12 +1038,12 @@ export type MemoryActionResultById = {
             type: 'full';
         } | {
             [x: string]: unknown;
-            type: 'latest_messages';
-            maxSemanticMessagesPerSession: number;
-        } | {
-            [x: string]: unknown;
             type: 'latest_days';
             days: number;
+        } | {
+            [x: string]: unknown;
+            type: 'latest_messages';
+            maxSemanticMessagesPerSession: number;
         } | {
             [x: string]: unknown;
             type: 'since_enabled';
@@ -1068,7 +1070,7 @@ export type MemoryActionResultById = {
             maxShardChars: number;
             maxSummaryChars: number;
             paddingMessagesOnVerify: number;
-            updateMode: 'onIdle' | 'continuous';
+            updateMode: 'continuous' | 'onIdle';
             idleDelayMs: number;
             maxRunsPerHour: number;
             failureBackoffBaseMs: number;
@@ -1096,27 +1098,27 @@ export type MemoryActionResultById = {
             [x: string]: unknown;
             mode: 'custom' | 'disabled' | 'preset';
             presetId: 'balanced' | 'long_context' | 'quality';
-            custom: {
+            custom: null | {
                 [x: string]: unknown;
                 kind: 'local_transformers';
                 modelId: string;
-                queryPrefix: string | null;
-                documentPrefix: string | null;
+                queryPrefix: null | string;
+                documentPrefix: null | string;
             } | {
                 [x: string]: unknown;
                 kind: 'openai_compatible';
-                baseUrl: string | null;
-                apiKey: {
+                baseUrl: null | string;
+                apiKey: null | {
                     _isSecretValue: true;
                     value?: string | undefined;
-                    encryptedValue?: {
+                    encryptedValue?: undefined | {
                         t: 'enc-v1';
                         c: string;
-                    } | undefined;
-                } | null;
+                    };
+                };
                 model: string;
-                dimensions: number | null;
-            } | null;
+                dimensions: null | number;
+            };
             blend: {
                 [x: string]: unknown;
                 ftsWeight: number;
@@ -1140,7 +1142,7 @@ export type MemoryActionResultById = {
         [x: string]: unknown;
         v: 1;
         enabled: boolean;
-        indexMode: 'hints' | 'deep';
+        indexMode: 'deep' | 'hints';
         hintsIndexReady: boolean;
         hintsIndexHasContent: boolean;
         deepIndexReady: boolean;
@@ -1151,42 +1153,43 @@ export type MemoryActionResultById = {
         embeddingsMode: 'custom' | 'disabled' | 'preset';
         embeddingsPresetId: 'balanced' | 'long_context' | 'quality' | null;
         embeddingsProviderKind: 'local_transformers' | 'openai_compatible' | null;
-        embeddingsModelId: string | null;
-        embeddingsRuntimeState: 'error' | 'unavailable' | 'ready' | 'downloading';
+        embeddingsModelId: null | string;
+        embeddingsRuntimeState: 'downloading' | 'error' | 'ready' | 'unavailable';
         embeddingsUsingFallback: boolean;
-        tier1DbPath: string | null;
-        deepDbPath: string | null;
-        tier1DbBytes: number | null;
-        deepDbBytes: number | null;
-        indexContent: {
+        tier1DbPath: null | string;
+        deepDbPath: null | string;
+        tier1DbBytes: null | number;
+        deepDbBytes: null | number;
+        indexContent: null | {
             [x: string]: unknown;
             lightShardCount: number;
             lightTermCount: number;
             deepChunkCount: number;
             deepEmbeddingCount: number;
             searchableSessionCount: number;
-            lastIndexedAtMs: number | null;
-            latestIndexedMessageAtMs: number | null;
-        } | null;
-        worker: {
+            lastIndexedAtMs: null | number;
+            latestIndexedMessageAtMs: null | number;
+        };
+        worker: null | {
             [x: string]: unknown;
-            state: 'error' | 'disabled' | 'idle' | 'inventorying' | 'indexing' | 'waiting' | 'backoff';
-            lastTickAtMs: number | null;
-            lastInventoryAtMs: number | null;
-            currentSessionId: string | null;
-            currentPhase: string | null;
-            activeOperations?: {
+            state: 'backoff' | 'disabled' | 'error' | 'idle' | 'indexing' | 'inventorying' | 'waiting';
+            lastTickAtMs: null | number;
+            lastInventoryAtMs: null | number;
+            currentSessionId: null | string;
+            currentPhase: null | string;
+            idleGraceUntilMs?: null | number | undefined;
+            activeOperations?: undefined | {
                 kind: 'documents' | 'transcript';
                 sessionIds: string[];
-            }[] | undefined;
-            sessionProgress?: {
+            }[];
+            sessionProgress?: undefined | {
                 sessionId: string;
-                observedSeq: number | null;
-                checkedSeq: number | null;
+                observedSeq: null | number;
+                checkedSeq: null | number;
                 indexedSeq: number;
-            }[] | undefined;
-        } | null;
-        queue: {
+            }[];
+        };
+        queue: null | {
             [x: string]: unknown;
             selectedSessionCount: number;
             queuedSessionCount: number;
@@ -1195,12 +1198,12 @@ export type MemoryActionResultById = {
             emptySessionCount: number;
             failedSessionCount: number;
             waitingSessionCount: number;
-            oldestQueuedAtMs: number | null;
-        } | null;
-        lastRun: {
+            oldestQueuedAtMs: null | number;
+        };
+        lastRun: null | {
             [x: string]: unknown;
-            startedAtMs: number | null;
-            finishedAtMs: number | null;
+            startedAtMs: null | number;
+            finishedAtMs: null | number;
             sessionsConsidered: number;
             sessionsProcessed: number;
             rawRowsFetched: number;
@@ -1209,11 +1212,13 @@ export type MemoryActionResultById = {
             deepChunksCreated: number;
             failures: number;
             skipReasons: Record<string, number>;
-        } | null;
+        };
         includeArchivedSessionsEffective?: boolean | undefined;
         documentSearchSupported?: boolean | undefined;
         projectSearchSupported?: boolean | undefined;
-        documents?: {
+        documents?: undefined | {
+            state: 'pending';
+        } | {
             state: 'ready';
             facts: {
                 ref: {
@@ -1229,31 +1234,29 @@ export type MemoryActionResultById = {
                 loadedFactCount?: number | undefined;
             }[];
         } | {
-            state: 'pending';
-        } | {
             state: 'unavailable';
-        } | undefined;
-        sources?: {
+        };
+        sources?: undefined | {
             source: {
-                type: 'happier_session';
-                sessionId: string;
-            } | {
                 type: 'external_transcript';
                 agentId: string;
                 sourceKey: string;
+            } | {
+                type: 'happier_session';
+                sessionId: string;
             };
-            state: 'error' | 'disabled' | 'ready' | 'indexing';
+            state: 'disabled' | 'error' | 'indexing' | 'ready';
             indexedThroughMs?: number | undefined;
             errorCode?: string | undefined;
             errorReason?: string | undefined;
-        }[] | undefined;
+        }[];
     };
     readonly "memory.clear_index": {
         ok: true;
     };
     readonly "search.conversations": {
         hits: ({
-            machineId: string | null;
+            machineId: null | string;
             mode: 'indexed';
             hit: {
                 [x: string]: unknown;
@@ -1265,6 +1268,24 @@ export type MemoryActionResultById = {
                 summary: string;
                 score: number;
                 type?: undefined;
+            } | {
+                type: 'artifact';
+                ref: {
+                    artifactId: string;
+                    kind: 'doc';
+                    serverId: string;
+                };
+                revision: {
+                    headerVersion: number;
+                    bodyVersion: number;
+                };
+                location: 'archive' | 'document' | 'facts' | {
+                    type: 'topic';
+                    title: string;
+                };
+                summary: string;
+                score: number;
+                factId?: string | undefined;
             } | {
                 type: 'external_transcript';
                 source: {
@@ -1279,24 +1300,6 @@ export type MemoryActionResultById = {
                 summary: string;
                 score: number;
                 cursor?: string | undefined;
-            } | {
-                type: 'artifact';
-                ref: {
-                    artifactId: string;
-                    kind: 'doc';
-                    serverId: string;
-                };
-                revision: {
-                    headerVersion: number;
-                    bodyVersion: number;
-                };
-                location: 'archive' | 'facts' | 'document' | {
-                    type: 'topic';
-                    title: string;
-                };
-                summary: string;
-                score: number;
-                factId?: string | undefined;
             };
         } | {
             machineId: string;
@@ -1313,34 +1316,34 @@ export type MemoryActionResultById = {
                 cwd?: string | undefined;
                 messageCount?: number | undefined;
                 createdAtMs?: number | undefined;
-                activity?: 'unknown' | 'idle' | 'running' | 'active_recently' | undefined;
+                activity?: 'active_recently' | 'idle' | 'running' | 'unknown' | undefined;
                 archived?: boolean | undefined;
-                details?: {
+                details?: undefined | {
                     [x: string]: unknown;
-                } | undefined;
+                };
                 linkData?: PluginAgentExternalSessionLinkDataObject | undefined;
                 linkedSessionId?: string | undefined;
                 imported?: boolean | undefined;
                 materializedThrough?: number | undefined;
-                thread?: {
+                thread?: undefined | {
                     kind: 'reviewer' | 'subagent';
-                    parentRemoteSessionId: string | null;
+                    parentRemoteSessionId: null | string;
                     parentTitle?: string | undefined;
-                } | undefined;
-                match?: {
+                };
+                match?: undefined | {
                     snippet: string;
                     sourceItemId: string;
                     messageIndex: number;
-                } | undefined;
+                };
             };
         })[];
         machines: {
             machineId: string;
-            status: 'ok' | 'partial' | 'offline' | 'outdated' | 'disabled-by-settings';
+            status: 'disabled-by-settings' | 'offline' | 'ok' | 'outdated' | 'partial';
             standardSearchEnabled?: boolean | undefined;
-            documents?: 'partial' | 'unavailable' | 'ready' | 'pending' | undefined;
+            documents?: 'partial' | 'pending' | 'ready' | 'unavailable' | undefined;
         }[];
-        sources?: {
+        sources?: undefined | {
             machineId: string;
             agentId: string;
             sourceKey: string;
@@ -1350,29 +1353,29 @@ export type MemoryActionResultById = {
             key?: string | undefined;
             label?: string | undefined;
             detail?: string | undefined;
-        }[] | undefined;
+        }[];
         homeStatus?: 'ok' | 'partial' | 'unavailable' | undefined;
-        failures?: {
+        failures?: undefined | {
             machineId: string;
             agentId: string;
             sourceKey: string;
-            errorCode: 'invalid_request' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'internal_error';
+            errorCode: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'internal_error' | 'invalid_request' | 'machine_offline';
             retryable: boolean;
-        }[] | undefined;
-        continuations?: {
-            machineId: string | null;
+        }[];
+        continuations?: undefined | {
+            machineId: null | string;
             cursor: string;
             sourceKey?: string | undefined;
-        }[] | undefined;
-        resetSources?: {
+        }[];
+        resetSources?: undefined | {
             machineId: string;
             sourceKey: string;
-        }[] | undefined;
-        completedStandardSources?: {
+        }[];
+        completedStandardSources?: undefined | {
             machineId: string;
             agentId: string;
             sourceKey: string;
-        }[] | undefined;
+        }[];
     };
     readonly "memory.get_window": {
         [x: string]: unknown;
@@ -1392,7 +1395,7 @@ export type MemoryActionResultById = {
             seqFrom: number;
             seqTo: number;
         }[];
-        externalSnippets?: {
+        externalSnippets?: undefined | {
             source: {
                 type: 'external_transcript';
                 agentId: string;
@@ -1403,7 +1406,7 @@ export type MemoryActionResultById = {
             createdAtMs: number;
             text: string;
             cursor?: string | undefined;
-        }[] | undefined;
+        }[];
     };
     readonly "memory.ensure_up_to_date": {
         [x: string]: unknown;

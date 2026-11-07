@@ -11,7 +11,7 @@ export type BrowserContextActionInputById = {
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
     };
     readonly "browser.context.captureScreenshot": {
         [x: string]: unknown;
@@ -20,41 +20,43 @@ export type BrowserContextActionInputById = {
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
     };
     readonly "browser.context.captureSelectedElement": {
         [x: string]: unknown;
         browserSessionId: string;
         viewId: string;
-        pickerResult?: {
+        pickerResult?: undefined | {
             v: 1;
             pickerRequestId: string;
             viewId: string;
             navigationGeneration: number;
             tier: 'cdp' | 'injectedPage';
-            status: 'selected' | 'cancelled' | 'blocked' | 'failed' | 'collectorDegraded';
+            status: 'blocked' | 'cancelled' | 'collectorDegraded' | 'failed' | 'selected';
             audited: true;
             backendNodeRef?: string | undefined;
             selectorPath?: string | undefined;
-            rect?: {
+            rect?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
+            };
             accessibleName?: string | undefined;
             componentName?: string | undefined;
-            sourceLocation?: {
+            sourceLocation?: undefined | {
                 file: string;
                 line?: number | undefined;
                 column?: number | undefined;
-            } | undefined;
-            errorCode?: 'feature_disabled' | 'adapter_unavailable' | 'policy_denied' | 'collector_denied' | 'collector_unavailable' | 'collector_degraded' | 'navigation_stale' | 'target_detached' | 'page_crashed' | 'unsupported_fidelity' | undefined;
-        } | undefined;
+            };
+            errorCode?: 'adapter_unavailable' | 'collector_degraded' | 'collector_denied' | 'collector_unavailable' | 'feature_disabled' | 'navigation_stale' | 'page_crashed' | 'policy_denied' | 'target_detached' | 'unsupported_fidelity' | undefined;
+        };
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "browser.context.captureNetworkSummary": {
         [x: string]: unknown;
@@ -63,7 +65,7 @@ export type BrowserContextActionInputById = {
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
     };
     readonly "browser.context.captureConsoleSummary": {
         [x: string]: unknown;
@@ -72,7 +74,7 @@ export type BrowserContextActionInputById = {
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
     };
     readonly "browser.context.annotation.start": {
         [x: string]: unknown;
@@ -81,7 +83,9 @@ export type BrowserContextActionInputById = {
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "browser.context.annotation.cancel": {
         [x: string]: unknown;
@@ -90,25 +94,26 @@ export type BrowserContextActionInputById = {
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "browser.context.annotation.attachDraft": {
         navigationGeneration: number;
         browserSessionId: string;
         viewId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "browser.context.annotation.setDraftComment": {
-        comment: string | null;
+        comment: null | string;
         navigationGeneration: number;
         browserSessionId: string;
         viewId: string;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "browser.context.attachToComposer": {
-        source: 'activePage';
-        navigationGeneration: number;
-        browserSessionId: string;
-        viewId: string;
-    } | {
+    readonly "browser.context.attachToComposer": ({
         [x: string]: unknown;
         browserSessionId: string;
         viewId: string;
@@ -116,7 +121,14 @@ export type BrowserContextActionInputById = {
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
+    } | {
+        source: 'activePage';
+        navigationGeneration: number;
+        browserSessionId: string;
+        viewId: string;
+    }) & {
+        clientId?: string | undefined;
     };
     readonly "browser.context.attachToAgentTurn": {
         [x: string]: unknown;
@@ -125,7 +137,7 @@ export type BrowserContextActionInputById = {
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
     };
     readonly "browser.context.clear": {
         [x: string]: unknown;
@@ -134,20 +146,208 @@ export type BrowserContextActionInputById = {
         navigationGeneration?: number | undefined;
         contextId?: string | undefined;
         annotationId?: string | undefined;
-        command?: 'captureScreenshot' | 'capturePageContext' | 'captureSelectedElement' | 'captureNetworkSummary' | 'captureConsoleSummary' | 'attachToComposer' | 'attachToAgentTurn' | 'clearCapturedContext' | undefined;
+        command?: 'attachToAgentTurn' | 'attachToComposer' | 'captureConsoleSummary' | 'captureNetworkSummary' | 'capturePageContext' | 'captureScreenshot' | 'captureSelectedElement' | 'clearCapturedContext' | undefined;
     };
 };
 export type BrowserContextActionResultById = {
-    readonly "browser.context.capturePage": {
+    readonly "browser.context.capturePage": ({
+        annotationId: string;
+        browserSessionId: string;
+        imageRef: {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        marks: {
+            v: 1;
+            image: {
+                width: number;
+                height: number;
+                scale: number;
+            };
+            marks: ({
+                kind: 'arrow';
+                from: {
+                    x: number;
+                    y: number;
+                };
+                to: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'blur';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'element';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                label: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            })[];
+            crop?: undefined | {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        };
+        elements: {
+            markId: string;
+            selectorPath: string;
+            accessibleName?: string | undefined;
+            componentName?: string | undefined;
+            sourceLocation?: undefined | {
+                file: string;
+                line?: number | undefined;
+                column?: number | undefined;
+            };
+        }[];
+        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        pageUrl?: string | undefined;
+        pageTitle?: string | undefined;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -168,37 +368,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -206,74 +381,60 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    })[] | {
         annotationId: string;
         browserSessionId: string;
         imageRef: {
@@ -282,13 +443,13 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         marks: {
             v: 1;
@@ -307,67 +468,8 @@ export type BrowserContextActionResultById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -377,7 +479,7 @@ export type BrowserContextActionResultById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -388,40 +490,103 @@ export type BrowserContextActionResultById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             })[];
-            crop?: {
+            crop?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
+            };
         };
         elements: {
             markId: string;
             selectorPath: string;
             accessibleName?: string | undefined;
             componentName?: string | undefined;
-            sourceLocation?: {
+            sourceLocation?: undefined | {
                 file: string;
                 line?: number | undefined;
                 column?: number | undefined;
-            } | undefined;
+            };
         }[];
         kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         pageUrl?: string | undefined;
         pageTitle?: string | undefined;
         disabledReason?: string | undefined;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
+        error: string;
     } | {
         v: 1;
         attachmentId: string;
@@ -429,9 +594,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -440,13 +605,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -465,67 +630,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -535,7 +641,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -546,26 +652,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -573,17 +738,56 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
-    } | ({
+        };
+    } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -604,37 +808,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -642,237 +821,258 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
-        annotationId: string;
-        browserSessionId: string;
-        imageRef: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: {
-                sessionId: string;
-                storage: 'session' | 'daemon';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            } | undefined;
-        };
-        marks: {
-            v: 1;
-            image: {
-                width: number;
-                height: number;
-                scale: number;
-            };
-            marks: ({
-                kind: 'arrow';
-                from: {
-                    x: number;
-                    y: number;
-                };
-                to: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'blur';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'element';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                id: string;
-            })[];
-            crop?: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            } | undefined;
-        };
-        elements: {
-            markId: string;
-            selectorPath: string;
-            accessibleName?: string | undefined;
-            componentName?: string | undefined;
-            sourceLocation?: {
-                file: string;
-                line?: number | undefined;
-                column?: number | undefined;
-            } | undefined;
-        }[];
-        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        pageUrl?: string | undefined;
-        pageTitle?: string | undefined;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
         disabledReason?: string | undefined;
-    })[] | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
-        error: string;
     };
-    readonly "browser.context.captureScreenshot": {
+    readonly "browser.context.captureScreenshot": ({
+        annotationId: string;
+        browserSessionId: string;
+        imageRef: {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        marks: {
+            v: 1;
+            image: {
+                width: number;
+                height: number;
+                scale: number;
+            };
+            marks: ({
+                kind: 'arrow';
+                from: {
+                    x: number;
+                    y: number;
+                };
+                to: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'blur';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'element';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                label: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            })[];
+            crop?: undefined | {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        };
+        elements: {
+            markId: string;
+            selectorPath: string;
+            accessibleName?: string | undefined;
+            componentName?: string | undefined;
+            sourceLocation?: undefined | {
+                file: string;
+                line?: number | undefined;
+                column?: number | undefined;
+            };
+        }[];
+        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        pageUrl?: string | undefined;
+        pageTitle?: string | undefined;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -893,37 +1093,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -931,74 +1106,60 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    })[] | {
         annotationId: string;
         browserSessionId: string;
         imageRef: {
@@ -1007,13 +1168,13 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         marks: {
             v: 1;
@@ -1032,67 +1193,8 @@ export type BrowserContextActionResultById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -1102,7 +1204,7 @@ export type BrowserContextActionResultById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -1113,40 +1215,103 @@ export type BrowserContextActionResultById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             })[];
-            crop?: {
+            crop?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
+            };
         };
         elements: {
             markId: string;
             selectorPath: string;
             accessibleName?: string | undefined;
             componentName?: string | undefined;
-            sourceLocation?: {
+            sourceLocation?: undefined | {
                 file: string;
                 line?: number | undefined;
                 column?: number | undefined;
-            } | undefined;
+            };
         }[];
         kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         pageUrl?: string | undefined;
         pageTitle?: string | undefined;
         disabledReason?: string | undefined;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
+        error: string;
     } | {
         v: 1;
         attachmentId: string;
@@ -1154,9 +1319,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -1165,13 +1330,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -1190,67 +1355,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -1260,7 +1366,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -1271,26 +1377,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -1298,17 +1463,56 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
-    } | ({
+        };
+    } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -1329,37 +1533,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -1367,237 +1546,258 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
-        annotationId: string;
-        browserSessionId: string;
-        imageRef: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: {
-                sessionId: string;
-                storage: 'session' | 'daemon';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            } | undefined;
-        };
-        marks: {
-            v: 1;
-            image: {
-                width: number;
-                height: number;
-                scale: number;
-            };
-            marks: ({
-                kind: 'arrow';
-                from: {
-                    x: number;
-                    y: number;
-                };
-                to: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'blur';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'element';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                id: string;
-            })[];
-            crop?: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            } | undefined;
-        };
-        elements: {
-            markId: string;
-            selectorPath: string;
-            accessibleName?: string | undefined;
-            componentName?: string | undefined;
-            sourceLocation?: {
-                file: string;
-                line?: number | undefined;
-                column?: number | undefined;
-            } | undefined;
-        }[];
-        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        pageUrl?: string | undefined;
-        pageTitle?: string | undefined;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
         disabledReason?: string | undefined;
-    })[] | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
-        error: string;
     };
-    readonly "browser.context.captureSelectedElement": {
+    readonly "browser.context.captureSelectedElement": ({
+        annotationId: string;
+        browserSessionId: string;
+        imageRef: {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        marks: {
+            v: 1;
+            image: {
+                width: number;
+                height: number;
+                scale: number;
+            };
+            marks: ({
+                kind: 'arrow';
+                from: {
+                    x: number;
+                    y: number;
+                };
+                to: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'blur';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'element';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                label: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            })[];
+            crop?: undefined | {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        };
+        elements: {
+            markId: string;
+            selectorPath: string;
+            accessibleName?: string | undefined;
+            componentName?: string | undefined;
+            sourceLocation?: undefined | {
+                file: string;
+                line?: number | undefined;
+                column?: number | undefined;
+            };
+        }[];
+        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        pageUrl?: string | undefined;
+        pageTitle?: string | undefined;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -1618,37 +1818,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -1656,74 +1831,60 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    })[] | {
         annotationId: string;
         browserSessionId: string;
         imageRef: {
@@ -1732,13 +1893,13 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         marks: {
             v: 1;
@@ -1757,67 +1918,8 @@ export type BrowserContextActionResultById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -1827,7 +1929,7 @@ export type BrowserContextActionResultById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -1838,40 +1940,103 @@ export type BrowserContextActionResultById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             })[];
-            crop?: {
+            crop?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
+            };
         };
         elements: {
             markId: string;
             selectorPath: string;
             accessibleName?: string | undefined;
             componentName?: string | undefined;
-            sourceLocation?: {
+            sourceLocation?: undefined | {
                 file: string;
                 line?: number | undefined;
                 column?: number | undefined;
-            } | undefined;
+            };
         }[];
         kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         pageUrl?: string | undefined;
         pageTitle?: string | undefined;
         disabledReason?: string | undefined;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
+        error: string;
     } | {
         v: 1;
         attachmentId: string;
@@ -1879,9 +2044,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -1890,13 +2055,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -1915,67 +2080,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -1985,7 +2091,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -1996,26 +2102,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -2023,17 +2188,56 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
-    } | ({
+        };
+    } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -2054,37 +2258,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -2092,237 +2271,258 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
-        annotationId: string;
-        browserSessionId: string;
-        imageRef: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: {
-                sessionId: string;
-                storage: 'session' | 'daemon';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            } | undefined;
-        };
-        marks: {
-            v: 1;
-            image: {
-                width: number;
-                height: number;
-                scale: number;
-            };
-            marks: ({
-                kind: 'arrow';
-                from: {
-                    x: number;
-                    y: number;
-                };
-                to: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'blur';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'element';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                id: string;
-            })[];
-            crop?: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            } | undefined;
-        };
-        elements: {
-            markId: string;
-            selectorPath: string;
-            accessibleName?: string | undefined;
-            componentName?: string | undefined;
-            sourceLocation?: {
-                file: string;
-                line?: number | undefined;
-                column?: number | undefined;
-            } | undefined;
-        }[];
-        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        pageUrl?: string | undefined;
-        pageTitle?: string | undefined;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
         disabledReason?: string | undefined;
-    })[] | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
-        error: string;
     };
-    readonly "browser.context.captureNetworkSummary": {
+    readonly "browser.context.captureNetworkSummary": ({
+        annotationId: string;
+        browserSessionId: string;
+        imageRef: {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        marks: {
+            v: 1;
+            image: {
+                width: number;
+                height: number;
+                scale: number;
+            };
+            marks: ({
+                kind: 'arrow';
+                from: {
+                    x: number;
+                    y: number;
+                };
+                to: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'blur';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'element';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                label: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            })[];
+            crop?: undefined | {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        };
+        elements: {
+            markId: string;
+            selectorPath: string;
+            accessibleName?: string | undefined;
+            componentName?: string | undefined;
+            sourceLocation?: undefined | {
+                file: string;
+                line?: number | undefined;
+                column?: number | undefined;
+            };
+        }[];
+        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        pageUrl?: string | undefined;
+        pageTitle?: string | undefined;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -2343,37 +2543,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -2381,74 +2556,60 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    })[] | {
         annotationId: string;
         browserSessionId: string;
         imageRef: {
@@ -2457,13 +2618,13 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         marks: {
             v: 1;
@@ -2482,67 +2643,8 @@ export type BrowserContextActionResultById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -2552,7 +2654,7 @@ export type BrowserContextActionResultById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -2563,40 +2665,103 @@ export type BrowserContextActionResultById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             })[];
-            crop?: {
+            crop?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
+            };
         };
         elements: {
             markId: string;
             selectorPath: string;
             accessibleName?: string | undefined;
             componentName?: string | undefined;
-            sourceLocation?: {
+            sourceLocation?: undefined | {
                 file: string;
                 line?: number | undefined;
                 column?: number | undefined;
-            } | undefined;
+            };
         }[];
         kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         pageUrl?: string | undefined;
         pageTitle?: string | undefined;
         disabledReason?: string | undefined;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
+        error: string;
     } | {
         v: 1;
         attachmentId: string;
@@ -2604,9 +2769,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -2615,13 +2780,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -2640,67 +2805,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -2710,7 +2816,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -2721,26 +2827,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -2748,17 +2913,56 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
-    } | ({
+        };
+    } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -2779,37 +2983,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -2817,237 +2996,258 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
-        annotationId: string;
-        browserSessionId: string;
-        imageRef: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: {
-                sessionId: string;
-                storage: 'session' | 'daemon';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            } | undefined;
-        };
-        marks: {
-            v: 1;
-            image: {
-                width: number;
-                height: number;
-                scale: number;
-            };
-            marks: ({
-                kind: 'arrow';
-                from: {
-                    x: number;
-                    y: number;
-                };
-                to: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'blur';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'element';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                id: string;
-            })[];
-            crop?: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            } | undefined;
-        };
-        elements: {
-            markId: string;
-            selectorPath: string;
-            accessibleName?: string | undefined;
-            componentName?: string | undefined;
-            sourceLocation?: {
-                file: string;
-                line?: number | undefined;
-                column?: number | undefined;
-            } | undefined;
-        }[];
-        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        pageUrl?: string | undefined;
-        pageTitle?: string | undefined;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
         disabledReason?: string | undefined;
-    })[] | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
-        error: string;
     };
-    readonly "browser.context.captureConsoleSummary": {
+    readonly "browser.context.captureConsoleSummary": ({
+        annotationId: string;
+        browserSessionId: string;
+        imageRef: {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        marks: {
+            v: 1;
+            image: {
+                width: number;
+                height: number;
+                scale: number;
+            };
+            marks: ({
+                kind: 'arrow';
+                from: {
+                    x: number;
+                    y: number;
+                };
+                to: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'blur';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'element';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                label: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            })[];
+            crop?: undefined | {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        };
+        elements: {
+            markId: string;
+            selectorPath: string;
+            accessibleName?: string | undefined;
+            componentName?: string | undefined;
+            sourceLocation?: undefined | {
+                file: string;
+                line?: number | undefined;
+                column?: number | undefined;
+            };
+        }[];
+        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        pageUrl?: string | undefined;
+        pageTitle?: string | undefined;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -3068,37 +3268,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -3106,74 +3281,60 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    })[] | {
         annotationId: string;
         browserSessionId: string;
         imageRef: {
@@ -3182,13 +3343,13 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         marks: {
             v: 1;
@@ -3207,67 +3368,8 @@ export type BrowserContextActionResultById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -3277,7 +3379,7 @@ export type BrowserContextActionResultById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -3288,40 +3390,103 @@ export type BrowserContextActionResultById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             })[];
-            crop?: {
+            crop?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
+            };
         };
         elements: {
             markId: string;
             selectorPath: string;
             accessibleName?: string | undefined;
             componentName?: string | undefined;
-            sourceLocation?: {
+            sourceLocation?: undefined | {
                 file: string;
                 line?: number | undefined;
                 column?: number | undefined;
-            } | undefined;
+            };
         }[];
         kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         pageUrl?: string | undefined;
         pageTitle?: string | undefined;
         disabledReason?: string | undefined;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
+        error: string;
     } | {
         v: 1;
         attachmentId: string;
@@ -3329,9 +3494,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -3340,13 +3505,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -3365,67 +3530,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -3435,7 +3541,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -3446,26 +3552,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -3473,17 +3638,56 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
-    } | ({
+        };
+    } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -3504,37 +3708,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -3542,237 +3721,258 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
-        annotationId: string;
-        browserSessionId: string;
-        imageRef: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: {
-                sessionId: string;
-                storage: 'session' | 'daemon';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            } | undefined;
-        };
-        marks: {
-            v: 1;
-            image: {
-                width: number;
-                height: number;
-                scale: number;
-            };
-            marks: ({
-                kind: 'arrow';
-                from: {
-                    x: number;
-                    y: number;
-                };
-                to: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'blur';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'element';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                id: string;
-            })[];
-            crop?: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            } | undefined;
-        };
-        elements: {
-            markId: string;
-            selectorPath: string;
-            accessibleName?: string | undefined;
-            componentName?: string | undefined;
-            sourceLocation?: {
-                file: string;
-                line?: number | undefined;
-                column?: number | undefined;
-            } | undefined;
-        }[];
-        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        pageUrl?: string | undefined;
-        pageTitle?: string | undefined;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
         disabledReason?: string | undefined;
-    })[] | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
-        error: string;
     };
-    readonly "browser.context.annotation.start": {
+    readonly "browser.context.annotation.start": ({
+        annotationId: string;
+        browserSessionId: string;
+        imageRef: {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        marks: {
+            v: 1;
+            image: {
+                width: number;
+                height: number;
+                scale: number;
+            };
+            marks: ({
+                kind: 'arrow';
+                from: {
+                    x: number;
+                    y: number;
+                };
+                to: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'blur';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'element';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                label: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            })[];
+            crop?: undefined | {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        };
+        elements: {
+            markId: string;
+            selectorPath: string;
+            accessibleName?: string | undefined;
+            componentName?: string | undefined;
+            sourceLocation?: undefined | {
+                file: string;
+                line?: number | undefined;
+                column?: number | undefined;
+            };
+        }[];
+        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        pageUrl?: string | undefined;
+        pageTitle?: string | undefined;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -3793,37 +3993,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -3831,74 +4006,60 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    })[] | {
         annotationId: string;
         browserSessionId: string;
         imageRef: {
@@ -3907,13 +4068,13 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         marks: {
             v: 1;
@@ -3932,67 +4093,8 @@ export type BrowserContextActionResultById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -4002,7 +4104,7 @@ export type BrowserContextActionResultById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -4013,40 +4115,103 @@ export type BrowserContextActionResultById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             })[];
-            crop?: {
+            crop?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
+            };
         };
         elements: {
             markId: string;
             selectorPath: string;
             accessibleName?: string | undefined;
             componentName?: string | undefined;
-            sourceLocation?: {
+            sourceLocation?: undefined | {
                 file: string;
                 line?: number | undefined;
                 column?: number | undefined;
-            } | undefined;
+            };
         }[];
         kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         pageUrl?: string | undefined;
         pageTitle?: string | undefined;
         disabledReason?: string | undefined;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
+        error: string;
     } | {
         v: 1;
         attachmentId: string;
@@ -4054,9 +4219,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -4065,13 +4230,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -4090,67 +4255,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -4160,7 +4266,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -4171,26 +4277,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -4198,17 +4363,56 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
-    } | ({
+        };
+    } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -4229,37 +4433,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -4267,237 +4446,258 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
-        annotationId: string;
-        browserSessionId: string;
-        imageRef: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: {
-                sessionId: string;
-                storage: 'session' | 'daemon';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            } | undefined;
-        };
-        marks: {
-            v: 1;
-            image: {
-                width: number;
-                height: number;
-                scale: number;
-            };
-            marks: ({
-                kind: 'arrow';
-                from: {
-                    x: number;
-                    y: number;
-                };
-                to: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'blur';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'element';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                id: string;
-            })[];
-            crop?: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            } | undefined;
-        };
-        elements: {
-            markId: string;
-            selectorPath: string;
-            accessibleName?: string | undefined;
-            componentName?: string | undefined;
-            sourceLocation?: {
-                file: string;
-                line?: number | undefined;
-                column?: number | undefined;
-            } | undefined;
-        }[];
-        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        pageUrl?: string | undefined;
-        pageTitle?: string | undefined;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
         disabledReason?: string | undefined;
-    })[] | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
-        error: string;
     };
-    readonly "browser.context.annotation.cancel": {
+    readonly "browser.context.annotation.cancel": ({
+        annotationId: string;
+        browserSessionId: string;
+        imageRef: {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        marks: {
+            v: 1;
+            image: {
+                width: number;
+                height: number;
+                scale: number;
+            };
+            marks: ({
+                kind: 'arrow';
+                from: {
+                    x: number;
+                    y: number;
+                };
+                to: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'blur';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'element';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                label: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            })[];
+            crop?: undefined | {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        };
+        elements: {
+            markId: string;
+            selectorPath: string;
+            accessibleName?: string | undefined;
+            componentName?: string | undefined;
+            sourceLocation?: undefined | {
+                file: string;
+                line?: number | undefined;
+                column?: number | undefined;
+            };
+        }[];
+        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        pageUrl?: string | undefined;
+        pageTitle?: string | undefined;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -4518,37 +4718,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -4556,74 +4731,60 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    })[] | {
         annotationId: string;
         browserSessionId: string;
         imageRef: {
@@ -4632,13 +4793,13 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         marks: {
             v: 1;
@@ -4657,67 +4818,8 @@ export type BrowserContextActionResultById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -4727,7 +4829,7 @@ export type BrowserContextActionResultById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -4738,40 +4840,103 @@ export type BrowserContextActionResultById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             })[];
-            crop?: {
+            crop?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
+            };
         };
         elements: {
             markId: string;
             selectorPath: string;
             accessibleName?: string | undefined;
             componentName?: string | undefined;
-            sourceLocation?: {
+            sourceLocation?: undefined | {
                 file: string;
                 line?: number | undefined;
                 column?: number | undefined;
-            } | undefined;
+            };
         }[];
         kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         pageUrl?: string | undefined;
         pageTitle?: string | undefined;
         disabledReason?: string | undefined;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
+        error: string;
     } | {
         v: 1;
         attachmentId: string;
@@ -4779,9 +4944,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -4790,13 +4955,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -4815,67 +4980,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -4885,7 +4991,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -4896,26 +5002,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -4923,17 +5088,56 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
-    } | ({
+        };
+    } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -4954,37 +5158,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -4992,226 +5171,59 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
-        annotationId: string;
-        browserSessionId: string;
-        imageRef: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: {
-                sessionId: string;
-                storage: 'session' | 'daemon';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            } | undefined;
-        };
-        marks: {
-            v: 1;
-            image: {
-                width: number;
-                height: number;
-                scale: number;
-            };
-            marks: ({
-                kind: 'arrow';
-                from: {
-                    x: number;
-                    y: number;
-                };
-                to: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'blur';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'element';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                id: string;
-            })[];
-            crop?: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            } | undefined;
-        };
-        elements: {
-            markId: string;
-            selectorPath: string;
-            accessibleName?: string | undefined;
-            componentName?: string | undefined;
-            sourceLocation?: {
-                file: string;
-                line?: number | undefined;
-                column?: number | undefined;
-            } | undefined;
-        }[];
-        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        pageUrl?: string | undefined;
-        pageTitle?: string | undefined;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
         disabledReason?: string | undefined;
-    })[] | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
-        error: string;
     };
     readonly "browser.context.annotation.attachDraft": {
         v: 1;
@@ -5232,9 +5244,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -5243,13 +5255,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -5268,67 +5280,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -5338,7 +5291,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -5349,26 +5302,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -5376,7 +5388,7 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
+        };
     };
     readonly "browser.context.attachToAgentTurn": {
         v: 1;
@@ -5385,9 +5397,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -5396,13 +5408,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -5421,67 +5433,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -5491,7 +5444,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -5502,26 +5455,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -5529,18 +5541,206 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
+        };
     };
-    readonly "browser.context.clear": {
+    readonly "browser.context.clear": ({
+        annotationId: string;
+        browserSessionId: string;
+        imageRef: {
+            mediaId: string;
+            mediaKind: 'image';
+            width: number;
+            height: number;
+            sizeBytes: number;
+            file?: undefined | {
+                sessionId: string;
+                storage: 'daemon' | 'session';
+                path: string;
+                sha256: string;
+                mimeType: 'image/png';
+            };
+        };
+        marks: {
+            v: 1;
+            image: {
+                width: number;
+                height: number;
+                scale: number;
+            };
+            marks: ({
+                kind: 'arrow';
+                from: {
+                    x: number;
+                    y: number;
+                };
+                to: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'blur';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'element';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                label: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            })[];
+            crop?: undefined | {
+                x: number;
+                y: number;
+                width: number;
+                height: number;
+            };
+        };
+        elements: {
+            markId: string;
+            selectorPath: string;
+            accessibleName?: string | undefined;
+            componentName?: string | undefined;
+            sourceLocation?: undefined | {
+                file: string;
+                line?: number | undefined;
+                column?: number | undefined;
+            };
+        }[];
+        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        pageUrl?: string | undefined;
+        pageTitle?: string | undefined;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -5561,37 +5761,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -5599,74 +5774,60 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    })[] | {
         annotationId: string;
         browserSessionId: string;
         imageRef: {
@@ -5675,13 +5836,13 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         marks: {
             v: 1;
@@ -5700,67 +5861,8 @@ export type BrowserContextActionResultById = {
                     x: number;
                     y: number;
                 };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'blur';
@@ -5770,7 +5872,7 @@ export type BrowserContextActionResultById = {
                     width: number;
                     height: number;
                 };
-                size: 's' | 'm' | 'l';
+                size: 'l' | 'm' | 's';
                 id: string;
             } | {
                 kind: 'element';
@@ -5781,40 +5883,103 @@ export type BrowserContextActionResultById = {
                     height: number;
                 };
                 label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                id: string;
+            } | {
+                kind: 'ellipse';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'freehand';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'highlighter';
+                points: {
+                    x: number;
+                    y: number;
+                }[];
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'rectangle';
+                rect: {
+                    x: number;
+                    y: number;
+                    width: number;
+                    height: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'step';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
+                id: string;
+            } | {
+                kind: 'text';
+                at: {
+                    x: number;
+                    y: number;
+                };
+                text: string;
+                color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                size: 'l' | 'm' | 's';
                 id: string;
             })[];
-            crop?: {
+            crop?: undefined | {
                 x: number;
                 y: number;
                 width: number;
                 height: number;
-            } | undefined;
+            };
         };
         elements: {
             markId: string;
             selectorPath: string;
             accessibleName?: string | undefined;
             componentName?: string | undefined;
-            sourceLocation?: {
+            sourceLocation?: undefined | {
                 file: string;
                 line?: number | undefined;
                 column?: number | undefined;
-            } | undefined;
+            };
         }[];
         kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         pageUrl?: string | undefined;
         pageTitle?: string | undefined;
         disabledReason?: string | undefined;
+    } | {
+        ok: false;
+        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
+        error: string;
     } | {
         v: 1;
         attachmentId: string;
@@ -5822,9 +5987,9 @@ export type BrowserContextActionResultById = {
         sourceViewId: string;
         capturedNavigationGeneration: number;
         currentNavigationGeneration: number;
-        state: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
+        state: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
         requiresReconfirmBeforeSend: boolean;
-        structuredBlock?: {
+        structuredBlock?: undefined | {
             annotationId: string;
             browserSessionId: string;
             imageRef: {
@@ -5833,13 +5998,13 @@ export type BrowserContextActionResultById = {
                 width: number;
                 height: number;
                 sizeBytes: number;
-                file?: {
+                file?: undefined | {
                     sessionId: string;
-                    storage: 'session' | 'daemon';
+                    storage: 'daemon' | 'session';
                     path: string;
                     sha256: string;
                     mimeType: 'image/png';
-                } | undefined;
+                };
             };
             marks: {
                 v: 1;
@@ -5858,67 +6023,8 @@ export type BrowserContextActionResultById = {
                         x: number;
                         y: number;
                     };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'rectangle';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'ellipse';
-                    rect: {
-                        x: number;
-                        y: number;
-                        width: number;
-                        height: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'freehand';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'highlighter';
-                    points: {
-                        x: number;
-                        y: number;
-                    }[];
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'text';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    text: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
-                    id: string;
-                } | {
-                    kind: 'step';
-                    at: {
-                        x: number;
-                        y: number;
-                    };
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                    size: 's' | 'm' | 'l';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'blur';
@@ -5928,7 +6034,7 @@ export type BrowserContextActionResultById = {
                         width: number;
                         height: number;
                     };
-                    size: 's' | 'm' | 'l';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 } | {
                     kind: 'element';
@@ -5939,26 +6045,85 @@ export type BrowserContextActionResultById = {
                         height: number;
                     };
                     label: string;
-                    color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    id: string;
+                } | {
+                    kind: 'ellipse';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'freehand';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'highlighter';
+                    points: {
+                        x: number;
+                        y: number;
+                    }[];
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'rectangle';
+                    rect: {
+                        x: number;
+                        y: number;
+                        width: number;
+                        height: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'step';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
+                    id: string;
+                } | {
+                    kind: 'text';
+                    at: {
+                        x: number;
+                        y: number;
+                    };
+                    text: string;
+                    color: 'blue' | 'green' | 'ink' | 'orange' | 'purple' | 'red' | 'yellow';
+                    size: 'l' | 'm' | 's';
                     id: string;
                 })[];
-                crop?: {
+                crop?: undefined | {
                     x: number;
                     y: number;
                     width: number;
                     height: number;
-                } | undefined;
+                };
             };
             elements: {
                 markId: string;
                 selectorPath: string;
                 accessibleName?: string | undefined;
                 componentName?: string | undefined;
-                sourceLocation?: {
+                sourceLocation?: undefined | {
                     file: string;
                     line?: number | undefined;
                     column?: number | undefined;
-                } | undefined;
+                };
             }[];
             v: 2;
             kind: 'browser.annotation.v2';
@@ -5966,17 +6131,56 @@ export type BrowserContextActionResultById = {
             contextIds: string[];
             pageUrl?: string | undefined;
             pageTitle?: string | undefined;
-        } | undefined;
-    } | ({
+        };
+    } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserConsoleSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserPageTextSummary';
+        summary: string;
+        truncated: boolean;
+        disabledReason?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserPageReference';
+        disabledReason?: string | undefined;
+        targetId?: string | undefined;
+        targetKind?: 'externalUrl' | 'hostedPluginWeb' | 'localServicePreview' | 'simulatorPreview' | 'streamedBrowser' | undefined;
+        display?: undefined | {
+            title: string;
+            addressLabel?: string | undefined;
+            folderLabel?: string | undefined;
+            iconToken?: string | undefined;
+            tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+        };
+        url?: string | undefined;
+        title?: string | undefined;
+        faviconUrl?: string | undefined;
+        origin?: string | undefined;
+    } | {
+        v: 1;
+        contextId: string;
+        sourceViewId: string;
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
+        capturedAtMs: number;
+        navigationGeneration: number;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserRecordingEvidence';
         recordingId: string;
         artifactId: string;
@@ -5997,37 +6201,12 @@ export type BrowserContextActionResultById = {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageReference';
-        disabledReason?: string | undefined;
-        targetId?: string | undefined;
-        targetKind?: 'externalUrl' | 'simulatorPreview' | 'localServicePreview' | 'hostedPluginWeb' | 'streamedBrowser' | undefined;
-        display?: {
-            title: string;
-            addressLabel?: string | undefined;
-            folderLabel?: string | undefined;
-            iconToken?: string | undefined;
-            tone?: 'success' | 'neutral' | 'info' | 'warning' | 'danger' | 'accent' | undefined;
-        } | undefined;
-        url?: string | undefined;
-        title?: string | undefined;
-        faviconUrl?: string | undefined;
-        origin?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserScreenshot';
         media: {
             mediaId: string;
@@ -6035,225 +6214,58 @@ export type BrowserContextActionResultById = {
             width: number;
             height: number;
             sizeBytes: number;
-            file?: {
+            file?: undefined | {
                 sessionId: string;
-                storage: 'session' | 'daemon';
+                storage: 'daemon' | 'session';
                 path: string;
                 sha256: string;
                 mimeType: 'image/png';
-            } | undefined;
+            };
         };
         disabledReason?: string | undefined;
-        viewport?: {
+        viewport?: undefined | {
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserTextSelection';
-        text: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        kind: 'browserPageTextSummary' | 'browserDomSnapshotSummary' | 'browserNetworkSummary' | 'browserConsoleSummary';
-        summary: string;
-        truncated: boolean;
-        disabledReason?: string | undefined;
-    } | {
-        v: 1;
-        contextId: string;
-        sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
-        capturedAtMs: number;
-        navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
         kind: 'browserSelectedElement';
         selectorPath: string;
         disabledReason?: string | undefined;
         accessibleName?: string | undefined;
         componentName?: string | undefined;
-        sourceLocation?: {
+        sourceLocation?: undefined | {
             file: string;
             line?: number | undefined;
             column?: number | undefined;
-        } | undefined;
-        rect?: {
+        };
+        rect?: undefined | {
             x: number;
             y: number;
             width: number;
             height: number;
-        } | undefined;
+        };
     } | {
-        annotationId: string;
-        browserSessionId: string;
-        imageRef: {
-            mediaId: string;
-            mediaKind: 'image';
-            width: number;
-            height: number;
-            sizeBytes: number;
-            file?: {
-                sessionId: string;
-                storage: 'session' | 'daemon';
-                path: string;
-                sha256: string;
-                mimeType: 'image/png';
-            } | undefined;
-        };
-        marks: {
-            v: 1;
-            image: {
-                width: number;
-                height: number;
-                scale: number;
-            };
-            marks: ({
-                kind: 'arrow';
-                from: {
-                    x: number;
-                    y: number;
-                };
-                to: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'rectangle';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'ellipse';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'freehand';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'highlighter';
-                points: {
-                    x: number;
-                    y: number;
-                }[];
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'text';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                text: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'step';
-                at: {
-                    x: number;
-                    y: number;
-                };
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'blur';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                size: 's' | 'm' | 'l';
-                id: string;
-            } | {
-                kind: 'element';
-                rect: {
-                    x: number;
-                    y: number;
-                    width: number;
-                    height: number;
-                };
-                label: string;
-                color: 'red' | 'orange' | 'yellow' | 'green' | 'blue' | 'purple' | 'ink';
-                id: string;
-            })[];
-            crop?: {
-                x: number;
-                y: number;
-                width: number;
-                height: number;
-            } | undefined;
-        };
-        elements: {
-            markId: string;
-            selectorPath: string;
-            accessibleName?: string | undefined;
-            componentName?: string | undefined;
-            sourceLocation?: {
-                file: string;
-                line?: number | undefined;
-                column?: number | undefined;
-            } | undefined;
-        }[];
-        kind: 'browserAnnotation';
         v: 1;
         contextId: string;
         sourceViewId: string;
-        sourceAdapterKind: 'localPreview' | 'hostedPlugin' | 'externalUrl' | 'chromiumSidecar' | 'streamedBrowserSurface' | 'simulatorPreview';
-        fidelity: 'cdp' | 'injectedPage' | 'previewProxy' | 'nativeCallback' | 'streamFrame' | 'unavailable';
+        sourceAdapterKind: 'chromiumSidecar' | 'externalUrl' | 'hostedPlugin' | 'localPreview' | 'simulatorPreview' | 'streamedBrowserSurface';
+        fidelity: 'cdp' | 'injectedPage' | 'nativeCallback' | 'previewProxy' | 'streamFrame' | 'unavailable';
         capturedAtMs: number;
         navigationGeneration: number;
-        lifecycleState: 'available' | 'policyDenied' | 'sensitiveOrigin' | 'sensitiveFieldsPresent' | 'ephemeralOnly' | 'navigationStale' | 'adapterUnavailable' | 'captureFailed';
-        redactionLevel: 'blocked' | 'none' | 'metadataOnly' | 'summaryOnly';
-        pageUrl?: string | undefined;
-        pageTitle?: string | undefined;
+        lifecycleState: 'adapterUnavailable' | 'available' | 'captureFailed' | 'ephemeralOnly' | 'navigationStale' | 'policyDenied' | 'sensitiveFieldsPresent' | 'sensitiveOrigin';
+        redactionLevel: 'blocked' | 'metadataOnly' | 'none' | 'summaryOnly';
+        kind: 'browserTextSelection';
+        text: string;
+        truncated: boolean;
         disabledReason?: string | undefined;
-    })[] | {
-        ok: false;
-        errorCode: 'invalid_parameters' | 'runtime_action_disabled';
-        error: string;
     };
 };

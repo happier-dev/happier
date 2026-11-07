@@ -2,6 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
+import type { SessionTargetV1 } from './pluginActionDtoSupport.generated.js';
 
 export type IntentStartActionInputById = {
     readonly "subagents.plan.start": {
@@ -11,9 +12,10 @@ export type IntentStartActionInputById = {
         roleId?: string | undefined;
         launchProfileId?: string | undefined;
         sessionId?: string | undefined;
+        approvalProfileId?: null | string | undefined;
         notifyParentOnCompletion?: boolean | undefined;
         modelId?: string | undefined;
-        modelSelection?: {
+        modelSelection?: null | undefined | {
             agentTargetKey: string;
             providerConnectionId: null;
             modelId: string;
@@ -21,8 +23,8 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
-        } | null | undefined;
-        teamCredentialModel?: {
+        };
+        teamCredentialModel?: undefined | {
             kind: 'team_credential_provider_model';
             resourceId: string;
             teamId: string;
@@ -30,7 +32,7 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             modelId: string;
             deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-            nativeDelivery?: {
+            nativeDelivery?: undefined | {
                 managedId: string;
                 controllerInstallationId: string;
                 guestInstallationId: string;
@@ -38,38 +40,38 @@ export type IntentStartActionInputById = {
                 placeholderRef: string;
                 sourceRevision: string;
                 providerTicket: string;
-            } | undefined;
-        } | undefined;
-        teamCredentialSessionBindingConsent?: {
+            };
+        };
+        teamCredentialSessionBindingConsent?: undefined | {
             v: 1;
             sessionId: string;
             teamId: string;
             resourceId: string;
             expectedResourceRevision: number;
-        } | undefined;
-        secretReferenceOverlay?: {
+        };
+        secretReferenceOverlay?: undefined | {
             v: 1;
             bindings: Record<string, {
                 ref: string;
                 revision?: number | undefined;
             }>;
-        } | undefined;
-        sessionConfigOptionOverrides?: {
+        };
+        sessionConfigOptionOverrides?: undefined | {
             [x: string]: unknown;
             v: 1;
             updatedAt: number;
             overrides: Record<string, {
                 [x: string]: unknown;
                 updatedAt: number;
-                value: string | number | boolean | null;
+                value: boolean | null | number | string;
             }>;
-        } | undefined;
-        configOptions?: Record<string, string | number | boolean | null> | undefined;
+        };
+        configOptions?: Record<string, boolean | null | number | string> | undefined;
         connectedServices?: unknown;
         connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
-        target?: {
+        target?: undefined | {
             kind: 'detached';
-        } | undefined;
+        };
         permissionMode?: unknown;
         retentionPolicy?: 'ephemeral' | 'resumable' | undefined;
         runClass?: 'bounded' | 'long_lived' | undefined;
@@ -82,9 +84,10 @@ export type IntentStartActionInputById = {
         roleId?: string | undefined;
         launchProfileId?: string | undefined;
         sessionId?: string | undefined;
+        approvalProfileId?: null | string | undefined;
         notifyParentOnCompletion?: boolean | undefined;
         modelId?: string | undefined;
-        modelSelection?: {
+        modelSelection?: null | undefined | {
             agentTargetKey: string;
             providerConnectionId: null;
             modelId: string;
@@ -92,8 +95,8 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
-        } | null | undefined;
-        teamCredentialModel?: {
+        };
+        teamCredentialModel?: undefined | {
             kind: 'team_credential_provider_model';
             resourceId: string;
             teamId: string;
@@ -101,7 +104,7 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             modelId: string;
             deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-            nativeDelivery?: {
+            nativeDelivery?: undefined | {
                 managedId: string;
                 controllerInstallationId: string;
                 guestInstallationId: string;
@@ -109,33 +112,33 @@ export type IntentStartActionInputById = {
                 placeholderRef: string;
                 sourceRevision: string;
                 providerTicket: string;
-            } | undefined;
-        } | undefined;
-        teamCredentialSessionBindingConsent?: {
+            };
+        };
+        teamCredentialSessionBindingConsent?: undefined | {
             v: 1;
             sessionId: string;
             teamId: string;
             resourceId: string;
             expectedResourceRevision: number;
-        } | undefined;
-        secretReferenceOverlay?: {
+        };
+        secretReferenceOverlay?: undefined | {
             v: 1;
             bindings: Record<string, {
                 ref: string;
                 revision?: number | undefined;
             }>;
-        } | undefined;
-        sessionConfigOptionOverrides?: {
+        };
+        sessionConfigOptionOverrides?: undefined | {
             [x: string]: unknown;
             v: 1;
             updatedAt: number;
             overrides: Record<string, {
                 [x: string]: unknown;
                 updatedAt: number;
-                value: string | number | boolean | null;
+                value: boolean | null | number | string;
             }>;
-        } | undefined;
-        configOptions?: Record<string, string | number | boolean | null> | undefined;
+        };
+        configOptions?: Record<string, boolean | null | number | string> | undefined;
         connectedServices?: unknown;
         connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
         permissionMode?: unknown;
@@ -150,9 +153,10 @@ export type IntentStartActionInputById = {
         roleId?: string | undefined;
         launchProfileId?: string | undefined;
         sessionId?: string | undefined;
+        approvalProfileId?: null | string | undefined;
         notifyParentOnCompletion?: boolean | undefined;
         modelId?: string | undefined;
-        modelSelection?: {
+        modelSelection?: null | undefined | {
             agentTargetKey: string;
             providerConnectionId: null;
             modelId: string;
@@ -160,8 +164,8 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
-        } | null | undefined;
-        teamCredentialModel?: {
+        };
+        teamCredentialModel?: undefined | {
             kind: 'team_credential_provider_model';
             resourceId: string;
             teamId: string;
@@ -169,7 +173,7 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             modelId: string;
             deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-            nativeDelivery?: {
+            nativeDelivery?: undefined | {
                 managedId: string;
                 controllerInstallationId: string;
                 guestInstallationId: string;
@@ -177,33 +181,33 @@ export type IntentStartActionInputById = {
                 placeholderRef: string;
                 sourceRevision: string;
                 providerTicket: string;
-            } | undefined;
-        } | undefined;
-        teamCredentialSessionBindingConsent?: {
+            };
+        };
+        teamCredentialSessionBindingConsent?: undefined | {
             v: 1;
             sessionId: string;
             teamId: string;
             resourceId: string;
             expectedResourceRevision: number;
-        } | undefined;
-        secretReferenceOverlay?: {
+        };
+        secretReferenceOverlay?: undefined | {
             v: 1;
             bindings: Record<string, {
                 ref: string;
                 revision?: number | undefined;
             }>;
-        } | undefined;
-        sessionConfigOptionOverrides?: {
+        };
+        sessionConfigOptionOverrides?: undefined | {
             [x: string]: unknown;
             v: 1;
             updatedAt: number;
             overrides: Record<string, {
                 [x: string]: unknown;
                 updatedAt: number;
-                value: string | number | boolean | null;
+                value: boolean | null | number | string;
             }>;
-        } | undefined;
-        configOptions?: Record<string, string | number | boolean | null> | undefined;
+        };
+        configOptions?: Record<string, boolean | null | number | string> | undefined;
         connectedServices?: unknown;
         connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
         permissionMode?: unknown;
@@ -217,25 +221,23 @@ export type IntentStartActionInputById = {
         instructions: string;
         roleId?: string | undefined;
         launchProfileId?: string | undefined;
+        approvalProfileId?: null | string | undefined;
         sessionId?: string | undefined;
-        target?: {
+        target?: undefined | {
             kind: 'detached';
-        } | undefined;
+        };
         childSelection?: 'agentDefault' | undefined;
         cwd?: string | undefined;
         outputs?: 'walkthrough'[] | undefined;
         comparisonId?: string | undefined;
-        narrator?: {
+        narrator?: undefined | {
             engineId: string;
             modelId?: string | undefined;
-        } | undefined;
+        };
         notifyParentOnCompletion?: boolean | undefined;
         reviewCommentAuthorIntent?: 'open' | 'propose' | undefined;
         changeType?: 'all' | 'committed' | 'uncommitted' | undefined;
-        base?: {
-            [x: string]: unknown;
-            kind: 'none';
-        } | {
+        base?: undefined | {
             [x: string]: unknown;
             kind: 'branch';
             baseBranch: string;
@@ -243,29 +245,32 @@ export type IntentStartActionInputById = {
             [x: string]: unknown;
             kind: 'commit';
             baseCommit: string;
-        } | undefined;
+        } | {
+            [x: string]: unknown;
+            kind: 'none';
+        };
         engines?: Record<string, {
             [x: string]: unknown;
         }> | undefined;
-        scmReviewScope?: {
+        scmReviewScope?: undefined | {
             [x: string]: unknown;
             kind: 'review_scm_scope.v1';
             status: 'supported' | 'unsupported';
-            scmBackendId: string | null;
+            scmBackendId: null | string;
             scmMode: '.git' | '.sl' | null;
-            repositoryRoot: string | null;
-            worktreeRoot: string | null;
+            repositoryRoot: null | string;
+            worktreeRoot: null | string;
             baseRef: {
                 [x: string]: unknown;
-                source: 'unavailable' | 'explicit' | 'branch_upstream' | 'default_branch';
-                ref: string | null;
+                source: 'branch_upstream' | 'default_branch' | 'explicit' | 'unavailable';
+                ref: null | string;
             };
             selectedPaths: string[];
             committedPaths: {
                 [x: string]: unknown;
                 path: string;
-                previousPath: string | null;
-                kind: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'conflicted';
+                previousPath: null | string;
+                kind: 'added' | 'conflicted' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'untracked';
                 hasCommittedDelta: boolean;
                 hasUncommittedDelta: boolean;
                 diff: {
@@ -278,8 +283,8 @@ export type IntentStartActionInputById = {
             uncommittedPaths: {
                 [x: string]: unknown;
                 path: string;
-                previousPath: string | null;
-                kind: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'conflicted';
+                previousPath: null | string;
+                kind: 'added' | 'conflicted' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'untracked';
                 hasCommittedDelta: boolean;
                 hasUncommittedDelta: boolean;
                 diff: {
@@ -292,8 +297,8 @@ export type IntentStartActionInputById = {
             changedPaths: {
                 [x: string]: unknown;
                 path: string;
-                previousPath: string | null;
-                kind: 'modified' | 'added' | 'deleted' | 'renamed' | 'copied' | 'untracked' | 'conflicted';
+                previousPath: null | string;
+                kind: 'added' | 'conflicted' | 'copied' | 'deleted' | 'modified' | 'renamed' | 'untracked';
                 hasCommittedDelta: boolean;
                 hasUncommittedDelta: boolean;
                 diff: {
@@ -307,7 +312,7 @@ export type IntentStartActionInputById = {
                 [x: string]: unknown;
                 committedAvailable: boolean;
                 uncommittedAvailable: boolean;
-                byteLimit?: number | null | undefined;
+                byteLimit?: null | number | undefined;
             };
             diagnostics: {
                 [x: string]: unknown;
@@ -315,8 +320,8 @@ export type IntentStartActionInputById = {
                 severity: 'error' | 'warning';
                 message: string;
             }[];
-        } | undefined;
-        scmPullRequestReviewScope?: {
+        };
+        scmPullRequestReviewScope?: undefined | {
             account: {
                 service: {
                     pluginId: string;
@@ -327,13 +332,13 @@ export type IntentStartActionInputById = {
             kind: 'scm_pull_request_review_scope.v1';
             pullRequest: {
                 [x: string]: unknown;
+                headBranch: string;
+            } | {
+                [x: string]: unknown;
                 number: number;
             } | {
                 [x: string]: unknown;
                 url: string;
-            } | {
-                [x: string]: unknown;
-                headBranch: string;
             };
             observed: {
                 baseSha: string;
@@ -349,13 +354,13 @@ export type IntentStartActionInputById = {
             kind: 'scm_pull_request_review_scope.v1';
             pullRequest: {
                 [x: string]: unknown;
+                headBranch: string;
+            } | {
+                [x: string]: unknown;
                 number: number;
             } | {
                 [x: string]: unknown;
                 url: string;
-            } | {
-                [x: string]: unknown;
-                headBranch: string;
             };
             observed: {
                 baseSha: string;
@@ -363,13 +368,14 @@ export type IntentStartActionInputById = {
                 nativeRevision: string;
                 observedAtMs: number;
             };
-        } | undefined;
+        };
         permissionMode?: string | undefined;
         profileId?: string | undefined;
-        profileSourceCustody?: {
-            kind: 'managed';
-            immutableGenerationId: string;
-            installSource: 'npm' | 'archive' | 'localPath';
+        profileSourceCustody?: undefined | {
+            kind: 'account_release';
+            pluginId: string;
+            version: string;
+            archiveDigestSha256: string;
         } | {
             kind: 'bundled_first_party';
             packagedRuntime: {
@@ -386,21 +392,20 @@ export type IntentStartActionInputById = {
             kind: 'development';
             registeredRootId: string;
         } | {
-            kind: 'account_release';
-            pluginId: string;
-            version: string;
-            archiveDigestSha256: string;
-        } | undefined;
+            kind: 'managed';
+            immutableGenerationId: string;
+            installSource: 'archive' | 'localPath' | 'npm';
+        };
         connectedServices?: unknown;
         connectedServicesByBackendTargetKey?: Record<string, unknown> | undefined;
-        secretReferenceOverlay?: {
+        secretReferenceOverlay?: undefined | {
             v: 1;
             bindings: Record<string, {
                 ref: string;
                 revision?: number | undefined;
             }>;
-        } | undefined;
-        modelSelection?: {
+        };
+        modelSelection?: null | undefined | {
             agentTargetKey: string;
             providerConnectionId: null;
             modelId: string;
@@ -408,8 +413,8 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             providerConnectionId: string;
             modelId: string;
-        } | null | undefined;
-        teamCredentialModel?: {
+        };
+        teamCredentialModel?: undefined | {
             kind: 'team_credential_provider_model';
             resourceId: string;
             teamId: string;
@@ -417,7 +422,7 @@ export type IntentStartActionInputById = {
             agentTargetKey: string;
             modelId: string;
             deliveryMode: 'brokered' | 'direct' | 'vendor-native';
-            nativeDelivery?: {
+            nativeDelivery?: undefined | {
                 managedId: string;
                 controllerInstallationId: string;
                 guestInstallationId: string;
@@ -425,33 +430,68 @@ export type IntentStartActionInputById = {
                 placeholderRef: string;
                 sourceRevision: string;
                 providerTicket: string;
-            } | undefined;
-        } | undefined;
-        teamCredentialSessionBindingConsent?: {
+            };
+        };
+        teamCredentialSessionBindingConsent?: undefined | {
             v: 1;
             sessionId: string;
             teamId: string;
             resourceId: string;
             expectedResourceRevision: number;
-        } | undefined;
+        };
+    };
+    readonly "review.apply": {
+        sessionId: SessionTargetV1<true>;
+        reviews: {
+            runId: string;
+            findings: {
+                id: string;
+                title: string;
+                severity: 'blocker' | 'high' | 'low' | 'medium' | 'nit';
+                category: 'correctness' | 'docs' | 'maintainability' | 'performance' | 'security' | 'style' | 'testing';
+                summary: string;
+                filePath?: string | undefined;
+                startLine?: number | undefined;
+                endLine?: number | undefined;
+                whyItMatters?: string | undefined;
+                evidence?: string | undefined;
+                confidence?: number | undefined;
+                suggestion?: string | undefined;
+                patch?: string | undefined;
+                comment?: undefined | {
+                    id: string;
+                    state: 'delegated' | 'dismissed' | 'open' | 'pending_review' | 'proposed' | 'resolved';
+                    serverRevision: number;
+                    sessionId?: string | undefined;
+                    runId?: string | undefined;
+                    projectId?: string | undefined;
+                    workspace?: undefined | {
+                        machineId: string;
+                        path: string;
+                    };
+                };
+                attributionConfidence?: string | undefined;
+                threadRefs?: string[] | undefined;
+            }[];
+        }[];
     };
     readonly "review.walkthrough": {
         comparisonId: string;
         runId: string;
-        narrator?: {
+        narrator?: undefined | {
             engineId: string;
             modelId?: string | undefined;
-        } | undefined;
+        };
         sessionId?: string | undefined;
-        target?: {
+        target?: undefined | {
             kind: 'detached';
-        } | undefined;
+        };
         reviewRunIds?: string[] | undefined;
     };
     readonly "review.explain_findings": {
+        expectedRevision: number;
         cwd: string;
         resultId: string;
-        expectedRevision: number;
         findingIds: {
             runId: string;
             findingId: string;
@@ -459,9 +499,9 @@ export type IntentStartActionInputById = {
         runId: string;
         instructions?: string | undefined;
         sessionId?: string | undefined;
-        target?: {
+        target?: undefined | {
             kind: 'detached';
-        } | undefined;
+        };
         reviewRunIds?: string[] | undefined;
     };
 };
@@ -470,6 +510,88 @@ export type IntentStartActionResultById = {
     readonly "subagents.delegate.start": JsonValue;
     readonly "voice_agent.start": JsonValue;
     readonly "review.start": JsonValue;
+    readonly "review.apply": {
+        status: 'accepted';
+        localId: string;
+    } | {
+        status: 'alreadyAccepted';
+        localId: string;
+    } | {
+        status: 'cancelled';
+        localId: string;
+        code: 'session_input_turn_cancelled';
+    } | {
+        status: 'failed';
+        localId: string;
+        code: 'session_input_turn_failed';
+    } | {
+        status: 'held';
+        localId: string;
+        code: 'autonomous_check_in' | 'session_input_target_unavailable';
+    } | {
+        status: 'outcomeUnknown';
+        localId: string;
+        code: string;
+    } | {
+        status: 'rejected';
+        code: 'model_not_granted' | 'permission_mode_not_granted' | 'session_input_archived' | 'session_input_cancelled' | 'session_input_encryption_mode_mismatch' | 'session_input_idempotency_conflict' | 'session_input_invalid' | 'session_input_muted' | 'session_input_permission_ceiling_rejected' | 'session_input_source_authority_mismatch' | 'session_input_storage_unavailable' | 'session_input_target_unavailable' | 'session_input_target_update_required' | 'session_input_unauthorized' | 'session_input_untrusted_assertion';
+    } | {
+        status: 'replied';
+        localId: string;
+        outcome: {
+            kind: 'answer';
+            publicationRef: {
+                kind: 'discussion';
+                discussion: {
+                    serverId: string;
+                    discussionId: string;
+                };
+                messageId: string;
+            } | {
+                kind: 'session';
+                session: {
+                    serverId: string;
+                    sessionId: string;
+                };
+                messageId: string;
+            };
+        } | {
+            kind: 'answer';
+            text: string;
+            messageRef: {
+                kind: 'session';
+                session: {
+                    serverId: string;
+                    sessionId: string;
+                };
+                messageId: string;
+            };
+        } | {
+            kind: 'cancelled' | 'declined' | 'failed' | 'pass' | 'terminal_no_result';
+        } | {
+            kind: 'cancelled';
+            partialText: string;
+            messageRef: {
+                kind: 'session';
+                session: {
+                    serverId: string;
+                    sessionId: string;
+                };
+                messageId: string;
+            };
+        };
+        inputMessageRef?: undefined | {
+            kind: 'session';
+            session: {
+                serverId: string;
+                sessionId: string;
+            };
+            messageId: string;
+        };
+    } | {
+        status: 'unchanged';
+        commentIds: string[];
+    };
     readonly "review.walkthrough": JsonValue;
     readonly "review.explain_findings": JsonValue;
 };

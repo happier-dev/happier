@@ -4,9 +4,14 @@
 import type { JsonValue } from '../../identity.js';
 
 export type CurrentUiContextActionInputById = {
-    readonly "ui.current_context.read": Record<string, never>;
+    readonly "ui.current_context.read": Record<string, never> & {
+        clientId?: string | undefined;
+    };
     readonly "ui.current_context.command.invoke": {
         commandId: string;
+        input?: unknown;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type CurrentUiContextActionResultById = {
@@ -15,19 +20,19 @@ export type CurrentUiContextActionResultById = {
             area: string;
             screen: string;
             title?: string | undefined;
-            presentation?: 'screen' | 'modal' | 'pane' | undefined;
+            presentation?: 'modal' | 'pane' | 'screen' | undefined;
         };
         commands: {
             id: string;
             title: string;
             description?: string | undefined;
         }[];
-        entity?: {
+        entity?: undefined | {
             kind: string;
             label: string;
             summary?: string | undefined;
             reference?: JsonValue | undefined;
-        } | undefined;
+        };
         detail?: JsonValue | undefined;
     };
     readonly "ui.current_context.command.invoke": JsonValue;

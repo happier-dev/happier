@@ -15,14 +15,14 @@ export type MachineAccessActionInputById = {
             kind: 'account';
             accountId: string;
         } | {
-            kind: 'team';
-            teamId: string;
-        } | {
             kind: 'group';
             teamId: string;
             groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
         };
-        level: 'view' | 'admin';
+        level: 'admin' | 'view';
     };
     readonly "machines.access.grant.remove": {
         serverId: string;
@@ -31,12 +31,12 @@ export type MachineAccessActionInputById = {
             kind: 'account';
             accountId: string;
         } | {
-            kind: 'team';
-            teamId: string;
-        } | {
             kind: 'group';
             teamId: string;
             groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
         };
     };
     readonly "machines.access.leave": {
@@ -50,6 +50,9 @@ export type MachineAccessActionInputById = {
 };
 export type MachineAccessActionResultById = {
     readonly "machines.access.grants.list": {
+        kind: 'refused';
+        code: 'access_denied' | 'content_unpublished' | 'custodian_only' | 'custodian_protected' | 'daemon_upgrade_required' | 'data_key_not_required' | 'encryption_material_unavailable' | 'invalid_recipient_envelope' | 'machine_key_changed' | 'machine_unavailable' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'unsupported_operation';
+    } | {
         machineId: string;
         custodian: {
             accountId: string;
@@ -60,9 +63,10 @@ export type MachineAccessActionResultById = {
                 accountId: string;
                 displayName: string;
             };
-            role: 'use' | 'manage';
-            resourceMode: 'plain' | 'e2ee';
-            accessState: 'ready' | 'key_pending' | 'refused';
+            role: 'manage' | 'use';
+            resourceMode: 'e2ee' | 'plain';
+            accessState: 'key_pending' | 'ready' | 'refused';
+            reason?: 'access_denied' | 'content_unpublished' | 'custodian_only' | 'custodian_protected' | 'daemon_upgrade_required' | 'data_key_not_required' | 'encryption_material_unavailable' | 'invalid_recipient_envelope' | 'machine_key_changed' | 'machine_unavailable' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'unsupported_operation' | undefined;
         };
         canManage: boolean;
         grants: {
@@ -71,23 +75,23 @@ export type MachineAccessActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            level: 'view' | 'admin';
+            level: 'admin' | 'view';
             display: {
-                name: string | null;
+                name: null | string;
             };
-            readiness: 'ready' | 'key_pending' | 'refused';
+            readiness: 'key_pending' | 'ready' | 'refused';
             audience: {
                 accountId: string;
                 displayName: string;
-                readiness: 'ready' | 'key_pending' | 'refused';
-                reason: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required' | null;
+                readiness: 'key_pending' | 'ready' | 'refused';
+                reason: 'access_denied' | 'content_unpublished' | 'custodian_only' | 'custodian_protected' | 'daemon_upgrade_required' | 'data_key_not_required' | 'encryption_material_unavailable' | 'invalid_recipient_envelope' | 'machine_key_changed' | 'machine_unavailable' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'unsupported_operation' | null;
                 canPrepareKeys: boolean;
             }[];
             removal: {
@@ -100,26 +104,32 @@ export type MachineAccessActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            displayName: string | null;
+            displayName: null | string;
         }[];
-        currentRequesterDisplayIdentities?: {
+        currentRequesterDisplayIdentities?: undefined | {
             accountId: string;
             displayName: string;
-        }[] | undefined;
-    } | {
-        kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
+        }[];
     };
     readonly "machines.access.grant.set": {
+        kind: 'inherited_access_remains';
+        role: 'manage' | 'use';
+    } | {
+        kind: 'left';
+        effectiveAccess: 'manage' | 'none' | 'use';
+    } | {
         kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
+        code: 'access_denied' | 'content_unpublished' | 'custodian_only' | 'custodian_protected' | 'daemon_upgrade_required' | 'data_key_not_required' | 'encryption_material_unavailable' | 'invalid_recipient_envelope' | 'machine_key_changed' | 'machine_unavailable' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'unsupported_operation';
+    } | {
+        kind: 'removed';
+        effectiveAccess: 'manage' | 'none' | 'use';
     } | {
         kind: 'saved';
         grant: {
@@ -128,30 +138,30 @@ export type MachineAccessActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            level: 'view' | 'admin';
+            level: 'admin' | 'view';
         };
-        readiness: 'ready' | 'key_pending' | 'refused';
+        readiness: 'key_pending' | 'ready' | 'refused';
         canPrepareKeys: boolean;
-    } | {
-        kind: 'removed';
-        effectiveAccess: 'use' | 'manage' | 'none';
-    } | {
-        kind: 'left';
-        effectiveAccess: 'use' | 'manage' | 'none';
-    } | {
-        kind: 'inherited_access_remains';
-        role: 'use' | 'manage';
     };
     readonly "machines.access.grant.remove": {
+        kind: 'inherited_access_remains';
+        role: 'manage' | 'use';
+    } | {
+        kind: 'left';
+        effectiveAccess: 'manage' | 'none' | 'use';
+    } | {
         kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
+        code: 'access_denied' | 'content_unpublished' | 'custodian_only' | 'custodian_protected' | 'daemon_upgrade_required' | 'data_key_not_required' | 'encryption_material_unavailable' | 'invalid_recipient_envelope' | 'machine_key_changed' | 'machine_unavailable' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'unsupported_operation';
+    } | {
+        kind: 'removed';
+        effectiveAccess: 'manage' | 'none' | 'use';
     } | {
         kind: 'saved';
         grant: {
@@ -160,30 +170,30 @@ export type MachineAccessActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            level: 'view' | 'admin';
+            level: 'admin' | 'view';
         };
-        readiness: 'ready' | 'key_pending' | 'refused';
+        readiness: 'key_pending' | 'ready' | 'refused';
         canPrepareKeys: boolean;
-    } | {
-        kind: 'removed';
-        effectiveAccess: 'use' | 'manage' | 'none';
-    } | {
-        kind: 'left';
-        effectiveAccess: 'use' | 'manage' | 'none';
-    } | {
-        kind: 'inherited_access_remains';
-        role: 'use' | 'manage';
     };
     readonly "machines.access.leave": {
+        kind: 'inherited_access_remains';
+        role: 'manage' | 'use';
+    } | {
+        kind: 'left';
+        effectiveAccess: 'manage' | 'none' | 'use';
+    } | {
         kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
+        code: 'access_denied' | 'content_unpublished' | 'custodian_only' | 'custodian_protected' | 'daemon_upgrade_required' | 'data_key_not_required' | 'encryption_material_unavailable' | 'invalid_recipient_envelope' | 'machine_key_changed' | 'machine_unavailable' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'unsupported_operation';
+    } | {
+        kind: 'removed';
+        effectiveAccess: 'manage' | 'none' | 'use';
     } | {
         kind: 'saved';
         grant: {
@@ -192,35 +202,26 @@ export type MachineAccessActionResultById = {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
-            level: 'view' | 'admin';
+            level: 'admin' | 'view';
         };
-        readiness: 'ready' | 'key_pending' | 'refused';
+        readiness: 'key_pending' | 'ready' | 'refused';
         canPrepareKeys: boolean;
-    } | {
-        kind: 'removed';
-        effectiveAccess: 'use' | 'manage' | 'none';
-    } | {
-        kind: 'left';
-        effectiveAccess: 'use' | 'manage' | 'none';
-    } | {
-        kind: 'inherited_access_remains';
-        role: 'use' | 'manage';
     };
     readonly "machines.access.prepareKeys": {
-        kind: 'prepared';
-    } | {
         kind: 'pending_holder';
+    } | {
+        kind: 'prepared';
     } | {
         kind: 'recipient_incompatible';
     } | {
         kind: 'unavailable';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
+        code: 'access_denied' | 'content_unpublished' | 'custodian_only' | 'custodian_protected' | 'daemon_upgrade_required' | 'data_key_not_required' | 'encryption_material_unavailable' | 'invalid_recipient_envelope' | 'machine_key_changed' | 'machine_unavailable' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'unsupported_operation';
     };
 };

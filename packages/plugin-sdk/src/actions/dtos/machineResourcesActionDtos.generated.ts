@@ -12,92 +12,98 @@ export type MachineResourcesActionInputById = {
         machineId: string;
         expectedRevision: number;
         patch: {
-            alerts?: {
-                memory?: {
+            alerts?: undefined | {
+                memory?: undefined | {
                     enabled?: boolean | undefined;
-                    level?: 'elevated' | 'critical' | undefined;
+                    level?: 'critical' | 'elevated' | undefined;
                     sustainMs?: number | undefined;
-                } | undefined;
-                cpu?: {
+                };
+                cpu?: undefined | {
                     enabled?: boolean | undefined;
                     abovePct?: number | undefined;
                     sustainMs?: number | undefined;
-                } | undefined;
-                disk?: {
+                };
+                disk?: undefined | {
                     enabled?: boolean | undefined;
-                    threshold?: {
-                        freeFraction: number;
-                    } | {
+                    threshold?: undefined | {
                         freeBytes: number;
-                    } | undefined;
-                } | undefined;
-            } | undefined;
-            processes?: {
+                    } | {
+                        freeFraction: number;
+                    };
+                };
+            };
+            monitoring?: undefined | {
+                mode?: 'always' | 'off' | 'while_viewing' | undefined;
+                intervalMs?: number | undefined;
+            };
+            processes?: undefined | {
                 allProcessesVisible?: boolean | undefined;
-                toolIdleCloseMs?: number | null | undefined;
-                browserMaxConcurrent?: number | null | undefined;
-            } | undefined;
-            storage?: {
+                toolIdleCloseMs?: null | number | undefined;
+                browserMaxConcurrent?: null | number | undefined;
+            };
+            storage?: undefined | {
                 wholeDiskEnabled?: boolean | undefined;
-                protectedFolders?: {
+                protectedFolders?: undefined | {
                     path: string;
                     addedAt: number;
-                }[] | undefined;
-                logRetentionDays?: number | null | undefined;
-                trashEmptyAfterDays?: number | null | undefined;
-                scheduledScan?: {
+                }[];
+                logRetentionDays?: null | number | undefined;
+                trashEmptyAfterDays?: null | number | undefined;
+                scheduledScan?: null | undefined | {
                     weekday: number;
                     time: string;
                     onlyOnPower: true;
-                } | null | undefined;
+                };
                 suggestUnusedAfterDays?: number | undefined;
-            } | undefined;
-            guard?: {
-                memoryGuard?: {
+            };
+            guard?: undefined | {
+                memoryGuard?: undefined | {
                     enabled?: boolean | undefined;
-                    actAt?: 'elevated' | 'critical' | undefined;
+                    actAt?: 'critical' | 'elevated' | undefined;
                     sustainMs?: number | undefined;
                     cooldownMs?: number | undefined;
-                    pausedUntil?: number | null | undefined;
-                    steps?: {
+                    pausedUntil?: null | number | undefined;
+                    steps?: undefined | {
                         browsers?: boolean | undefined;
                         devServers?: boolean | undefined;
                         idleSessions?: boolean | undefined;
-                    } | undefined;
-                } | undefined;
-                idleSessions?: {
+                    };
+                };
+                idleSessions?: undefined | {
                     enabled?: boolean | undefined;
                     afterMs?: number | undefined;
                     warnBeforeMs?: number | undefined;
-                } | undefined;
-                idleTerminals?: {
+                };
+                idleTerminals?: undefined | {
                     enabled?: boolean | undefined;
                     afterMs?: number | undefined;
                     warnBeforeMs?: number | undefined;
-                } | undefined;
-                leftBehind?: {
-                    mode?: 'off' | 'ask' | 'automatic' | undefined;
+                };
+                leftBehind?: undefined | {
+                    mode?: 'ask' | 'automatic' | 'off' | undefined;
                     graceMs?: number | undefined;
-                } | undefined;
-                sessionMemoryCeiling?: {
-                    bytes?: number | null | undefined;
+                };
+                sessionMemoryCeiling?: undefined | {
+                    bytes?: null | number | undefined;
                     warnAtPercent?: number | undefined;
-                } | undefined;
+                };
                 keepAwake?: 'off' | 'on' | 'on_power' | undefined;
-            } | undefined;
+            };
         };
         serverId?: string | undefined;
     };
 };
 export type MachineResourcesActionResultById = {
     readonly "machines.resources.policy.get": {
+        status: 'invalid' | 'locked' | 'unavailable';
+    } | {
         status: 'ready';
         policy: {
             v: 1;
             alerts: {
                 memory: {
                     enabled: boolean;
-                    level: 'elevated' | 'critical';
+                    level: 'critical' | 'elevated';
                     sustainMs: number;
                 };
                 cpu: {
@@ -108,16 +114,20 @@ export type MachineResourcesActionResultById = {
                 disk: {
                     enabled: boolean;
                     threshold: {
-                        freeFraction: number;
-                    } | {
                         freeBytes: number;
+                    } | {
+                        freeFraction: number;
                     };
                 };
             };
+            monitoring: {
+                mode: 'always' | 'off' | 'while_viewing';
+                intervalMs: number;
+            };
             processes: {
                 allProcessesVisible: boolean;
-                toolIdleCloseMs: number | null;
-                browserMaxConcurrent: number | null;
+                toolIdleCloseMs: null | number;
+                browserMaxConcurrent: null | number;
             };
             storage: {
                 wholeDiskEnabled: boolean;
@@ -125,19 +135,19 @@ export type MachineResourcesActionResultById = {
                     path: string;
                     addedAt: number;
                 }[];
-                logRetentionDays: number | null;
-                trashEmptyAfterDays: number | null;
-                scheduledScan: {
+                logRetentionDays: null | number;
+                trashEmptyAfterDays: null | number;
+                scheduledScan: null | {
                     weekday: number;
                     time: string;
                     onlyOnPower: true;
-                } | null;
+                };
                 suggestUnusedAfterDays: number;
             };
             guard: {
                 memoryGuard: {
                     enabled: boolean;
-                    actAt: 'elevated' | 'critical';
+                    actAt: 'critical' | 'elevated';
                     sustainMs: number;
                     cooldownMs: number;
                     steps: {
@@ -145,7 +155,7 @@ export type MachineResourcesActionResultById = {
                         devServers: boolean;
                         idleSessions: boolean;
                     };
-                    pausedUntil: number | null;
+                    pausedUntil: null | number;
                 };
                 idleSessions: {
                     enabled: boolean;
@@ -158,11 +168,11 @@ export type MachineResourcesActionResultById = {
                     warnBeforeMs: number;
                 };
                 leftBehind: {
-                    mode: 'off' | 'ask' | 'automatic';
+                    mode: 'ask' | 'automatic' | 'off';
                     graceMs: number;
                 };
                 sessionMemoryCeiling: {
-                    bytes: number | null;
+                    bytes: null | number;
                     warnAtPercent: number;
                 };
                 keepAwake: 'off' | 'on' | 'on_power';
@@ -170,17 +180,15 @@ export type MachineResourcesActionResultById = {
         };
         revision: number;
         source: 'default' | 'stored';
-    } | {
-        status: 'locked' | 'invalid' | 'unavailable';
     };
     readonly "machines.resources.policy.set": {
-        status: 'applied' | 'unchanged' | 'conflict';
+        status: 'applied' | 'conflict' | 'unchanged';
         policy: {
             v: 1;
             alerts: {
                 memory: {
                     enabled: boolean;
-                    level: 'elevated' | 'critical';
+                    level: 'critical' | 'elevated';
                     sustainMs: number;
                 };
                 cpu: {
@@ -191,16 +199,20 @@ export type MachineResourcesActionResultById = {
                 disk: {
                     enabled: boolean;
                     threshold: {
-                        freeFraction: number;
-                    } | {
                         freeBytes: number;
+                    } | {
+                        freeFraction: number;
                     };
                 };
             };
+            monitoring: {
+                mode: 'always' | 'off' | 'while_viewing';
+                intervalMs: number;
+            };
             processes: {
                 allProcessesVisible: boolean;
-                toolIdleCloseMs: number | null;
-                browserMaxConcurrent: number | null;
+                toolIdleCloseMs: null | number;
+                browserMaxConcurrent: null | number;
             };
             storage: {
                 wholeDiskEnabled: boolean;
@@ -208,19 +220,19 @@ export type MachineResourcesActionResultById = {
                     path: string;
                     addedAt: number;
                 }[];
-                logRetentionDays: number | null;
-                trashEmptyAfterDays: number | null;
-                scheduledScan: {
+                logRetentionDays: null | number;
+                trashEmptyAfterDays: null | number;
+                scheduledScan: null | {
                     weekday: number;
                     time: string;
                     onlyOnPower: true;
-                } | null;
+                };
                 suggestUnusedAfterDays: number;
             };
             guard: {
                 memoryGuard: {
                     enabled: boolean;
-                    actAt: 'elevated' | 'critical';
+                    actAt: 'critical' | 'elevated';
                     sustainMs: number;
                     cooldownMs: number;
                     steps: {
@@ -228,7 +240,7 @@ export type MachineResourcesActionResultById = {
                         devServers: boolean;
                         idleSessions: boolean;
                     };
-                    pausedUntil: number | null;
+                    pausedUntil: null | number;
                 };
                 idleSessions: {
                     enabled: boolean;
@@ -241,11 +253,11 @@ export type MachineResourcesActionResultById = {
                     warnBeforeMs: number;
                 };
                 leftBehind: {
-                    mode: 'off' | 'ask' | 'automatic';
+                    mode: 'ask' | 'automatic' | 'off';
                     graceMs: number;
                 };
                 sessionMemoryCeiling: {
-                    bytes: number | null;
+                    bytes: null | number;
                     warnAtPercent: number;
                 };
                 keepAwake: 'off' | 'on' | 'on_power';

@@ -8,14 +8,14 @@ export type AutomationEventsActionInputById = {
         transport: {
             kind: 'checkpointedPull';
         } | {
-            kind: 'socket';
-        } | {
             kind: 'durablePush';
+        } | {
+            kind: 'socket';
         };
         pageSize?: number | undefined;
         cursor?: string | undefined;
         knownRevision?: string | undefined;
-        checkpointRetirementCandidates?: {
+        checkpointRetirementCandidates?: undefined | {
             automationId: string;
             triggerId: string;
             triggerRevision: number;
@@ -25,7 +25,7 @@ export type AutomationEventsActionInputById = {
             };
             sourceSelectorId: string;
             sourceContractVersion: number;
-        }[] | undefined;
+        }[];
     };
     readonly "automation.event.admit": {
         definitions: {
@@ -44,6 +44,21 @@ export type AutomationEventsActionInputById = {
         payload: JsonValue;
     };
     readonly "automation.event.source.status.report": {
+        kind: 'catalogReconciliation';
+        scope: {
+            kind: 'checkpointedPull';
+        } | {
+            kind: 'durablePush';
+            webhookEndpointId: string;
+        } | {
+            kind: 'socket';
+        };
+        observedRevision: string;
+        adoptedRevision: null | string;
+        state: 'current' | 'reconciling';
+        scanStartedAt: null | number;
+        nextRetryAt: null | number;
+    } | {
         kind: 'source';
         automationId: string;
         triggerId: string;
@@ -53,33 +68,21 @@ export type AutomationEventsActionInputById = {
             localId: string;
         };
         sourceSelectorId: string;
-        state: 'uninitialized' | 'baselined' | 'observing' | 'backingOff' | 'attention';
-        code: 'none' | 'credentialMissing' | 'credentialRevoked' | 'rateLimited' | 'historyGap' | 'capacityBlocked' | 'definitionStale' | 'sourceContractIncompatible' | 'admissionUnavailable';
-        nextRetryAt: number | null;
+        state: 'attention' | 'backingOff' | 'baselined' | 'observing' | 'uninitialized';
+        code: string;
+        nextRetryAt: null | number;
         observedDelta: number;
         admittedDelta: number;
         skippedDelta: number;
-        lastObservedAt?: number | null | undefined;
-        lastDispositionAt?: number | null | undefined;
-    } | {
-        kind: 'catalogReconciliation';
-        scope: {
-            kind: 'checkpointedPull';
-        } | {
-            kind: 'socket';
-        } | {
-            kind: 'durablePush';
-            webhookEndpointId: string;
-        };
-        observedRevision: string;
-        adoptedRevision: string | null;
-        state: 'current' | 'reconciling' | 'reconciliationLate';
-        scanStartedAt: number | null;
-        nextRetryAt: number | null;
+        lastObservedAt?: null | number | undefined;
+        lastDispositionAt?: null | number | undefined;
     };
 };
 export type AutomationEventsActionResultById = {
     readonly "automation.event.sources.list": {
+        kind: 'cursorStale';
+        currentRevision: string;
+    } | {
         kind: 'page';
         revision: string;
         definitions: {
@@ -102,13 +105,6 @@ export type AutomationEventsActionResultById = {
                     pluginId: string;
                 };
             } | {
-                kind: 'socket';
-                watcherMaterializationRef: {
-                    machineId: string;
-                    materializationId: string;
-                    pluginId: string;
-                };
-            } | {
                 kind: 'durablePush';
                 webhookEndpointId: string;
                 endpointMaterializationRef: {
@@ -117,29 +113,36 @@ export type AutomationEventsActionResultById = {
                     pluginId: string;
                 };
                 observationStartsAt: number;
+            } | {
+                kind: 'socket';
+                watcherMaterializationRef: {
+                    machineId: string;
+                    materializationId: string;
+                    pluginId: string;
+                };
             };
-            filter: {
+            filter: null | {
                 v: 1;
                 all: ({
                     op: 'eq';
                     field: string;
-                    value: string | number | boolean | null;
+                    value: boolean | null | number | string;
                 } | {
                     op: 'in';
                     field: string;
-                    values: (string | number | boolean | null)[];
+                    values: (boolean | null | number | string)[];
                 })[];
-            } | null;
-            maximumObservationAgeMs: number | null;
-            observationOnly?: {
+            };
+            maximumObservationAgeMs: null | number;
+            observationOnly?: undefined | {
                 kind: 'observationOnly';
-            } | undefined;
+            };
         }[];
-        nextCursor: string | null;
+        nextCursor: null | string;
     } | {
         kind: 'unchanged';
         revision: string;
-        checkpointRetirements?: {
+        checkpointRetirements?: undefined | {
             automationId: string;
             triggerId: string;
             triggerRevision: number;
@@ -149,10 +152,7 @@ export type AutomationEventsActionResultById = {
             };
             sourceSelectorId: string;
             sourceContractVersion: number;
-        }[] | undefined;
-    } | {
-        kind: 'cursorStale';
-        currentRevision: string;
+        }[];
     };
     readonly "automation.event.admit": {
         results: ({
@@ -160,21 +160,21 @@ export type AutomationEventsActionResultById = {
             runId: string;
             checkpointSafe: true;
         } | {
-            kind: 'rejoined';
-            runId: string;
-            checkpointSafe: true;
-        } | {
-            kind: 'skipped';
-            reason: 'filtered' | 'beforeObservationStart' | 'outsideFreshness' | 'definitionRetired' | 'occurrenceRejected';
-            checkpointSafe: true;
+            kind: 'blocked';
+            reason: 'capacity' | 'noEnabledAssignment' | 'occurrenceConflict' | 'temporarilyUnavailable';
+            checkpointSafe: false;
         } | {
             kind: 'refreshDefinition';
             reason: 'definitionStale' | 'observationTargetChanged';
             checkpointSafe: false;
         } | {
-            kind: 'blocked';
-            reason: 'capacity' | 'temporarilyUnavailable' | 'occurrenceConflict' | 'noEnabledAssignment';
-            checkpointSafe: false;
+            kind: 'rejoined';
+            runId: string;
+            checkpointSafe: true;
+        } | {
+            kind: 'skipped';
+            reason: 'beforeObservationStart' | 'definitionRetired' | 'filtered' | 'occurrenceRejected' | 'outsideFreshness';
+            checkpointSafe: true;
         })[];
     };
     readonly "automation.event.source.status.report": Record<string, never>;

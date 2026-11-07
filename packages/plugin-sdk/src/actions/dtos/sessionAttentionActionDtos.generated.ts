@@ -7,16 +7,16 @@ export type SessionAttentionActionInputById = {
     readonly "session.attention.set": {
         sessionId: string;
         standing?: boolean | null | undefined;
-        remindAt?: number | null | undefined;
+        remindAt?: null | number | undefined;
     };
 };
 export type SessionAttentionActionResultById = {
     readonly "session.attention.set": {
-        standing: {
+        standing: null | {
             sessionId: string;
             standing: boolean;
             updatedAt: number;
             remindAt?: number | undefined;
-        } | null;
+        };
     };
 };

@@ -7,8 +7,8 @@ export type MachineAgentSignInActionInputById = {
     readonly "machines.agents.signIn.start": {
         agentId: string;
         machineId: string;
-        method?: 'native' | 'connected' | undefined;
         serviceId?: string | undefined;
+        method?: 'connected' | 'native' | undefined;
     };
     readonly "machines.agents.signIn.status": {
         agentId: string;
@@ -27,8 +27,17 @@ export type MachineAgentSignInActionInputById = {
 };
 export type MachineAgentSignInActionResultById = {
     readonly "machines.agents.signIn.start": {
-        status: 'starting';
+        ok: false;
+        errorCode: string;
+        error: string;
+    } | {
+        status: 'awaitingDeviceAuthorization';
         attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
     } | {
         status: 'awaitingManual';
         attemptId: string;
@@ -39,26 +48,15 @@ export type MachineAgentSignInActionResultById = {
         authorizationUrl?: string | undefined;
         expiresAtMs?: number | undefined;
     } | {
-        status: 'awaitingDeviceAuthorization';
+        status: 'cancelled';
         attemptId: string;
-        verificationUri?: string | undefined;
-        verificationUriComplete?: string | undefined;
-        userCode?: string | undefined;
-        expiresAtMs?: number | undefined;
-        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
     } | {
         status: 'configurationRequired';
         target: {
-            kind: 'service';
-            service: {
-                pluginId: string;
-                localId: string;
-            } | {
-                pluginId: 'happier';
-                localId: 'mcp-sign-in';
-            };
-            modeId: string;
-        } | {
             kind: 'account';
             account: {
                 service: {
@@ -72,28 +70,31 @@ export type MachineAgentSignInActionResultById = {
             kind: 'attempt';
             attemptId: string;
             service: {
-                pluginId: string;
-                localId: string;
-            } | {
                 pluginId: 'happier';
                 localId: 'mcp-sign-in';
+            } | {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'service';
+            service: {
+                pluginId: 'happier';
+                localId: 'mcp-sign-in';
+            } | {
+                pluginId: string;
+                localId: string;
             };
             modeId: string;
         };
         missingFieldIds: string[];
         attemptId?: string | undefined;
     } | {
-        status: 'pending';
-        attemptId: string;
-        retryAfterMs: number;
-    } | {
-        status: 'outcomeUnknown';
-        attemptId: string;
-        diagnostic: unknown;
-    } | {
-        status: 'reconnectRequired';
-        attemptId: string;
+        status: 'conflict';
         code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
     } | {
         status: 'connected';
         attemptId: string;
@@ -105,12 +106,18 @@ export type MachineAgentSignInActionResultById = {
             accountId: string;
         };
     } | {
-        status: 'cancelled';
+        status: 'outcomeUnknown';
         attemptId: string;
+        diagnostic: unknown;
     } | {
-        status: 'cleanupPending';
+        status: 'pending';
         attemptId: string;
-        code: 'connected_account_attempt_cleanup_pending';
+        retryAfterMs: number;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+        diagnostic?: unknown;
     } | {
         status: 'rejected';
         code: string;
@@ -119,6 +126,9 @@ export type MachineAgentSignInActionResultById = {
         failureClass?: 'rateLimit' | undefined;
         retryNotBeforeMs?: number | undefined;
     } | {
+        status: 'starting';
+        attemptId: string;
+    } | {
         status: 'unavailable';
         code: string;
         attemptId?: string | undefined;
@@ -126,48 +136,49 @@ export type MachineAgentSignInActionResultById = {
         failureClass?: 'rateLimit' | undefined;
         retryNotBeforeMs?: number | undefined;
     } | {
-        status: 'conflict';
-        code: string;
-        attemptId?: string | undefined;
-        diagnostic?: unknown;
-    } | {
         terminalKey: string;
         terminalId: string;
-    } | {
-        ok: false;
-        errorCode: string;
-        error: string;
     };
     readonly "machines.agents.signIn.status": {
-        status: 'unknown' | 'signedIn' | 'signedOut';
-        accountLabel: string | null;
+        status: 'signedIn' | 'signedOut' | 'unknown';
         checkedAt: number;
-        nativeLogin: 'login_terminal' | 'status_only' | 'manual_only' | 'unsupported';
+        nativeLogin: 'login_terminal' | 'manual_only' | 'status_only' | 'unsupported';
         connectedServices: {
             serviceId: string;
             title: string;
         }[];
+        accountLabel?: null | string | undefined;
+        signInScope?: 'machineOwner' | 'member' | 'sharedAgent' | undefined;
     };
     readonly "machines.agents.signIn.cancel": {
         [x: string]: unknown;
-        ok: true;
+        ok: false;
+        errorCode: 'agent_cli_missing' | 'agent_login_unsupported' | 'effect_in_progress' | 'service_admission_unavailable' | 'service_generation_changed' | 'service_unavailable' | 'terminal_busy' | 'terminal_cwd_denied' | 'terminal_disabled' | 'terminal_forbidden' | 'terminal_invalid_request' | 'terminal_not_found' | 'terminal_resize_unavailable' | 'terminal_spawn_failed' | 'terminal_unavailable';
+        error: string;
+        spawnFailure?: undefined | {
+            reason: 'no_ptys' | 'other' | 'out_of_memory' | 'process_limit' | 'too_many_open_files';
+            errno?: string | undefined;
+        };
     } | {
         [x: string]: unknown;
-        ok: false;
-        errorCode: 'terminal_disabled' | 'terminal_not_found' | 'terminal_forbidden' | 'terminal_unavailable' | 'terminal_cwd_denied' | 'terminal_spawn_failed' | 'terminal_invalid_request' | 'terminal_busy' | 'service_generation_changed' | 'effect_in_progress' | 'service_unavailable' | 'service_admission_unavailable' | 'terminal_resize_unavailable' | 'agent_login_unsupported' | 'agent_cli_missing';
-        error: string;
-        spawnFailure?: {
-            reason: 'too_many_open_files' | 'no_ptys' | 'process_limit' | 'out_of_memory' | 'other';
-            errno?: string | undefined;
-        } | undefined;
+        ok: true;
     } | {
         ok: false;
         errorCode: string;
         error: string;
     };
     readonly "machines.agents.signIn.restart": {
-        status: 'starting';
+        ok: false;
+        errorCode: string;
+        error: string;
+    } | {
+        status: 'awaitingDeviceAuthorization';
         attemptId: string;
+        verificationUri?: string | undefined;
+        verificationUriComplete?: string | undefined;
+        userCode?: string | undefined;
+        expiresAtMs?: number | undefined;
+        pollIntervalMs?: number | undefined;
     } | {
         status: 'awaitingManual';
         attemptId: string;
@@ -178,26 +189,15 @@ export type MachineAgentSignInActionResultById = {
         authorizationUrl?: string | undefined;
         expiresAtMs?: number | undefined;
     } | {
-        status: 'awaitingDeviceAuthorization';
+        status: 'cancelled';
         attemptId: string;
-        verificationUri?: string | undefined;
-        verificationUriComplete?: string | undefined;
-        userCode?: string | undefined;
-        expiresAtMs?: number | undefined;
-        pollIntervalMs?: number | undefined;
+    } | {
+        status: 'cleanupPending';
+        attemptId: string;
+        code: 'connected_account_attempt_cleanup_pending';
     } | {
         status: 'configurationRequired';
         target: {
-            kind: 'service';
-            service: {
-                pluginId: string;
-                localId: string;
-            } | {
-                pluginId: 'happier';
-                localId: 'mcp-sign-in';
-            };
-            modeId: string;
-        } | {
             kind: 'account';
             account: {
                 service: {
@@ -211,28 +211,31 @@ export type MachineAgentSignInActionResultById = {
             kind: 'attempt';
             attemptId: string;
             service: {
-                pluginId: string;
-                localId: string;
-            } | {
                 pluginId: 'happier';
                 localId: 'mcp-sign-in';
+            } | {
+                pluginId: string;
+                localId: string;
+            };
+            modeId: string;
+        } | {
+            kind: 'service';
+            service: {
+                pluginId: 'happier';
+                localId: 'mcp-sign-in';
+            } | {
+                pluginId: string;
+                localId: string;
             };
             modeId: string;
         };
         missingFieldIds: string[];
         attemptId?: string | undefined;
     } | {
-        status: 'pending';
-        attemptId: string;
-        retryAfterMs: number;
-    } | {
-        status: 'outcomeUnknown';
-        attemptId: string;
-        diagnostic: unknown;
-    } | {
-        status: 'reconnectRequired';
-        attemptId: string;
+        status: 'conflict';
         code: string;
+        attemptId?: string | undefined;
+        diagnostic?: unknown;
     } | {
         status: 'connected';
         attemptId: string;
@@ -244,12 +247,18 @@ export type MachineAgentSignInActionResultById = {
             accountId: string;
         };
     } | {
-        status: 'cancelled';
+        status: 'outcomeUnknown';
         attemptId: string;
+        diagnostic: unknown;
     } | {
-        status: 'cleanupPending';
+        status: 'pending';
         attemptId: string;
-        code: 'connected_account_attempt_cleanup_pending';
+        retryAfterMs: number;
+    } | {
+        status: 'reconnectRequired';
+        attemptId: string;
+        code: string;
+        diagnostic?: unknown;
     } | {
         status: 'rejected';
         code: string;
@@ -258,6 +267,9 @@ export type MachineAgentSignInActionResultById = {
         failureClass?: 'rateLimit' | undefined;
         retryNotBeforeMs?: number | undefined;
     } | {
+        status: 'starting';
+        attemptId: string;
+    } | {
         status: 'unavailable';
         code: string;
         attemptId?: string | undefined;
@@ -265,16 +277,7 @@ export type MachineAgentSignInActionResultById = {
         failureClass?: 'rateLimit' | undefined;
         retryNotBeforeMs?: number | undefined;
     } | {
-        status: 'conflict';
-        code: string;
-        attemptId?: string | undefined;
-        diagnostic?: unknown;
-    } | {
         terminalKey: string;
         terminalId: string;
-    } | {
-        ok: false;
-        errorCode: string;
-        error: string;
     };
 };

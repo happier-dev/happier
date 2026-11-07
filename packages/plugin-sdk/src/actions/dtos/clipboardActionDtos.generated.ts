@@ -6,6 +6,8 @@
 export type ClipboardActionInputById = {
     readonly "clipboard.write": {
         text: string;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type ClipboardActionResultById = {

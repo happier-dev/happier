@@ -6,6 +6,14 @@ import type { ExtensionSelectionV1, FollowPolicyV1, QualifiedAudienceSelection, 
 export type SessionFollowActionInputById = {
     readonly "follow.preferences.get": Record<string, never>;
     readonly "follow.preferences.set": {
+        assigned: boolean;
+        direct: boolean;
+        team: boolean;
+        group: boolean;
+        managerPolicy?: FollowPolicyV1<true> | undefined;
+        runReportPolicy?: FollowPolicyV1<true> | undefined;
+        discussionReceivePolicy?: FollowPolicyV1<true> | undefined;
+    } | {
         defaultRules: {
             assigned: boolean;
             direct: boolean;
@@ -15,16 +23,33 @@ export type SessionFollowActionInputById = {
         managerPolicy?: FollowPolicyV1<true> | undefined;
         runReportPolicy?: FollowPolicyV1<true> | undefined;
         discussionReceivePolicy?: FollowPolicyV1<true> | undefined;
-    } | {
-        assigned: boolean;
-        direct: boolean;
-        team: boolean;
-        group: boolean;
-        managerPolicy?: FollowPolicyV1<true> | undefined;
-        runReportPolicy?: FollowPolicyV1<true> | undefined;
-        discussionReceivePolicy?: FollowPolicyV1<true> | undefined;
     };
     readonly "follow.list": {
+        direction: 'followers';
+        source: {
+            kind: 'discussion';
+            discussionId: string;
+        } | {
+            kind: 'execution_run';
+            machineId: string;
+            runId: string;
+        } | {
+            kind: 'execution_run';
+            sessionId: string;
+            runId: string;
+        } | {
+            kind: 'rule';
+            ruleId: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'workflow_run';
+            runId: string;
+        };
+        cursor?: string | undefined;
+        limit?: number | undefined;
+    } | {
         direction: 'following';
         receiver: {
             kind: 'account';
@@ -32,53 +57,28 @@ export type SessionFollowActionInputById = {
             kind: 'session';
             sessionId: SessionTargetV1<true>;
         };
-        source?: {
-            kind: 'session';
-            sessionId: string;
-        } | {
+        source?: undefined | {
             kind: 'discussion';
             discussionId: string;
-        } | {
-            kind: 'execution_run';
-            sessionId: string;
-            runId: string;
         } | {
             kind: 'execution_run';
             machineId: string;
             runId: string;
         } | {
-            kind: 'workflow_run';
+            kind: 'execution_run';
+            sessionId: string;
             runId: string;
         } | {
             kind: 'rule';
             ruleId: string;
-        } | undefined;
-        sourceKinds?: ('session' | 'discussion' | 'execution_run' | 'workflow_run')[] | undefined;
-        cursor?: string | undefined;
-        limit?: number | undefined;
-    } | {
-        direction: 'followers';
-        source: {
+        } | {
             kind: 'session';
             sessionId: string;
         } | {
-            kind: 'discussion';
-            discussionId: string;
-        } | {
-            kind: 'execution_run';
-            sessionId: string;
-            runId: string;
-        } | {
-            kind: 'execution_run';
-            machineId: string;
-            runId: string;
-        } | {
             kind: 'workflow_run';
             runId: string;
-        } | {
-            kind: 'rule';
-            ruleId: string;
         };
+        sourceKinds?: ('discussion' | 'execution_run' | 'session' | 'workflow_run')[] | undefined;
         cursor?: string | undefined;
         limit?: number | undefined;
     };
@@ -104,25 +104,25 @@ export type SessionFollowActionInputById = {
         } | {
             kind: 'source';
             source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
         };
     };
@@ -139,25 +139,25 @@ export type SessionFollowActionInputById = {
         } | {
             kind: 'source';
             source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
         };
     };
@@ -177,28 +177,81 @@ export type SessionFollowActionInputById = {
             sessionId: SessionTargetV1<true>;
         };
         source: {
-            kind: 'session';
-            sessionId: string;
-        } | {
             kind: 'discussion';
             discussionId: string;
-        } | {
-            kind: 'execution_run';
-            sessionId: string;
-            runId: string;
         } | {
             kind: 'execution_run';
             machineId: string;
             runId: string;
         } | {
-            kind: 'workflow_run';
+            kind: 'execution_run';
+            sessionId: string;
             runId: string;
         } | {
             kind: 'rule';
             ruleId: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'workflow_run';
+            runId: string;
         };
     };
     readonly "follow.set": {
+        receiver: {
+            kind: 'account';
+        } | {
+            kind: 'session';
+            sessionId: SessionTargetV1<true>;
+        };
+        source: {
+            kind: 'discussion';
+            discussionId: string;
+        } | {
+            kind: 'execution_run';
+            machineId: string;
+            runId: string;
+        } | {
+            kind: 'execution_run';
+            sessionId: string;
+            runId: string;
+        } | {
+            kind: 'rule';
+            ruleId: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'workflow_run';
+            runId: string;
+        };
+        policy?: FollowPolicyV1<true> | undefined;
+        once?: ({
+            kind: 'first_needs_you';
+        } | {
+            kind: 'output_ready';
+            outputRef: {
+                kind: 'review_walkthrough';
+                comparisonId: string;
+                resultId: string;
+            } | {
+                kind: 'scm_diff_summary';
+                output: 'commitPlan' | 'summary' | 'walkthrough';
+                comparisonId: string;
+                resultId: string;
+            };
+            afterRevision?: number | undefined;
+        } | {
+            kind: 'run_settled';
+        })[] | null | undefined | {
+            kind: 'first_needs_you';
+        } | {
+            kind: 'turn_finished';
+            sourceTurnId: string;
+        };
+        clearOnceDeliveries?: true | undefined;
+    } | {
         receiver: {
             kind: 'account';
         } | {
@@ -211,9 +264,9 @@ export type SessionFollowActionInputById = {
         };
         ruleDefinition: {
             filter: Readonly<{
-                show: 'sessions' | 'runs' | 'both';
-                startedBy: readonly ('you' | 'triggers' | 'agents')[];
-                scope: 'following' | 'my_work' | 'assigned_to_me' | 'involving_me' | 'all_accessible';
+                show: 'both' | 'runs' | 'sessions';
+                startedBy: readonly ('agents' | 'triggers' | 'you')[];
+                scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
                 attention: 'any' | 'needs_my_attention';
                 bot?: 'bot' | 'ordinary' | undefined;
                 coordinator?: 'coordinator' | undefined;
@@ -227,8 +280,8 @@ export type SessionFollowActionInputById = {
                         projectKey: string;
                     }[];
                 }> | undefined;
-                statuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-                excludedStatuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
+                statuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+                excludedStatuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
                 machines?: Readonly<{
                     include: readonly Readonly<{
                         serverId: string;
@@ -277,66 +330,13 @@ export type SessionFollowActionInputById = {
                     serverId: string;
                     tagId: string;
                 }>[];
-                source: 'direct' | 'all' | 'persisted';
+                source: 'all' | 'direct' | 'persisted';
             }>;
             v: 1;
             enabled: boolean;
         };
         policy: FollowPolicyV1<true>;
         expectedVersion: number;
-    } | {
-        receiver: {
-            kind: 'account';
-        } | {
-            kind: 'session';
-            sessionId: SessionTargetV1<true>;
-        };
-        source: {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'discussion';
-            discussionId: string;
-        } | {
-            kind: 'execution_run';
-            sessionId: string;
-            runId: string;
-        } | {
-            kind: 'execution_run';
-            machineId: string;
-            runId: string;
-        } | {
-            kind: 'workflow_run';
-            runId: string;
-        } | {
-            kind: 'rule';
-            ruleId: string;
-        };
-        policy?: FollowPolicyV1<true> | undefined;
-        once?: {
-            kind: 'turn_finished';
-            sourceTurnId: string;
-        } | {
-            kind: 'first_needs_you';
-        } | ({
-            kind: 'run_settled';
-        } | {
-            kind: 'first_needs_you';
-        } | {
-            kind: 'output_ready';
-            outputRef: {
-                kind: 'review_walkthrough';
-                comparisonId: string;
-                resultId: string;
-            } | {
-                kind: 'scm_diff_summary';
-                output: 'summary' | 'walkthrough' | 'commitPlan';
-                comparisonId: string;
-                resultId: string;
-            };
-            afterRevision?: number | undefined;
-        })[] | null | undefined;
-        clearOnceDeliveries?: true | undefined;
     };
     readonly "follow.remove": {
         receiver: {
@@ -346,10 +346,26 @@ export type SessionFollowActionInputById = {
             sessionId: SessionTargetV1<true>;
         };
         source: {
+            kind: 'discussion';
+            discussionId: string;
+        } | {
+            kind: 'execution_run';
+            machineId: string;
+            runId: string;
+        } | {
+            kind: 'execution_run';
+            sessionId: string;
+            runId: string;
+        } | {
             kind: 'rule';
             ruleId: string;
+        } | {
+            kind: 'session';
+            sessionId: string;
+        } | {
+            kind: 'workflow_run';
+            runId: string;
         };
-        expectedVersion: number;
     } | {
         receiver: {
             kind: 'account';
@@ -358,26 +374,10 @@ export type SessionFollowActionInputById = {
             sessionId: SessionTargetV1<true>;
         };
         source: {
-            kind: 'session';
-            sessionId: string;
-        } | {
-            kind: 'discussion';
-            discussionId: string;
-        } | {
-            kind: 'execution_run';
-            sessionId: string;
-            runId: string;
-        } | {
-            kind: 'execution_run';
-            machineId: string;
-            runId: string;
-        } | {
-            kind: 'workflow_run';
-            runId: string;
-        } | {
             kind: 'rule';
             ruleId: string;
         };
+        expectedVersion: number;
     };
 };
 export type SessionFollowActionResultById = {
@@ -401,33 +401,52 @@ export type SessionFollowActionResultById = {
     };
     readonly "follow.list": {
         follows: ({
-            source: {
-                kind: 'session';
-                sessionId: string;
+            sessionId: string;
+            following: boolean;
+            notificationLevel: 'all_messages' | 'important' | 'none';
+            includeInVoice: boolean;
+            persistent?: boolean | undefined;
+            policy?: FollowPolicyV1 | undefined;
+            once?: null | undefined | {
+                kind: 'first_needs_you';
             } | {
+                kind: 'turn_finished';
+                sourceTurnId: string;
+            };
+            onceAfterAgentStateVersion?: number | undefined;
+            onceDelivery?: undefined | {
+                event: 'cancelled' | 'failed' | 'message' | 'permission_required' | 'ready' | 'user_action_required';
+                agentStateVersion: number;
+                turnId?: string | undefined;
+                requestId?: string | undefined;
+                transcriptSeq?: number | undefined;
+            };
+        } | {
+            source: {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
             following: boolean;
             persistent: boolean;
             policy: FollowPolicyV1;
             once?: ({
-                kind: 'run_settled';
-            } | {
                 kind: 'first_needs_you';
             } | {
                 kind: 'output_ready';
@@ -437,21 +456,23 @@ export type SessionFollowActionResultById = {
                     resultId: string;
                 } | {
                     kind: 'scm_diff_summary';
-                    output: 'summary' | 'walkthrough' | 'commitPlan';
+                    output: 'commitPlan' | 'summary' | 'walkthrough';
                     comparisonId: string;
                     resultId: string;
                 };
                 afterRevision?: number | undefined;
+            } | {
+                kind: 'run_settled';
             })[] | null | undefined;
             onceDeliveries?: ({
                 original: {
                     source: {
                         kind: 'execution_run';
-                        sessionId: string;
+                        machineId: string;
                         runId: string;
                     } | {
                         kind: 'execution_run';
-                        machineId: string;
+                        sessionId: string;
                         runId: string;
                     };
                     output: {
@@ -461,12 +482,12 @@ export type SessionFollowActionResultById = {
                             resultId: string;
                         } | {
                             kind: 'scm_diff_summary';
-                            output: 'summary' | 'walkthrough' | 'commitPlan';
+                            output: 'commitPlan' | 'summary' | 'walkthrough';
                             comparisonId: string;
                             resultId: string;
                         };
                         revision: number;
-                        state: 'failed' | 'cancelled' | 'pending' | 'writing' | 'complete' | 'partial';
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
                     };
                 };
                 event: {
@@ -476,27 +497,11 @@ export type SessionFollowActionResultById = {
                 original: {
                     source: {
                         kind: 'execution_run';
-                        sessionId: string;
+                        machineId: string;
                         runId: string;
                     } | {
                         kind: 'execution_run';
-                        machineId: string;
-                        runId: string;
-                    };
-                    terminalEventId: string;
-                };
-                event: {
-                    kind: 'finished' | 'failed_or_stopped';
-                };
-            } | {
-                original: {
-                    source: {
-                        kind: 'execution_run';
                         sessionId: string;
-                        runId: string;
-                    } | {
-                        kind: 'execution_run';
-                        machineId: string;
                         runId: string;
                     };
                     permissionRequests: {
@@ -511,61 +516,56 @@ export type SessionFollowActionResultById = {
             } | {
                 original: {
                     source: {
+                        kind: 'execution_run';
+                        machineId: string;
+                        runId: string;
+                    } | {
+                        kind: 'execution_run';
+                        sessionId: string;
+                        runId: string;
+                    };
+                    terminalEventId: string;
+                };
+                event: {
+                    kind: 'failed_or_stopped' | 'finished';
+                };
+            } | {
+                original: {
+                    source: {
                         kind: 'workflow_run';
                         runId: string;
                     };
                     revision: number;
                 };
                 event: {
-                    kind: 'finished' | 'failed_or_stopped' | 'update_posted';
+                    kind: 'failed_or_stopped' | 'finished' | 'update_posted';
                 } | {
                     kind: 'needs_you';
-                    type: 'approval' | 'decision' | 'blocked';
+                    type: 'approval' | 'blocked' | 'decision';
                 };
             })[] | undefined;
-        } | {
-            sessionId: string;
-            following: boolean;
-            notificationLevel: 'none' | 'important' | 'all_messages';
-            includeInVoice: boolean;
-            persistent?: boolean | undefined;
-            policy?: FollowPolicyV1 | undefined;
-            once?: {
-                kind: 'turn_finished';
-                sourceTurnId: string;
-            } | {
-                kind: 'first_needs_you';
-            } | null | undefined;
-            onceAfterAgentStateVersion?: number | undefined;
-            onceDelivery?: {
-                event: 'message' | 'failed' | 'permission_required' | 'ready' | 'cancelled' | 'user_action_required';
-                agentStateVersion: number;
-                turnId?: string | undefined;
-                requestId?: string | undefined;
-                transcriptSeq?: number | undefined;
-            } | undefined;
         })[];
         sources: ({
             source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
             destinationSessionId: string;
             policy: FollowPolicyV1;
@@ -579,7 +579,7 @@ export type SessionFollowActionResultById = {
             policy: FollowPolicyV1;
             deliveryState: 'eligible' | 'paused_archived';
             hasPendingUpdates: boolean;
-            relation?: 'manager' | 'follower' | undefined;
+            relation?: 'follower' | 'manager' | undefined;
         })[];
         rules: {
             ruleId: string;
@@ -594,9 +594,9 @@ export type SessionFollowActionResultById = {
                 v: 1;
                 enabled: boolean;
                 filter: Readonly<{
-                    show: 'sessions' | 'runs' | 'both';
-                    startedBy: readonly ('you' | 'triggers' | 'agents')[];
-                    scope: 'following' | 'my_work' | 'assigned_to_me' | 'involving_me' | 'all_accessible';
+                    show: 'both' | 'runs' | 'sessions';
+                    startedBy: readonly ('agents' | 'triggers' | 'you')[];
+                    scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
                     attention: 'any' | 'needs_my_attention';
                     bot?: 'bot' | 'ordinary' | undefined;
                     coordinator?: 'coordinator' | undefined;
@@ -610,8 +610,8 @@ export type SessionFollowActionResultById = {
                             projectKey: string;
                         }[];
                     }> | undefined;
-                    statuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-                    excludedStatuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
+                    statuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+                    excludedStatuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
                     machines?: Readonly<{
                         include: readonly Readonly<{
                             serverId: string;
@@ -660,34 +660,34 @@ export type SessionFollowActionResultById = {
                         serverId: string;
                         tagId: string;
                     }>[];
-                    source: 'direct' | 'all' | 'persisted';
+                    source: 'all' | 'direct' | 'persisted';
                 }>;
                 policy: FollowPolicyV1;
             };
-            sources?: {
+            sources?: undefined | {
                 sourceSessionId: string;
                 delivered: {
                     transcriptSeq: number;
                     readyEventSeq: number;
                     agentStateVersion: number;
-                    turn: {
+                    turn: null | {
                         id: string;
-                        status: 'failed' | 'waiting' | 'cancelled' | 'completed' | 'stalled';
-                    } | null;
+                        status: 'cancelled' | 'completed' | 'failed' | 'stalled' | 'waiting';
+                    };
                 };
-                stalled?: {
+                stalled?: undefined | {
                     ruleVersion: number;
                     presence: {
                         turnId: string;
                         publisherFence: number;
                     };
-                    effectiveDelivery: 'wake' | 'next_turn';
-                } | undefined;
-            }[] | undefined;
-            inception?: {
+                    effectiveDelivery: 'next_turn' | 'wake';
+                };
+            }[];
+            inception?: undefined | {
                 createdAt: number;
                 accountChangeCursor?: number | undefined;
-            } | undefined;
+            };
         }[];
         coverage: 'complete' | 'partial' | 'unavailable';
         continuation?: string | undefined;
@@ -699,49 +699,49 @@ export type SessionFollowActionResultById = {
         matches: {
             serverId: string;
             source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
         }[];
         unavailable: {
             serverId: string;
             source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
         }[];
         overlaps: {
@@ -749,25 +749,25 @@ export type SessionFollowActionResultById = {
             matches: {
                 serverId: string;
                 source: {
-                    kind: 'session';
-                    sessionId: string;
-                } | {
                     kind: 'discussion';
                     discussionId: string;
-                } | {
-                    kind: 'execution_run';
-                    sessionId: string;
-                    runId: string;
                 } | {
                     kind: 'execution_run';
                     machineId: string;
                     runId: string;
                 } | {
-                    kind: 'workflow_run';
+                    kind: 'execution_run';
+                    sessionId: string;
                     runId: string;
                 } | {
                     kind: 'rule';
                     ruleId: string;
+                } | {
+                    kind: 'session';
+                    sessionId: string;
+                } | {
+                    kind: 'workflow_run';
+                    runId: string;
                 };
             }[];
         }[];
@@ -788,85 +788,83 @@ export type SessionFollowActionResultById = {
         } | {
             kind: 'source';
             source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
         })[];
     };
     readonly "follow.get": {
-        follow: {
+        follow: null | {
             sessionId: string;
             following: boolean;
-            notificationLevel: 'none' | 'important' | 'all_messages';
+            notificationLevel: 'all_messages' | 'important' | 'none';
             includeInVoice: boolean;
             persistent?: boolean | undefined;
             policy?: FollowPolicyV1 | undefined;
-            once?: {
+            once?: null | undefined | {
+                kind: 'first_needs_you';
+            } | {
                 kind: 'turn_finished';
                 sourceTurnId: string;
-            } | {
-                kind: 'first_needs_you';
-            } | null | undefined;
+            };
             onceAfterAgentStateVersion?: number | undefined;
-            onceDelivery?: {
-                event: 'message' | 'failed' | 'permission_required' | 'ready' | 'cancelled' | 'user_action_required';
+            onceDelivery?: undefined | {
+                event: 'cancelled' | 'failed' | 'message' | 'permission_required' | 'ready' | 'user_action_required';
                 agentStateVersion: number;
                 turnId?: string | undefined;
                 requestId?: string | undefined;
                 transcriptSeq?: number | undefined;
-            } | undefined;
-        } | null;
+            };
+        };
         isSessionOwner: boolean;
         capabilities: {
             manageFollow: boolean;
         };
         voiceInitialSnapshotPending: boolean;
     } | {
-        follow: {
+        follow: null | {
             source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
             following: boolean;
             persistent: boolean;
             policy: FollowPolicyV1;
             once?: ({
-                kind: 'run_settled';
-            } | {
                 kind: 'first_needs_you';
             } | {
                 kind: 'output_ready';
@@ -876,21 +874,23 @@ export type SessionFollowActionResultById = {
                     resultId: string;
                 } | {
                     kind: 'scm_diff_summary';
-                    output: 'summary' | 'walkthrough' | 'commitPlan';
+                    output: 'commitPlan' | 'summary' | 'walkthrough';
                     comparisonId: string;
                     resultId: string;
                 };
                 afterRevision?: number | undefined;
+            } | {
+                kind: 'run_settled';
             })[] | null | undefined;
             onceDeliveries?: ({
                 original: {
                     source: {
                         kind: 'execution_run';
-                        sessionId: string;
+                        machineId: string;
                         runId: string;
                     } | {
                         kind: 'execution_run';
-                        machineId: string;
+                        sessionId: string;
                         runId: string;
                     };
                     output: {
@@ -900,12 +900,12 @@ export type SessionFollowActionResultById = {
                             resultId: string;
                         } | {
                             kind: 'scm_diff_summary';
-                            output: 'summary' | 'walkthrough' | 'commitPlan';
+                            output: 'commitPlan' | 'summary' | 'walkthrough';
                             comparisonId: string;
                             resultId: string;
                         };
                         revision: number;
-                        state: 'failed' | 'cancelled' | 'pending' | 'writing' | 'complete' | 'partial';
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
                     };
                 };
                 event: {
@@ -915,27 +915,11 @@ export type SessionFollowActionResultById = {
                 original: {
                     source: {
                         kind: 'execution_run';
-                        sessionId: string;
+                        machineId: string;
                         runId: string;
                     } | {
                         kind: 'execution_run';
-                        machineId: string;
-                        runId: string;
-                    };
-                    terminalEventId: string;
-                };
-                event: {
-                    kind: 'finished' | 'failed_or_stopped';
-                };
-            } | {
-                original: {
-                    source: {
-                        kind: 'execution_run';
                         sessionId: string;
-                        runId: string;
-                    } | {
-                        kind: 'execution_run';
-                        machineId: string;
                         runId: string;
                     };
                     permissionRequests: {
@@ -950,58 +934,37 @@ export type SessionFollowActionResultById = {
             } | {
                 original: {
                     source: {
+                        kind: 'execution_run';
+                        machineId: string;
+                        runId: string;
+                    } | {
+                        kind: 'execution_run';
+                        sessionId: string;
+                        runId: string;
+                    };
+                    terminalEventId: string;
+                };
+                event: {
+                    kind: 'failed_or_stopped' | 'finished';
+                };
+            } | {
+                original: {
+                    source: {
                         kind: 'workflow_run';
                         runId: string;
                     };
                     revision: number;
                 };
                 event: {
-                    kind: 'finished' | 'failed_or_stopped' | 'update_posted';
+                    kind: 'failed_or_stopped' | 'finished' | 'update_posted';
                 } | {
                     kind: 'needs_you';
-                    type: 'approval' | 'decision' | 'blocked';
+                    type: 'approval' | 'blocked' | 'decision';
                 };
             })[] | undefined;
-        } | null;
+        };
     } | {
-        source: {
-            source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
-                kind: 'discussion';
-                discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
-            } | {
-                kind: 'execution_run';
-                machineId: string;
-                runId: string;
-            } | {
-                kind: 'workflow_run';
-                runId: string;
-            } | {
-                kind: 'rule';
-                ruleId: string;
-            };
-            destinationSessionId: string;
-            policy: FollowPolicyV1;
-            deliveryState: 'eligible' | 'paused_archived';
-            sourceAvailability: 'available' | 'unavailable';
-            hasPendingUpdates: boolean | null;
-            relation: 'follower';
-        } | {
-            sourceSessionId: string;
-            destinationSessionId: string;
-            policy: FollowPolicyV1;
-            deliveryState: 'eligible' | 'paused_archived';
-            hasPendingUpdates: boolean;
-            relation?: 'manager' | 'follower' | undefined;
-        } | null;
-    } | {
-        rule: {
+        rule: null | {
             ruleId: string;
             receiver: {
                 kind: 'account';
@@ -1014,9 +977,9 @@ export type SessionFollowActionResultById = {
                 v: 1;
                 enabled: boolean;
                 filter: Readonly<{
-                    show: 'sessions' | 'runs' | 'both';
-                    startedBy: readonly ('you' | 'triggers' | 'agents')[];
-                    scope: 'following' | 'my_work' | 'assigned_to_me' | 'involving_me' | 'all_accessible';
+                    show: 'both' | 'runs' | 'sessions';
+                    startedBy: readonly ('agents' | 'triggers' | 'you')[];
+                    scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
                     attention: 'any' | 'needs_my_attention';
                     bot?: 'bot' | 'ordinary' | undefined;
                     coordinator?: 'coordinator' | undefined;
@@ -1030,8 +993,8 @@ export type SessionFollowActionResultById = {
                             projectKey: string;
                         }[];
                     }> | undefined;
-                    statuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-                    excludedStatuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
+                    statuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+                    excludedStatuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
                     machines?: Readonly<{
                         include: readonly Readonly<{
                             serverId: string;
@@ -1080,91 +1043,126 @@ export type SessionFollowActionResultById = {
                         serverId: string;
                         tagId: string;
                     }>[];
-                    source: 'direct' | 'all' | 'persisted';
+                    source: 'all' | 'direct' | 'persisted';
                 }>;
                 policy: FollowPolicyV1;
             };
-            sources?: {
+            sources?: undefined | {
                 sourceSessionId: string;
                 delivered: {
                     transcriptSeq: number;
                     readyEventSeq: number;
                     agentStateVersion: number;
-                    turn: {
+                    turn: null | {
                         id: string;
-                        status: 'failed' | 'waiting' | 'cancelled' | 'completed' | 'stalled';
-                    } | null;
+                        status: 'cancelled' | 'completed' | 'failed' | 'stalled' | 'waiting';
+                    };
                 };
-                stalled?: {
+                stalled?: undefined | {
                     ruleVersion: number;
                     presence: {
                         turnId: string;
                         publisherFence: number;
                     };
-                    effectiveDelivery: 'wake' | 'next_turn';
-                } | undefined;
-            }[] | undefined;
-            inception?: {
+                    effectiveDelivery: 'next_turn' | 'wake';
+                };
+            }[];
+            inception?: undefined | {
                 createdAt: number;
                 accountChangeCursor?: number | undefined;
-            } | undefined;
-        } | null;
+            };
+        };
+    } | {
+        source: null | {
+            source: {
+                kind: 'discussion';
+                discussionId: string;
+            } | {
+                kind: 'execution_run';
+                machineId: string;
+                runId: string;
+            } | {
+                kind: 'execution_run';
+                sessionId: string;
+                runId: string;
+            } | {
+                kind: 'rule';
+                ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
+            };
+            destinationSessionId: string;
+            policy: FollowPolicyV1;
+            deliveryState: 'eligible' | 'paused_archived';
+            sourceAvailability: 'available' | 'unavailable';
+            hasPendingUpdates: boolean | null;
+            relation: 'follower';
+        } | {
+            sourceSessionId: string;
+            destinationSessionId: string;
+            policy: FollowPolicyV1;
+            deliveryState: 'eligible' | 'paused_archived';
+            hasPendingUpdates: boolean;
+            relation?: 'follower' | 'manager' | undefined;
+        };
     };
     readonly "follow.set": {
         changed: boolean;
         follow: {
             sessionId: string;
             following: boolean;
-            notificationLevel: 'none' | 'important' | 'all_messages';
+            notificationLevel: 'all_messages' | 'important' | 'none';
             includeInVoice: boolean;
             persistent?: boolean | undefined;
             policy?: FollowPolicyV1 | undefined;
-            once?: {
+            once?: null | undefined | {
+                kind: 'first_needs_you';
+            } | {
                 kind: 'turn_finished';
                 sourceTurnId: string;
-            } | {
-                kind: 'first_needs_you';
-            } | null | undefined;
+            };
             onceAfterAgentStateVersion?: number | undefined;
-            onceDelivery?: {
-                event: 'message' | 'failed' | 'permission_required' | 'ready' | 'cancelled' | 'user_action_required';
+            onceDelivery?: undefined | {
+                event: 'cancelled' | 'failed' | 'message' | 'permission_required' | 'ready' | 'user_action_required';
                 agentStateVersion: number;
                 turnId?: string | undefined;
                 requestId?: string | undefined;
                 transcriptSeq?: number | undefined;
-            } | undefined;
+            };
         };
         voiceInitialSnapshotPending: boolean;
     } | {
         changed: boolean;
         follow: {
             source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
             following: boolean;
             persistent: boolean;
             policy: FollowPolicyV1;
             once?: ({
-                kind: 'run_settled';
-            } | {
                 kind: 'first_needs_you';
             } | {
                 kind: 'output_ready';
@@ -1174,21 +1172,23 @@ export type SessionFollowActionResultById = {
                     resultId: string;
                 } | {
                     kind: 'scm_diff_summary';
-                    output: 'summary' | 'walkthrough' | 'commitPlan';
+                    output: 'commitPlan' | 'summary' | 'walkthrough';
                     comparisonId: string;
                     resultId: string;
                 };
                 afterRevision?: number | undefined;
+            } | {
+                kind: 'run_settled';
             })[] | null | undefined;
             onceDeliveries?: ({
                 original: {
                     source: {
                         kind: 'execution_run';
-                        sessionId: string;
+                        machineId: string;
                         runId: string;
                     } | {
                         kind: 'execution_run';
-                        machineId: string;
+                        sessionId: string;
                         runId: string;
                     };
                     output: {
@@ -1198,12 +1198,12 @@ export type SessionFollowActionResultById = {
                             resultId: string;
                         } | {
                             kind: 'scm_diff_summary';
-                            output: 'summary' | 'walkthrough' | 'commitPlan';
+                            output: 'commitPlan' | 'summary' | 'walkthrough';
                             comparisonId: string;
                             resultId: string;
                         };
                         revision: number;
-                        state: 'failed' | 'cancelled' | 'pending' | 'writing' | 'complete' | 'partial';
+                        state: 'cancelled' | 'complete' | 'failed' | 'partial' | 'pending' | 'writing';
                     };
                 };
                 event: {
@@ -1213,27 +1213,11 @@ export type SessionFollowActionResultById = {
                 original: {
                     source: {
                         kind: 'execution_run';
-                        sessionId: string;
+                        machineId: string;
                         runId: string;
                     } | {
                         kind: 'execution_run';
-                        machineId: string;
-                        runId: string;
-                    };
-                    terminalEventId: string;
-                };
-                event: {
-                    kind: 'finished' | 'failed_or_stopped';
-                };
-            } | {
-                original: {
-                    source: {
-                        kind: 'execution_run';
                         sessionId: string;
-                        runId: string;
-                    } | {
-                        kind: 'execution_run';
-                        machineId: string;
                         runId: string;
                     };
                     permissionRequests: {
@@ -1248,16 +1232,32 @@ export type SessionFollowActionResultById = {
             } | {
                 original: {
                     source: {
+                        kind: 'execution_run';
+                        machineId: string;
+                        runId: string;
+                    } | {
+                        kind: 'execution_run';
+                        sessionId: string;
+                        runId: string;
+                    };
+                    terminalEventId: string;
+                };
+                event: {
+                    kind: 'failed_or_stopped' | 'finished';
+                };
+            } | {
+                original: {
+                    source: {
                         kind: 'workflow_run';
                         runId: string;
                     };
                     revision: number;
                 };
                 event: {
-                    kind: 'finished' | 'failed_or_stopped' | 'update_posted';
+                    kind: 'failed_or_stopped' | 'finished' | 'update_posted';
                 } | {
                     kind: 'needs_you';
-                    type: 'approval' | 'decision' | 'blocked';
+                    type: 'approval' | 'blocked' | 'decision';
                 };
             })[] | undefined;
         };
@@ -1265,25 +1265,25 @@ export type SessionFollowActionResultById = {
         changed: boolean;
         source: {
             source: {
-                kind: 'session';
-                sessionId: string;
-            } | {
                 kind: 'discussion';
                 discussionId: string;
-            } | {
-                kind: 'execution_run';
-                sessionId: string;
-                runId: string;
             } | {
                 kind: 'execution_run';
                 machineId: string;
                 runId: string;
             } | {
-                kind: 'workflow_run';
+                kind: 'execution_run';
+                sessionId: string;
                 runId: string;
             } | {
                 kind: 'rule';
                 ruleId: string;
+            } | {
+                kind: 'session';
+                sessionId: string;
+            } | {
+                kind: 'workflow_run';
+                runId: string;
             };
             destinationSessionId: string;
             policy: FollowPolicyV1;
@@ -1297,7 +1297,7 @@ export type SessionFollowActionResultById = {
             policy: FollowPolicyV1;
             deliveryState: 'eligible' | 'paused_archived';
             hasPendingUpdates: boolean;
-            relation?: 'manager' | 'follower' | undefined;
+            relation?: 'follower' | 'manager' | undefined;
         };
     } | {
         rule: {
@@ -1313,9 +1313,9 @@ export type SessionFollowActionResultById = {
                 v: 1;
                 enabled: boolean;
                 filter: Readonly<{
-                    show: 'sessions' | 'runs' | 'both';
-                    startedBy: readonly ('you' | 'triggers' | 'agents')[];
-                    scope: 'following' | 'my_work' | 'assigned_to_me' | 'involving_me' | 'all_accessible';
+                    show: 'both' | 'runs' | 'sessions';
+                    startedBy: readonly ('agents' | 'triggers' | 'you')[];
+                    scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
                     attention: 'any' | 'needs_my_attention';
                     bot?: 'bot' | 'ordinary' | undefined;
                     coordinator?: 'coordinator' | undefined;
@@ -1329,8 +1329,8 @@ export type SessionFollowActionResultById = {
                             projectKey: string;
                         }[];
                     }> | undefined;
-                    statuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-                    excludedStatuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
+                    statuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+                    excludedStatuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
                     machines?: Readonly<{
                         include: readonly Readonly<{
                             serverId: string;
@@ -1379,40 +1379,40 @@ export type SessionFollowActionResultById = {
                         serverId: string;
                         tagId: string;
                     }>[];
-                    source: 'direct' | 'all' | 'persisted';
+                    source: 'all' | 'direct' | 'persisted';
                 }>;
                 policy: FollowPolicyV1;
             };
-            sources?: {
+            sources?: undefined | {
                 sourceSessionId: string;
                 delivered: {
                     transcriptSeq: number;
                     readyEventSeq: number;
                     agentStateVersion: number;
-                    turn: {
+                    turn: null | {
                         id: string;
-                        status: 'failed' | 'waiting' | 'cancelled' | 'completed' | 'stalled';
-                    } | null;
+                        status: 'cancelled' | 'completed' | 'failed' | 'stalled' | 'waiting';
+                    };
                 };
-                stalled?: {
+                stalled?: undefined | {
                     ruleVersion: number;
                     presence: {
                         turnId: string;
                         publisherFence: number;
                     };
-                    effectiveDelivery: 'wake' | 'next_turn';
-                } | undefined;
-            }[] | undefined;
-            inception?: {
+                    effectiveDelivery: 'next_turn' | 'wake';
+                };
+            }[];
+            inception?: undefined | {
                 createdAt: number;
                 accountChangeCursor?: number | undefined;
-            } | undefined;
+            };
         };
     };
     readonly "follow.remove": {
         changed: boolean;
+        version: number;
     } | {
         changed: boolean;
-        version: number;
     };
 };

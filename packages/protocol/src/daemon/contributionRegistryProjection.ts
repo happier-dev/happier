@@ -1,20 +1,13 @@
-import { PluginUiMachineServiceReadReferenceV1Schema, DaemonMachineServiceLogsResourceReadRequestSchema, DaemonMachineServiceLogsResourceWatchOpenRequestSchema,
-  DaemonMachineServiceLogsResourceWatchNextRequestSchema, DaemonMachineServiceLogsResourceWatchCloseRequestSchema,
-  DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS } from './machineServiceLogsResource.js';
-export { DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS,
-  DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS } from './machineServiceLogsResource.js';
-import { ActionToolExposureSchema } from '../actions/metadata.js';
-import { DeploymentTargetContributionV1Schema } from '../plugins/contributions/deploymentTargets.js';
-import { PluginBotTemplateContributionV1Schema } from '../plugins/contributions/botTemplates.js';
-import { PluginStoreKindContributionV1Schema } from '../plugins/contributions/storeKinds.js';
-import { HealthCheckKindContributionV1Schema } from '../plugins/contributions/healthCheckKinds.js';
-import { AccessProviderContributionV1Schema } from '../plugins/contributions/accessProviders.js';
-import { BackupDestinationContributionV1Schema } from '../plugins/contributions/backupDestinations.js';
-import { PluginProjectedMachineRecipeEntryV1Schema, PluginProjectedMachineSetupPresetEntryV1Schema } from './machineSetupProjection.js';
-import { MachinePublishedMetadataV1Schema } from '../machines/machinePublishedContentV1.js';
 import * as zMini from 'zod/mini';
+export { buildPluginBrowserProjectionEntryId, normalizePluginBrowserProjection, EMPTY_PLUGIN_BROWSER_PROJECTION,
+  type PluginBrowserProjectionEntry, type PluginBrowserTargetProjection, type PluginBrowserActionProjectionEntry,
+  type PluginBrowserActionProjection, type PluginBrowserProjectionModel } from './browserProjection.js';
 import { lazyZodSchema } from '../lazyZodSchema.js';
+import { PluginUiResourceLinkV1Schema } from '../plugins/contributions/ui/resourceLinks.js';
 import { z } from 'zod/mini';
+import { PluginProjectionSourceV2Schema, PluginProjectionBrandAssetV2Schema } from './pluginCatalogPresentation.js';
+export { PluginProjectionSourceV2Schema, PluginProjectionBrandAssetV2Schema,
+  type PluginProjectionSourceV2, type PluginProjectionBrandAssetV2 } from './pluginCatalogPresentation.js';
 import { InputHintsSchema, InputPathSchema } from '../inputs/inputFields.js';
 import { InputPredicateSchema } from '../inputs/inputPredicates.js';
 import { WidgetConnectedAccountPurposeBindingV1Schema } from '../widgets/widgetConnectedAccountPurposeBindingV1.js';
@@ -24,6 +17,11 @@ import { createCanonicalJsonSigningInput } from '../crypto/canonicalJson.js';
 import { PluginHostedHtmlSourceV1Schema } from '../plugins/contributions/ui/hostedHtmlSourceV1.js';
 import { PluginUiHostedHtmlRequestedCapabilitiesV1Schema } from '../plugins/contributions/ui/hostedHtmlCapabilitiesV1.js';
 import { PluginUiWidgetAreaDeclarationsV1Schema } from '../plugins/contributions/ui/widgetAreas.js';
+import { PluginUiMachineServiceReadReferenceV1Schema, DaemonMachineServiceLogsResourceReadRequestSchema, DaemonMachineServiceLogsResourceWatchOpenRequestSchema,
+  DaemonMachineServiceLogsResourceWatchNextRequestSchema, DaemonMachineServiceLogsResourceWatchCloseRequestSchema,
+  DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS } from './machineServiceLogsResource.js';
+export { DAEMON_PLUGIN_UI_RESOURCE_WATCH_MIN_WAIT_MS, DAEMON_PLUGIN_UI_RESOURCE_WATCH_MAX_WAIT_MS,
+  DAEMON_PLUGIN_UI_RESOURCE_WATCH_DEFAULT_WAIT_MS } from './machineServiceLogsResource.js';
 import {
   PluginSourceCustodyV1Schema,
   pluginSourceCustodyV1Equal,
@@ -35,9 +33,17 @@ import {
   getPluginMachineExecutionOriginRef,
   type PluginMachineExecutionOriginV1,
 } from '../machines/administration/pluginMachineExecutionOriginV1.js';
+import { PluginMachineMaterializationRefV1Schema } from '../plugins/availability/materializationRefV1.js';
 import { PluginExecutionTargetV2Schema } from '../plugins/manifest/v2.js';
 import { PluginSkillLibraryContentV1Schema } from '../prompts/library/skills/skillReadV1.js';
 import { PluginWorkItemsContributionV1Schema } from '../plugins/contributions/workItems.js';
+import { PluginNotificationCategoryContributionV2Schema } from '../plugins/contributions/notifications.js';
+import { PluginSessionInboxResourceBindingV1Schema } from '../plugins/contributions/ui/sessionInbox.js';
+import { PluginCollectionListExtensionV1Schema } from '../plugins/contributions/ui/v2.js';
+import { DeploymentTargetContributionV1Schema } from '../plugins/contributions/deploymentTargets.js';
+import { HealthCheckKindContributionV1Schema } from '../plugins/contributions/healthCheckKinds.js';
+import { PluginStoreKindContributionV1Schema } from '../plugins/contributions/storeKinds.js';
+import { PluginBotTemplateContributionV1Schema } from '../plugins/contributions/botTemplates.js';
 
 import {
   DaemonPluginStructuredMessageActionExecuteRequestSchema,
@@ -60,6 +66,7 @@ import {
   createActionInputHintsSchemas,
 } from '../actions/actionInputHints.js';
 import { ActionOperationDeclarationV1Schema } from '../actions/operations/v1.js';
+import { ActionToolExposureSchema } from '../actions/metadata.js';
 import { ActionSessionTargetDeclarationV1Schema } from '../actions/sessionTargetV1.js';
 import { asProtocolZod } from '../plugins/actions/internalProtocolZodAdapter.js';
 import { QualifiedConnectedAccountRefSchema as CanonicalQualifiedConnectedAccountRefSchema } from '../connect/qualifiedConnectedAccountPersistence.js';
@@ -174,6 +181,14 @@ import {
 } from '../plugins/contributions/composerReferenceProviders.js';
 import { PluginComposerAttachmentContributionV1Schema } from '../plugins/contributions/composerAttachments.js';
 import { MachineProvisionerContributionV1Schema } from '../plugins/contributions/machineProvisioners.js';
+import { AccessProviderContributionV1Schema } from '../plugins/contributions/accessProviders.js';
+import { BackupDestinationContributionV1Schema } from '../plugins/contributions/backupDestinations.js';
+import { MachineRecipeReferenceV1Schema } from '../machines/setup/machineRecipeV1.js';
+import { MachinePublishedMetadataV1Schema } from '../machines/machinePublishedContentV1.js';
+import { validateProjectedExecutionOrigin } from './projectedExecutionOrigin.js';
+import { PluginProjectedMachineRecipeEntryV1Schema, PluginProjectedMachineSetupPresetEntryV1Schema } from './machineSetupProjection.js';
+export { PluginProjectedMachineRecipeEntryV1Schema, PluginProjectedMachineSetupPresetEntryV1Schema,
+  type PluginProjectedMachineRecipeEntryV1, type PluginProjectedMachineSetupPresetEntryV1 } from './machineSetupProjection.js';
 import { PluginComposerControlContributionV1Schema } from '../plugins/contributions/composerControls.js';
 import { PluginComposerRegionContributionV1Schema } from '../plugins/contributions/composerRegions.js';
 import { OpenableContentViewerSelectorV1Schema } from '../plugins/openableContent.js';
@@ -203,6 +218,7 @@ import { parseQualifiedPluginContributionKey } from '../plugins/contributionIden
 import {
   PluginContributionIntrospectionProjectionV1Schema,
   PluginDiagnosticRecordV1Schema,
+  mapPluginSourceToDiagnosticSource,
 } from './pluginContributionIntrospection.js';
 
 const QualifiedConnectedAccountRefSchema = lazyZodSchema(() => asProtocolZod(CanonicalQualifiedConnectedAccountRefSchema));
@@ -215,30 +231,6 @@ const PluginUiQualifiedActionReferenceV1Schema = lazyZodSchema(() => asProtocolZ
 const PluginUiRuntimeOccurrenceIdV1Schema = lazyZodSchema(() => asProtocolZod(
   CanonicalPluginUiRuntimeOccurrenceIdV1Schema,
 ));
-
-function validateProjectedExecutionOrigin(
-  executionOrigin: PluginMachineExecutionOriginV1 | undefined,
-  producer: Readonly<{ pluginId: string; sourceCustody?: z.infer<typeof PluginSourceCustodyV1Schema> }>,
-  context: z.core.$RefinementCtx,
-): void {
-  if (!executionOrigin) return;
-  const refKind = 'sourceRef' in executionOrigin ? 'sourceRef' : 'materializationRef';
-  if (getPluginMachineExecutionOriginRef(executionOrigin).pluginId !== producer.pluginId) {
-    context.addIssue({
-      code: "custom",
-      path: ['executionOrigin', refKind, 'pluginId'],
-      message: 'Projected execution origin must match its producer pluginId.',
-    });
-  }
-  if ('sourceRef' in executionOrigin && producer.sourceCustody
-    && !pluginSourceCustodyV1Equal(executionOrigin.sourceRef.sourceCustody, producer.sourceCustody)) {
-    context.addIssue({
-      code: "custom",
-      path: ['executionOrigin', 'sourceRef', 'sourceCustody'],
-      message: 'Projected source execution origin must match its producer source custody.',
-    });
-  }
-}
 
 const DaemonReactNativeHostRuntimeIdentityStringV1Schema = lazyZodSchema(() => z.string().check(z.trim(), z.minLength(1)));
 
@@ -307,9 +299,9 @@ export type DaemonContributionRegistryProjectionMountedTargetV1 = z.infer<
 const DaemonContributionRegistryProjectionClientContextV1Shape = {
   machineId: z.string().check(z.trim(), z.minLength(1)),
   /**
-   * The caller's display locale. A client reads exactly two translation
-   * bundles — its preferred locale merged over English — so naming the locale
-   * lets the daemon ship only those. Omitting it keeps the whole set.
+   * The caller's display locale. The UI selects Resource locales on demand;
+   * transitional inline bundles retain preferred-plus-English narrowing until
+   * I18NRES step 4 removes the final inline producer.
    */
   locale: z.optional(z.string().check(z.trim(), z.minLength(1), z.maxLength(64))),
   reactNativeHostRuntimeIdentity: z.optional(DaemonReactNativeHostRuntimeIdentityV1Schema),
@@ -339,43 +331,45 @@ function rejectMismatchedClientPlatforms(
 export const DaemonContributionRegistryProjectionDescribeRequestSchema = lazyZodSchema(() => z.union([
   z.strictObject({
     ...DaemonContributionRegistryProjectionClientContextV1Shape,
+    selection: z.literal('mountedActions'),
+    /** Current callers for the mounted target and its prepared children. */
+    callers: z.array(asProtocolZod(PluginUiTargetedContributionTargetV1Schema)).check(z.minLength(1)),
+    /** Qualified callees; their current execution placement and form hints are projected in place. */
+    actions: z.array(PluginContributionIdentityV1Schema),
+  }).check(z.superRefine(rejectMismatchedClientPlatforms)),
+  z.strictObject({
+    ...DaemonContributionRegistryProjectionClientContextV1Shape,
     selection: z.literal('skills'),
     skillIds: z.optional(z.array(z.string().check(z.minLength(1)))),
   }).check(z.superRefine(rejectMismatchedClientPlatforms)),
   z.looseObject({
     ...DaemonContributionRegistryProjectionClientContextV1Shape,
+    /** Explicit offer: old Event readers must never receive an unknown authority-bearing binding. */
+    supportedEventObservationBindingVersions: z.optional(z.array(z.literal(1))),
     /** Safely ignorable by older daemons: an unmatched witness returns the full response. */
     knownProjectionDigest: z.optional(z.string()),
-    /** Opts into section framing, including an empty cold inventory. Older daemons ignore it. */
-    knownSectionDigests: z.optional(z.array(z.string().check(z.regex(/^[a-f0-9]{64}$/u)))),
     /** Opt-in digest-only manifest; older daemons safely return the full reply. */
     deferredSections: z.optional(z.literal(true)),
-    /** Capability offer only; the manifest must confirm before versioned reads. */
-    supportedSectionFrameVersions: z.optional(z.array(z.literal(2))),
-    /** Selects the advertised encoding for sectionRead; absent means the original array encoding. */
-    sectionFrameVersion: z.optional(z.literal(2)),
     /** Only used after a matching daemon advertised its digest manifest. */
     sectionRead: z.optional(z.strictObject({ digest: z.string().check(z.regex(/^[a-f0-9]{64}$/u)),
       offset: z.number().check(z.int(), z.minimum(0)),
       includeDigests: z.optional(z.array(z.string().check(z.regex(/^[a-f0-9]{64}$/u)))) })),
     /** Named reads project only the catalog slice required by their caller. */
-    selection: z.optional(z.enum(['agents', 'settings', 'connectedAccountAdmission'])),
+    selection: z.optional(z.enum(['agents', 'settings', 'connectedAccountAdmission', 'workflowMaterialization', 'machineRecipes'])),
+    /** Omitted selects the family; an explicit empty selection reads no recipe bodies. */
+    recipeRefs: z.optional(z.readonly(z.array(MachineRecipeReferenceV1Schema))),
   }).check(z.superRefine((value, context) => {
     rejectMismatchedClientPlatforms(value, context);
+    if (value.recipeRefs !== undefined && value.selection !== 'machineRecipes') {
+      context.addIssue({ code: 'custom', path: ['recipeRefs'], message: 'Recipe refs require the machineRecipes selection' });
+    }
     if ('skillIds' in value) context.addIssue({ code: 'custom', path: ['skillIds'], message: 'Skill ids require the skills selection' });
     if (value.selection !== undefined && value.knownProjectionDigest !== undefined) {
       context.addIssue({ code: 'custom', path: ['knownProjectionDigest'], message: 'A projection digest requires full discovery' });
     }
-    if (value.selection !== undefined && value.knownSectionDigests !== undefined) {
-      context.addIssue({ code: 'custom', path: ['knownSectionDigests'], message: 'Section digests require full discovery' });
-    }
     if ((value.selection !== undefined && value.deferredSections !== undefined)
       || (value.sectionRead !== undefined && value.deferredSections !== true)) {
       context.addIssue({ code: 'custom', message: 'Section reads require negotiated full discovery' });
-    }
-    if ((value.supportedSectionFrameVersions !== undefined && (value.selection !== undefined || value.deferredSections !== true))
-      || (value.sectionFrameVersion !== undefined && value.sectionRead === undefined)) {
-      context.addIssue({ code: 'custom', message: 'Frame encoding requires deferred section negotiation' });
     }
   })),
 ]));
@@ -390,11 +384,30 @@ export type DaemonContributionRegistryProjectionDescribeRequest = z.infer<
  * display catalog with no Event-store or setup-binding ownership.
  */
 export const DaemonContributionRegistryProjectionAutomationEligibleEventV1Schema = lazyZodSchema(() => (<T extends zMini.ZodMiniObject>(schema: T) => zMini.core.clone(schema, { ...schema._zod.def, catchall: zMini.never() }) as zMini.ZodMiniObject<T['shape'], zMini.core.$strict>)(zMini.safeExtend(AutomationEligibleEventCatalogEntryV1Schema, {
+  /** Same current daemon source, with its actual host-owned observer assignment. */
+  observationBinding: z.optional(z.strictObject({
+    executionOrigin: PluginMachineExecutionOriginV1Schema,
+    materializationRef: PluginMachineMaterializationRefV1Schema,
+  })),
   setupSurface: z.optional(z.lazy(
     () => DaemonContributionRegistryProjectionAutomationEligibleEventSetupSurfaceV1Schema,
   )),
 })).check(zMini.superRefine((entry, context) => {
   const eventIdentity = entry.event.identity;
+  const binding = entry.observationBinding;
+  if (binding) {
+    const source = getPluginMachineExecutionOriginRef(binding.executionOrigin);
+    if (source.pluginId !== eventIdentity.pluginId
+      || binding.materializationRef.pluginId !== eventIdentity.pluginId
+      || source.machineId !== binding.materializationRef.machineId
+      || ('materializationRef' in binding.executionOrigin
+        && binding.executionOrigin.materializationRef.materializationId !== binding.materializationRef.materializationId)
+      || ('sourceRef' in binding.executionOrigin && (!entry.event.sourceCustody
+        || !pluginSourceCustodyV1Equal(binding.executionOrigin.sourceRef.sourceCustody, entry.event.sourceCustody)))) {
+      context.addIssue({ code: 'custom', path: ['observationBinding'],
+        message: 'Observer assignment must match the exact admitted Event source and host.' });
+    }
+  }
   if (!entry.setupSurface) return;
   if (
     entry.setupSurface.contribution.pluginId !== eventIdentity.pluginId
@@ -477,7 +490,14 @@ export type DaemonPluginUiTargetedContributionsReadResponse =
       resourceDeclarationsByPluginId?: DaemonPluginUiResourceDeclarationsByPluginIdV1 }
   | { status: 'unavailable'; code: string };
 
-export const DaemonPluginUiTargetedContributionsReadResponseSchema: z.ZodMiniType<DaemonPluginUiTargetedContributionsReadResponse> = lazyZodSchema(() => z.discriminatedUnion('status', [
+const DaemonPluginUiTargetedContributionsInlineReadResponseSchema = lazyZodSchema(() => z.strictObject({
+  status: z.literal('current'),
+  targetedContributions: PluginUiTargetedContributionsV1Schema,
+  targetedSurfaceMounts: z.lazy(() => DaemonPluginUiTargetedSurfaceMountsV1Schema),
+  resourceDeclarationsByPluginId: z.optional(z.lazy(() => DaemonPluginUiResourceDeclarationsByPluginIdV1Schema)),
+}));
+
+export const DaemonPluginUiTargetedContributionsReadResponseSchema: z.ZodMiniType<DaemonPluginUiTargetedContributionsReadResponse> = lazyZodSchema(() => z.union([
   z.strictObject({
     status: z.literal('sourceDeclarations'),
     pluginId: PluginIdSchema,
@@ -486,22 +506,15 @@ export const DaemonPluginUiTargetedContributionsReadResponseSchema: z.ZodMiniTyp
     const plugins = new Set<string>();
     response.sourceDeclarations.forEach((row, index) => {
       if (plugins.has(row.manifest.id)
-        || row.manifest.contributes.targetedPluginContributions.length === 0
+        || (row.manifest.id !== response.pluginId && row.manifest.contributes.targetedPluginContributions.length === 0)
         || row.manifest.contributes.targetedPluginContributions.some((entry) => entry.target.pluginId !== response.pluginId)) {
         context.addIssue({ code: 'custom', path: ['sourceDeclarations', index], message: 'Source declarations must uniquely address the requested target.' });
       }
       plugins.add(row.manifest.id);
     });
   })),
-  z.strictObject({
-    status: z.literal('current'),
-    /** Tagged with the target's current occurrence (`target.occurrenceId`). */
-    targetedContributions: PluginUiTargetedContributionsV1Schema,
-    /** Host-private selected embedded-Surface mounts for the same snapshot. */
-    targetedSurfaceMounts: z.lazy(() => DaemonPluginUiTargetedSurfaceMountsV1Schema),
-    /** Present plugin keys are complete, including {}; absent keys/field remain unknown. */
-    resourceDeclarationsByPluginId: z.optional(z.lazy(() => DaemonPluginUiResourceDeclarationsByPluginIdV1Schema)),
-  }),
+  z.lazy(() => DaemonPluginUiTargetedContributionsSharedReadResponseSchema),
+  DaemonPluginUiTargetedContributionsInlineReadResponseSchema,
   z.strictObject({
     status: z.literal('unavailable'),
     code: z.string().check(z.trim(), z.minLength(1)),
@@ -707,11 +720,15 @@ export type DaemonPluginActionFormConnectedAccountOptionsResolveRequest = z.infe
   typeof DaemonPluginActionFormConnectedAccountOptionsResolveRequestSchema
 >;
 
-/** The form sees one safe display label plus the exact ref it may submit. */
-export const DaemonPluginActionFormConnectedAccountOptionSchema = lazyZodSchema(() => z.strictObject({
+/** Native choices carry the exact declared sibling path; no credential material leaves the daemon. */
+export const DaemonPluginActionFormConnectedAccountOptionSchema = lazyZodSchema(() => z.union([z.strictObject({
   value: QualifiedConnectedAccountRefSchema,
   label: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
-}));
+}), z.strictObject({
+  value: PluginContributionIdentityV1Schema,
+  label: z.string().check(z.trim(), z.minLength(1), z.maxLength(512)),
+  nativeServicePath: ActionInputPathSchema,
+})]));
 export type DaemonPluginActionFormConnectedAccountOption = z.infer<
   typeof DaemonPluginActionFormConnectedAccountOptionSchema
 >;
@@ -1179,36 +1196,6 @@ export type DaemonPluginUiResourceWatchCloseResponse = z.infer<
   typeof DaemonPluginUiResourceWatchCloseResponseSchema
 >;
 
-export const PluginProjectionSourceV2Schema = lazyZodSchema(() => z.strictObject({
-  kind: z.string().check(z.trim(), z.minLength(1)),
-  locator: z.string().check(z.trim(), z.minLength(1)),
-}));
-export type PluginProjectionSourceV2 = z.infer<typeof PluginProjectionSourceV2Schema>;
-
-/**
- * The one catalog-facing fact for an optional portable plugin brand mark.
- *
- * It deliberately exposes the already-admitted Resource identity, dimensions,
- * and digest—not a path, URL, byte handle, or cache key. Consumers render a
- * neutral textual fallback for every non-available state.
- */
-export const PluginProjectionBrandAssetV2Schema = lazyZodSchema(() => z.union([
-  z.strictObject({
-    state: z.literal('available'),
-    resource: PluginContributionIdentityV1Schema,
-    monochrome: z.optional(z.boolean()),
-    width: z.number().check(z.int(), z.minimum(64), z.maximum(512)),
-    height: z.number().check(z.int(), z.minimum(64), z.maximum(512)),
-    digest: PluginUiArtifactDigestV1Schema,
-  }).check(z.refine((value) => value.width === value.height, {
-    message: 'A plugin brand asset must be square',
-  })),
-  z.strictObject({
-    state: z.enum(['missing', 'invalid', 'retired']),
-  }),
-]));
-export type PluginProjectionBrandAssetV2 = z.infer<typeof PluginProjectionBrandAssetV2Schema>;
-
 export const PluginProjectionInstalledPackageV2Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.trim(), z.minLength(1)),
   displayName: z.string().check(z.trim(), z.minLength(1)),
@@ -1420,20 +1407,6 @@ export const PluginProjectedActionV2Schema = lazyZodSchema(() => (<T extends z.Z
 })));
 export type PluginProjectedActionV2 = z.infer<typeof PluginProjectedActionV2Schema>;
 
-export const PluginProjectedToolV2Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginProjectedContributionBaseV2Schema, {
-  exposesToAgent: z._default(z.boolean(), false),
-})));
-export type PluginProjectedToolV2 = z.infer<typeof PluginProjectedToolV2Schema>;
-
-export const PluginProjectedCommandSurfaceV2Schema = lazyZodSchema(() => z.enum(['cli', 'agentSlash', 'commandPalette']));
-export type PluginProjectedCommandSurfaceV2 = z.infer<typeof PluginProjectedCommandSurfaceV2Schema>;
-
-export const PluginProjectedCommandV2Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(PluginProjectedContributionBaseV2Schema, {
-  surfaces: z.array(PluginProjectedCommandSurfaceV2Schema).check(z.minLength(1)),
-  tokens: z._default(z.array(z.string().check(z.trim(), z.minLength(1))), []),
-})));
-export type PluginProjectedCommandV2 = z.infer<typeof PluginProjectedCommandV2Schema>;
-
 export const PluginProjectedConnectedAccountPurposeDeclarationV1Schema = lazyZodSchema(() => z.strictObject({
   purpose: z.string().check(z.trim(), z.minLength(1)), serviceRefs: z.array(PluginContributionIdentityV1Schema).check(z.minLength(1)),
 }));
@@ -1452,6 +1425,9 @@ export const PluginProjectedResourceV2Schema = lazyZodSchema(() => z.strictObjec
   scope: zMini.optional(PluginDynamicResourceScopeV1Schema),
   /** Explicit producer placement; omitted historical projections remain Machine-owned. */
   execution: zMini.optional(PluginDynamicResourceExecutionV1Schema),
+  /** Declared by this receiver's adopted compiled Account graph; not proof of activation/registration. */
+  accountRuntimeDeclared: zMini.optional(z.boolean()),
+  sessionInbox: zMini.optional(PluginSessionInboxResourceBindingV1Schema),
   /** Exact admitted Resource HostAccess, never a widget-owned credential choice. */
   connectedAccountPurposes: z.optional(z.array(PluginProjectedConnectedAccountPurposeDeclarationV1Schema)),
   digest: PluginOptionalStringSchema,
@@ -2059,15 +2035,19 @@ const PROJECTED_OPENABLE_CONTENT_VIEWER_FIELDS = new Set([
   'executionOrigin',
 ]);
 
-const PluginProjectedSearchProviderEntryV1Schema = lazyZodSchema(() => z.strictObject({
+const PluginSearchProviderEntryShapeV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.trim(), z.minLength(1)),
   pluginId: PluginIdSchema,
-  occurrenceId: PluginUiRuntimeOccurrenceIdV1Schema,
   contributionKind: z.literal('searchProvider'),
   descriptorId: PluginContributionLocalIdSchema,
   identity: PluginContributionIdentityV1Schema,
   action: PluginContributionIdentityV1Schema,
-}).check(z.superRefine((value, context) => {
+}));
+
+function refineSearchProviderEntry(
+  value: z.infer<typeof PluginSearchProviderEntryShapeV1Schema>,
+  context: z.core.$RefinementCtx,
+): void {
   if (value.id !== `searchProvider:${value.pluginId}:${value.descriptorId}`) {
     context.addIssue({
       code: "custom",
@@ -2092,7 +2072,13 @@ const PluginProjectedSearchProviderEntryV1Schema = lazyZodSchema(() => z.strictO
       message: 'Projected search-provider Action must belong to the declaring plugin.',
     });
   }
-})));
+}
+
+const PluginDeclaredSearchProviderEntryV1Schema = lazyZodSchema(() =>
+  PluginSearchProviderEntryShapeV1Schema.check(z.superRefine(refineSearchProviderEntry)));
+const PluginProjectedSearchProviderEntryV1Schema = lazyZodSchema(() =>
+  z.extend(PluginSearchProviderEntryShapeV1Schema, { occurrenceId: PluginUiRuntimeOccurrenceIdV1Schema })
+    .check(z.superRefine(refineSearchProviderEntry)));
 
 const PluginProjectedUiGenericEntryShapeV2Schema = lazyZodSchema(() => (<T extends z.ZodMiniObject>(schema: T) => z.core.clone(schema, { ...schema._zod.def, catchall: z.never() }) as z.ZodMiniObject<T['shape'], z.core.$strict>)(z.extend(strictProjectedFamilyEntrySchema([
   'contributionKind',
@@ -2110,6 +2096,7 @@ const PluginProjectedUiGenericEntryShapeV2Schema = lazyZodSchema(() => (<T exten
   'defaultLocale',
   'locales',
   'resourceIdsByLocale',
+  // I18NRES step 4 removes inline bundles with the last inline producer.
   'bundles',
   'digest',
   'families',
@@ -2180,6 +2167,7 @@ const PluginProjectedUiGenericEntryShapeV2Schema = lazyZodSchema(() => (<T exten
   artifactSelectionOwner: z.optional(z.enum(['accountRelease', 'daemonProjection'])),
   command: zMini.optional(PluginUiResolvedSemanticCommandV1Schema),
   headerActions: z.optional(z.array(PluginProjectedUiHeaderActionV2Schema)),
+  resourceLinks: z.optional(z.array(PluginUiResourceLinkV1Schema)),
   binding: zMini.optional(PluginUiSurfaceBindingV1Schema),
   widgetAreas: zMini.optional(PluginUiWidgetAreaDeclarationsV1Schema),
   inputs: zMini.optional(InputHintsSchema),
@@ -2191,6 +2179,7 @@ const PluginProjectedUiGenericEntryShapeV2Schema = lazyZodSchema(() => (<T exten
   publicPresentation: z.optional(WidgetPublicSnapshotPresentationV1Schema),
   container: zMini.optional(PluginUiContainerV1Schema),
   identity: zMini.optional(PluginContributionIdentityV1Schema),
+  listExtension: z.optional(PluginCollectionListExtensionV1Schema),
   viewer: zMini.optional(OpenableContentViewerSelectorV1Schema),
   destination: zMini.optional(PluginContributionIdentityV1Schema),
   // The canonical normalized renderer reference, reusing the targeted-Surface
@@ -2208,6 +2197,15 @@ function refineProjectedUiEntry(
   value: Omit<z.infer<typeof PluginProjectedUiGenericEntryShapeV2Schema>, 'occurrenceId'>,
   context: z.core.$RefinementCtx,
 ): void {
+  if (value.contributionKind === 'listExtension') {
+    const declaration = value.listExtension;
+    if (!declaration || !value.pluginId || value.identity?.pluginId !== value.pluginId
+      || value.identity.localId !== declaration.id || value.id !== `listExtension:${value.pluginId}:${declaration.id}`) {
+      context.addIssue({ code: 'custom', path: ['listExtension'], message: 'List extension identity must match its declaration.' });
+    }
+  } else if (value.listExtension !== undefined) {
+    context.addIssue({ code: 'custom', path: ['listExtension'], message: 'Only list-extension entries carry a list declaration.' });
+  }
   if (value.widgetAreas !== undefined && (value.contributionKind !== 'surfacePlacement'
     || value.binding?.kind !== 'destination' || value.binding.container !== 'appPage')) {
     context.addIssue({ code: 'custom', path: ['widgetAreas'], message: 'Widget areas require an app-page destination placement.' });
@@ -2261,7 +2259,7 @@ function refineProjectedUiEntry(
     || value.viewer !== undefined
     || value.destination !== undefined;
   if (contributionKind !== 'openableContentViewer') {
-    if (hasViewerFields) {
+    if (hasViewerFields && contributionKind !== 'listExtension') {
       context.addIssue({
         code: "custom",
         path: ['contributionKind'],
@@ -2321,11 +2319,16 @@ function refineProjectedUiEntry(
 const PluginProjectedUiGenericEntryV2Schema = lazyZodSchema(() => PluginProjectedUiGenericEntryShapeV2Schema.check(zMini.superRefine(refineProjectedUiEntry)));
 
 /** Installed presentation declarations carry no process or execution authority. */
-export const PluginDeclaredUiEntryV1Schema = lazyZodSchema(() => zMini.omit(PluginProjectedUiGenericEntryShapeV2Schema, {
+const PluginDeclaredUiGenericEntryV1Schema = lazyZodSchema(() => zMini.omit(PluginProjectedUiGenericEntryShapeV2Schema, {
   occurrenceId: true,
   executionOrigin: true,
 }).check(zMini.superRefine(refineProjectedUiEntry)));
-export type PluginDeclaredUiEntryV1 = z.infer<typeof PluginDeclaredUiEntryV1Schema>;
+export type PluginDeclaredUiEntryV1 = z.infer<typeof PluginDeclaredUiGenericEntryV1Schema>;
+// Preserve the descriptive record API; each family still parses through its closed arm.
+export const PluginDeclaredUiEntryV1Schema: z.ZodMiniType<PluginDeclaredUiEntryV1> = lazyZodSchema(() => z.union([
+  PluginDeclaredSearchProviderEntryV1Schema,
+  PluginDeclaredUiGenericEntryV1Schema,
+]));
 export const PluginDeclaredUiEntriesV1Schema = lazyZodSchema(() => z.record(z.string(), PluginDeclaredUiEntryV1Schema));
 export type PluginDeclaredUiEntriesV1 = z.infer<typeof PluginDeclaredUiEntriesV1Schema>;
 
@@ -2582,6 +2585,101 @@ export type DaemonPluginUiTargetedSurfaceMountsV1 = z.infer<
   typeof DaemonPluginUiTargetedSurfaceMountsV1Schema
 >;
 
+/** Bodies shared by exact domain identity within this one current reply. */
+type TargetedSurfaceInputContract = Pick<DaemonPluginUiTargetedSurfaceMountV1, 'point' | 'role' | 'inputSchema'>;
+type TargetedSurfaceSharedMount = Omit<DaemonPluginUiTargetedSurfaceMountV1, 'target' | 'inputSchema' | 'contributorTargetedContributions'>;
+export type DaemonPluginUiTargetedContributionsSharedReadResponse = {
+  status: 'current';
+  targetedContributions: PluginUiTargetedContributionsV1;
+  targetedSurfaceMounts: TargetedSurfaceSharedMount[];
+  targetedSurfaceMountBodies: {
+    inputContracts: TargetedSurfaceInputContract[];
+    contributorSnapshots: PluginUiTargetedContributionsV1[];
+  };
+  resourceDeclarationsByPluginId?: DaemonPluginUiResourceDeclarationsByPluginIdV1;
+};
+
+function targetedSurfaceInputContractKey(contract: Pick<TargetedSurfaceInputContract, 'point' | 'role'>): string {
+  return JSON.stringify([contract.point.pointId, contract.point.protocol.id, contract.point.protocol.version, contract.role]);
+}
+
+function targetedSurfaceSnapshotKey(target: PluginUiTargetedContributionsV1['target']): string {
+  return JSON.stringify([target.pluginId, target.occurrenceId]);
+}
+
+/** Serializes only unique demanded bodies; selection and admission remain with the producer. */
+export function shareDaemonPluginUiTargetedContributionsReadResponse(
+  response: Extract<DaemonPluginUiTargetedContributionsReadResponse, { status: 'current' }>,
+): DaemonPluginUiTargetedContributionsSharedReadResponse {
+  const inputContracts = new Map<string, TargetedSurfaceInputContract>();
+  const contributorSnapshots = new Map<string, PluginUiTargetedContributionsV1>();
+  const targetKey = targetedSurfaceSnapshotKey(response.targetedContributions.target);
+  const mounts = response.targetedSurfaceMounts.map(({ target: _target, inputSchema, contributorTargetedContributions, ...mount }) => {
+    const inputKey = targetedSurfaceInputContractKey(mount);
+    if (!inputContracts.has(inputKey)) inputContracts.set(inputKey, { point: mount.point, role: mount.role, inputSchema });
+    const contributorKey = targetedSurfaceSnapshotKey(contributorTargetedContributions.target);
+    if (contributorKey !== targetKey && !contributorSnapshots.has(contributorKey)) {
+      contributorSnapshots.set(contributorKey, contributorTargetedContributions);
+    }
+    return mount;
+  });
+  return { ...response, targetedSurfaceMounts: mounts, targetedSurfaceMountBodies: {
+    inputContracts: [...inputContracts.values()], contributorSnapshots: [...contributorSnapshots.values()],
+  } };
+}
+
+const DaemonPluginUiTargetedContributionsSharedReadResponseSchema: z.ZodMiniType<Extract<DaemonPluginUiTargetedContributionsReadResponse, { status: 'current' }>> = lazyZodSchema(() => {
+  const wireSchema = z.strictObject({
+  status: z.literal('current'),
+  targetedContributions: PluginUiTargetedContributionsV1Schema,
+  targetedSurfaceMounts: z.array(z.strictObject({
+    ...DaemonPluginUiTargetedSurfaceMountIdentityV1Schema.shape,
+    // The shared target is the outer snapshot's identity.
+    target: z.optional(z.never()),
+    rendererChain: DaemonPluginUiTargetedSurfaceMountV1Schema.shape.rendererChain,
+    selectedRenderer: DaemonPluginUiTargetedSurfaceSelectedRendererV1Schema,
+    executionOrigin: PluginMachineExecutionOriginV1Schema,
+    resourceCapability: PluginUiResourceBindingCapabilityV1Schema,
+  })),
+  targetedSurfaceMountBodies: z.strictObject({
+    inputContracts: z.array(z.strictObject({
+      point: DaemonPluginUiTargetedSurfaceMountIdentityV1Schema.shape.point,
+      role: PluginContributionLocalIdSchema,
+      inputSchema: PluginJsonSchemaV2Schema,
+    })),
+    contributorSnapshots: z.array(PluginUiTargetedContributionsV1Schema),
+  }),
+  resourceDeclarationsByPluginId: z.optional(z.lazy(() => DaemonPluginUiResourceDeclarationsByPluginIdV1Schema)),
+  });
+  // Reconstructed fields remain untrusted until the complete inline schema admits them.
+  return z.pipe(z.pipe(wireSchema, z.transform((response: z.output<typeof wireSchema>, context): unknown => {
+  const { targetedSurfaceMountBodies: bodies, ...inline } = response;
+  const contracts = new Map(bodies.inputContracts.map(contract => [targetedSurfaceInputContractKey(contract), contract]));
+  const snapshots = new Map([response.targetedContributions, ...bodies.contributorSnapshots]
+    .map(snapshot => [targetedSurfaceSnapshotKey(snapshot.target), snapshot]));
+  if (contracts.size !== bodies.inputContracts.length || snapshots.size !== bodies.contributorSnapshots.length + 1) {
+    context.issues.push({ code: 'custom', input: response, message: 'Shared targeted Surface bodies must have unique exact identities.' });
+    return z.NEVER;
+  }
+  const usedContracts = new Set<string>();
+  const usedSnapshots = new Set<string>([targetedSurfaceSnapshotKey(response.targetedContributions.target)]);
+  const mounts = response.targetedSurfaceMounts.map(mount => {
+    const contractKey = targetedSurfaceInputContractKey(mount);
+    const snapshotKey = targetedSurfaceSnapshotKey(mount.contributor);
+    usedContracts.add(contractKey);
+    usedSnapshots.add(snapshotKey);
+    return { ...mount, target: response.targetedContributions.target,
+      inputSchema: contracts.get(contractKey)?.inputSchema,
+      contributorTargetedContributions: snapshots.get(snapshotKey) };
+  });
+  if (usedContracts.size !== contracts.size || usedSnapshots.size !== snapshots.size) {
+    context.issues.push({ code: 'custom', input: response, message: 'Shared targeted Surface bodies must match the demanded mounts.' });
+    return z.NEVER;
+  }
+  return { ...inline, targetedSurfaceMounts: mounts };
+})), DaemonPluginUiTargetedContributionsInlineReadResponseSchema);
+});
+
 function sameTargetedSurfaceProtocolV1(
   left: Readonly<{ id: string; version: number }>,
   right: Readonly<{ id: string; version: number }>,
@@ -2678,6 +2776,13 @@ export const PluginProjectedSkillEntryV1Schema = lazyZodSchema(() => z.strictObj
 })));
 export type PluginProjectedSkillEntryV1 = z.infer<typeof PluginProjectedSkillEntryV1Schema>;
 
+export const PluginProjectedBotTemplateEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema,
+  pluginVersion: z.string().check(z.minLength(1)),
+  definition: PluginBotTemplateContributionV1Schema,
+}));
+export type PluginProjectedBotTemplateEntryV1 = z.infer<typeof PluginProjectedBotTemplateEntryV1Schema>;
+
 const PluginProjectedAtmospherePictureEntryV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)), occurrenceId: zMini.optional(PluginUiRuntimeOccurrenceIdV1Schema),
   executionOrigin: zMini.optional(PluginMachineExecutionOriginV1Schema),
@@ -2721,6 +2826,53 @@ const PluginProjectedInputTypeEntryV1Schema = lazyZodSchema(() => z.strictObject
   }
 })));
 
+export const PluginProjectedDeploymentTargetEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
+  definition: DeploymentTargetContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Deployment target identity must match its descriptor' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Deployment target origin requires its serving occurrence' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+export type PluginProjectedDeploymentTargetEntryV1 = z.infer<typeof PluginProjectedDeploymentTargetEntryV1Schema>;
+
+export const PluginProjectedHealthCheckKindEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
+  definition: HealthCheckKindContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Health check kind identity must match its descriptor.' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Health check kind origin requires its serving occurrence.' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+export type PluginProjectedHealthCheckKindEntryV1 = z.infer<typeof PluginProjectedHealthCheckKindEntryV1Schema>;
+
+export const PluginProjectedStoreKindEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
+  definition: PluginStoreKindContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Store kind identity must match its descriptor.' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Store kind origin requires its serving occurrence.' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+export type PluginProjectedStoreKindEntryV1 = z.infer<typeof PluginProjectedStoreKindEntryV1Schema>;
+
+const PluginProjectedBackupDestinationEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
+  definition: BackupDestinationContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Destination identity must match its descriptor' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Destination origin requires its serving occurrence' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+
 export const PluginProjectedMachineProvisionerEntryV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)),
   pluginId: PluginIdSchema,
@@ -2740,6 +2892,17 @@ export const PluginProjectedMachineProvisionerEntryV1Schema = lazyZodSchema(() =
   validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
 })));
 export type PluginProjectedMachineProvisionerEntryV1 = z.infer<typeof PluginProjectedMachineProvisionerEntryV1Schema>;
+
+export const PluginProjectedAccessProviderEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: zMini.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  executionOrigin: zMini.optional(PluginMachineExecutionOriginV1Schema), definition: AccessProviderContributionV1Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Access provider identity must match its descriptor.' });
+  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Access provider origin requires its serving occurrence.' });
+  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
+})));
+export type PluginProjectedAccessProviderEntryV1 = z.infer<typeof PluginProjectedAccessProviderEntryV1Schema>;
 
 export const PluginProjectedWorkItemsEntryV1Schema = lazyZodSchema(() => z.strictObject({
   id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)), occurrenceId: zMini.optional(PluginUiRuntimeOccurrenceIdV1Schema),
@@ -2764,17 +2927,24 @@ export const PluginProjectedDropTargetEntryV1Schema = lazyZodSchema(() => z.stri
 })));
 export type PluginProjectedDropTargetEntryV1 = z.infer<typeof PluginProjectedDropTargetEntryV1Schema>;
 
+export const PluginProjectedNotificationCategoryEntryV1Schema = lazyZodSchema(() => z.strictObject({
+  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
+  occurrenceId: zMini.optional(PluginUiRuntimeOccurrenceIdV1Schema),
+  definition: PluginNotificationCategoryContributionV2Schema,
+}).check(z.superRefine((entry, context) => {
+  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Notification category identity must match its descriptor' });
+})));
+export type PluginProjectedNotificationCategoryEntryV1 = z.infer<typeof PluginProjectedNotificationCategoryEntryV1Schema>;
+
 export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
-  typeof PluginProjectedMachineSetupPresetEntryV1Schema,
-  typeof PluginProjectedMachineRecipeEntryV1Schema,
-  typeof PluginProjectedAccessProviderEntryV1Schema,
-  typeof PluginProjectedBackupDestinationEntryV1Schema,
   typeof PluginProjectedHealthCheckKindEntryV1Schema,
-  typeof PluginProjectedBotTemplateEntryV1Schema,
   typeof PluginProjectedStoreKindEntryV1Schema,
-  typeof PluginProjectedDeploymentTargetEntryV1Schema,
+  typeof PluginProjectedMachineRecipeEntryV1Schema,
+  typeof PluginProjectedMachineSetupPresetEntryV1Schema,
+  typeof PluginProjectedNotificationCategoryEntryV1Schema,
   typeof PluginProjectedWorkItemsEntryV1Schema,
   typeof PluginProjectedMachineProvisionerEntryV1Schema,
+  typeof PluginProjectedAccessProviderEntryV1Schema,
   typeof PluginProjectedDragSourceEntryV1Schema,
   typeof PluginProjectedDropTargetEntryV1Schema,
   typeof PluginProjectedInputTypeEntryV1Schema,
@@ -2782,6 +2952,7 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedRegistrySourceEntryV1Schema,
   typeof PluginProjectedLanguageServerEntryV1Schema,
   typeof PluginProjectedSkillEntryV1Schema,
+  typeof PluginProjectedBotTemplateEntryV1Schema,
   typeof PluginProjectedProviderEntryV2Schema,
   typeof PluginProjectedDefinitionEntryV2Schema,
   typeof PluginProjectedWorkflowEntryV1Schema,
@@ -2798,16 +2969,14 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedBrowserEntryV2Schema,
   typeof PluginProjectedUiEntryV2Schema,
 ]> = lazyZodSchema(() => z.union([
-  PluginProjectedMachineSetupPresetEntryV1Schema,
-  PluginProjectedMachineRecipeEntryV1Schema,
-  PluginProjectedAccessProviderEntryV1Schema,
-  PluginProjectedBackupDestinationEntryV1Schema,
   PluginProjectedHealthCheckKindEntryV1Schema,
-  PluginProjectedBotTemplateEntryV1Schema,
   PluginProjectedStoreKindEntryV1Schema,
-  PluginProjectedDeploymentTargetEntryV1Schema,
+  PluginProjectedMachineRecipeEntryV1Schema,
+  PluginProjectedMachineSetupPresetEntryV1Schema,
+  PluginProjectedNotificationCategoryEntryV1Schema,
   PluginProjectedWorkItemsEntryV1Schema,
   PluginProjectedMachineProvisionerEntryV1Schema,
+  PluginProjectedAccessProviderEntryV1Schema,
   PluginProjectedDragSourceEntryV1Schema,
   PluginProjectedDropTargetEntryV1Schema,
   PluginProjectedInputTypeEntryV1Schema,
@@ -2815,6 +2984,7 @@ export const PluginProjectedFamilyEntryV2Schema: z.ZodMiniUnion<readonly [
   PluginProjectedRegistrySourceEntryV1Schema,
   PluginProjectedLanguageServerEntryV1Schema,
   PluginProjectedSkillEntryV1Schema,
+  PluginProjectedBotTemplateEntryV1Schema,
   PluginProjectedProviderEntryV2Schema,
   PluginProjectedDefinitionEntryV2Schema,
   PluginProjectedWorkflowEntryV1Schema,
@@ -2861,11 +3031,20 @@ const PluginProjectedWorkflowsFamilyV1Schema = lazyZodSchema(() => projectedFami
 const PluginProjectedInputTypesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('inputTypes', PluginProjectedInputTypeEntryV1Schema));
 const PluginProjectedAtmospherePicturesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('atmospherePictures', PluginProjectedAtmospherePictureEntryV1Schema));
 const PluginProjectedRegistrySourcesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('registrySources', PluginProjectedRegistrySourceEntryV1Schema));
+const PluginProjectedBackupDestinationsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('backupDestinations', PluginProjectedBackupDestinationEntryV1Schema));
+const PluginProjectedDeploymentTargetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('deploymentTargets', PluginProjectedDeploymentTargetEntryV1Schema));
+const PluginProjectedHealthCheckKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('healthCheckKinds', PluginProjectedHealthCheckKindEntryV1Schema));
+const PluginProjectedStoreKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('storeKinds', PluginProjectedStoreKindEntryV1Schema));
+const PluginProjectedMachineRecipesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineRecipes', PluginProjectedMachineRecipeEntryV1Schema));
+const PluginProjectedMachineSetupPresetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineSetupPresets', PluginProjectedMachineSetupPresetEntryV1Schema));
 const PluginProjectedLanguageServersFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('languageServers', PluginProjectedLanguageServerEntryV1Schema));
 const PluginProjectedSkillsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('skills', PluginProjectedSkillEntryV1Schema));
+const PluginProjectedBotTemplatesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('botTemplates', PluginProjectedBotTemplateEntryV1Schema));
 const PluginProjectedMachineProvisionersFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineProvisioners', PluginProjectedMachineProvisionerEntryV1Schema));
+const PluginProjectedAccessProvidersFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('accessProviders', PluginProjectedAccessProviderEntryV1Schema));
 const PluginProjectedDragSourcesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('dragSources', PluginProjectedDragSourceEntryV1Schema));
 const PluginProjectedWorkItemsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('workItems', PluginProjectedWorkItemsEntryV1Schema));
+const PluginProjectedNotificationCategoriesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('notificationCategories', PluginProjectedNotificationCategoryEntryV1Schema));
 const PluginProjectedDropTargetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('dropTargets', PluginProjectedDropTargetEntryV1Schema));
 const PluginProjectedVoiceProvidersFamilyV2Schema = lazyZodSchema(() => projectedFamilySchema('voiceProviders', PluginProjectedVoiceProviderEntryV2Schema));
 const PluginProjectedComposerAttachmentsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('composerAttachments', PluginProjectedComposerAttachmentEntryV1Schema));
@@ -2873,20 +3052,9 @@ const PluginProjectedComposerControlsFamilyV1Schema = lazyZodSchema(() => projec
 const PluginProjectedComposerRegionsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('composerRegions', PluginProjectedComposerRegionEntryV1Schema));
 
 type PluginProjectedFamiliesByIdV2Shape = {
-accessProviders: z.ZodMiniOptional<typeof PluginProjectedAccessProvidersFamilyV1Schema>;
-
-machineSetupPresets: z.ZodMiniOptional<typeof PluginProjectedMachineSetupPresetsFamilyV1Schema>;
-
-machineRecipes: z.ZodMiniOptional<typeof PluginProjectedMachineRecipesFamilyV1Schema>;
-
-healthCheckKinds: z.ZodMiniOptional<typeof PluginProjectedHealthCheckKindsFamilyV1Schema>;
-botTemplates: z.ZodMiniOptional<typeof PluginProjectedBotTemplatesFamilyV1Schema>;
-storeKinds: z.ZodMiniOptional<typeof PluginProjectedStoreKindsFamilyV1Schema>;
-
-deploymentTargets: z.ZodMiniOptional<typeof PluginProjectedDeploymentTargetsFamilyV1Schema>;
-
-backupDestinations: z.ZodMiniOptional<typeof PluginProjectedBackupDestinationsFamilyV1Schema>;
-
+  machineRecipes: z.ZodMiniOptional<typeof PluginProjectedMachineRecipesFamilyV1Schema>;
+  machineSetupPresets: z.ZodMiniOptional<typeof PluginProjectedMachineSetupPresetsFamilyV1Schema>;
+  notificationCategories: z.ZodMiniOptional<typeof PluginProjectedNotificationCategoriesFamilyV1Schema>;
   providers: z.ZodMiniOptional<typeof PluginProjectedProvidersFamilyV2Schema>;
   connectedAccounts: z.ZodMiniOptional<typeof PluginProjectedConnectedAccountsFamilyV2Schema>;
   scmHostingProviders: z.ZodMiniOptional<typeof PluginProjectedScmHostingProvidersFamilyV2Schema>;
@@ -2902,9 +3070,15 @@ backupDestinations: z.ZodMiniOptional<typeof PluginProjectedBackupDestinationsFa
   inputTypes: z.ZodMiniOptional<typeof PluginProjectedInputTypesFamilyV1Schema>;
   atmospherePictures: z.ZodMiniOptional<typeof PluginProjectedAtmospherePicturesFamilyV1Schema>;
   registrySources: z.ZodMiniOptional<typeof PluginProjectedRegistrySourcesFamilyV1Schema>;
+  backupDestinations: z.ZodMiniOptional<typeof PluginProjectedBackupDestinationsFamilyV1Schema>;
+  deploymentTargets: z.ZodMiniOptional<typeof PluginProjectedDeploymentTargetsFamilyV1Schema>;
+  healthCheckKinds: z.ZodMiniOptional<typeof PluginProjectedHealthCheckKindsFamilyV1Schema>;
+  storeKinds: z.ZodMiniOptional<typeof PluginProjectedStoreKindsFamilyV1Schema>;
   languageServers: z.ZodMiniOptional<typeof PluginProjectedLanguageServersFamilyV1Schema>;
   skills: z.ZodMiniOptional<typeof PluginProjectedSkillsFamilyV1Schema>;
+  botTemplates: z.ZodMiniOptional<typeof PluginProjectedBotTemplatesFamilyV1Schema>;
   machineProvisioners: z.ZodMiniOptional<typeof PluginProjectedMachineProvisionersFamilyV1Schema>;
+  accessProviders: z.ZodMiniOptional<typeof PluginProjectedAccessProvidersFamilyV1Schema>;
   dragSources: z.ZodMiniOptional<typeof PluginProjectedDragSourcesFamilyV1Schema>;
   workItems: z.ZodMiniOptional<typeof PluginProjectedWorkItemsFamilyV1Schema>;
   dropTargets: z.ZodMiniOptional<typeof PluginProjectedDropTargetsFamilyV1Schema>;
@@ -2916,22 +3090,10 @@ backupDestinations: z.ZodMiniOptional<typeof PluginProjectedBackupDestinationsFa
 
 const PluginProjectedFamiliesByIdV2Schema: z.ZodMiniDefault<
   z.ZodMiniObject<PluginProjectedFamiliesByIdV2Shape, z.core.$strict>
-> = lazyZodSchema(() => {
-  const schema = z._default(z.strictObject({
-accessProviders: z.optional(PluginProjectedAccessProvidersFamilyV1Schema),
-
-machineSetupPresets: z.optional(PluginProjectedMachineSetupPresetsFamilyV1Schema),
-
-machineRecipes: z.optional(PluginProjectedMachineRecipesFamilyV1Schema),
-
-healthCheckKinds: z.optional(PluginProjectedHealthCheckKindsFamilyV1Schema),
-botTemplates: z.optional(PluginProjectedBotTemplatesFamilyV1Schema),
-storeKinds: z.optional(PluginProjectedStoreKindsFamilyV1Schema),
-
-deploymentTargets: z.optional(PluginProjectedDeploymentTargetsFamilyV1Schema),
-
-backupDestinations: z.optional(PluginProjectedBackupDestinationsFamilyV1Schema),
-
+> = lazyZodSchema(() => z._default(z.strictObject({
+  machineRecipes: z.optional(PluginProjectedMachineRecipesFamilyV1Schema),
+  machineSetupPresets: z.optional(PluginProjectedMachineSetupPresetsFamilyV1Schema),
+  notificationCategories: z.optional(PluginProjectedNotificationCategoriesFamilyV1Schema),
   providers: z.optional(PluginProjectedProvidersFamilyV2Schema),
   connectedAccounts: z.optional(PluginProjectedConnectedAccountsFamilyV2Schema),
   scmHostingProviders: z.optional(PluginProjectedScmHostingProvidersFamilyV2Schema),
@@ -2947,9 +3109,15 @@ backupDestinations: z.optional(PluginProjectedBackupDestinationsFamilyV1Schema),
   inputTypes: z.optional(PluginProjectedInputTypesFamilyV1Schema),
   atmospherePictures: z.optional(PluginProjectedAtmospherePicturesFamilyV1Schema),
   registrySources: z.optional(PluginProjectedRegistrySourcesFamilyV1Schema),
+  backupDestinations: z.optional(PluginProjectedBackupDestinationsFamilyV1Schema),
+  deploymentTargets: z.optional(PluginProjectedDeploymentTargetsFamilyV1Schema),
+  healthCheckKinds: z.optional(PluginProjectedHealthCheckKindsFamilyV1Schema),
+  storeKinds: z.optional(PluginProjectedStoreKindsFamilyV1Schema),
   languageServers: z.optional(PluginProjectedLanguageServersFamilyV1Schema),
   skills: z.optional(PluginProjectedSkillsFamilyV1Schema),
+  botTemplates: z.optional(PluginProjectedBotTemplatesFamilyV1Schema),
   machineProvisioners: z.optional(PluginProjectedMachineProvisionersFamilyV1Schema),
+  accessProviders: z.optional(PluginProjectedAccessProvidersFamilyV1Schema),
   dragSources: z.optional(PluginProjectedDragSourcesFamilyV1Schema),
   workItems: z.optional(PluginProjectedWorkItemsFamilyV1Schema),
   dropTargets: z.optional(PluginProjectedDropTargetsFamilyV1Schema),
@@ -2957,20 +3125,13 @@ backupDestinations: z.optional(PluginProjectedBackupDestinationsFamilyV1Schema),
   composerAttachments: z.optional(PluginProjectedComposerAttachmentsFamilyV1Schema),
   composerControls: z.optional(PluginProjectedComposerControlsFamilyV1Schema),
   composerRegions: z.optional(PluginProjectedComposerRegionsFamilyV1Schema),
-}), {});
-  assertPluginProjectionFamilyIdsV2(Object.keys(schema._zod.def.innerType.shape));
-  return schema;
-});
+}), {}));
+assertPluginProjectionFamilyIdsV2(Object.keys(PluginProjectedFamiliesByIdV2Schema._zod.def.innerType.shape));
 
 export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
-  typeof PluginProjectedAccessProvidersFamilyV1Schema,
-  typeof PluginProjectedMachineSetupPresetsFamilyV1Schema,
   typeof PluginProjectedMachineRecipesFamilyV1Schema,
-  typeof PluginProjectedHealthCheckKindsFamilyV1Schema,
-  typeof PluginProjectedBotTemplatesFamilyV1Schema,
-  typeof PluginProjectedStoreKindsFamilyV1Schema,
-  typeof PluginProjectedDeploymentTargetsFamilyV1Schema,
-  typeof PluginProjectedBackupDestinationsFamilyV1Schema,
+  typeof PluginProjectedMachineSetupPresetsFamilyV1Schema,
+  typeof PluginProjectedNotificationCategoriesFamilyV1Schema,
   typeof PluginProjectedWorkItemsFamilyV1Schema,
   typeof PluginProjectedProvidersFamilyV2Schema,
   typeof PluginProjectedConnectedAccountsFamilyV2Schema,
@@ -2987,9 +3148,15 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedInputTypesFamilyV1Schema,
   typeof PluginProjectedAtmospherePicturesFamilyV1Schema,
   typeof PluginProjectedRegistrySourcesFamilyV1Schema,
+  typeof PluginProjectedBackupDestinationsFamilyV1Schema,
+  typeof PluginProjectedDeploymentTargetsFamilyV1Schema,
+  typeof PluginProjectedHealthCheckKindsFamilyV1Schema,
+  typeof PluginProjectedStoreKindsFamilyV1Schema,
   typeof PluginProjectedLanguageServersFamilyV1Schema,
   typeof PluginProjectedSkillsFamilyV1Schema,
+  typeof PluginProjectedBotTemplatesFamilyV1Schema,
   typeof PluginProjectedMachineProvisionersFamilyV1Schema,
+  typeof PluginProjectedAccessProvidersFamilyV1Schema,
   typeof PluginProjectedDragSourcesFamilyV1Schema,
   typeof PluginProjectedDropTargetsFamilyV1Schema,
   typeof PluginProjectedVoiceProvidersFamilyV2Schema,
@@ -2997,14 +3164,9 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   typeof PluginProjectedComposerControlsFamilyV1Schema,
   typeof PluginProjectedComposerRegionsFamilyV1Schema,
 ]> = lazyZodSchema(() => z.union([
-  PluginProjectedAccessProvidersFamilyV1Schema,
-  PluginProjectedMachineSetupPresetsFamilyV1Schema,
   PluginProjectedMachineRecipesFamilyV1Schema,
-  PluginProjectedHealthCheckKindsFamilyV1Schema,
-  PluginProjectedBotTemplatesFamilyV1Schema,
-  PluginProjectedStoreKindsFamilyV1Schema,
-  PluginProjectedDeploymentTargetsFamilyV1Schema,
-  PluginProjectedBackupDestinationsFamilyV1Schema,
+  PluginProjectedMachineSetupPresetsFamilyV1Schema,
+  PluginProjectedNotificationCategoriesFamilyV1Schema,
   PluginProjectedWorkItemsFamilyV1Schema,
   PluginProjectedProvidersFamilyV2Schema,
   PluginProjectedConnectedAccountsFamilyV2Schema,
@@ -3021,9 +3183,15 @@ export const PluginProjectedFamilyV2Schema: z.ZodMiniUnion<readonly [
   PluginProjectedInputTypesFamilyV1Schema,
   PluginProjectedAtmospherePicturesFamilyV1Schema,
   PluginProjectedRegistrySourcesFamilyV1Schema,
+  PluginProjectedBackupDestinationsFamilyV1Schema,
+  PluginProjectedDeploymentTargetsFamilyV1Schema,
+  PluginProjectedHealthCheckKindsFamilyV1Schema,
+  PluginProjectedStoreKindsFamilyV1Schema,
   PluginProjectedLanguageServersFamilyV1Schema,
   PluginProjectedSkillsFamilyV1Schema,
+  PluginProjectedBotTemplatesFamilyV1Schema,
   PluginProjectedMachineProvisionersFamilyV1Schema,
+  PluginProjectedAccessProvidersFamilyV1Schema,
   PluginProjectedDragSourcesFamilyV1Schema,
   PluginProjectedDropTargetsFamilyV1Schema,
   PluginProjectedVoiceProvidersFamilyV2Schema,
@@ -3039,8 +3207,6 @@ export const PluginProjectionV2Schema: z.ZodMiniObject<{
   installedPackagesById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectionInstalledPackageV2Schema>>;
   agentsById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedAgentV2Schema>>;
   actionsById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedActionV2Schema>>;
-
-
   resourcesById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedResourceV2Schema>>;
   settingsById: z.ZodMiniDefault<z.ZodMiniRecord<z.ZodMiniString<string>, typeof PluginProjectedSettingsV2Schema>>;
   familiesById: typeof PluginProjectedFamiliesByIdV2Schema;
@@ -3052,8 +3218,6 @@ export const PluginProjectionV2Schema: z.ZodMiniObject<{
   installedPackagesById: z._default(z.record(z.string(), PluginProjectionInstalledPackageV2Schema), {}),
   agentsById: z._default(z.record(z.string(), PluginProjectedAgentV2Schema), {}),
   actionsById: z._default(z.record(z.string(), PluginProjectedActionV2Schema), {}),
-
-
   resourcesById: z._default(z.record(z.string(), PluginProjectedResourceV2Schema), {}),
   settingsById: z._default(z.record(z.string(), PluginProjectedSettingsV2Schema), {}),
   familiesById: PluginProjectedFamiliesByIdV2Schema,
@@ -3067,13 +3231,89 @@ export const PluginProjectionV2Schema: z.ZodMiniObject<{
 export type PluginProjectionV2 = z.infer<typeof PluginProjectionV2Schema>;
 
 /**
+ * Refuse invalid optional family entries, as the daemon family publisher does,
+ * without withdrawing unrelated contributions. Envelope and execution facts
+ * remain closed. Diagnostics describe the producing daemon's rejected entry;
+ * no field is coerced and an omitted entry grants no execution authority.
+ */
+function admitPluginProjectionV2(raw: unknown): ReturnType<typeof PluginProjectionV2Schema.safeParse> {
+  const parsed = PluginProjectionV2Schema.safeParse(raw);
+  if (parsed.success) return parsed;
+  const record = (value: unknown): Record<string, unknown> | null => (
+    value !== null && typeof value === 'object' && !Array.isArray(value)
+      ? value as Record<string, unknown> : null
+  );
+  const projection = record(raw);
+  const families = record(projection?.familiesById);
+  const packages = record(projection?.installedPackagesById);
+  if (!projection || !families || !packages) return parsed;
+  const failures = new Map<string, Map<string, string[][]>>();
+  for (const issue of parsed.error.issues) {
+    const [root, family, entriesKey, entryId, ...path] = issue.path;
+    // A malformed family envelope, package/custody row, or top-level authority
+    // cannot be interpreted as an isolated optional contribution failure.
+    if (root !== 'familiesById' || typeof family !== 'string'
+      || entriesKey !== 'entriesById' || typeof entryId !== 'string') return parsed;
+    const entries = failures.get(family) ?? new Map<string, string[][]>();
+    const paths = entries.get(entryId) ?? [];
+    paths.push(path.map(String));
+    entries.set(entryId, paths);
+    failures.set(family, entries);
+  }
+  const admittedFamilies = { ...families };
+  const diagnostics: PluginProjectionV2['diagnostics'] = [];
+  for (const [family, failuresById] of failures) {
+    const familyRecord = record(admittedFamilies[family]);
+    const entries = record(familyRecord?.entriesById);
+    if (!familyRecord || !entries) return parsed;
+    const admittedEntries = { ...entries };
+    for (const [entryId, paths] of failuresById) {
+      const entry = record(entries[entryId]);
+      const plugin = typeof entry?.pluginId === 'string' ? record(packages[entry.pluginId]) : null;
+      const source = record(plugin?.source);
+      if (!entry || !plugin || typeof source?.kind !== 'string') return parsed;
+      const diagnostic = PluginDiagnosticRecordV1Schema.safeParse({
+        version: 1,
+        id: `projection:${projection.generation}:${family}:${entryId}`,
+        plugin: { id: plugin.id, version: plugin.version ?? 'unknown',
+          source: mapPluginSourceToDiagnosticSource({ kind: source.kind }) },
+        data: { code: 'plugin_compatibility_projection_invalid', severity: 'error',
+          message: `Invalid contribution projection omitted: ${entryId}`, details: { family, entryId, paths } },
+        stage: 'normalization', host: 'daemon', platform: 'unknown',
+        ...(typeof entry.occurrenceId === 'string' ? { occurrenceId: entry.occurrenceId } : {}),
+        occurredAtMs: Date.now(), resolution: { state: 'current' },
+      });
+      if (!diagnostic.success) return parsed;
+      diagnostics.push(diagnostic.data);
+      delete admittedEntries[entryId];
+    }
+    admittedFamilies[family] = { ...familyRecord, entriesById: admittedEntries };
+  }
+  return PluginProjectionV2Schema.safeParse({ ...projection, familiesById: admittedFamilies,
+    diagnostics: [...(Array.isArray(projection.diagnostics) ? projection.diagnostics : []), ...diagnostics] });
+}
+
+const PluginProjectionV2ReadSchema: z.ZodMiniType<PluginProjectionV2> = lazyZodSchema(() => z.pipe(z.unknown(), z.transform((value, context) => {
+  const parsed = admitPluginProjectionV2(value);
+  if (parsed.success) return parsed.data;
+  parsed.error.issues.forEach((issue) => void context.issues.push({
+    ...issue, path: [...issue.path], input: context.value,
+  } as z.core.$ZodRawIssue));
+  return z.NEVER;
+})));
+
+/**
  * The machine-wide describe response. Declared after the projection schemas it
  * carries so the parsed projection is exactly `PluginProjectionV2`.
  */
+/** Published target identity only; never a native support or installed-state observation. */
+export const MachineRecipeReadTargetV1Schema = lazyZodSchema(() => z.pick(MachinePublishedMetadataV1Schema, { platform: true, arch: true }));
+export type MachineRecipeReadTargetV1 = z.infer<typeof MachineRecipeReadTargetV1Schema>;
+
 export const DaemonContributionRegistryProjectionDescribeResponseSchema: z.ZodMiniObject<{
   protocolVersion: z.ZodMiniLiteral<1>;
   projectionDigest: z.ZodMiniOptional<z.ZodMiniString>;
-  projection: typeof PluginProjectionV2Schema;
+  projection: typeof PluginProjectionV2ReadSchema;
   composerSurfaceCatalog: z.ZodMiniOptional<z.ZodMiniArray<typeof DaemonPluginUiComposerSurfaceCatalogEntryV1Schema>>;
   automationEligibleEvents: z.ZodMiniOptional<typeof DaemonContributionRegistryProjectionAutomationEligibleEventsV1Schema>;
   pluginSkills: z.ZodMiniOptional<typeof PluginSkillLibraryContentV1Schema>;
@@ -3082,7 +3322,7 @@ export const DaemonContributionRegistryProjectionDescribeResponseSchema: z.ZodMi
   protocolVersion: z.literal(1),
   /** Digest of the complete full response, excluding this field; absent on older daemons. */
   projectionDigest: z.optional(z.string()),
-  projection: PluginProjectionV2Schema,
+  projection: PluginProjectionV2ReadSchema,
   /**
    * Daemon-selected static Composer renderer facts. The UI joins each row to
    * its current live Composer/input/instance facts before producing a mount.
@@ -3109,83 +3349,11 @@ export type DaemonContributionRegistryProjectionDescribeUnchangedResponse = z.in
 >;
 
 export type DaemonContributionRegistryProjection = PluginProjectionV2;
-export { DaemonContributionRegistryProjectionSectionsResponseSchema, buildDaemonProjectionSections,
+export { DaemonContributionRegistryProjectionSectionsResponseSchema,
   DAEMON_PROJECTION_SECTION_FRAME_BYTES, DAEMON_PROJECTION_SECTION_STALE_CODE, DaemonProjectionDeferredSectionsResponseSchema,
-  DaemonProjectionSectionBodyResponseSchema, buildDeferredDaemonProjectionSections, demandedDaemonProjectionSections,
+  DaemonProjectionSectionBodyResponseSchema, buildDeferredDaemonProjectionSections, demandedDaemonProjectionSections, daemonProjectionSectionsCover,
   type DaemonProjectionDeferredSectionsResponse,
-  computeDaemonProjectionSectionDigest, omitKnownDaemonProjectionSectionBodies, reassembleDaemonProjectionSections,
+  computeDaemonProjectionSectionDigest, computeDaemonProjectionSectionDigestAsync, reassembleDaemonProjectionSections,
+  type DaemonProjectionSectionSha256, type DaemonProjectionSectionSha256Async,
   type DaemonContributionRegistryProjectionSectionsResponse,
 } from './contributionRegistryProjectionSections.js';
-
-export { type PluginProjectedMachineRecipeEntryV1 } from './machineSetupProjection.js';
-
-export const MachineRecipeReadTargetV1Schema = lazyZodSchema(() => z.pick(MachinePublishedMetadataV1Schema, { platform: true, arch: true }));
-
-export type MachineRecipeReadTargetV1 = z.infer<typeof MachineRecipeReadTargetV1Schema>;
-
-export const PluginProjectedDeploymentTargetEntryV1Schema = lazyZodSchema(() => z.strictObject({
-  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
-  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
-  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
-  definition: DeploymentTargetContributionV1Schema,
-}).check(z.superRefine((entry, context) => {
-  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Deployment target identity must match its descriptor' });
-  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Deployment target origin requires its serving occurrence' });
-  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
-})));
-export const PluginProjectedBotTemplateEntryV1Schema = lazyZodSchema(() => z.strictObject({
-  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema,
-  pluginVersion: z.string().check(z.minLength(1)),
-  definition: PluginBotTemplateContributionV1Schema,
-}));
-export type PluginProjectedBotTemplateEntryV1 = z.infer<typeof PluginProjectedBotTemplateEntryV1Schema>;
-
-export const PluginProjectedStoreKindEntryV1Schema = lazyZodSchema(() => z.strictObject({
-  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
-  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
-  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
-  definition: PluginStoreKindContributionV1Schema,
-}).check(z.superRefine((entry, context) => {
-  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Store kind identity must match its descriptor.' });
-  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Store kind origin requires its serving occurrence.' });
-  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
-})));
-export type PluginProjectedStoreKindEntryV1 = z.infer<typeof PluginProjectedStoreKindEntryV1Schema>;
-
-export const PluginProjectedHealthCheckKindEntryV1Schema = lazyZodSchema(() => z.strictObject({
-  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
-  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
-  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
-  definition: HealthCheckKindContributionV1Schema,
-}).check(z.superRefine((entry, context) => {
-  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Health check kind identity must match its descriptor.' });
-  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Health check kind origin requires its serving occurrence.' });
-  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
-})));
-const PluginProjectedBackupDestinationEntryV1Schema = lazyZodSchema(() => z.strictObject({
-  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
-  occurrenceId: z.optional(PluginUiRuntimeOccurrenceIdV1Schema),
-  executionOrigin: z.optional(PluginMachineExecutionOriginV1Schema),
-  definition: BackupDestinationContributionV1Schema,
-}).check(z.superRefine((entry, context) => {
-  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Destination identity must match its descriptor' });
-  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Destination origin requires its serving occurrence' });
-  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
-})));
-export const PluginProjectedAccessProviderEntryV1Schema = lazyZodSchema(() => z.strictObject({
-  id: z.string().check(z.minLength(1)), pluginId: PluginIdSchema, pluginVersion: z.string().check(z.minLength(1)),
-  occurrenceId: zMini.optional(PluginUiRuntimeOccurrenceIdV1Schema),
-  executionOrigin: zMini.optional(PluginMachineExecutionOriginV1Schema), definition: AccessProviderContributionV1Schema,
-}).check(z.superRefine((entry, context) => {
-  if (entry.id !== `${entry.pluginId}/${entry.definition.id}`) context.addIssue({ code: 'custom', path: ['id'], message: 'Access provider identity must match its descriptor.' });
-  if (entry.executionOrigin && !entry.occurrenceId) context.addIssue({ code: 'custom', path: ['occurrenceId'], message: 'Access provider origin requires its serving occurrence.' });
-  validateProjectedExecutionOrigin(entry.executionOrigin, entry, context);
-})));
-const PluginProjectedBackupDestinationsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('backupDestinations', PluginProjectedBackupDestinationEntryV1Schema));
-const PluginProjectedDeploymentTargetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('deploymentTargets', PluginProjectedDeploymentTargetEntryV1Schema));
-const PluginProjectedHealthCheckKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('healthCheckKinds', PluginProjectedHealthCheckKindEntryV1Schema));
-const PluginProjectedBotTemplatesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('botTemplates', PluginProjectedBotTemplateEntryV1Schema));
-const PluginProjectedStoreKindsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('storeKinds', PluginProjectedStoreKindEntryV1Schema));
-const PluginProjectedMachineRecipesFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineRecipes', PluginProjectedMachineRecipeEntryV1Schema));
-const PluginProjectedMachineSetupPresetsFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('machineSetupPresets', PluginProjectedMachineSetupPresetEntryV1Schema));
-const PluginProjectedAccessProvidersFamilyV1Schema = lazyZodSchema(() => projectedFamilySchema('accessProviders', PluginProjectedAccessProviderEntryV1Schema));

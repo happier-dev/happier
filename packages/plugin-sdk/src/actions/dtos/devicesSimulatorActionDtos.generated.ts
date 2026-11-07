@@ -19,6 +19,41 @@ export type DevicesSimulatorActionInputById = {
             kind: 'browser_input';
             controlEpoch: number;
             event: {
+                kind: 'clipboard';
+                target: 'page';
+                action: 'copy' | 'cut' | 'paste';
+                sequence: number;
+                text?: string | undefined;
+            } | {
+                kind: 'dialog';
+                target: 'page';
+                dialogId: string;
+                accept: boolean;
+                sequence: number;
+                promptText?: string | undefined;
+            } | {
+                kind: 'download';
+                target: 'page';
+                downloadId: string;
+                offset: number;
+                byteLength: number;
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'fileChooser';
+                target: 'page';
+                chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -27,7 +62,7 @@ export type DevicesSimulatorActionInputById = {
             } | {
                 kind: 'pointer';
                 target: 'page';
-                action: 'down' | 'move' | 'up' | 'cancel';
+                action: 'cancel' | 'down' | 'move' | 'up';
                 x: number;
                 y: number;
                 sequence: number;
@@ -37,17 +72,19 @@ export type DevicesSimulatorActionInputById = {
                 text: string;
                 sequence: number;
             } | {
+                kind: 'wheel';
+                target: 'page';
+                x: number;
+                y: number;
+                deltaX: number;
+                deltaY: number;
+                sequence: number;
+            } | {
                 width: number;
                 height: number;
                 deviceScaleFactor: number;
                 kind: 'viewport';
                 target: 'page';
-                sequence: number;
-            } | {
-                kind: 'editableProbe';
-                target: 'page';
-                x: number;
-                y: number;
                 sequence: number;
             };
             v: 1;
@@ -65,17 +102,53 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             leaseId?: string | undefined;
         } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'tap';
-            x: number;
-            y: number;
             leaseId?: string | undefined;
-            button?: 'left' | 'right' | 'middle' | undefined;
-            clickCount?: 2 | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'drag';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
+            leaseId?: string | undefined;
+            durationMs?: number | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'hardware_button';
+            button: string;
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_key';
+            key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_text';
+            text: string;
+            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -91,25 +164,17 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'swipe';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'orientation';
+            orientation: 'landscapeLeft' | 'landscapeRight' | 'portrait' | 'portraitUpsideDown';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'drag';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'pause_capture';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -128,6 +193,20 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
+            kind: 'request_keyframe';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'resume_capture';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             kind: 'rotate';
             centerX: number;
             centerY: number;
@@ -136,57 +215,6 @@ export type DevicesSimulatorActionInputById = {
             endAngle: number;
             leaseId?: string | undefined;
             durationMs?: number | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_text';
-            text: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_key';
-            key: string;
-            leaseId?: string | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
-        } | {
-            kind: 'wheel';
-            x: number;
-            y: number;
-            deltaX: number;
-            deltaY: number;
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'hardware_button';
-            button: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'orientation';
-            orientation: 'portrait' | 'portraitUpsideDown' | 'landscapeLeft' | 'landscapeRight';
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'request_keyframe';
-            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -203,16 +231,25 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'pause_capture';
+            kind: 'swipe';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
             leaseId?: string | undefined;
-            reasonCode?: string | undefined;
+            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'resume_capture';
+            kind: 'tap';
+            x: number;
+            y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'middle' | 'right' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -241,6 +278,41 @@ export type DevicesSimulatorActionInputById = {
             kind: 'browser_input';
             controlEpoch: number;
             event: {
+                kind: 'clipboard';
+                target: 'page';
+                action: 'copy' | 'cut' | 'paste';
+                sequence: number;
+                text?: string | undefined;
+            } | {
+                kind: 'dialog';
+                target: 'page';
+                dialogId: string;
+                accept: boolean;
+                sequence: number;
+                promptText?: string | undefined;
+            } | {
+                kind: 'download';
+                target: 'page';
+                downloadId: string;
+                offset: number;
+                byteLength: number;
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'fileChooser';
+                target: 'page';
+                chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -249,7 +321,7 @@ export type DevicesSimulatorActionInputById = {
             } | {
                 kind: 'pointer';
                 target: 'page';
-                action: 'down' | 'move' | 'up' | 'cancel';
+                action: 'cancel' | 'down' | 'move' | 'up';
                 x: number;
                 y: number;
                 sequence: number;
@@ -259,17 +331,19 @@ export type DevicesSimulatorActionInputById = {
                 text: string;
                 sequence: number;
             } | {
+                kind: 'wheel';
+                target: 'page';
+                x: number;
+                y: number;
+                deltaX: number;
+                deltaY: number;
+                sequence: number;
+            } | {
                 width: number;
                 height: number;
                 deviceScaleFactor: number;
                 kind: 'viewport';
                 target: 'page';
-                sequence: number;
-            } | {
-                kind: 'editableProbe';
-                target: 'page';
-                x: number;
-                y: number;
                 sequence: number;
             };
             v: 1;
@@ -287,17 +361,53 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             leaseId?: string | undefined;
         } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'tap';
-            x: number;
-            y: number;
             leaseId?: string | undefined;
-            button?: 'left' | 'right' | 'middle' | undefined;
-            clickCount?: 2 | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'drag';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
+            leaseId?: string | undefined;
+            durationMs?: number | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'hardware_button';
+            button: string;
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_key';
+            key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_text';
+            text: string;
+            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -313,25 +423,17 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'swipe';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'orientation';
+            orientation: 'landscapeLeft' | 'landscapeRight' | 'portrait' | 'portraitUpsideDown';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'drag';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'pause_capture';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -350,6 +452,20 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
+            kind: 'request_keyframe';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'resume_capture';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             kind: 'rotate';
             centerX: number;
             centerY: number;
@@ -358,57 +474,6 @@ export type DevicesSimulatorActionInputById = {
             endAngle: number;
             leaseId?: string | undefined;
             durationMs?: number | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_text';
-            text: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_key';
-            key: string;
-            leaseId?: string | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
-        } | {
-            kind: 'wheel';
-            x: number;
-            y: number;
-            deltaX: number;
-            deltaY: number;
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'hardware_button';
-            button: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'orientation';
-            orientation: 'portrait' | 'portraitUpsideDown' | 'landscapeLeft' | 'landscapeRight';
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'request_keyframe';
-            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -425,16 +490,25 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'pause_capture';
+            kind: 'swipe';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
             leaseId?: string | undefined;
-            reasonCode?: string | undefined;
+            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'resume_capture';
+            kind: 'tap';
+            x: number;
+            y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'middle' | 'right' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -495,6 +569,41 @@ export type DevicesSimulatorActionInputById = {
             kind: 'browser_input';
             controlEpoch: number;
             event: {
+                kind: 'clipboard';
+                target: 'page';
+                action: 'copy' | 'cut' | 'paste';
+                sequence: number;
+                text?: string | undefined;
+            } | {
+                kind: 'dialog';
+                target: 'page';
+                dialogId: string;
+                accept: boolean;
+                sequence: number;
+                promptText?: string | undefined;
+            } | {
+                kind: 'download';
+                target: 'page';
+                downloadId: string;
+                offset: number;
+                byteLength: number;
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'fileChooser';
+                target: 'page';
+                chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -503,7 +612,7 @@ export type DevicesSimulatorActionInputById = {
             } | {
                 kind: 'pointer';
                 target: 'page';
-                action: 'down' | 'move' | 'up' | 'cancel';
+                action: 'cancel' | 'down' | 'move' | 'up';
                 x: number;
                 y: number;
                 sequence: number;
@@ -513,17 +622,19 @@ export type DevicesSimulatorActionInputById = {
                 text: string;
                 sequence: number;
             } | {
+                kind: 'wheel';
+                target: 'page';
+                x: number;
+                y: number;
+                deltaX: number;
+                deltaY: number;
+                sequence: number;
+            } | {
                 width: number;
                 height: number;
                 deviceScaleFactor: number;
                 kind: 'viewport';
                 target: 'page';
-                sequence: number;
-            } | {
-                kind: 'editableProbe';
-                target: 'page';
-                x: number;
-                y: number;
                 sequence: number;
             };
             v: 1;
@@ -541,17 +652,53 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             leaseId?: string | undefined;
         } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'tap';
-            x: number;
-            y: number;
             leaseId?: string | undefined;
-            button?: 'left' | 'right' | 'middle' | undefined;
-            clickCount?: 2 | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'drag';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
+            leaseId?: string | undefined;
+            durationMs?: number | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'hardware_button';
+            button: string;
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_key';
+            key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_text';
+            text: string;
+            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -567,25 +714,17 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'swipe';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'orientation';
+            orientation: 'landscapeLeft' | 'landscapeRight' | 'portrait' | 'portraitUpsideDown';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'drag';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'pause_capture';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -604,6 +743,20 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
+            kind: 'request_keyframe';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'resume_capture';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             kind: 'rotate';
             centerX: number;
             centerY: number;
@@ -612,57 +765,6 @@ export type DevicesSimulatorActionInputById = {
             endAngle: number;
             leaseId?: string | undefined;
             durationMs?: number | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_text';
-            text: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_key';
-            key: string;
-            leaseId?: string | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
-        } | {
-            kind: 'wheel';
-            x: number;
-            y: number;
-            deltaX: number;
-            deltaY: number;
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'hardware_button';
-            button: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'orientation';
-            orientation: 'portrait' | 'portraitUpsideDown' | 'landscapeLeft' | 'landscapeRight';
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'request_keyframe';
-            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -679,16 +781,25 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'pause_capture';
+            kind: 'swipe';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
             leaseId?: string | undefined;
-            reasonCode?: string | undefined;
+            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'resume_capture';
+            kind: 'tap';
+            x: number;
+            y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'middle' | 'right' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -704,6 +815,41 @@ export type DevicesSimulatorActionInputById = {
             kind: 'browser_input';
             controlEpoch: number;
             event: {
+                kind: 'clipboard';
+                target: 'page';
+                action: 'copy' | 'cut' | 'paste';
+                sequence: number;
+                text?: string | undefined;
+            } | {
+                kind: 'dialog';
+                target: 'page';
+                dialogId: string;
+                accept: boolean;
+                sequence: number;
+                promptText?: string | undefined;
+            } | {
+                kind: 'download';
+                target: 'page';
+                downloadId: string;
+                offset: number;
+                byteLength: number;
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'fileChooser';
+                target: 'page';
+                chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -712,7 +858,7 @@ export type DevicesSimulatorActionInputById = {
             } | {
                 kind: 'pointer';
                 target: 'page';
-                action: 'down' | 'move' | 'up' | 'cancel';
+                action: 'cancel' | 'down' | 'move' | 'up';
                 x: number;
                 y: number;
                 sequence: number;
@@ -722,17 +868,19 @@ export type DevicesSimulatorActionInputById = {
                 text: string;
                 sequence: number;
             } | {
+                kind: 'wheel';
+                target: 'page';
+                x: number;
+                y: number;
+                deltaX: number;
+                deltaY: number;
+                sequence: number;
+            } | {
                 width: number;
                 height: number;
                 deviceScaleFactor: number;
                 kind: 'viewport';
                 target: 'page';
-                sequence: number;
-            } | {
-                kind: 'editableProbe';
-                target: 'page';
-                x: number;
-                y: number;
                 sequence: number;
             };
             v: 1;
@@ -750,17 +898,53 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             leaseId?: string | undefined;
         } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'tap';
-            x: number;
-            y: number;
             leaseId?: string | undefined;
-            button?: 'left' | 'right' | 'middle' | undefined;
-            clickCount?: 2 | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'drag';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
+            leaseId?: string | undefined;
+            durationMs?: number | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'hardware_button';
+            button: string;
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_key';
+            key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_text';
+            text: string;
+            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -776,25 +960,17 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'swipe';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'orientation';
+            orientation: 'landscapeLeft' | 'landscapeRight' | 'portrait' | 'portraitUpsideDown';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'drag';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'pause_capture';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -813,6 +989,20 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
+            kind: 'request_keyframe';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'resume_capture';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             kind: 'rotate';
             centerX: number;
             centerY: number;
@@ -821,57 +1011,6 @@ export type DevicesSimulatorActionInputById = {
             endAngle: number;
             leaseId?: string | undefined;
             durationMs?: number | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_text';
-            text: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_key';
-            key: string;
-            leaseId?: string | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
-        } | {
-            kind: 'wheel';
-            x: number;
-            y: number;
-            deltaX: number;
-            deltaY: number;
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'hardware_button';
-            button: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'orientation';
-            orientation: 'portrait' | 'portraitUpsideDown' | 'landscapeLeft' | 'landscapeRight';
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'request_keyframe';
-            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -888,16 +1027,25 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'pause_capture';
+            kind: 'swipe';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
             leaseId?: string | undefined;
-            reasonCode?: string | undefined;
+            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'resume_capture';
+            kind: 'tap';
+            x: number;
+            y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'middle' | 'right' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -913,6 +1061,41 @@ export type DevicesSimulatorActionInputById = {
             kind: 'browser_input';
             controlEpoch: number;
             event: {
+                kind: 'clipboard';
+                target: 'page';
+                action: 'copy' | 'cut' | 'paste';
+                sequence: number;
+                text?: string | undefined;
+            } | {
+                kind: 'dialog';
+                target: 'page';
+                dialogId: string;
+                accept: boolean;
+                sequence: number;
+                promptText?: string | undefined;
+            } | {
+                kind: 'download';
+                target: 'page';
+                downloadId: string;
+                offset: number;
+                byteLength: number;
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'fileChooser';
+                target: 'page';
+                chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -921,7 +1104,7 @@ export type DevicesSimulatorActionInputById = {
             } | {
                 kind: 'pointer';
                 target: 'page';
-                action: 'down' | 'move' | 'up' | 'cancel';
+                action: 'cancel' | 'down' | 'move' | 'up';
                 x: number;
                 y: number;
                 sequence: number;
@@ -931,17 +1114,19 @@ export type DevicesSimulatorActionInputById = {
                 text: string;
                 sequence: number;
             } | {
+                kind: 'wheel';
+                target: 'page';
+                x: number;
+                y: number;
+                deltaX: number;
+                deltaY: number;
+                sequence: number;
+            } | {
                 width: number;
                 height: number;
                 deviceScaleFactor: number;
                 kind: 'viewport';
                 target: 'page';
-                sequence: number;
-            } | {
-                kind: 'editableProbe';
-                target: 'page';
-                x: number;
-                y: number;
                 sequence: number;
             };
             v: 1;
@@ -959,17 +1144,53 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             leaseId?: string | undefined;
         } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'tap';
-            x: number;
-            y: number;
             leaseId?: string | undefined;
-            button?: 'left' | 'right' | 'middle' | undefined;
-            clickCount?: 2 | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'drag';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
+            leaseId?: string | undefined;
+            durationMs?: number | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'hardware_button';
+            button: string;
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_key';
+            key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_text';
+            text: string;
+            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -985,25 +1206,17 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'swipe';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'orientation';
+            orientation: 'landscapeLeft' | 'landscapeRight' | 'portrait' | 'portraitUpsideDown';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'drag';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'pause_capture';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1022,6 +1235,20 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
+            kind: 'request_keyframe';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'resume_capture';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             kind: 'rotate';
             centerX: number;
             centerY: number;
@@ -1030,57 +1257,6 @@ export type DevicesSimulatorActionInputById = {
             endAngle: number;
             leaseId?: string | undefined;
             durationMs?: number | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_text';
-            text: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_key';
-            key: string;
-            leaseId?: string | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
-        } | {
-            kind: 'wheel';
-            x: number;
-            y: number;
-            deltaX: number;
-            deltaY: number;
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'hardware_button';
-            button: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'orientation';
-            orientation: 'portrait' | 'portraitUpsideDown' | 'landscapeLeft' | 'landscapeRight';
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'request_keyframe';
-            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1097,16 +1273,25 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'pause_capture';
+            kind: 'swipe';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
             leaseId?: string | undefined;
-            reasonCode?: string | undefined;
+            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'resume_capture';
+            kind: 'tap';
+            x: number;
+            y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'middle' | 'right' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -1122,6 +1307,41 @@ export type DevicesSimulatorActionInputById = {
             kind: 'browser_input';
             controlEpoch: number;
             event: {
+                kind: 'clipboard';
+                target: 'page';
+                action: 'copy' | 'cut' | 'paste';
+                sequence: number;
+                text?: string | undefined;
+            } | {
+                kind: 'dialog';
+                target: 'page';
+                dialogId: string;
+                accept: boolean;
+                sequence: number;
+                promptText?: string | undefined;
+            } | {
+                kind: 'download';
+                target: 'page';
+                downloadId: string;
+                offset: number;
+                byteLength: number;
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'fileChooser';
+                target: 'page';
+                chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -1130,7 +1350,7 @@ export type DevicesSimulatorActionInputById = {
             } | {
                 kind: 'pointer';
                 target: 'page';
-                action: 'down' | 'move' | 'up' | 'cancel';
+                action: 'cancel' | 'down' | 'move' | 'up';
                 x: number;
                 y: number;
                 sequence: number;
@@ -1140,17 +1360,19 @@ export type DevicesSimulatorActionInputById = {
                 text: string;
                 sequence: number;
             } | {
+                kind: 'wheel';
+                target: 'page';
+                x: number;
+                y: number;
+                deltaX: number;
+                deltaY: number;
+                sequence: number;
+            } | {
                 width: number;
                 height: number;
                 deviceScaleFactor: number;
                 kind: 'viewport';
                 target: 'page';
-                sequence: number;
-            } | {
-                kind: 'editableProbe';
-                target: 'page';
-                x: number;
-                y: number;
                 sequence: number;
             };
             v: 1;
@@ -1168,17 +1390,53 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             leaseId?: string | undefined;
         } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'tap';
-            x: number;
-            y: number;
             leaseId?: string | undefined;
-            button?: 'left' | 'right' | 'middle' | undefined;
-            clickCount?: 2 | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'drag';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
+            leaseId?: string | undefined;
+            durationMs?: number | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'hardware_button';
+            button: string;
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_key';
+            key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_text';
+            text: string;
+            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1194,25 +1452,17 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'swipe';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'orientation';
+            orientation: 'landscapeLeft' | 'landscapeRight' | 'portrait' | 'portraitUpsideDown';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'drag';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'pause_capture';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1231,6 +1481,20 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
+            kind: 'request_keyframe';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'resume_capture';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             kind: 'rotate';
             centerX: number;
             centerY: number;
@@ -1239,57 +1503,6 @@ export type DevicesSimulatorActionInputById = {
             endAngle: number;
             leaseId?: string | undefined;
             durationMs?: number | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_text';
-            text: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_key';
-            key: string;
-            leaseId?: string | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
-        } | {
-            kind: 'wheel';
-            x: number;
-            y: number;
-            deltaX: number;
-            deltaY: number;
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'hardware_button';
-            button: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'orientation';
-            orientation: 'portrait' | 'portraitUpsideDown' | 'landscapeLeft' | 'landscapeRight';
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'request_keyframe';
-            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1306,16 +1519,25 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'pause_capture';
+            kind: 'swipe';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
             leaseId?: string | undefined;
-            reasonCode?: string | undefined;
+            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'resume_capture';
+            kind: 'tap';
+            x: number;
+            y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'middle' | 'right' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -1331,6 +1553,41 @@ export type DevicesSimulatorActionInputById = {
             kind: 'browser_input';
             controlEpoch: number;
             event: {
+                kind: 'clipboard';
+                target: 'page';
+                action: 'copy' | 'cut' | 'paste';
+                sequence: number;
+                text?: string | undefined;
+            } | {
+                kind: 'dialog';
+                target: 'page';
+                dialogId: string;
+                accept: boolean;
+                sequence: number;
+                promptText?: string | undefined;
+            } | {
+                kind: 'download';
+                target: 'page';
+                downloadId: string;
+                offset: number;
+                byteLength: number;
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'fileChooser';
+                target: 'page';
+                chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -1339,7 +1596,7 @@ export type DevicesSimulatorActionInputById = {
             } | {
                 kind: 'pointer';
                 target: 'page';
-                action: 'down' | 'move' | 'up' | 'cancel';
+                action: 'cancel' | 'down' | 'move' | 'up';
                 x: number;
                 y: number;
                 sequence: number;
@@ -1349,17 +1606,19 @@ export type DevicesSimulatorActionInputById = {
                 text: string;
                 sequence: number;
             } | {
+                kind: 'wheel';
+                target: 'page';
+                x: number;
+                y: number;
+                deltaX: number;
+                deltaY: number;
+                sequence: number;
+            } | {
                 width: number;
                 height: number;
                 deviceScaleFactor: number;
                 kind: 'viewport';
                 target: 'page';
-                sequence: number;
-            } | {
-                kind: 'editableProbe';
-                target: 'page';
-                x: number;
-                y: number;
                 sequence: number;
             };
             v: 1;
@@ -1377,17 +1636,53 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             leaseId?: string | undefined;
         } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'tap';
-            x: number;
-            y: number;
             leaseId?: string | undefined;
-            button?: 'left' | 'right' | 'middle' | undefined;
-            clickCount?: 2 | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'drag';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
+            leaseId?: string | undefined;
+            durationMs?: number | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'hardware_button';
+            button: string;
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_key';
+            key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_text';
+            text: string;
+            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1403,25 +1698,17 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'swipe';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'orientation';
+            orientation: 'landscapeLeft' | 'landscapeRight' | 'portrait' | 'portraitUpsideDown';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'drag';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'pause_capture';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1440,6 +1727,20 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
+            kind: 'request_keyframe';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'resume_capture';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             kind: 'rotate';
             centerX: number;
             centerY: number;
@@ -1448,57 +1749,6 @@ export type DevicesSimulatorActionInputById = {
             endAngle: number;
             leaseId?: string | undefined;
             durationMs?: number | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_text';
-            text: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_key';
-            key: string;
-            leaseId?: string | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
-        } | {
-            kind: 'wheel';
-            x: number;
-            y: number;
-            deltaX: number;
-            deltaY: number;
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'hardware_button';
-            button: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'orientation';
-            orientation: 'portrait' | 'portraitUpsideDown' | 'landscapeLeft' | 'landscapeRight';
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'request_keyframe';
-            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1515,16 +1765,25 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'pause_capture';
+            kind: 'swipe';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
             leaseId?: string | undefined;
-            reasonCode?: string | undefined;
+            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'resume_capture';
+            kind: 'tap';
+            x: number;
+            y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'middle' | 'right' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -1540,6 +1799,41 @@ export type DevicesSimulatorActionInputById = {
             kind: 'browser_input';
             controlEpoch: number;
             event: {
+                kind: 'clipboard';
+                target: 'page';
+                action: 'copy' | 'cut' | 'paste';
+                sequence: number;
+                text?: string | undefined;
+            } | {
+                kind: 'dialog';
+                target: 'page';
+                dialogId: string;
+                accept: boolean;
+                sequence: number;
+                promptText?: string | undefined;
+            } | {
+                kind: 'download';
+                target: 'page';
+                downloadId: string;
+                offset: number;
+                byteLength: number;
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'fileChooser';
+                target: 'page';
+                chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -1548,7 +1842,7 @@ export type DevicesSimulatorActionInputById = {
             } | {
                 kind: 'pointer';
                 target: 'page';
-                action: 'down' | 'move' | 'up' | 'cancel';
+                action: 'cancel' | 'down' | 'move' | 'up';
                 x: number;
                 y: number;
                 sequence: number;
@@ -1558,17 +1852,19 @@ export type DevicesSimulatorActionInputById = {
                 text: string;
                 sequence: number;
             } | {
+                kind: 'wheel';
+                target: 'page';
+                x: number;
+                y: number;
+                deltaX: number;
+                deltaY: number;
+                sequence: number;
+            } | {
                 width: number;
                 height: number;
                 deviceScaleFactor: number;
                 kind: 'viewport';
                 target: 'page';
-                sequence: number;
-            } | {
-                kind: 'editableProbe';
-                target: 'page';
-                x: number;
-                y: number;
                 sequence: number;
             };
             v: 1;
@@ -1586,17 +1882,53 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             leaseId?: string | undefined;
         } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'tap';
-            x: number;
-            y: number;
             leaseId?: string | undefined;
-            button?: 'left' | 'right' | 'middle' | undefined;
-            clickCount?: 2 | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'drag';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
+            leaseId?: string | undefined;
+            durationMs?: number | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'hardware_button';
+            button: string;
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_key';
+            key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_text';
+            text: string;
+            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1612,25 +1944,17 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'swipe';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'orientation';
+            orientation: 'landscapeLeft' | 'landscapeRight' | 'portrait' | 'portraitUpsideDown';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'drag';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'pause_capture';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1649,6 +1973,20 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
+            kind: 'request_keyframe';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'resume_capture';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             kind: 'rotate';
             centerX: number;
             centerY: number;
@@ -1657,57 +1995,6 @@ export type DevicesSimulatorActionInputById = {
             endAngle: number;
             leaseId?: string | undefined;
             durationMs?: number | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_text';
-            text: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_key';
-            key: string;
-            leaseId?: string | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
-        } | {
-            kind: 'wheel';
-            x: number;
-            y: number;
-            deltaX: number;
-            deltaY: number;
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'hardware_button';
-            button: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'orientation';
-            orientation: 'portrait' | 'portraitUpsideDown' | 'landscapeLeft' | 'landscapeRight';
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'request_keyframe';
-            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1724,16 +2011,25 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'pause_capture';
+            kind: 'swipe';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
             leaseId?: string | undefined;
-            reasonCode?: string | undefined;
+            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'resume_capture';
+            kind: 'tap';
+            x: number;
+            y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'middle' | 'right' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -1749,6 +2045,41 @@ export type DevicesSimulatorActionInputById = {
             kind: 'browser_input';
             controlEpoch: number;
             event: {
+                kind: 'clipboard';
+                target: 'page';
+                action: 'copy' | 'cut' | 'paste';
+                sequence: number;
+                text?: string | undefined;
+            } | {
+                kind: 'dialog';
+                target: 'page';
+                dialogId: string;
+                accept: boolean;
+                sequence: number;
+                promptText?: string | undefined;
+            } | {
+                kind: 'download';
+                target: 'page';
+                downloadId: string;
+                offset: number;
+                byteLength: number;
+                sequence: number;
+            } | {
+                kind: 'editableProbe';
+                target: 'page';
+                x: number;
+                y: number;
+                sequence: number;
+            } | {
+                kind: 'fileChooser';
+                target: 'page';
+                chooserId: string;
+                files: {
+                    name: string;
+                    dataBase64: string;
+                }[];
+                sequence: number;
+            } | {
                 kind: 'key';
                 target: 'page';
                 key: string;
@@ -1757,7 +2088,7 @@ export type DevicesSimulatorActionInputById = {
             } | {
                 kind: 'pointer';
                 target: 'page';
-                action: 'down' | 'move' | 'up' | 'cancel';
+                action: 'cancel' | 'down' | 'move' | 'up';
                 x: number;
                 y: number;
                 sequence: number;
@@ -1767,17 +2098,19 @@ export type DevicesSimulatorActionInputById = {
                 text: string;
                 sequence: number;
             } | {
+                kind: 'wheel';
+                target: 'page';
+                x: number;
+                y: number;
+                deltaX: number;
+                deltaY: number;
+                sequence: number;
+            } | {
                 width: number;
                 height: number;
                 deviceScaleFactor: number;
                 kind: 'viewport';
                 target: 'page';
-                sequence: number;
-            } | {
-                kind: 'editableProbe';
-                target: 'page';
-                x: number;
-                y: number;
                 sequence: number;
             };
             v: 1;
@@ -1795,17 +2128,53 @@ export type DevicesSimulatorActionInputById = {
             eventId: string;
             leaseId?: string | undefined;
         } | {
+            kind: 'wheel';
+            x: number;
+            y: number;
+            deltaX: number;
+            deltaY: number;
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'tap';
-            x: number;
-            y: number;
             leaseId?: string | undefined;
-            button?: 'left' | 'right' | 'middle' | undefined;
-            clickCount?: 2 | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'drag';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
+            leaseId?: string | undefined;
+            durationMs?: number | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'hardware_button';
+            button: string;
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_key';
+            key: string;
+            leaseId?: string | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'keyboard_text';
+            text: string;
+            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1821,25 +2190,17 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'swipe';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'orientation';
+            orientation: 'landscapeLeft' | 'landscapeRight' | 'portrait' | 'portraitUpsideDown';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'drag';
-            fromX: number;
-            fromY: number;
-            toX: number;
-            toY: number;
+            kind: 'pause_capture';
             leaseId?: string | undefined;
-            durationMs?: number | undefined;
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1858,6 +2219,20 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
+            kind: 'request_keyframe';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
+            kind: 'resume_capture';
+            leaseId?: string | undefined;
+        } | {
+            v: 1;
+            streamId: string;
+            sourceId: string;
+            eventId: string;
             kind: 'rotate';
             centerX: number;
             centerY: number;
@@ -1866,57 +2241,6 @@ export type DevicesSimulatorActionInputById = {
             endAngle: number;
             leaseId?: string | undefined;
             durationMs?: number | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_text';
-            text: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'keyboard_key';
-            key: string;
-            leaseId?: string | undefined;
-            modifiers?: ('alt' | 'control' | 'meta' | 'shift' | 'fn')[] | undefined;
-        } | {
-            kind: 'wheel';
-            x: number;
-            y: number;
-            deltaX: number;
-            deltaY: number;
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'hardware_button';
-            button: string;
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'orientation';
-            orientation: 'portrait' | 'portraitUpsideDown' | 'landscapeLeft' | 'landscapeRight';
-            leaseId?: string | undefined;
-        } | {
-            v: 1;
-            streamId: string;
-            sourceId: string;
-            eventId: string;
-            kind: 'request_keyframe';
-            leaseId?: string | undefined;
         } | {
             v: 1;
             streamId: string;
@@ -1933,16 +2257,25 @@ export type DevicesSimulatorActionInputById = {
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'pause_capture';
+            kind: 'swipe';
+            fromX: number;
+            fromY: number;
+            toX: number;
+            toY: number;
             leaseId?: string | undefined;
-            reasonCode?: string | undefined;
+            durationMs?: number | undefined;
         } | {
             v: 1;
             streamId: string;
             sourceId: string;
             eventId: string;
-            kind: 'resume_capture';
+            kind: 'tap';
+            x: number;
+            y: number;
             leaseId?: string | undefined;
+            button?: 'left' | 'middle' | 'right' | undefined;
+            clickCount?: 2 | undefined;
+            modifiers?: ('alt' | 'control' | 'fn' | 'meta' | 'shift')[] | undefined;
         };
     } & {
         [x: string]: unknown;
@@ -1955,7 +2288,7 @@ export type DevicesSimulatorActionInputById = {
     readonly "devices.simulator.sideband.request": {
         simulatorId: string;
         type: 'simulator.sideband.request';
-        kind: 'accessibility_tree' | 'logs' | 'device_config' | 'app_metadata' | 'network_diagnostics' | 'route' | 'capture_health';
+        kind: 'accessibility_tree' | 'app_metadata' | 'capture_health' | 'device_config' | 'logs' | 'network_diagnostics' | 'route';
     } & {
         [x: string]: unknown;
         type: 'simulator.sideband.request';
@@ -1970,22 +2303,22 @@ export type DevicesSimulatorActionResultById = {
         resources: {
             v: 1;
             simulatorId: string;
-            platform: 'ios' | 'android';
+            platform: 'android' | 'ios';
             deviceId: string;
             displayName: string;
             capture: {
                 status: 'available';
                 sourceId: string;
-                supportedCodecs: ('image.frame.v1' | 'image.mjpeg' | 'h264.avcc')[];
-                inputMode: 'none' | 'shared' | 'exclusive';
-                supportedInputKinds?: ('browser_input' | 'move' | 'tap' | 'long_press' | 'swipe' | 'drag' | 'pinch' | 'rotate' | 'keyboard_text' | 'keyboard_key' | 'wheel' | 'hardware_button' | 'orientation')[] | undefined;
-                streamControls?: {
+                supportedCodecs: ('h264.avcc' | 'image.frame.v1' | 'image.mjpeg')[];
+                inputMode: 'exclusive' | 'none' | 'shared';
+                supportedInputKinds?: ('browser_input' | 'drag' | 'hardware_button' | 'keyboard_key' | 'keyboard_text' | 'long_press' | 'move' | 'orientation' | 'pinch' | 'rotate' | 'swipe' | 'tap' | 'wheel')[] | undefined;
+                streamControls?: undefined | {
                     requestKeyframe: boolean;
                     snapshot: boolean;
                     setQuality: boolean;
                     setFps: boolean;
                     setScale: boolean;
-                } | undefined;
+                };
             } | {
                 status: 'unavailable';
                 reasonCode: string;
@@ -1998,10 +2331,10 @@ export type DevicesSimulatorActionResultById = {
     };
     readonly "devices.simulator.stream.keyframe": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2011,8 +2344,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2022,9 +2355,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2035,8 +2374,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2049,15 +2389,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2066,26 +2399,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.stream.snapshot": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2095,8 +2428,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2106,9 +2439,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2119,8 +2458,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2133,15 +2473,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2150,26 +2483,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.stream.quality.set": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2179,8 +2512,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2190,9 +2523,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2203,8 +2542,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2217,15 +2557,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2234,26 +2567,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.stream.fps.set": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2263,8 +2596,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2274,9 +2607,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2287,8 +2626,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2301,15 +2641,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2318,26 +2651,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.stream.scale.set": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2347,8 +2680,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2358,9 +2691,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2371,8 +2710,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2385,15 +2725,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2402,26 +2735,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.lease.acquire": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2431,8 +2764,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2442,9 +2775,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2455,8 +2794,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2469,15 +2809,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2486,26 +2819,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.lease.renew": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2515,8 +2848,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2526,9 +2859,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2539,8 +2878,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2553,15 +2893,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2570,26 +2903,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.lease.release": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2599,8 +2932,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2610,9 +2943,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2623,8 +2962,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2637,15 +2977,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2654,26 +2987,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.input.tap": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2683,8 +3016,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2694,9 +3027,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2707,8 +3046,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2721,15 +3061,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2738,26 +3071,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.input.swipe": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2767,8 +3100,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2778,9 +3111,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2791,8 +3130,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2805,15 +3145,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2822,26 +3155,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.input.text": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2851,8 +3184,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2862,9 +3195,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2875,8 +3214,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2889,15 +3229,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2906,26 +3239,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.input.key": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -2935,8 +3268,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -2946,9 +3279,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -2959,8 +3298,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -2973,15 +3313,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -2990,26 +3323,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.input.button": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -3019,8 +3352,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -3030,9 +3363,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -3043,8 +3382,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -3057,15 +3397,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -3074,26 +3407,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.input.pinch": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -3103,8 +3436,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -3114,9 +3447,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -3127,8 +3466,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -3141,15 +3481,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -3158,26 +3491,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.input.rotate": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -3187,8 +3520,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -3198,9 +3531,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -3211,8 +3550,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -3225,15 +3565,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -3242,26 +3575,26 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;
     };
     readonly "devices.simulator.sideband.request": {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'accepted';
-        lease?: {
+        lease?: undefined | {
             [x: string]: unknown;
             v: 1;
             leaseId: string;
@@ -3271,8 +3604,8 @@ export type DevicesSimulatorActionResultById = {
             mode: 'exclusive';
             acquiredAtMs: number;
             expiresAtMs: number;
-        } | undefined;
-        sideband?: {
+        };
+        sideband?: undefined | {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
@@ -3282,9 +3615,15 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'logs';
-            level: 'error' | 'debug' | 'info' | 'warn';
-            message: string;
+            kind: 'app_metadata';
+            metadata: Record<string, JSONType>;
+        } | {
+            v: 1;
+            simulatorId: string;
+            emittedAtMs: number;
+            kind: 'capture_health';
+            status: 'available' | 'degraded' | 'starting' | 'unavailable';
+            reasonCode?: string | undefined;
         } | {
             v: 1;
             simulatorId: string;
@@ -3295,8 +3634,9 @@ export type DevicesSimulatorActionResultById = {
             v: 1;
             simulatorId: string;
             emittedAtMs: number;
-            kind: 'app_metadata';
-            metadata: Record<string, JSONType>;
+            kind: 'logs';
+            level: 'debug' | 'error' | 'info' | 'warn';
+            message: string;
         } | {
             v: 1;
             simulatorId: string;
@@ -3309,15 +3649,8 @@ export type DevicesSimulatorActionResultById = {
             emittedAtMs: number;
             kind: 'route';
             route: string;
-        } | {
-            v: 1;
-            simulatorId: string;
-            emittedAtMs: number;
-            kind: 'capture_health';
-            status: 'available' | 'unavailable' | 'starting' | 'degraded';
-            reasonCode?: string | undefined;
-        } | undefined;
-        stream?: {
+        };
+        stream?: undefined | {
             v: 1;
             streamId: string;
             sourceId: string;
@@ -3326,16 +3659,16 @@ export type DevicesSimulatorActionResultById = {
             sourceMachineId: string;
             targetMachineId: string;
             expiresAtMs?: number | undefined;
-        } | undefined;
+        };
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'rejected';
         reasonCode: string;
     } | {
         v: 1;
-        eventType: 'simulator.devices.list' | 'simulator.stream.open' | 'simulator.stream.close' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.control.send' | 'simulator.sideband.request' | 'simulator.quality.set' | 'simulator.keyframe.request' | 'simulator.snapshot.request';
+        eventType: 'simulator.control.send' | 'simulator.devices.list' | 'simulator.keyframe.request' | 'simulator.lease.acquire' | 'simulator.lease.release' | 'simulator.lease.renew' | 'simulator.quality.set' | 'simulator.sideband.request' | 'simulator.snapshot.request' | 'simulator.stream.close' | 'simulator.stream.open';
         diagnostics: Record<string, unknown>[];
         status: 'unavailable';
         reasonCode: string;

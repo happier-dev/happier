@@ -15,26 +15,26 @@ export type ProjectWorkersActionInputById = {
             serverId: string;
             refId: string;
         };
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         expected: {
             kind: 'absent';
         } | {
             kind: 'value';
             value: {
-                unavailable: 'ask' | 'primary' | 'fail';
+                unavailable: 'ask' | 'fail' | 'primary';
                 allowAdHoc: boolean;
                 scriptOverrides: Record<string, 'primary' | 'workers'>;
                 enabled: false;
-                destination?: {
+                destination?: undefined | {
                     kind: 'machine';
                     machineId: string;
                 } | {
                     kind: 'pool';
                     poolId: string;
                     selection: 'ask' | 'automatic';
-                } | undefined;
+                };
             } | {
-                unavailable: 'ask' | 'primary' | 'fail';
+                unavailable: 'ask' | 'fail' | 'primary';
                 allowAdHoc: boolean;
                 scriptOverrides: Record<string, 'primary' | 'workers'>;
                 enabled: true;
@@ -49,20 +49,20 @@ export type ProjectWorkersActionInputById = {
             };
         };
         next: {
-            unavailable: 'ask' | 'primary' | 'fail';
+            unavailable: 'ask' | 'fail' | 'primary';
             allowAdHoc: boolean;
             scriptOverrides: Record<string, 'primary' | 'workers'>;
             enabled: false;
-            destination?: {
+            destination?: undefined | {
                 kind: 'machine';
                 machineId: string;
             } | {
                 kind: 'pool';
                 poolId: string;
                 selection: 'ask' | 'automatic';
-            } | undefined;
+            };
         } | {
-            unavailable: 'ask' | 'primary' | 'fail';
+            unavailable: 'ask' | 'fail' | 'primary';
             allowAdHoc: boolean;
             scriptOverrides: Record<string, 'primary' | 'workers'>;
             enabled: true;
@@ -81,26 +81,26 @@ export type ProjectWorkersActionInputById = {
             serverId: string;
             refId: string;
         };
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         expected: {
             kind: 'absent';
         } | {
             kind: 'value';
             value: {
-                unavailable: 'ask' | 'primary' | 'fail';
+                unavailable: 'ask' | 'fail' | 'primary';
                 allowAdHoc: boolean;
                 scriptOverrides: Record<string, 'primary' | 'workers'>;
                 enabled: false;
-                destination?: {
+                destination?: undefined | {
                     kind: 'machine';
                     machineId: string;
                 } | {
                     kind: 'pool';
                     poolId: string;
                     selection: 'ask' | 'automatic';
-                } | undefined;
+                };
             } | {
-                unavailable: 'ask' | 'primary' | 'fail';
+                unavailable: 'ask' | 'fail' | 'primary';
                 allowAdHoc: boolean;
                 scriptOverrides: Record<string, 'primary' | 'workers'>;
                 enabled: true;
@@ -122,12 +122,12 @@ export type ProjectWorkersActionInputById = {
     readonly "machines.worker.policy.set": {
         expectedPolicy: {
             accepting: boolean;
-            runAtMost: number | null;
+            runAtMost: null | number;
         };
         expectedMetadataVersion: number;
         policy: {
             accepting: boolean;
-            runAtMost: number | null;
+            runAtMost: null | number;
         };
         serverId: string;
         machineId: string;
@@ -142,19 +142,19 @@ export type ProjectWorkersActionInputById = {
             machineId: string;
         };
         purpose: 'finite' | 'service-start';
-        memoryDemand?: {
+        memoryDemand?: undefined | {
             bytes: number;
             basis: {
                 kind: 'declared';
             } | {
                 kind: 'measured';
-                operation?: {
+                operation?: undefined | {
                     serverId: string;
                     machineId: string;
                     operationId: string;
-                } | undefined;
+                };
             };
-        } | undefined;
+        };
     };
     readonly "projects.worker.copy.inspect": {
         kind: 'preview';
@@ -169,10 +169,10 @@ export type ProjectWorkersActionInputById = {
             controllerMachineId: string;
             alphaWorkspaceRefId: string;
             betaWorkspaceRefId: string;
-            mode: 'keep_synced' | 'mirror_exactly' | 'keep_both_in_sync';
+            mode: 'keep_both_in_sync' | 'keep_synced' | 'mirror_exactly';
             contentPolicy: {
                 v: 1;
-                selection: 'git_worktree' | 'all_files';
+                selection: 'all_files' | 'git_worktree';
                 extraIgnorePatterns: readonly string[];
                 extraIncludePatterns: readonly string[];
                 policyDigest: string;
@@ -180,12 +180,12 @@ export type ProjectWorkersActionInputById = {
             enabled: boolean;
             createdAtMs: number;
             updatedAtMs: number;
-            provenance?: {
+            provenance?: undefined | {
                 kind: 'worker_clean_copy';
                 sourceWorkspaceRefId: string;
                 targetWorkspaceRefId: string;
-            } | undefined;
-            committedAtMs?: number | null | undefined;
+            };
+            committedAtMs?: null | number | undefined;
         };
         targetMachineId: string;
         targetWorkspaceRefId: string;
@@ -202,10 +202,10 @@ export type ProjectWorkersActionInputById = {
             controllerMachineId: string;
             alphaWorkspaceRefId: string;
             betaWorkspaceRefId: string;
-            mode: 'keep_synced' | 'mirror_exactly' | 'keep_both_in_sync';
+            mode: 'keep_both_in_sync' | 'keep_synced' | 'mirror_exactly';
             contentPolicy: {
                 v: 1;
-                selection: 'git_worktree' | 'all_files';
+                selection: 'all_files' | 'git_worktree';
                 extraIgnorePatterns: readonly string[];
                 extraIncludePatterns: readonly string[];
                 policyDigest: string;
@@ -213,17 +213,17 @@ export type ProjectWorkersActionInputById = {
             enabled: boolean;
             createdAtMs: number;
             updatedAtMs: number;
-            provenance?: {
+            provenance?: undefined | {
                 kind: 'worker_clean_copy';
                 sourceWorkspaceRefId: string;
                 targetWorkspaceRefId: string;
-            } | undefined;
-            committedAtMs?: number | null | undefined;
+            };
+            committedAtMs?: null | number | undefined;
         };
-        removeTargetCopy?: {
+        removeTargetCopy?: undefined | {
             workspaceRefId: string;
             rootFingerprint: string;
-        } | undefined;
+        };
     };
     readonly "projects.service.placement.get": {
         workspace: {
@@ -238,7 +238,7 @@ export type ProjectWorkersActionInputById = {
             refId: string;
         };
         serviceName: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         expected: {
             kind: 'absent';
         } | {
@@ -257,7 +257,7 @@ export type ProjectWorkersActionInputById = {
                         selection: 'ask' | 'automatic';
                     };
                 };
-                unavailable: 'primary' | 'fail';
+                unavailable: 'fail' | 'primary';
             };
         };
         value: {
@@ -274,27 +274,27 @@ export type ProjectWorkersActionInputById = {
                     selection: 'ask' | 'automatic';
                 };
             };
-            unavailable: 'primary' | 'fail';
+            unavailable: 'fail' | 'primary';
         };
     };
 };
 export type ProjectWorkersActionResultById = {
     readonly "projects.worker.preferences.get": {
         preference: {
-            unavailable: 'ask' | 'primary' | 'fail';
+            unavailable: 'ask' | 'fail' | 'primary';
             allowAdHoc: boolean;
             scriptOverrides: Record<string, 'primary' | 'workers'>;
             enabled: false;
-            destination?: {
+            destination?: undefined | {
                 kind: 'machine';
                 machineId: string;
             } | {
                 kind: 'pool';
                 poolId: string;
                 selection: 'ask' | 'automatic';
-            } | undefined;
+            };
         } | {
-            unavailable: 'ask' | 'primary' | 'fail';
+            unavailable: 'ask' | 'fail' | 'primary';
             allowAdHoc: boolean;
             scriptOverrides: Record<string, 'primary' | 'workers'>;
             enabled: true;
@@ -307,28 +307,28 @@ export type ProjectWorkersActionResultById = {
                 selection: 'ask' | 'automatic';
             };
         };
-        revision: number | 'absent';
+        revision: 'absent' | number;
         provenance: 'default' | 'saved';
         status: 'ready';
     } | {
-        status: 'unavailable' | 'locked' | 'invalid';
+        status: 'invalid' | 'locked' | 'unavailable';
     };
     readonly "projects.worker.preferences.set": {
         preference: {
-            unavailable: 'ask' | 'primary' | 'fail';
+            unavailable: 'ask' | 'fail' | 'primary';
             allowAdHoc: boolean;
             scriptOverrides: Record<string, 'primary' | 'workers'>;
             enabled: false;
-            destination?: {
+            destination?: undefined | {
                 kind: 'machine';
                 machineId: string;
             } | {
                 kind: 'pool';
                 poolId: string;
                 selection: 'ask' | 'automatic';
-            } | undefined;
+            };
         } | {
-            unavailable: 'ask' | 'primary' | 'fail';
+            unavailable: 'ask' | 'fail' | 'primary';
             allowAdHoc: boolean;
             scriptOverrides: Record<string, 'primary' | 'workers'>;
             enabled: true;
@@ -341,28 +341,28 @@ export type ProjectWorkersActionResultById = {
                 selection: 'ask' | 'automatic';
             };
         };
-        revision: number | 'absent';
+        revision: 'absent' | number;
         provenance: 'default' | 'saved';
-        status: 'applied' | 'satisfied' | 'unchanged' | 'conflict';
+        status: 'applied' | 'conflict' | 'satisfied' | 'unchanged';
     } | {
-        status: 'unavailable' | 'locked' | 'invalid' | 'outcomeUnknown' | 'cancelled';
+        status: 'cancelled' | 'invalid' | 'locked' | 'outcomeUnknown' | 'unavailable';
     };
     readonly "projects.worker.preferences.reset": {
         preference: {
-            unavailable: 'ask' | 'primary' | 'fail';
+            unavailable: 'ask' | 'fail' | 'primary';
             allowAdHoc: boolean;
             scriptOverrides: Record<string, 'primary' | 'workers'>;
             enabled: false;
-            destination?: {
+            destination?: undefined | {
                 kind: 'machine';
                 machineId: string;
             } | {
                 kind: 'pool';
                 poolId: string;
                 selection: 'ask' | 'automatic';
-            } | undefined;
+            };
         } | {
-            unavailable: 'ask' | 'primary' | 'fail';
+            unavailable: 'ask' | 'fail' | 'primary';
             allowAdHoc: boolean;
             scriptOverrides: Record<string, 'primary' | 'workers'>;
             enabled: true;
@@ -375,38 +375,38 @@ export type ProjectWorkersActionResultById = {
                 selection: 'ask' | 'automatic';
             };
         };
-        revision: number | 'absent';
+        revision: 'absent' | number;
         provenance: 'default' | 'saved';
-        status: 'applied' | 'satisfied' | 'unchanged' | 'conflict';
+        status: 'applied' | 'conflict' | 'satisfied' | 'unchanged';
     } | {
-        status: 'unavailable' | 'locked' | 'invalid' | 'outcomeUnknown' | 'cancelled';
+        status: 'cancelled' | 'invalid' | 'locked' | 'outcomeUnknown' | 'unavailable';
     };
     readonly "machines.worker.policy.get": {
+        status: 'invalid' | 'locked' | 'unavailable';
+    } | {
         status: 'ready';
         policy: {
             accepting: boolean;
-            runAtMost: number | null;
+            runAtMost: null | number;
         };
         source: 'default' | 'stored';
         metadataVersion: number;
-    } | {
-        status: 'unavailable' | 'locked' | 'invalid';
     };
     readonly "machines.worker.policy.set": {
-        status: 'applied' | 'satisfied' | 'unchanged' | 'conflict';
+        status: 'applied' | 'conflict' | 'satisfied' | 'unchanged';
         policy: {
             accepting: boolean;
-            runAtMost: number | null;
+            runAtMost: null | number;
         };
         metadataVersion: number;
     } | {
-        status: 'unavailable' | 'locked' | 'invalid' | 'outcomeUnknown' | 'cancelled';
+        status: 'cancelled' | 'invalid' | 'locked' | 'outcomeUnknown' | 'unavailable';
     };
     readonly "projects.worker.status": {
         eligible: false;
         load: {
             accepting: boolean;
-            runAtMost: number | null;
+            runAtMost: null | number;
             kind: 'known';
             running: number;
             queued: number;
@@ -414,23 +414,23 @@ export type ProjectWorkersActionResultById = {
             kind: 'unknown';
         };
         candidate: null;
-        explanation: 'unavailable' | 'not_accepting' | 'draining' | 'policy_unavailable' | 'unsupported' | 'forbidden' | 'workspace_unavailable' | 'worker_copy_missing' | 'capability_unknown' | 'memory_insufficient' | 'memory_unavailable';
-        observedMemory?: {
+        explanation: 'capability_unknown' | 'draining' | 'forbidden' | 'memory_insufficient' | 'memory_unavailable' | 'not_accepting' | 'policy_unavailable' | 'unavailable' | 'unsupported' | 'worker_copy_missing' | 'workspace_unavailable';
+        observedMemory?: undefined | {
             totalBytes: number;
             availableBytes: number;
-        } | undefined;
-        lastCleanSyncAtMs?: number | null | undefined;
-        workerCopy?: {
+        };
+        lastCleanSyncAtMs?: null | number | undefined;
+        workerCopy?: undefined | {
             serverId: string;
             sourceWorkspaceRefId: string;
             sourceMachineId: string;
             targetMachineId: string;
-        } | undefined;
+        };
     } | {
         eligible: true;
         load: {
             accepting: boolean;
-            runAtMost: number | null;
+            runAtMost: null | number;
             kind: 'known';
             running: number;
             queued: number;
@@ -442,13 +442,16 @@ export type ProjectWorkersActionResultById = {
             machineId: string;
         };
         explanation: 'eligible' | 'load_unknown';
-        observedMemory?: {
+        observedMemory?: undefined | {
             totalBytes: number;
             availableBytes: number;
-        } | undefined;
-        lastCleanSyncAtMs?: number | null | undefined;
+        };
+        lastCleanSyncAtMs?: null | number | undefined;
     };
     readonly "projects.worker.copy.inspect": {
+        ok: false;
+        errorCode: 'workspace_copy_not_owned';
+    } | {
         ok: true;
         preview: {
             targetMachineId: string;
@@ -456,9 +459,6 @@ export type ProjectWorkersActionResultById = {
             rootFingerprint: string;
             sizeBytes?: number | undefined;
         };
-    } | {
-        ok: false;
-        errorCode: 'workspace_copy_not_owned';
     };
     readonly "projects.worker.copy.retire": {
         status: 'retired';
@@ -478,218 +478,39 @@ export type ProjectWorkersActionResultById = {
                     selection: 'ask' | 'automatic';
                 };
             };
-            unavailable: 'primary' | 'fail';
+            unavailable: 'fail' | 'primary';
         };
-        revision: number | 'absent';
+        revision: 'absent' | number;
         provenance: 'default' | 'saved';
         status: 'ready';
         actual: {
-            status: 'present';
-            target: {
-                id: string;
-                source: 'package_script' | 'managed_service' | 'inventory_entry' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset' | 'recent';
-                machineId: string;
-                title: string;
-                confidence: 'high' | 'medium' | 'low';
-                state: 'unavailable' | 'starting' | 'available' | 'stale';
-                actions: ('start' | 'open' | 'open_preview' | 'register_preview' | 'manage' | 'terminate_detected')[];
-                sourceClass?: {
-                    kind: 'package_script';
-                    runTargetId: string;
-                    packageName: string;
-                    scriptName: string;
-                    cwd?: string | undefined;
-                } | {
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    inventoryEntryId?: string | undefined;
-                } | {
-                    kind: 'inventory_entry';
-                    inventoryEntryId: string;
-                } | {
-                    kind: 'registered_preview';
-                    previewId: string;
-                } | {
-                    kind: 'terminal_url';
-                    sourceId: string;
-                    addressLabel: string;
-                    host?: string | undefined;
-                    port?: number | undefined;
-                } | {
-                    kind: 'workspace_file_asset';
-                    sourceId: string;
-                    assetRef: string;
-                    mediaType?: string | undefined;
-                } | {
-                    kind: 'recent';
-                    targetId: string;
-                } | undefined;
-                sessionId?: string | undefined;
-                workspaceId?: string | undefined;
-                workspace?: {
-                    serverId: string;
-                    workspaceId: string;
-                    machineId: string;
-                    rootPath: string;
-                } | undefined;
-                cwd?: string | undefined;
-                declaration?: {
-                    workspaceRefId: string;
-                    selection: {
-                        kind: 'manifest';
-                        name: string;
-                    } | {
-                        kind: 'native';
-                        source: {
-                            kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                            file: string;
-                            target: string;
-                        } | {
-                            kind: 'pluginNative';
-                            adapter: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            file: string;
-                            target: string;
-                        };
-                    };
-                } | undefined;
-                execution?: 'primary' | 'portable' | undefined;
-                serviceState?: 'running' | 'starting' | 'stopped' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'failed' | undefined;
-                diagnostics?: {
-                    code: string;
-                    severity: 'error' | 'info' | 'warning';
-                    message?: string | undefined;
-                }[] | undefined;
-                readiness?: 'ready' | 'not_ready' | 'not_reported' | undefined;
-                endpointUrl?: string | undefined;
-                startedAtMs?: number | undefined;
-                startedByAccountId?: string | undefined;
-                endpointKind?: 'native' | 'none' | 'http' | undefined;
-                subtitle?: string | undefined;
-                kind?: string | undefined;
-                commandPreview?: string | undefined;
-                unavailableReason?: string | undefined;
-                unavailableMachineId?: string | undefined;
-                browserTarget?: {
-                    targetId: string;
-                    kind: 'localServicePreview';
-                    machineId: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                    sessionId?: string | undefined;
-                    serviceTarget?: {
-                        kind: 'managed_service';
-                        machineId: string;
-                        cwd: string;
-                        managedServiceId: string;
-                        declaration: {
-                            workspaceRefId: string;
-                            selection: {
-                                kind: 'manifest';
-                                name: string;
-                            } | {
-                                kind: 'native';
-                                source: {
-                                    kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
-                                    file: string;
-                                    target: string;
-                                } | {
-                                    kind: 'pluginNative';
-                                    adapter: {
-                                        pluginId: string;
-                                        localId: string;
-                                    };
-                                    file: string;
-                                    target: string;
-                                };
-                            };
-                        };
-                        workspaceId?: string | undefined;
-                    } | undefined;
-                } | {
-                    targetId: string;
-                    kind: 'hostedPluginWeb';
-                    pluginId: string;
-                    contributionId: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                } | {
-                    targetId: string;
-                    kind: 'externalUrl';
-                    url: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                } | {
-                    kind: 'streamedBrowser';
-                    targetId: string;
-                    streamId: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                    daemonView?: {
-                        browserSessionId: string;
-                        viewId: string;
-                    } | undefined;
-                } | {
-                    targetId: string;
-                    kind: 'simulatorPreview';
-                    deviceId: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                    sourceId?: string | undefined;
-                } | undefined;
-            };
+            status: 'absent';
         } | {
             status: 'ambiguous';
             targets: {
                 id: string;
-                source: 'package_script' | 'managed_service' | 'inventory_entry' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset' | 'recent';
+                source: 'inventory_entry' | 'managed_service' | 'package_script' | 'recent' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset';
                 machineId: string;
                 title: string;
-                confidence: 'high' | 'medium' | 'low';
-                state: 'unavailable' | 'starting' | 'available' | 'stale';
-                actions: ('start' | 'open' | 'open_preview' | 'register_preview' | 'manage' | 'terminate_detected')[];
-                sourceClass?: {
+                confidence: 'high' | 'low' | 'medium';
+                state: 'available' | 'stale' | 'starting' | 'unavailable';
+                actions: ('manage' | 'open' | 'open_preview' | 'register_preview' | 'start' | 'terminate_detected')[];
+                sourceClass?: undefined | {
+                    kind: 'inventory_entry';
+                    inventoryEntryId: string;
+                } | {
+                    kind: 'managed_service';
+                    managedServiceId: string;
+                    inventoryEntryId?: string | undefined;
+                } | {
                     kind: 'package_script';
                     runTargetId: string;
                     packageName: string;
                     scriptName: string;
                     cwd?: string | undefined;
                 } | {
-                    kind: 'managed_service';
-                    managedServiceId: string;
-                    inventoryEntryId?: string | undefined;
-                } | {
-                    kind: 'inventory_entry';
-                    inventoryEntryId: string;
+                    kind: 'recent';
+                    targetId: string;
                 } | {
                     kind: 'registered_preview';
                     previewId: string;
@@ -704,20 +525,17 @@ export type ProjectWorkersActionResultById = {
                     sourceId: string;
                     assetRef: string;
                     mediaType?: string | undefined;
-                } | {
-                    kind: 'recent';
-                    targetId: string;
-                } | undefined;
+                };
                 sessionId?: string | undefined;
                 workspaceId?: string | undefined;
-                workspace?: {
+                workspace?: undefined | {
                     serverId: string;
                     workspaceId: string;
                     machineId: string;
                     rootPath: string;
-                } | undefined;
+                };
                 cwd?: string | undefined;
-                declaration?: {
+                declaration?: undefined | {
                     workspaceRefId: string;
                     selection: {
                         kind: 'manifest';
@@ -726,7 +544,7 @@ export type ProjectWorkersActionResultById = {
                         kind: 'native';
                         source: {
                             kind: 'native';
-                            tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                             file: string;
                             target: string;
                         } | {
@@ -739,37 +557,82 @@ export type ProjectWorkersActionResultById = {
                             target: string;
                         };
                     };
-                } | undefined;
-                execution?: 'primary' | 'portable' | undefined;
-                serviceState?: 'running' | 'starting' | 'stopped' | 'detecting' | 'healthy' | 'unhealthy' | 'stopping' | 'failed' | undefined;
-                diagnostics?: {
+                };
+                environment?: undefined | {
+                    environmentId: string;
+                    environmentInstanceId: string;
+                    deploymentId: string;
+                    composeService: string;
+                };
+                lifecyclePurpose?: 'deployment' | 'development' | 'infrastructure' | undefined;
+                execution?: 'portable' | 'primary' | undefined;
+                serviceState?: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | undefined;
+                diagnostics?: undefined | {
                     code: string;
                     severity: 'error' | 'info' | 'warning';
                     message?: string | undefined;
-                }[] | undefined;
-                readiness?: 'ready' | 'not_ready' | 'not_reported' | undefined;
+                }[];
+                readiness?: 'not_ready' | 'not_reported' | 'ready' | undefined;
                 endpointUrl?: string | undefined;
                 startedAtMs?: number | undefined;
                 startedByAccountId?: string | undefined;
-                endpointKind?: 'native' | 'none' | 'http' | undefined;
+                endpointKind?: 'http' | 'native' | 'none' | undefined;
                 subtitle?: string | undefined;
                 kind?: string | undefined;
                 commandPreview?: string | undefined;
                 unavailableReason?: string | undefined;
                 unavailableMachineId?: string | undefined;
-                browserTarget?: {
+                browserTarget?: undefined | {
+                    kind: 'streamedBrowser';
                     targetId: string;
-                    kind: 'localServicePreview';
-                    machineId: string;
-                    display?: {
+                    streamId: string;
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    daemonView?: undefined | {
+                        browserSessionId: string;
+                        viewId: string;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'externalUrl';
+                    url: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'hostedPluginWeb';
+                    pluginId: string;
+                    contributionId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'localServicePreview';
+                    machineId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sessionId?: string | undefined;
-                    serviceTarget?: {
+                    serviceTarget?: undefined | {
                         kind: 'managed_service';
                         machineId: string;
                         cwd: string;
@@ -783,7 +646,7 @@ export type ProjectWorkersActionResultById = {
                                 kind: 'native';
                                 source: {
                                     kind: 'native';
-                                    tool: 'package_script' | 'mise' | 'make' | 'just' | 'taskfile' | 'turbo' | 'compose' | 'procfile' | 'devbox' | 'devenv' | 'flox';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
                                     file: string;
                                     target: string;
                                 } | {
@@ -798,68 +661,219 @@ export type ProjectWorkersActionResultById = {
                             };
                         };
                         workspaceId?: string | undefined;
-                    } | undefined;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'simulatorPreview';
+                    deviceId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    sourceId?: string | undefined;
+                };
+            }[];
+        } | {
+            status: 'present';
+            target: {
+                id: string;
+                source: 'inventory_entry' | 'managed_service' | 'package_script' | 'recent' | 'registered_preview' | 'terminal_url' | 'workspace_file_asset';
+                machineId: string;
+                title: string;
+                confidence: 'high' | 'low' | 'medium';
+                state: 'available' | 'stale' | 'starting' | 'unavailable';
+                actions: ('manage' | 'open' | 'open_preview' | 'register_preview' | 'start' | 'terminate_detected')[];
+                sourceClass?: undefined | {
+                    kind: 'inventory_entry';
+                    inventoryEntryId: string;
+                } | {
+                    kind: 'managed_service';
+                    managedServiceId: string;
+                    inventoryEntryId?: string | undefined;
+                } | {
+                    kind: 'package_script';
+                    runTargetId: string;
+                    packageName: string;
+                    scriptName: string;
+                    cwd?: string | undefined;
+                } | {
+                    kind: 'recent';
+                    targetId: string;
+                } | {
+                    kind: 'registered_preview';
+                    previewId: string;
+                } | {
+                    kind: 'terminal_url';
+                    sourceId: string;
+                    addressLabel: string;
+                    host?: string | undefined;
+                    port?: number | undefined;
+                } | {
+                    kind: 'workspace_file_asset';
+                    sourceId: string;
+                    assetRef: string;
+                    mediaType?: string | undefined;
+                };
+                sessionId?: string | undefined;
+                workspaceId?: string | undefined;
+                workspace?: undefined | {
+                    serverId: string;
+                    workspaceId: string;
+                    machineId: string;
+                    rootPath: string;
+                };
+                cwd?: string | undefined;
+                declaration?: undefined | {
+                    workspaceRefId: string;
+                    selection: {
+                        kind: 'manifest';
+                        name: string;
+                    } | {
+                        kind: 'native';
+                        source: {
+                            kind: 'native';
+                            tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                            file: string;
+                            target: string;
+                        } | {
+                            kind: 'pluginNative';
+                            adapter: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            file: string;
+                            target: string;
+                        };
+                    };
+                };
+                environment?: undefined | {
+                    environmentId: string;
+                    environmentInstanceId: string;
+                    deploymentId: string;
+                    composeService: string;
+                };
+                lifecyclePurpose?: 'deployment' | 'development' | 'infrastructure' | undefined;
+                execution?: 'portable' | 'primary' | undefined;
+                serviceState?: 'detecting' | 'failed' | 'healthy' | 'running' | 'starting' | 'stopped' | 'stopping' | 'unhealthy' | undefined;
+                diagnostics?: undefined | {
+                    code: string;
+                    severity: 'error' | 'info' | 'warning';
+                    message?: string | undefined;
+                }[];
+                readiness?: 'not_ready' | 'not_reported' | 'ready' | undefined;
+                endpointUrl?: string | undefined;
+                startedAtMs?: number | undefined;
+                startedByAccountId?: string | undefined;
+                endpointKind?: 'http' | 'native' | 'none' | undefined;
+                subtitle?: string | undefined;
+                kind?: string | undefined;
+                commandPreview?: string | undefined;
+                unavailableReason?: string | undefined;
+                unavailableMachineId?: string | undefined;
+                browserTarget?: undefined | {
+                    kind: 'streamedBrowser';
+                    targetId: string;
+                    streamId: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    daemonView?: undefined | {
+                        browserSessionId: string;
+                        viewId: string;
+                    };
+                } | {
+                    targetId: string;
+                    kind: 'externalUrl';
+                    url: string;
+                    display?: undefined | {
+                        title: string;
+                        addressLabel?: string | undefined;
+                        folderLabel?: string | undefined;
+                        iconToken?: string | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                 } | {
                     targetId: string;
                     kind: 'hostedPluginWeb';
                     pluginId: string;
                     contributionId: string;
-                    display?: {
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                 } | {
                     targetId: string;
-                    kind: 'externalUrl';
-                    url: string;
-                    display?: {
+                    kind: 'localServicePreview';
+                    machineId: string;
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                } | {
-                    kind: 'streamedBrowser';
-                    targetId: string;
-                    streamId: string;
-                    display?: {
-                        title: string;
-                        addressLabel?: string | undefined;
-                        folderLabel?: string | undefined;
-                        iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
-                    daemonView?: {
-                        browserSessionId: string;
-                        viewId: string;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
+                    sessionId?: string | undefined;
+                    serviceTarget?: undefined | {
+                        kind: 'managed_service';
+                        machineId: string;
+                        cwd: string;
+                        managedServiceId: string;
+                        declaration: {
+                            workspaceRefId: string;
+                            selection: {
+                                kind: 'manifest';
+                                name: string;
+                            } | {
+                                kind: 'native';
+                                source: {
+                                    kind: 'native';
+                                    tool: 'compose' | 'devbox' | 'devenv' | 'flox' | 'just' | 'make' | 'mise' | 'package_script' | 'procfile' | 'taskfile' | 'turbo';
+                                    file: string;
+                                    target: string;
+                                } | {
+                                    kind: 'pluginNative';
+                                    adapter: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    file: string;
+                                    target: string;
+                                };
+                            };
+                        };
+                        workspaceId?: string | undefined;
+                    };
                 } | {
                     targetId: string;
                     kind: 'simulatorPreview';
                     deviceId: string;
-                    display?: {
+                    display?: undefined | {
                         title: string;
                         addressLabel?: string | undefined;
                         folderLabel?: string | undefined;
                         iconToken?: string | undefined;
-                        tone?: 'success' | 'info' | 'warning' | 'neutral' | 'danger' | 'accent' | undefined;
-                    } | undefined;
+                        tone?: 'accent' | 'danger' | 'info' | 'neutral' | 'success' | 'warning' | undefined;
+                    };
                     sourceId?: string | undefined;
-                } | undefined;
-            }[];
-        } | {
-            status: 'absent';
+                };
+            };
         } | {
             status: 'unavailable';
             machineId?: string | undefined;
-            reasonCode?: 'workspace_unavailable' | 'observation_changed' | 'topology_unavailable' | 'machine_unavailable' | 'snapshot_invalid' | 'snapshot_machine_mismatch' | 'binding_invalid' | 'observation_unavailable' | 'account_rows_unavailable' | 'external_observation_unsupported' | undefined;
+            reasonCode?: 'account_rows_unavailable' | 'binding_invalid' | 'external_observation_unsupported' | 'machine_unavailable' | 'observation_changed' | 'observation_unavailable' | 'snapshot_invalid' | 'snapshot_machine_mismatch' | 'topology_unavailable' | 'workspace_unavailable' | undefined;
         };
     } | {
-        status: 'unavailable' | 'locked' | 'invalid';
+        status: 'invalid' | 'locked' | 'unavailable';
     };
     readonly "projects.service.placement.set": {
         placement: {
@@ -876,12 +890,12 @@ export type ProjectWorkersActionResultById = {
                     selection: 'ask' | 'automatic';
                 };
             };
-            unavailable: 'primary' | 'fail';
+            unavailable: 'fail' | 'primary';
         };
-        revision: number | 'absent';
+        revision: 'absent' | number;
         provenance: 'default' | 'saved';
-        status: 'applied' | 'satisfied' | 'unchanged' | 'conflict';
+        status: 'applied' | 'conflict' | 'satisfied' | 'unchanged';
     } | {
-        status: 'unavailable' | 'locked' | 'invalid' | 'outcomeUnknown' | 'cancelled';
+        status: 'cancelled' | 'invalid' | 'locked' | 'outcomeUnknown' | 'unavailable';
     };
 };

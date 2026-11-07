@@ -6,44 +6,23 @@ import type { SessionTerminalLayoutV1 } from './pluginActionDtoSupport.generated
 export type SessionTerminalsActionInputById = {
     readonly "session.terminals.list": {
         scopeId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.open": {
         scopeId: string;
         target: {
-            kind: 'workspace_shell';
-            initialCommand?: string | undefined;
-            launch?: {
-                kind: 'package_script';
-                runTargetId: string;
-            } | {
-                kind: 'service_shell';
-                serviceId: string;
-                expectedGeneration: string;
-            } | {
-                kind: 'agent_login';
-                agentId: string;
-                launchId?: 'primary' | 'device_code' | undefined;
-            } | {
-                kind: 'session_attach';
-                sessionId: string;
-            } | {
-                kind: 'happier_cli';
-                args: string[];
-            } | undefined;
-            workspace?: {
-                serverId: string;
-                workspaceId: string;
-                machineId: string;
-                rootPath: string;
-            } | undefined;
-        } | {
-            kind: 'session_attach';
-        } | {
             kind: 'machine_shell';
             machineId: string;
             cwd: string;
-            initialCommand?: string | undefined;
-            launch?: {
+            launch?: undefined | {
+                kind: 'agent_login';
+                agentId: string;
+                launchId?: 'device_code' | 'primary' | undefined;
+            } | {
+                kind: 'happier_cli';
+                args: string[];
+            } | {
                 kind: 'package_script';
                 runTargetId: string;
             } | {
@@ -51,69 +30,75 @@ export type SessionTerminalsActionInputById = {
                 serviceId: string;
                 expectedGeneration: string;
             } | {
-                kind: 'agent_login';
-                agentId: string;
-                launchId?: 'primary' | 'device_code' | undefined;
-            } | {
                 kind: 'session_attach';
                 sessionId: string;
             } | {
-                kind: 'happier_cli';
-                args: string[];
-            } | undefined;
+                kind: 'shell_command';
+                command: string;
+            };
+        } | {
+            kind: 'session_attach';
         } | {
             kind: 'terminal_view';
             machineId: string;
             terminalId: string;
             terminalKey: string;
             cwd: string;
-            workspace?: {
+            workspace?: undefined | {
                 serverId: string;
                 workspaceId: string;
                 machineId: string;
                 rootPath: string;
-            } | undefined;
+            };
             sessionId?: string | undefined;
+        } | {
+            kind: 'workspace_shell';
+            launch?: undefined | {
+                kind: 'agent_login';
+                agentId: string;
+                launchId?: 'device_code' | 'primary' | undefined;
+            } | {
+                kind: 'happier_cli';
+                args: string[];
+            } | {
+                kind: 'package_script';
+                runTargetId: string;
+            } | {
+                kind: 'service_shell';
+                serviceId: string;
+                expectedGeneration: string;
+            } | {
+                kind: 'session_attach';
+                sessionId: string;
+            } | {
+                kind: 'shell_command';
+                command: string;
+            };
+            workspace?: undefined | {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+            };
         };
         title?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.split": {
         scopeId: string;
         target: {
-            kind: 'workspace_shell';
-            initialCommand?: string | undefined;
-            launch?: {
-                kind: 'package_script';
-                runTargetId: string;
-            } | {
-                kind: 'service_shell';
-                serviceId: string;
-                expectedGeneration: string;
-            } | {
-                kind: 'agent_login';
-                agentId: string;
-                launchId?: 'primary' | 'device_code' | undefined;
-            } | {
-                kind: 'session_attach';
-                sessionId: string;
-            } | {
-                kind: 'happier_cli';
-                args: string[];
-            } | undefined;
-            workspace?: {
-                serverId: string;
-                workspaceId: string;
-                machineId: string;
-                rootPath: string;
-            } | undefined;
-        } | {
-            kind: 'session_attach';
-        } | {
             kind: 'machine_shell';
             machineId: string;
             cwd: string;
-            initialCommand?: string | undefined;
-            launch?: {
+            launch?: undefined | {
+                kind: 'agent_login';
+                agentId: string;
+                launchId?: 'device_code' | 'primary' | undefined;
+            } | {
+                kind: 'happier_cli';
+                args: string[];
+            } | {
                 kind: 'package_script';
                 runTargetId: string;
             } | {
@@ -121,71 +106,118 @@ export type SessionTerminalsActionInputById = {
                 serviceId: string;
                 expectedGeneration: string;
             } | {
-                kind: 'agent_login';
-                agentId: string;
-                launchId?: 'primary' | 'device_code' | undefined;
-            } | {
                 kind: 'session_attach';
                 sessionId: string;
             } | {
-                kind: 'happier_cli';
-                args: string[];
-            } | undefined;
+                kind: 'shell_command';
+                command: string;
+            };
+        } | {
+            kind: 'session_attach';
         } | {
             kind: 'terminal_view';
             machineId: string;
             terminalId: string;
             terminalKey: string;
             cwd: string;
-            workspace?: {
+            workspace?: undefined | {
                 serverId: string;
                 workspaceId: string;
                 machineId: string;
                 rootPath: string;
-            } | undefined;
+            };
             sessionId?: string | undefined;
+        } | {
+            kind: 'workspace_shell';
+            launch?: undefined | {
+                kind: 'agent_login';
+                agentId: string;
+                launchId?: 'device_code' | 'primary' | undefined;
+            } | {
+                kind: 'happier_cli';
+                args: string[];
+            } | {
+                kind: 'package_script';
+                runTargetId: string;
+            } | {
+                kind: 'service_shell';
+                serviceId: string;
+                expectedGeneration: string;
+            } | {
+                kind: 'session_attach';
+                sessionId: string;
+            } | {
+                kind: 'shell_command';
+                command: string;
+            };
+            workspace?: undefined | {
+                serverId: string;
+                workspaceId: string;
+                machineId: string;
+                rootPath: string;
+            };
         };
         tabId?: string | undefined;
         title?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.focus": {
         scopeId: string;
         terminalId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.restart": {
         scopeId: string;
         terminalId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.open_in_details": {
         scopeId: string;
         terminalId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.close": {
         scopeId: string;
         terminalId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.close_tab": {
         scopeId: string;
         tabId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.close_others": {
         scopeId: string;
         tabId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.resize": {
         scopeId: string;
         tabId: string;
         splitId: string;
         ratio: number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.rename": {
         scopeId: string;
         terminalId: string;
-        title: string | null;
+        title: null | string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.list_view": {
         scopeId: string;
         showList: boolean;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.run_script": {
         scopeId: string;
@@ -193,15 +225,21 @@ export type SessionTerminalsActionInputById = {
         cwd: string;
         runTargetId: string;
         title?: string | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.detach": {
         scopeId: string;
         terminalId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.terminals.reorder": {
         scopeId: string;
         tabId: string;
         index: number;
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type SessionTerminalsActionResultById = {
@@ -214,40 +252,17 @@ export type SessionTerminalsActionResultById = {
                 terminals: {
                     id: string;
                     target: {
-                        kind: 'workspace_shell';
-                        initialCommand?: string | undefined;
-                        launch?: {
-                            kind: 'package_script';
-                            runTargetId: string;
-                        } | {
-                            kind: 'service_shell';
-                            serviceId: string;
-                            expectedGeneration: string;
-                        } | {
-                            kind: 'agent_login';
-                            agentId: string;
-                            launchId?: 'primary' | 'device_code' | undefined;
-                        } | {
-                            kind: 'session_attach';
-                            sessionId: string;
-                        } | {
-                            kind: 'happier_cli';
-                            args: string[];
-                        } | undefined;
-                        workspace?: {
-                            serverId: string;
-                            workspaceId: string;
-                            machineId: string;
-                            rootPath: string;
-                        } | undefined;
-                    } | {
-                        kind: 'session_attach';
-                    } | {
                         kind: 'machine_shell';
                         machineId: string;
                         cwd: string;
-                        initialCommand?: string | undefined;
-                        launch?: {
+                        launch?: undefined | {
+                            kind: 'agent_login';
+                            agentId: string;
+                            launchId?: 'device_code' | 'primary' | undefined;
+                        } | {
+                            kind: 'happier_cli';
+                            args: string[];
+                        } | {
                             kind: 'package_script';
                             runTargetId: string;
                         } | {
@@ -255,50 +270,77 @@ export type SessionTerminalsActionResultById = {
                             serviceId: string;
                             expectedGeneration: string;
                         } | {
-                            kind: 'agent_login';
-                            agentId: string;
-                            launchId?: 'primary' | 'device_code' | undefined;
-                        } | {
                             kind: 'session_attach';
                             sessionId: string;
                         } | {
-                            kind: 'happier_cli';
-                            args: string[];
-                        } | undefined;
+                            kind: 'shell_command';
+                            command: string;
+                        };
+                    } | {
+                        kind: 'session_attach';
                     } | {
                         kind: 'terminal_view';
                         machineId: string;
                         terminalId: string;
                         terminalKey: string;
                         cwd: string;
-                        workspace?: {
+                        workspace?: undefined | {
                             serverId: string;
                             workspaceId: string;
                             machineId: string;
                             rootPath: string;
-                        } | undefined;
+                        };
                         sessionId?: string | undefined;
+                    } | {
+                        kind: 'workspace_shell';
+                        launch?: undefined | {
+                            kind: 'agent_login';
+                            agentId: string;
+                            launchId?: 'device_code' | 'primary' | undefined;
+                        } | {
+                            kind: 'happier_cli';
+                            args: string[];
+                        } | {
+                            kind: 'package_script';
+                            runTargetId: string;
+                        } | {
+                            kind: 'service_shell';
+                            serviceId: string;
+                            expectedGeneration: string;
+                        } | {
+                            kind: 'session_attach';
+                            sessionId: string;
+                        } | {
+                            kind: 'shell_command';
+                            command: string;
+                        };
+                        workspace?: undefined | {
+                            serverId: string;
+                            workspaceId: string;
+                            machineId: string;
+                            rootPath: string;
+                        };
                     };
                     title?: string | undefined;
-                    pendingActionApproval?: {
+                    pendingActionApproval?: undefined | {
                         scope: {
                             serverId: string;
                             accountId: string;
                         };
                         artifactId: string;
                         actionId: 'machines.terminal.open' | 'machines.terminal.restart';
-                    } | undefined;
+                    };
                     openCancelled?: true | undefined;
                 }[];
                 focusedTerminalId: string;
                 root: SessionTerminalLayoutV1;
             }[];
-            activeTabId: string | null;
+            activeTabId: null | string;
             showList: boolean;
-            ownerScope?: {
+            ownerScope?: undefined | {
                 serverId: string;
                 accountId: string;
-            } | undefined;
+            };
         };
     };
     readonly "session.terminals.open": {

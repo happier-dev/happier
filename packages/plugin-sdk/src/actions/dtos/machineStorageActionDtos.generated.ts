@@ -10,12 +10,13 @@ export type MachineStorageActionInputById = {
     };
     readonly "machines.storage.pile.set": {
         machineId: string;
-        add?: {
+        add?: undefined | {
             itemId: string;
             path: string;
-        }[] | undefined;
+        }[];
         remove?: string[] | undefined;
         clear?: true | undefined;
+        acknowledgeDropped?: string[] | undefined;
         serverId?: string | undefined;
     };
     readonly "machines.storage.items.check": {
@@ -33,7 +34,7 @@ export type MachineStorageActionInputById = {
                 path: string;
                 identity: {
                     dev: string;
-                    kind: 'file' | 'directory' | 'symlink' | 'other';
+                    kind: 'directory' | 'file' | 'other' | 'symlink';
                     ino?: string | undefined;
                     fileId?: string | undefined;
                     fingerprint?: string | undefined;
@@ -41,26 +42,26 @@ export type MachineStorageActionInputById = {
                 collectedAt: number;
                 collectedBy: {
                     accountId: string;
-                    kind: 'person' | 'agent';
+                    kind: 'agent' | 'person';
                     proposalId?: string | undefined;
                 };
                 title?: string | undefined;
             };
             expect: string;
-            claimedVerdict: 'check' | 'safe' | 'caution' | 'keep' | 'forbidden';
-            reason?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            } | undefined;
+            claimedVerdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+            reason?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
         }[];
         machineId: string;
-        notIncluded?: {
+        notIncluded?: undefined | {
             itemId: string;
-            kind: 'category-item' | 'worktree' | 'suggestion' | 'disk-node';
+            kind: 'category-item' | 'disk-node' | 'suggestion' | 'worktree';
             title: string;
             evidence: string[];
             path: string;
-            verdict: 'check' | 'safe' | 'caution' | 'keep' | 'forbidden';
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
             collectable: boolean;
             size: {
                 allocatedBytes: number;
@@ -71,22 +72,22 @@ export type MachineStorageActionInputById = {
                 freesUpToBytes?: number | undefined;
             };
             reason: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
             };
-            categoryId?: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData' | undefined;
+            categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
             lastChangedAt?: number | undefined;
             lastUsedAt?: number | undefined;
-            loses?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            }[] | undefined;
-        }[] | undefined;
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
+        }[];
         goalBytes?: number | undefined;
         emptyAfter?: boolean | undefined;
-        retry?: {
+        retry?: undefined | {
             sessionId: string;
-        } | undefined;
+        };
         serverId?: string | undefined;
     };
     readonly "machines.storage.deleteNow": {
@@ -96,7 +97,7 @@ export type MachineStorageActionInputById = {
                 path: string;
                 identity: {
                     dev: string;
-                    kind: 'file' | 'directory' | 'symlink' | 'other';
+                    kind: 'directory' | 'file' | 'other' | 'symlink';
                     ino?: string | undefined;
                     fileId?: string | undefined;
                     fingerprint?: string | undefined;
@@ -104,7 +105,7 @@ export type MachineStorageActionInputById = {
                 collectedAt: number;
                 collectedBy: {
                     accountId: string;
-                    kind: 'person' | 'agent';
+                    kind: 'agent' | 'person';
                     proposalId?: string | undefined;
                 };
                 title?: string | undefined;
@@ -114,6 +115,27 @@ export type MachineStorageActionInputById = {
         machineId: string;
         serverId?: string | undefined;
     };
+    readonly "machines.storage.docker.prune": Readonly<{
+        expectedEngineId: string;
+        selection: Readonly<{
+            kind: 'explicit';
+            images: readonly Readonly<{
+                nativeId: string;
+                configDigest: string;
+                platform: string;
+            }>[];
+            buildCacheIds: readonly string[];
+        }>;
+        machineId: string;
+        serverId?: string | undefined;
+    }> | Readonly<{
+        selection: Readonly<{
+            kind: 'unusedBuildCacheAndUnreferencedImages';
+        }>;
+        machineId: string;
+        expectedEngineId?: string | undefined;
+        serverId?: string | undefined;
+    }>;
     readonly "machines.storage.trash.empty": {
         machineId: string;
         volume?: string | undefined;
@@ -131,7 +153,7 @@ export type MachineStorageActionInputById = {
     readonly "machines.storage.worktrees.list": {
         machineId: string;
         projectId?: string | undefined;
-        filter?: 'check' | 'safe' | 'caution' | 'keep' | 'forbidden' | undefined;
+        filter?: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe' | undefined;
         serverId?: string | undefined;
     };
     readonly "machines.storage.suggestions.list": {
@@ -147,7 +169,7 @@ export type MachineStorageActionInputById = {
                 path: string;
                 identity: {
                     dev: string;
-                    kind: 'file' | 'directory' | 'symlink' | 'other';
+                    kind: 'directory' | 'file' | 'other' | 'symlink';
                     ino?: string | undefined;
                     fileId?: string | undefined;
                     fingerprint?: string | undefined;
@@ -155,7 +177,7 @@ export type MachineStorageActionInputById = {
                 collectedAt: number;
                 collectedBy: {
                     accountId: string;
-                    kind: 'person' | 'agent';
+                    kind: 'agent' | 'person';
                     proposalId?: string | undefined;
                 };
                 title?: string | undefined;
@@ -167,9 +189,9 @@ export type MachineStorageActionInputById = {
     };
     readonly "machines.storage.scan.start": {
         target: {
-            volumeId: string;
-        } | {
             folderPath: string;
+        } | {
+            volumeId: string;
         };
         machineId: string;
         resume?: boolean | undefined;
@@ -178,27 +200,27 @@ export type MachineStorageActionInputById = {
     readonly "machines.storage.scan.get": {
         machineId: string;
         scanId?: string | undefined;
-        view?: {
-            tab: 'old' | 'folders' | 'large' | 'insights' | 'find';
+        view?: undefined | {
+            tab: 'find' | 'folders' | 'insights' | 'large' | 'old';
             depth: 1 | 2 | 3;
             nodeId?: string | undefined;
-            sort?: {
-                by: 'size' | 'items' | 'name' | 'changed' | 'since';
+            sort?: undefined | {
+                by: 'changed' | 'items' | 'name' | 'since' | 'size';
                 direction: 'asc' | 'desc';
-            } | undefined;
+            };
             cursor?: string | undefined;
             pageSize?: number | undefined;
             minBytes?: number | undefined;
             olderThanDays?: number | undefined;
-            olderThanMonths?: 6 | 3 | 12 | undefined;
-            query?: {
+            olderThanMonths?: 12 | 3 | 6 | undefined;
+            query?: undefined | {
                 name?: string | undefined;
                 kind?: 'file' | 'folder' | 'package' | undefined;
                 minBytes?: number | undefined;
                 maxBytes?: number | undefined;
                 modifiedWithinDays?: number | undefined;
-            } | undefined;
-        } | undefined;
+            };
+        };
         serverId?: string | undefined;
     };
     readonly "machines.storage.scan.cancel": {
@@ -227,14 +249,14 @@ export type MachineStorageActionInputById = {
         serverId?: string | undefined;
     };
     readonly "machines.storage.category.list": {
-        categoryId: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData';
+        categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
         machineId: string;
         cursor?: string | undefined;
         serverId?: string | undefined;
     };
     readonly "machines.storage.size.refresh": {
         machineId: string;
-        categoryId?: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData' | undefined;
+        categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
         serverId?: string | undefined;
     };
 };
@@ -246,7 +268,7 @@ export type MachineStorageActionResultById = {
             path: string;
             identity: {
                 dev: string;
-                kind: 'file' | 'directory' | 'symlink' | 'other';
+                kind: 'directory' | 'file' | 'other' | 'symlink';
                 ino?: string | undefined;
                 fileId?: string | undefined;
                 fingerprint?: string | undefined;
@@ -254,7 +276,7 @@ export type MachineStorageActionResultById = {
             collectedAt: number;
             collectedBy: {
                 accountId: string;
-                kind: 'person' | 'agent';
+                kind: 'agent' | 'person';
                 proposalId?: string | undefined;
             };
             title?: string | undefined;
@@ -266,8 +288,8 @@ export type MachineStorageActionResultById = {
                 itemId: string;
                 path: string;
                 reason: {
-                    code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                    detail?: Record<string, string | number | boolean | null> | undefined;
+                    code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                    detail?: Record<string, boolean | null | number | string> | undefined;
                 };
             }[];
         };
@@ -279,7 +301,7 @@ export type MachineStorageActionResultById = {
             path: string;
             identity: {
                 dev: string;
-                kind: 'file' | 'directory' | 'symlink' | 'other';
+                kind: 'directory' | 'file' | 'other' | 'symlink';
                 ino?: string | undefined;
                 fileId?: string | undefined;
                 fingerprint?: string | undefined;
@@ -287,7 +309,7 @@ export type MachineStorageActionResultById = {
             collectedAt: number;
             collectedBy: {
                 accountId: string;
-                kind: 'person' | 'agent';
+                kind: 'agent' | 'person';
                 proposalId?: string | undefined;
             };
             title?: string | undefined;
@@ -299,8 +321,8 @@ export type MachineStorageActionResultById = {
                 itemId: string;
                 path: string;
                 reason: {
-                    code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                    detail?: Record<string, string | number | boolean | null> | undefined;
+                    code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                    detail?: Record<string, boolean | null | number | string> | undefined;
                 };
             }[];
         };
@@ -312,7 +334,7 @@ export type MachineStorageActionResultById = {
                 path: string;
                 identity: {
                     dev: string;
-                    kind: 'file' | 'directory' | 'symlink' | 'other';
+                    kind: 'directory' | 'file' | 'other' | 'symlink';
                     ino?: string | undefined;
                     fileId?: string | undefined;
                     fingerprint?: string | undefined;
@@ -320,16 +342,16 @@ export type MachineStorageActionResultById = {
                 collectedAt: number;
                 collectedBy: {
                     accountId: string;
-                    kind: 'person' | 'agent';
+                    kind: 'agent' | 'person';
                     proposalId?: string | undefined;
                 };
                 title?: string | undefined;
             };
             expect: string;
-            verdict: 'check' | 'safe' | 'caution' | 'keep' | 'forbidden';
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
             reason: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
             };
             size: {
                 allocatedBytes: number;
@@ -341,10 +363,10 @@ export type MachineStorageActionResultById = {
             };
             absorbs: string[];
             title?: string | undefined;
-            loses?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            }[] | undefined;
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
         }[];
         staying: {
             item: {
@@ -353,8 +375,8 @@ export type MachineStorageActionResultById = {
                 title?: string | undefined;
             };
             reason: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
             };
         }[];
         countedOnceBytes: number;
@@ -362,22 +384,22 @@ export type MachineStorageActionResultById = {
         trashVolumes: {
             volumeId: string;
             trashAvailable: boolean;
-            reason?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            } | undefined;
+            reason?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
         }[];
     };
     readonly "machines.storage.trash.move": {
         batchId: string;
-        mode: 'trash' | 'delete';
+        mode: 'delete' | 'trash';
         outcomes: {
             itemId: string;
-            status: 'failed' | 'moved' | 'deleted' | 'skipped' | 'refused';
-            reason?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            } | undefined;
+            status: 'deleted' | 'failed' | 'moved' | 'refused' | 'skipped';
+            reason?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
         }[];
         inTrashBytes: number;
         freedBytes: number;
@@ -385,27 +407,61 @@ export type MachineStorageActionResultById = {
     };
     readonly "machines.storage.deleteNow": {
         batchId: string;
-        mode: 'trash' | 'delete';
+        mode: 'delete' | 'trash';
         outcomes: {
             itemId: string;
-            status: 'failed' | 'moved' | 'deleted' | 'skipped' | 'refused';
-            reason?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            } | undefined;
+            status: 'deleted' | 'failed' | 'moved' | 'refused' | 'skipped';
+            reason?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
         }[];
         inTrashBytes: number;
         freedBytes: number;
         trashEntryIds?: string[] | undefined;
     };
+    readonly "machines.storage.docker.prune": Readonly<{
+        kind: 'changed';
+        removed: readonly string[];
+        kept: readonly string[];
+    }> | Readonly<{
+        kind: 'completed';
+        buildCache: 'unsupported';
+        removed: readonly string[];
+        kept: readonly string[];
+    }> | Readonly<{
+        kind: 'effect_in_progress';
+        actionOperationId: string;
+        removed: readonly string[];
+        kept: readonly string[];
+    }> | Readonly<{
+        kind: 'failed';
+        removed: readonly string[];
+        kept: readonly string[];
+    }> | Readonly<{
+        kind: 'outcome_unknown';
+        removed: readonly string[];
+        kept: readonly string[];
+    }> | Readonly<{
+        kind: 'unavailable';
+        reason: 'image_custody_unavailable' | 'native_inventory_unavailable';
+        deploymentIds: readonly string[];
+        removed: readonly string[];
+        kept: readonly string[];
+    }> | Readonly<{
+        kind: 'unsupported';
+        reason: 'build_cache_custody_unavailable' | 'image_custody_unavailable' | 'native_runtime_unavailable';
+        removed: readonly string[];
+        kept: readonly string[];
+    }>;
     readonly "machines.storage.trash.empty": {
         outcomes: {
             entryId: string;
-            status: 'failed' | 'deleted' | 'refused';
-            reason?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            } | undefined;
+            status: 'deleted' | 'failed' | 'refused';
+            reason?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
         }[];
         freedBytes: number;
     };
@@ -414,19 +470,19 @@ export type MachineStorageActionResultById = {
             entryId: string;
             status: 'failed' | 'refused' | 'restored';
             path?: string | undefined;
-            reason?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            } | undefined;
+            reason?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
         }[];
     };
     readonly "machines.storage.worktrees.list": {
         revision: number;
         items: {
             itemId: string;
-            kind: 'category-item' | 'worktree' | 'suggestion' | 'disk-node';
+            kind: 'category-item' | 'disk-node' | 'suggestion' | 'worktree';
             title: string;
-            evidence: ('unknown' | 'directory_permission_unavailable' | 'managed_acp_install' | 'runner_snapshot_root' | 'managed_cache_root' | 'connected_service_home' | 'execution_run_isolation_owner' | 'execution_run_isolation_facts_unavailable' | 'happier_temporary_directory' | 'temporary_lifecycle_owner' | 'temporary_lifecycle_facts_unavailable' | 'voice_model_pack_install_record' | 'model_pack_facts_unavailable' | 'browser_recording_owner' | 'recording_expired' | 'happier_trash_root' | 'happier_data_remainder' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'session_workspace_upload' | 'worktree_parent' | 'registration_unavailable' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'log_file_modified_time' | 'trusted_disk_index' | 'scm_ignored' | 'browser_profile_cache' | 'unused_after_policy' | 'repository_not_in_use' | 'verified_cache_location' | 'empty_folder_relisted' | 'trash_entry' | `recognizer:${string}` | `manifest:${string}`)[];
+            evidence: ('browser_profile_cache' | 'browser_recording_owner' | 'connected_service_home' | 'directory_permission_unavailable' | 'empty_folder_relisted' | 'execution_run_isolation_facts_unavailable' | 'execution_run_isolation_owner' | 'happier_data_remainder' | 'happier_temporary_directory' | 'happier_trash_root' | 'log_file_modified_time' | 'managed_acp_install' | 'managed_cache_root' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'model_pack_facts_unavailable' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'recording_expired' | 'registration_unavailable' | 'repository_not_in_use' | 'runner_snapshot_root' | 'scm_ignored' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'session_workspace_upload' | 'temporary_lifecycle_facts_unavailable' | 'temporary_lifecycle_owner' | 'trash_entry' | 'trusted_disk_index' | 'unknown' | 'unused_after_policy' | 'verified_cache_location' | 'voice_model_pack_install_record' | 'worktree_parent' | `manifest:${string}` | `recognizer:${string}`)[];
             path: string;
             size: {
                 allocatedBytes: number;
@@ -436,19 +492,24 @@ export type MachineStorageActionResultById = {
                 atLeast: boolean;
                 freesUpToBytes?: number | undefined;
             };
-            verdict: 'check' | 'safe' | 'caution' | 'keep' | 'forbidden';
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
             reason: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
             };
             collectable: boolean;
-            categoryId?: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData' | undefined;
+            categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
             lastChangedAt?: number | undefined;
             lastUsedAt?: number | undefined;
-            loses?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            }[] | undefined;
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
+        }[];
+        incomplete?: undefined | {
+            categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
+            reason: 'permission_denied';
+            remedy: 'grant_admin_access_or_run_as_machine_owner';
         }[];
         nextCursor?: string | undefined;
         declinedCount?: number | undefined;
@@ -457,9 +518,9 @@ export type MachineStorageActionResultById = {
         revision: number;
         items: {
             itemId: string;
-            kind: 'category-item' | 'worktree' | 'suggestion' | 'disk-node';
+            kind: 'category-item' | 'disk-node' | 'suggestion' | 'worktree';
             title: string;
-            evidence: ('unknown' | 'directory_permission_unavailable' | 'managed_acp_install' | 'runner_snapshot_root' | 'managed_cache_root' | 'connected_service_home' | 'execution_run_isolation_owner' | 'execution_run_isolation_facts_unavailable' | 'happier_temporary_directory' | 'temporary_lifecycle_owner' | 'temporary_lifecycle_facts_unavailable' | 'voice_model_pack_install_record' | 'model_pack_facts_unavailable' | 'browser_recording_owner' | 'recording_expired' | 'happier_trash_root' | 'happier_data_remainder' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'session_workspace_upload' | 'worktree_parent' | 'registration_unavailable' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'log_file_modified_time' | 'trusted_disk_index' | 'scm_ignored' | 'browser_profile_cache' | 'unused_after_policy' | 'repository_not_in_use' | 'verified_cache_location' | 'empty_folder_relisted' | 'trash_entry' | `recognizer:${string}` | `manifest:${string}`)[];
+            evidence: ('browser_profile_cache' | 'browser_recording_owner' | 'connected_service_home' | 'directory_permission_unavailable' | 'empty_folder_relisted' | 'execution_run_isolation_facts_unavailable' | 'execution_run_isolation_owner' | 'happier_data_remainder' | 'happier_temporary_directory' | 'happier_trash_root' | 'log_file_modified_time' | 'managed_acp_install' | 'managed_cache_root' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'model_pack_facts_unavailable' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'recording_expired' | 'registration_unavailable' | 'repository_not_in_use' | 'runner_snapshot_root' | 'scm_ignored' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'session_workspace_upload' | 'temporary_lifecycle_facts_unavailable' | 'temporary_lifecycle_owner' | 'trash_entry' | 'trusted_disk_index' | 'unknown' | 'unused_after_policy' | 'verified_cache_location' | 'voice_model_pack_install_record' | 'worktree_parent' | `manifest:${string}` | `recognizer:${string}`)[];
             path: string;
             size: {
                 allocatedBytes: number;
@@ -469,19 +530,24 @@ export type MachineStorageActionResultById = {
                 atLeast: boolean;
                 freesUpToBytes?: number | undefined;
             };
-            verdict: 'check' | 'safe' | 'caution' | 'keep' | 'forbidden';
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
             reason: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
             };
             collectable: boolean;
-            categoryId?: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData' | undefined;
+            categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
             lastChangedAt?: number | undefined;
             lastUsedAt?: number | undefined;
-            loses?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            }[] | undefined;
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
+        }[];
+        incomplete?: undefined | {
+            categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
+            reason: 'permission_denied';
+            remedy: 'grant_admin_access_or_run_as_machine_owner';
         }[];
         nextCursor?: string | undefined;
         declinedCount?: number | undefined;
@@ -493,15 +559,15 @@ export type MachineStorageActionResultById = {
     readonly "machines.storage.scan.start": {
         scanId: string;
         target: {
-            volumeId: string;
-        } | {
             folderPath: string;
+        } | {
+            volumeId: string;
         };
-        status: 'running' | 'complete' | 'cancelled' | 'interrupted' | 'failed';
+        status: 'cancelled' | 'complete' | 'failed' | 'interrupted' | 'running';
         progress: {
             sizedBytes: number;
-            usedBytes: number;
             items: number;
+            usedBytes?: number | undefined;
             currentPath?: string | undefined;
             stuckSinceMs?: number | undefined;
         };
@@ -519,7 +585,7 @@ export type MachineStorageActionResultById = {
             }[];
         };
         fullDiskAccess: {
-            state: 'unknown' | 'granted' | 'not_granted' | 'not_applicable';
+            state: 'granted' | 'not_applicable' | 'not_granted' | 'unknown';
             binary: {
                 name: string;
                 path: string;
@@ -531,18 +597,18 @@ export type MachineStorageActionResultById = {
         apfsLocalSnapshotCount?: number | undefined;
     };
     readonly "machines.storage.scan.get": {
-        state: {
+        state: null | {
             scanId: string;
             target: {
-                volumeId: string;
-            } | {
                 folderPath: string;
+            } | {
+                volumeId: string;
             };
-            status: 'running' | 'complete' | 'cancelled' | 'interrupted' | 'failed';
+            status: 'cancelled' | 'complete' | 'failed' | 'interrupted' | 'running';
             progress: {
                 sizedBytes: number;
-                usedBytes: number;
                 items: number;
+                usedBytes?: number | undefined;
                 currentPath?: string | undefined;
                 stuckSinceMs?: number | undefined;
             };
@@ -560,7 +626,7 @@ export type MachineStorageActionResultById = {
                 }[];
             };
             fullDiskAccess: {
-                state: 'unknown' | 'granted' | 'not_granted' | 'not_applicable';
+                state: 'granted' | 'not_applicable' | 'not_granted' | 'unknown';
                 binary: {
                     name: string;
                     path: string;
@@ -570,11 +636,11 @@ export type MachineStorageActionResultById = {
             finishedAt?: number | undefined;
             previousScanAt?: number | undefined;
             apfsLocalSnapshotCount?: number | undefined;
-        } | null;
+        };
         nodes: {
             nodeId: string;
             name: string;
-            kind: 'file' | 'folder' | 'package' | 'small-items' | 'hidden-space' | 'reserved' | 'mount' | 'cloud-only';
+            kind: 'cloud-only' | 'file' | 'folder' | 'hidden-space' | 'mount' | 'package' | 'reserved' | 'small-items';
             size: {
                 allocatedBytes: number;
                 freesBytes: number;
@@ -588,7 +654,7 @@ export type MachineStorageActionResultById = {
             changedAt: number;
             flags: {
                 happier: boolean;
-                protection: 'keep' | 'forbidden' | 'none';
+                protection: 'forbidden' | 'keep' | 'none';
                 atLeast: boolean;
                 inUse: boolean;
             };
@@ -596,14 +662,14 @@ export type MachineStorageActionResultById = {
             parentId?: string | undefined;
             nameBytes?: string | undefined;
             deltaSincePrevious?: number | undefined;
-            reason?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            } | undefined;
-            loses?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            }[] | undefined;
+            reason?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
         }[];
         coverage: {
             path: string;
@@ -611,10 +677,15 @@ export type MachineStorageActionResultById = {
             complete: boolean;
         }[];
         nextCursor?: string | undefined;
-        root?: {
+        incomplete?: undefined | {
+            categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
+            reason: 'permission_denied';
+            remedy: 'grant_admin_access_or_run_as_machine_owner';
+        }[];
+        root?: undefined | {
             nodeId: string;
             name: string;
-            kind: 'file' | 'folder' | 'package' | 'small-items' | 'hidden-space' | 'reserved' | 'mount' | 'cloud-only';
+            kind: 'cloud-only' | 'file' | 'folder' | 'hidden-space' | 'mount' | 'package' | 'reserved' | 'small-items';
             size: {
                 allocatedBytes: number;
                 freesBytes: number;
@@ -628,7 +699,7 @@ export type MachineStorageActionResultById = {
             changedAt: number;
             flags: {
                 happier: boolean;
-                protection: 'keep' | 'forbidden' | 'none';
+                protection: 'forbidden' | 'keep' | 'none';
                 atLeast: boolean;
                 inUse: boolean;
             };
@@ -636,23 +707,23 @@ export type MachineStorageActionResultById = {
             parentId?: string | undefined;
             nameBytes?: string | undefined;
             deltaSincePrevious?: number | undefined;
-            reason?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            } | undefined;
-            loses?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            }[] | undefined;
-        } | undefined;
+            reason?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
+        };
         indexedAt?: number | undefined;
         previousScanAt?: number | undefined;
         findCoverageMinBytes?: number | undefined;
-        insights?: {
+        insights?: undefined | {
             largestDistinct: {
                 nodeId: string;
                 name: string;
-                kind: 'file' | 'folder' | 'package' | 'small-items' | 'hidden-space' | 'reserved' | 'mount' | 'cloud-only';
+                kind: 'cloud-only' | 'file' | 'folder' | 'hidden-space' | 'mount' | 'package' | 'reserved' | 'small-items';
                 size: {
                     allocatedBytes: number;
                     freesBytes: number;
@@ -666,7 +737,7 @@ export type MachineStorageActionResultById = {
                 changedAt: number;
                 flags: {
                     happier: boolean;
-                    protection: 'keep' | 'forbidden' | 'none';
+                    protection: 'forbidden' | 'keep' | 'none';
                     atLeast: boolean;
                     inUse: boolean;
                 };
@@ -674,20 +745,20 @@ export type MachineStorageActionResultById = {
                 parentId?: string | undefined;
                 nameBytes?: string | undefined;
                 deltaSincePrevious?: number | undefined;
-                reason?: {
-                    code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                    detail?: Record<string, string | number | boolean | null> | undefined;
-                } | undefined;
-                loses?: {
-                    code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                    detail?: Record<string, string | number | boolean | null> | undefined;
-                }[] | undefined;
+                reason?: undefined | {
+                    code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                    detail?: Record<string, boolean | null | number | string> | undefined;
+                };
+                loses?: undefined | {
+                    code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                    detail?: Record<string, boolean | null | number | string> | undefined;
+                }[];
             }[];
             changes: {
                 grew: {
                     nodeId: string;
                     name: string;
-                    kind: 'file' | 'folder' | 'package' | 'small-items' | 'hidden-space' | 'reserved' | 'mount' | 'cloud-only';
+                    kind: 'cloud-only' | 'file' | 'folder' | 'hidden-space' | 'mount' | 'package' | 'reserved' | 'small-items';
                     size: {
                         allocatedBytes: number;
                         freesBytes: number;
@@ -701,7 +772,7 @@ export type MachineStorageActionResultById = {
                     changedAt: number;
                     flags: {
                         happier: boolean;
-                        protection: 'keep' | 'forbidden' | 'none';
+                        protection: 'forbidden' | 'keep' | 'none';
                         atLeast: boolean;
                         inUse: boolean;
                     };
@@ -709,19 +780,19 @@ export type MachineStorageActionResultById = {
                     parentId?: string | undefined;
                     nameBytes?: string | undefined;
                     deltaSincePrevious?: number | undefined;
-                    reason?: {
-                        code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                        detail?: Record<string, string | number | boolean | null> | undefined;
-                    } | undefined;
-                    loses?: {
-                        code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                        detail?: Record<string, string | number | boolean | null> | undefined;
-                    }[] | undefined;
+                    reason?: undefined | {
+                        code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                        detail?: Record<string, boolean | null | number | string> | undefined;
+                    };
+                    loses?: undefined | {
+                        code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                        detail?: Record<string, boolean | null | number | string> | undefined;
+                    }[];
                 }[];
                 shrank: {
                     nodeId: string;
                     name: string;
-                    kind: 'file' | 'folder' | 'package' | 'small-items' | 'hidden-space' | 'reserved' | 'mount' | 'cloud-only';
+                    kind: 'cloud-only' | 'file' | 'folder' | 'hidden-space' | 'mount' | 'package' | 'reserved' | 'small-items';
                     size: {
                         allocatedBytes: number;
                         freesBytes: number;
@@ -735,7 +806,7 @@ export type MachineStorageActionResultById = {
                     changedAt: number;
                     flags: {
                         happier: boolean;
-                        protection: 'keep' | 'forbidden' | 'none';
+                        protection: 'forbidden' | 'keep' | 'none';
                         atLeast: boolean;
                         inUse: boolean;
                     };
@@ -743,19 +814,19 @@ export type MachineStorageActionResultById = {
                     parentId?: string | undefined;
                     nameBytes?: string | undefined;
                     deltaSincePrevious?: number | undefined;
-                    reason?: {
-                        code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                        detail?: Record<string, string | number | boolean | null> | undefined;
-                    } | undefined;
-                    loses?: {
-                        code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                        detail?: Record<string, string | number | boolean | null> | undefined;
-                    }[] | undefined;
+                    reason?: undefined | {
+                        code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                        detail?: Record<string, boolean | null | number | string> | undefined;
+                    };
+                    loses?: undefined | {
+                        code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                        detail?: Record<string, boolean | null | number | string> | undefined;
+                    }[];
                 }[];
                 appeared: {
                     nodeId: string;
                     name: string;
-                    kind: 'file' | 'folder' | 'package' | 'small-items' | 'hidden-space' | 'reserved' | 'mount' | 'cloud-only';
+                    kind: 'cloud-only' | 'file' | 'folder' | 'hidden-space' | 'mount' | 'package' | 'reserved' | 'small-items';
                     size: {
                         allocatedBytes: number;
                         freesBytes: number;
@@ -769,7 +840,7 @@ export type MachineStorageActionResultById = {
                     changedAt: number;
                     flags: {
                         happier: boolean;
-                        protection: 'keep' | 'forbidden' | 'none';
+                        protection: 'forbidden' | 'keep' | 'none';
                         atLeast: boolean;
                         inUse: boolean;
                     };
@@ -777,19 +848,19 @@ export type MachineStorageActionResultById = {
                     parentId?: string | undefined;
                     nameBytes?: string | undefined;
                     deltaSincePrevious?: number | undefined;
-                    reason?: {
-                        code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                        detail?: Record<string, string | number | boolean | null> | undefined;
-                    } | undefined;
-                    loses?: {
-                        code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                        detail?: Record<string, string | number | boolean | null> | undefined;
-                    }[] | undefined;
+                    reason?: undefined | {
+                        code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                        detail?: Record<string, boolean | null | number | string> | undefined;
+                    };
+                    loses?: undefined | {
+                        code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                        detail?: Record<string, boolean | null | number | string> | undefined;
+                    }[];
                 }[];
                 disappeared: {
                     nodeId: string;
                     name: string;
-                    kind: 'file' | 'folder' | 'package' | 'small-items' | 'hidden-space' | 'reserved' | 'mount' | 'cloud-only';
+                    kind: 'cloud-only' | 'file' | 'folder' | 'hidden-space' | 'mount' | 'package' | 'reserved' | 'small-items';
                     size: {
                         allocatedBytes: number;
                         freesBytes: number;
@@ -803,7 +874,7 @@ export type MachineStorageActionResultById = {
                     changedAt: number;
                     flags: {
                         happier: boolean;
-                        protection: 'keep' | 'forbidden' | 'none';
+                        protection: 'forbidden' | 'keep' | 'none';
                         atLeast: boolean;
                         inUse: boolean;
                     };
@@ -811,14 +882,14 @@ export type MachineStorageActionResultById = {
                     parentId?: string | undefined;
                     nameBytes?: string | undefined;
                     deltaSincePrevious?: number | undefined;
-                    reason?: {
-                        code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                        detail?: Record<string, string | number | boolean | null> | undefined;
-                    } | undefined;
-                    loses?: {
-                        code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                        detail?: Record<string, string | number | boolean | null> | undefined;
-                    }[] | undefined;
+                    reason?: undefined | {
+                        code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                        detail?: Record<string, boolean | null | number | string> | undefined;
+                    };
+                    loses?: undefined | {
+                        code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                        detail?: Record<string, boolean | null | number | string> | undefined;
+                    }[];
                 }[];
             };
             growthBytes: number;
@@ -831,20 +902,20 @@ export type MachineStorageActionResultById = {
                 months12: number;
             };
             trashBytes: number;
-        } | undefined;
+        };
     };
     readonly "machines.storage.scan.cancel": {
         scanId: string;
         target: {
-            volumeId: string;
-        } | {
             folderPath: string;
+        } | {
+            volumeId: string;
         };
-        status: 'running' | 'complete' | 'cancelled' | 'interrupted' | 'failed';
+        status: 'cancelled' | 'complete' | 'failed' | 'interrupted' | 'running';
         progress: {
             sizedBytes: number;
-            usedBytes: number;
             items: number;
+            usedBytes?: number | undefined;
             currentPath?: string | undefined;
             stuckSinceMs?: number | undefined;
         };
@@ -862,7 +933,7 @@ export type MachineStorageActionResultById = {
             }[];
         };
         fullDiskAccess: {
-            state: 'unknown' | 'granted' | 'not_granted' | 'not_applicable';
+            state: 'granted' | 'not_applicable' | 'not_granted' | 'unknown';
             binary: {
                 name: string;
                 path: string;
@@ -876,15 +947,15 @@ export type MachineStorageActionResultById = {
     readonly "machines.storage.scan.skip": {
         scanId: string;
         target: {
-            volumeId: string;
-        } | {
             folderPath: string;
+        } | {
+            volumeId: string;
         };
-        status: 'running' | 'complete' | 'cancelled' | 'interrupted' | 'failed';
+        status: 'cancelled' | 'complete' | 'failed' | 'interrupted' | 'running';
         progress: {
             sizedBytes: number;
-            usedBytes: number;
             items: number;
+            usedBytes?: number | undefined;
             currentPath?: string | undefined;
             stuckSinceMs?: number | undefined;
         };
@@ -902,7 +973,7 @@ export type MachineStorageActionResultById = {
             }[];
         };
         fullDiskAccess: {
-            state: 'unknown' | 'granted' | 'not_granted' | 'not_applicable';
+            state: 'granted' | 'not_applicable' | 'not_granted' | 'unknown';
             binary: {
                 name: string;
                 path: string;
@@ -914,13 +985,13 @@ export type MachineStorageActionResultById = {
         apfsLocalSnapshotCount?: number | undefined;
     };
     readonly "machines.storage.protected.add": {
-        status: 'applied' | 'unchanged' | 'conflict';
+        status: 'applied' | 'conflict' | 'unchanged';
         policy: {
             v: 1;
             alerts: {
                 memory: {
                     enabled: boolean;
-                    level: 'elevated' | 'critical';
+                    level: 'critical' | 'elevated';
                     sustainMs: number;
                 };
                 cpu: {
@@ -931,16 +1002,20 @@ export type MachineStorageActionResultById = {
                 disk: {
                     enabled: boolean;
                     threshold: {
-                        freeFraction: number;
-                    } | {
                         freeBytes: number;
+                    } | {
+                        freeFraction: number;
                     };
                 };
             };
+            monitoring: {
+                mode: 'always' | 'off' | 'while_viewing';
+                intervalMs: number;
+            };
             processes: {
                 allProcessesVisible: boolean;
-                toolIdleCloseMs: number | null;
-                browserMaxConcurrent: number | null;
+                toolIdleCloseMs: null | number;
+                browserMaxConcurrent: null | number;
             };
             storage: {
                 wholeDiskEnabled: boolean;
@@ -948,19 +1023,19 @@ export type MachineStorageActionResultById = {
                     path: string;
                     addedAt: number;
                 }[];
-                logRetentionDays: number | null;
-                trashEmptyAfterDays: number | null;
-                scheduledScan: {
+                logRetentionDays: null | number;
+                trashEmptyAfterDays: null | number;
+                scheduledScan: null | {
                     weekday: number;
                     time: string;
                     onlyOnPower: true;
-                } | null;
+                };
                 suggestUnusedAfterDays: number;
             };
             guard: {
                 memoryGuard: {
                     enabled: boolean;
-                    actAt: 'elevated' | 'critical';
+                    actAt: 'critical' | 'elevated';
                     sustainMs: number;
                     cooldownMs: number;
                     steps: {
@@ -968,7 +1043,7 @@ export type MachineStorageActionResultById = {
                         devServers: boolean;
                         idleSessions: boolean;
                     };
-                    pausedUntil: number | null;
+                    pausedUntil: null | number;
                 };
                 idleSessions: {
                     enabled: boolean;
@@ -981,11 +1056,11 @@ export type MachineStorageActionResultById = {
                     warnBeforeMs: number;
                 };
                 leftBehind: {
-                    mode: 'off' | 'ask' | 'automatic';
+                    mode: 'ask' | 'automatic' | 'off';
                     graceMs: number;
                 };
                 sessionMemoryCeiling: {
-                    bytes: number | null;
+                    bytes: null | number;
                     warnAtPercent: number;
                 };
                 keepAwake: 'off' | 'on' | 'on_power';
@@ -993,17 +1068,17 @@ export type MachineStorageActionResultById = {
         };
         revision: number;
     } | {
-        status: 'unsupported' | 'unavailable';
+        status: 'unavailable' | 'unsupported';
         reason: string;
     };
     readonly "machines.storage.protected.remove": {
-        status: 'applied' | 'unchanged' | 'conflict';
+        status: 'applied' | 'conflict' | 'unchanged';
         policy: {
             v: 1;
             alerts: {
                 memory: {
                     enabled: boolean;
-                    level: 'elevated' | 'critical';
+                    level: 'critical' | 'elevated';
                     sustainMs: number;
                 };
                 cpu: {
@@ -1014,16 +1089,20 @@ export type MachineStorageActionResultById = {
                 disk: {
                     enabled: boolean;
                     threshold: {
-                        freeFraction: number;
-                    } | {
                         freeBytes: number;
+                    } | {
+                        freeFraction: number;
                     };
                 };
             };
+            monitoring: {
+                mode: 'always' | 'off' | 'while_viewing';
+                intervalMs: number;
+            };
             processes: {
                 allProcessesVisible: boolean;
-                toolIdleCloseMs: number | null;
-                browserMaxConcurrent: number | null;
+                toolIdleCloseMs: null | number;
+                browserMaxConcurrent: null | number;
             };
             storage: {
                 wholeDiskEnabled: boolean;
@@ -1031,19 +1110,19 @@ export type MachineStorageActionResultById = {
                     path: string;
                     addedAt: number;
                 }[];
-                logRetentionDays: number | null;
-                trashEmptyAfterDays: number | null;
-                scheduledScan: {
+                logRetentionDays: null | number;
+                trashEmptyAfterDays: null | number;
+                scheduledScan: null | {
                     weekday: number;
                     time: string;
                     onlyOnPower: true;
-                } | null;
+                };
                 suggestUnusedAfterDays: number;
             };
             guard: {
                 memoryGuard: {
                     enabled: boolean;
-                    actAt: 'elevated' | 'critical';
+                    actAt: 'critical' | 'elevated';
                     sustainMs: number;
                     cooldownMs: number;
                     steps: {
@@ -1051,7 +1130,7 @@ export type MachineStorageActionResultById = {
                         devServers: boolean;
                         idleSessions: boolean;
                     };
-                    pausedUntil: number | null;
+                    pausedUntil: null | number;
                 };
                 idleSessions: {
                     enabled: boolean;
@@ -1064,11 +1143,11 @@ export type MachineStorageActionResultById = {
                     warnBeforeMs: number;
                 };
                 leftBehind: {
-                    mode: 'off' | 'ask' | 'automatic';
+                    mode: 'ask' | 'automatic' | 'off';
                     graceMs: number;
                 };
                 sessionMemoryCeiling: {
-                    bytes: number | null;
+                    bytes: null | number;
                     warnAtPercent: number;
                 };
                 keepAwake: 'off' | 'on' | 'on_power';
@@ -1076,7 +1155,7 @@ export type MachineStorageActionResultById = {
         };
         revision: number;
     } | {
-        status: 'unsupported' | 'unavailable';
+        status: 'unavailable' | 'unsupported';
         reason: string;
     };
     readonly "machines.storage.summary.get": {
@@ -1099,7 +1178,7 @@ export type MachineStorageActionResultById = {
             canGoBytes?: number | undefined;
         }[];
         categories: {
-            categoryId: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData';
+            categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
             size: {
                 allocatedBytes: number;
                 freesBytes: number;
@@ -1110,13 +1189,14 @@ export type MachineStorageActionResultById = {
             };
             canGoBytes: number;
             count: number;
-            detailFacts: Record<string, string | number | boolean | null>;
+            detailFacts: Record<string, boolean | null | number | string>;
+            revision?: number | undefined;
         }[];
         suggestionsTop: {
             itemId: string;
-            kind: 'category-item' | 'worktree' | 'suggestion' | 'disk-node';
+            kind: 'category-item' | 'disk-node' | 'suggestion' | 'worktree';
             title: string;
-            evidence: ('unknown' | 'directory_permission_unavailable' | 'managed_acp_install' | 'runner_snapshot_root' | 'managed_cache_root' | 'connected_service_home' | 'execution_run_isolation_owner' | 'execution_run_isolation_facts_unavailable' | 'happier_temporary_directory' | 'temporary_lifecycle_owner' | 'temporary_lifecycle_facts_unavailable' | 'voice_model_pack_install_record' | 'model_pack_facts_unavailable' | 'browser_recording_owner' | 'recording_expired' | 'happier_trash_root' | 'happier_data_remainder' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'session_workspace_upload' | 'worktree_parent' | 'registration_unavailable' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'log_file_modified_time' | 'trusted_disk_index' | 'scm_ignored' | 'browser_profile_cache' | 'unused_after_policy' | 'repository_not_in_use' | 'verified_cache_location' | 'empty_folder_relisted' | 'trash_entry' | `recognizer:${string}` | `manifest:${string}`)[];
+            evidence: ('browser_profile_cache' | 'browser_recording_owner' | 'connected_service_home' | 'directory_permission_unavailable' | 'empty_folder_relisted' | 'execution_run_isolation_facts_unavailable' | 'execution_run_isolation_owner' | 'happier_data_remainder' | 'happier_temporary_directory' | 'happier_trash_root' | 'log_file_modified_time' | 'managed_acp_install' | 'managed_cache_root' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'model_pack_facts_unavailable' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'recording_expired' | 'registration_unavailable' | 'repository_not_in_use' | 'runner_snapshot_root' | 'scm_ignored' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'session_workspace_upload' | 'temporary_lifecycle_facts_unavailable' | 'temporary_lifecycle_owner' | 'trash_entry' | 'trusted_disk_index' | 'unknown' | 'unused_after_policy' | 'verified_cache_location' | 'voice_model_pack_install_record' | 'worktree_parent' | `manifest:${string}` | `recognizer:${string}`)[];
             path: string;
             size: {
                 allocatedBytes: number;
@@ -1126,19 +1206,19 @@ export type MachineStorageActionResultById = {
                 atLeast: boolean;
                 freesUpToBytes?: number | undefined;
             };
-            verdict: 'check' | 'safe' | 'caution' | 'keep' | 'forbidden';
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
             reason: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
             };
             collectable: boolean;
-            categoryId?: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData' | undefined;
+            categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
             lastChangedAt?: number | undefined;
             lastUsedAt?: number | undefined;
-            loses?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            }[] | undefined;
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
         }[];
         pile: {
             count: number;
@@ -1147,8 +1227,8 @@ export type MachineStorageActionResultById = {
                 itemId: string;
                 path: string;
                 reason: {
-                    code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                    detail?: Record<string, string | number | boolean | null> | undefined;
+                    code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                    detail?: Record<string, boolean | null | number | string> | undefined;
                 };
             }[];
         };
@@ -1162,15 +1242,15 @@ export type MachineStorageActionResultById = {
             scans: {
                 scanId: string;
                 target: {
-                    volumeId: string;
-                } | {
                     folderPath: string;
+                } | {
+                    volumeId: string;
                 };
-                status: 'running' | 'complete' | 'cancelled' | 'interrupted' | 'failed';
+                status: 'cancelled' | 'complete' | 'failed' | 'interrupted' | 'running';
                 progress: {
                     sizedBytes: number;
-                    usedBytes: number;
                     items: number;
+                    usedBytes?: number | undefined;
                     currentPath?: string | undefined;
                     stuckSinceMs?: number | undefined;
                 };
@@ -1188,7 +1268,7 @@ export type MachineStorageActionResultById = {
                     }[];
                 };
                 fullDiskAccess: {
-                    state: 'unknown' | 'granted' | 'not_granted' | 'not_applicable';
+                    state: 'granted' | 'not_applicable' | 'not_granted' | 'unknown';
                     binary: {
                         name: string;
                         path: string;
@@ -1200,20 +1280,22 @@ export type MachineStorageActionResultById = {
                 apfsLocalSnapshotCount?: number | undefined;
             }[];
         };
-        scanShortcuts?: {
-            kind: 'downloads' | 'cache';
+        incomplete?: undefined | {
+            categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
+            reason: 'permission_denied';
+            remedy: 'grant_admin_access_or_run_as_machine_owner';
+        }[];
+        pileRevision?: number | undefined;
+        itemsRevision?: number | undefined;
+        scanShortcuts?: undefined | {
+            kind: 'cache' | 'downloads' | 'folder';
             path: string;
-        }[] | undefined;
-    };
-    readonly "machines.storage.category.list": {
-        revision: number;
-        sizedAt: number;
-        categoryId: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData';
-        items: {
+        }[];
+        suggestionsSafeTop?: undefined | {
             itemId: string;
-            kind: 'category-item' | 'worktree' | 'suggestion' | 'disk-node';
+            kind: 'category-item' | 'disk-node' | 'suggestion' | 'worktree';
             title: string;
-            evidence: ('unknown' | 'directory_permission_unavailable' | 'managed_acp_install' | 'runner_snapshot_root' | 'managed_cache_root' | 'connected_service_home' | 'execution_run_isolation_owner' | 'execution_run_isolation_facts_unavailable' | 'happier_temporary_directory' | 'temporary_lifecycle_owner' | 'temporary_lifecycle_facts_unavailable' | 'voice_model_pack_install_record' | 'model_pack_facts_unavailable' | 'browser_recording_owner' | 'recording_expired' | 'happier_trash_root' | 'happier_data_remainder' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'session_workspace_upload' | 'worktree_parent' | 'registration_unavailable' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'log_file_modified_time' | 'trusted_disk_index' | 'scm_ignored' | 'browser_profile_cache' | 'unused_after_policy' | 'repository_not_in_use' | 'verified_cache_location' | 'empty_folder_relisted' | 'trash_entry' | `recognizer:${string}` | `manifest:${string}`)[];
+            evidence: ('browser_profile_cache' | 'browser_recording_owner' | 'connected_service_home' | 'directory_permission_unavailable' | 'empty_folder_relisted' | 'execution_run_isolation_facts_unavailable' | 'execution_run_isolation_owner' | 'happier_data_remainder' | 'happier_temporary_directory' | 'happier_trash_root' | 'log_file_modified_time' | 'managed_acp_install' | 'managed_cache_root' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'model_pack_facts_unavailable' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'recording_expired' | 'registration_unavailable' | 'repository_not_in_use' | 'runner_snapshot_root' | 'scm_ignored' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'session_workspace_upload' | 'temporary_lifecycle_facts_unavailable' | 'temporary_lifecycle_owner' | 'trash_entry' | 'trusted_disk_index' | 'unknown' | 'unused_after_policy' | 'verified_cache_location' | 'voice_model_pack_install_record' | 'worktree_parent' | `manifest:${string}` | `recognizer:${string}`)[];
             path: string;
             size: {
                 allocatedBytes: number;
@@ -1223,21 +1305,62 @@ export type MachineStorageActionResultById = {
                 atLeast: boolean;
                 freesUpToBytes?: number | undefined;
             };
-            verdict: 'check' | 'safe' | 'caution' | 'keep' | 'forbidden';
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
             reason: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
             };
             collectable: boolean;
-            categoryId?: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData' | undefined;
+            categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
             lastChangedAt?: number | undefined;
             lastUsedAt?: number | undefined;
-            loses?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            }[] | undefined;
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
         }[];
-        trashEntries?: {
+        suggestionsSafeTotalCount?: number | undefined;
+        suggestionsSafeFreesBytes?: number | undefined;
+        suggestionsTotalCount?: number | undefined;
+    };
+    readonly "machines.storage.category.list": {
+        revision: number;
+        sizedAt: number;
+        categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
+        items: {
+            itemId: string;
+            kind: 'category-item' | 'disk-node' | 'suggestion' | 'worktree';
+            title: string;
+            evidence: ('browser_profile_cache' | 'browser_recording_owner' | 'connected_service_home' | 'directory_permission_unavailable' | 'empty_folder_relisted' | 'execution_run_isolation_facts_unavailable' | 'execution_run_isolation_owner' | 'happier_data_remainder' | 'happier_temporary_directory' | 'happier_trash_root' | 'log_file_modified_time' | 'managed_acp_install' | 'managed_cache_root' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'model_pack_facts_unavailable' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'recording_expired' | 'registration_unavailable' | 'repository_not_in_use' | 'runner_snapshot_root' | 'scm_ignored' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'session_workspace_upload' | 'temporary_lifecycle_facts_unavailable' | 'temporary_lifecycle_owner' | 'trash_entry' | 'trusted_disk_index' | 'unknown' | 'unused_after_policy' | 'verified_cache_location' | 'voice_model_pack_install_record' | 'worktree_parent' | `manifest:${string}` | `recognizer:${string}`)[];
+            path: string;
+            size: {
+                allocatedBytes: number;
+                freesBytes: number;
+                sharedBytes: number;
+                sharedExtentsUnmeasured: boolean;
+                atLeast: boolean;
+                freesUpToBytes?: number | undefined;
+            };
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+            reason: {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
+            collectable: boolean;
+            categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
+            lastChangedAt?: number | undefined;
+            lastUsedAt?: number | undefined;
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
+        }[];
+        incomplete?: undefined | {
+            categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
+            reason: 'permission_denied';
+            remedy: 'grant_admin_access_or_run_as_machine_owner';
+        }[];
+        trashEntries?: undefined | {
             entryId: string;
             batchId: string;
             volumeId: string;
@@ -1254,23 +1377,23 @@ export type MachineStorageActionResultById = {
             movedAt: number;
             movedBy: {
                 accountId: string;
-                kind: 'person' | 'agent';
+                kind: 'agent' | 'person';
                 proposalId?: string | undefined;
             };
-            emptiesAt: number | null;
+            emptiesAt: null | number;
             restorable: boolean;
-            categoryId?: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData' | undefined;
-            reason?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            } | undefined;
-        }[] | undefined;
+            categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
+            reason?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
+        }[];
         nextCursor?: string | undefined;
-        groups?: {
-            id: 'recent' | 'stopped' | 'old';
+        groups?: undefined | {
+            id: 'old' | 'recent' | 'stopped';
             itemIds: string[];
             olderThanDays?: number | undefined;
-        }[] | undefined;
+        }[];
     };
     readonly "machines.storage.size.refresh": {
         revision: number;
@@ -1292,7 +1415,7 @@ export type MachineStorageActionResultById = {
             canGoBytes?: number | undefined;
         }[];
         categories: {
-            categoryId: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData';
+            categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
             size: {
                 allocatedBytes: number;
                 freesBytes: number;
@@ -1303,13 +1426,14 @@ export type MachineStorageActionResultById = {
             };
             canGoBytes: number;
             count: number;
-            detailFacts: Record<string, string | number | boolean | null>;
+            detailFacts: Record<string, boolean | null | number | string>;
+            revision?: number | undefined;
         }[];
         suggestionsTop: {
             itemId: string;
-            kind: 'category-item' | 'worktree' | 'suggestion' | 'disk-node';
+            kind: 'category-item' | 'disk-node' | 'suggestion' | 'worktree';
             title: string;
-            evidence: ('unknown' | 'directory_permission_unavailable' | 'managed_acp_install' | 'runner_snapshot_root' | 'managed_cache_root' | 'connected_service_home' | 'execution_run_isolation_owner' | 'execution_run_isolation_facts_unavailable' | 'happier_temporary_directory' | 'temporary_lifecycle_owner' | 'temporary_lifecycle_facts_unavailable' | 'voice_model_pack_install_record' | 'model_pack_facts_unavailable' | 'browser_recording_owner' | 'recording_expired' | 'happier_trash_root' | 'happier_data_remainder' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'session_workspace_upload' | 'worktree_parent' | 'registration_unavailable' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'log_file_modified_time' | 'trusted_disk_index' | 'scm_ignored' | 'browser_profile_cache' | 'unused_after_policy' | 'repository_not_in_use' | 'verified_cache_location' | 'empty_folder_relisted' | 'trash_entry' | `recognizer:${string}` | `manifest:${string}`)[];
+            evidence: ('browser_profile_cache' | 'browser_recording_owner' | 'connected_service_home' | 'directory_permission_unavailable' | 'empty_folder_relisted' | 'execution_run_isolation_facts_unavailable' | 'execution_run_isolation_owner' | 'happier_data_remainder' | 'happier_temporary_directory' | 'happier_trash_root' | 'log_file_modified_time' | 'managed_acp_install' | 'managed_cache_root' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'model_pack_facts_unavailable' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'recording_expired' | 'registration_unavailable' | 'repository_not_in_use' | 'runner_snapshot_root' | 'scm_ignored' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'session_workspace_upload' | 'temporary_lifecycle_facts_unavailable' | 'temporary_lifecycle_owner' | 'trash_entry' | 'trusted_disk_index' | 'unknown' | 'unused_after_policy' | 'verified_cache_location' | 'voice_model_pack_install_record' | 'worktree_parent' | `manifest:${string}` | `recognizer:${string}`)[];
             path: string;
             size: {
                 allocatedBytes: number;
@@ -1319,19 +1443,19 @@ export type MachineStorageActionResultById = {
                 atLeast: boolean;
                 freesUpToBytes?: number | undefined;
             };
-            verdict: 'check' | 'safe' | 'caution' | 'keep' | 'forbidden';
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
             reason: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
             };
             collectable: boolean;
-            categoryId?: 'worktrees' | 'caches' | 'modelPacks' | 'sessionFolders' | 'logs' | 'agentHomes' | 'temporary' | 'recordings' | 'trash' | 'ownData' | undefined;
+            categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
             lastChangedAt?: number | undefined;
             lastUsedAt?: number | undefined;
-            loses?: {
-                code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                detail?: Record<string, string | number | boolean | null> | undefined;
-            }[] | undefined;
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
         }[];
         pile: {
             count: number;
@@ -1340,8 +1464,8 @@ export type MachineStorageActionResultById = {
                 itemId: string;
                 path: string;
                 reason: {
-                    code: 'main_checkout' | 'in_use' | 'changed_files' | 'unpushed_commits' | 'unsaved_edits' | 'open_pr' | 'recent' | 'always_kept' | 'merged_clean' | 'branch_gone' | 'clean_pushed' | 'rebuilds' | 'reinstalls' | 'downloads_again' | 'stopped' | 'old' | 'attachments_go' | 'feature_waits' | 'not_rebuildable' | 'personal_folder' | 'agent_home' | 'credentials' | 'user_protected' | 'contains' | 'root' | 'system' | 'home_folder' | 'happier_install' | 'happier_data' | 'contains_forbidden' | 'facts_unavailable' | 'changed_since_review' | 'missing' | 'trash_unavailable' | 'destination_occupied' | 'parent_missing' | 'unauthorized' | 'operation_failed' | 'unsupported' | 'has_submodules';
-                    detail?: Record<string, string | number | boolean | null> | undefined;
+                    code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                    detail?: Record<string, boolean | null | number | string> | undefined;
                 };
             }[];
         };
@@ -1355,15 +1479,15 @@ export type MachineStorageActionResultById = {
             scans: {
                 scanId: string;
                 target: {
-                    volumeId: string;
-                } | {
                     folderPath: string;
+                } | {
+                    volumeId: string;
                 };
-                status: 'running' | 'complete' | 'cancelled' | 'interrupted' | 'failed';
+                status: 'cancelled' | 'complete' | 'failed' | 'interrupted' | 'running';
                 progress: {
                     sizedBytes: number;
-                    usedBytes: number;
                     items: number;
+                    usedBytes?: number | undefined;
                     currentPath?: string | undefined;
                     stuckSinceMs?: number | undefined;
                 };
@@ -1381,7 +1505,7 @@ export type MachineStorageActionResultById = {
                     }[];
                 };
                 fullDiskAccess: {
-                    state: 'unknown' | 'granted' | 'not_granted' | 'not_applicable';
+                    state: 'granted' | 'not_applicable' | 'not_granted' | 'unknown';
                     binary: {
                         name: string;
                         path: string;
@@ -1393,9 +1517,47 @@ export type MachineStorageActionResultById = {
                 apfsLocalSnapshotCount?: number | undefined;
             }[];
         };
-        scanShortcuts?: {
-            kind: 'downloads' | 'cache';
+        incomplete?: undefined | {
+            categoryId: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees';
+            reason: 'permission_denied';
+            remedy: 'grant_admin_access_or_run_as_machine_owner';
+        }[];
+        pileRevision?: number | undefined;
+        itemsRevision?: number | undefined;
+        scanShortcuts?: undefined | {
+            kind: 'cache' | 'downloads' | 'folder';
             path: string;
-        }[] | undefined;
+        }[];
+        suggestionsSafeTop?: undefined | {
+            itemId: string;
+            kind: 'category-item' | 'disk-node' | 'suggestion' | 'worktree';
+            title: string;
+            evidence: ('browser_profile_cache' | 'browser_recording_owner' | 'connected_service_home' | 'directory_permission_unavailable' | 'empty_folder_relisted' | 'execution_run_isolation_facts_unavailable' | 'execution_run_isolation_owner' | 'happier_data_remainder' | 'happier_temporary_directory' | 'happier_trash_root' | 'log_file_modified_time' | 'managed_acp_install' | 'managed_cache_root' | 'managed_session_directory_record' | 'managed_session_directory_record_unavailable' | 'model_pack_facts_unavailable' | 'nested_worktree_kept' | 'nested_worktrees_children_first' | 'recording_expired' | 'registration_unavailable' | 'repository_not_in_use' | 'runner_snapshot_root' | 'scm_ignored' | 'scm_orphan_back_reference' | 'scm_registered_worktree' | 'session_workspace_upload' | 'temporary_lifecycle_facts_unavailable' | 'temporary_lifecycle_owner' | 'trash_entry' | 'trusted_disk_index' | 'unknown' | 'unused_after_policy' | 'verified_cache_location' | 'voice_model_pack_install_record' | 'worktree_parent' | `manifest:${string}` | `recognizer:${string}`)[];
+            path: string;
+            size: {
+                allocatedBytes: number;
+                freesBytes: number;
+                sharedBytes: number;
+                sharedExtentsUnmeasured: boolean;
+                atLeast: boolean;
+                freesUpToBytes?: number | undefined;
+            };
+            verdict: 'caution' | 'check' | 'forbidden' | 'keep' | 'safe';
+            reason: {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            };
+            collectable: boolean;
+            categoryId?: 'agentHomes' | 'caches' | 'logs' | 'modelPacks' | 'ownData' | 'recordings' | 'sessionFolders' | 'temporary' | 'trash' | 'worktrees' | undefined;
+            lastChangedAt?: number | undefined;
+            lastUsedAt?: number | undefined;
+            loses?: undefined | {
+                code: 'agent_home' | 'always_kept' | 'attachments_go' | 'branch_gone' | 'changed_files' | 'changed_since_review' | 'clean_pushed' | 'contains' | 'contains_forbidden' | 'credentials' | 'destination_occupied' | 'downloads_again' | 'facts_unavailable' | 'feature_waits' | 'happier_data' | 'happier_install' | 'has_submodules' | 'home_folder' | 'in_use' | 'main_checkout' | 'merged_clean' | 'missing' | 'not_rebuildable' | 'old' | 'open_pr' | 'operation_failed' | 'parent_missing' | 'personal_folder' | 'policy_unavailable' | 'rebuilds' | 'recent' | 'reinstalls' | 'root' | 'stopped' | 'system' | 'trash_unavailable' | 'unauthorized' | 'unpushed_commits' | 'unsaved_edits' | 'unsupported' | 'user_protected';
+                detail?: Record<string, boolean | null | number | string> | undefined;
+            }[];
+        }[];
+        suggestionsSafeTotalCount?: number | undefined;
+        suggestionsSafeFreesBytes?: number | undefined;
+        suggestionsTotalCount?: number | undefined;
     };
 };

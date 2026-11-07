@@ -9,53 +9,72 @@ export type RemoteHostsActionInputById = {
     readonly "remote_hosts.read": {
         hostId: string;
     };
-    readonly "remote_hosts.add": Record<string, never>;
+    readonly "remote_hosts.add": Record<string, never> & {
+        clientId?: string | undefined;
+    };
     readonly "remote_hosts.edit": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.save": {
         host: {
             ssh: {
                 target: string;
                 authMode: 'agent' | 'keyfile' | 'password';
-                passwordSecretRef?: string | null | undefined;
-                identityPrivateKeySecretRef?: string | null | undefined;
-                port?: number | null | undefined;
+                passwordSecretRef?: null | string | undefined;
+                identityPrivateKeySecretRef?: null | string | undefined;
+                port?: null | number | undefined;
             };
             id: string;
             name: string;
             createdAt: number;
             updatedAt: number;
-            lastUsedAt: number | null;
-            linkedMachineId?: string | null | undefined;
-            linkedRelayProfileId?: string | null | undefined;
+            lastUsedAt: null | number;
+            linkedMachineId?: null | string | undefined;
+            linkedRelayProfileId?: null | string | undefined;
         };
-        expectedRevision: number | 'absent';
-        referencedSavedSecretRevisions?: {
+        expectedRevision: 'absent' | number;
+        referencedSavedSecretRevisions?: undefined | {
             resourceId: string;
             revision: number;
-        }[] | undefined;
-        savedSecretResources?: {
+        }[];
+        savedSecretResources?: undefined | {
             resourceId: string;
             displayName: string;
-            kind: 'password' | 'apiKey' | 'token' | 'other';
-            encryptionMode: 'plain' | 'e2ee';
+            kind: 'apiKey' | 'other' | 'password' | 'token';
+            encryptionMode: 'e2ee' | 'plain';
             storedContent: {
+                t: 'encrypted';
+                c: string;
+                storage?: undefined | {
+                    kind: 'external';
+                    provider: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                    providerLabel?: string | undefined;
+                } | {
+                    kind: 'passkey';
+                } | {
+                    kind: 'value';
+                };
+            } | {
                 t: 'plain';
                 v: {
                     v: 1;
                     name: string;
-                    kind: 'password' | 'apiKey' | 'token' | 'other';
+                    kind: 'apiKey' | 'other' | 'password' | 'token';
                     value: string;
-                    createdByPlugin?: {
+                    createdByPlugin?: undefined | {
                         pluginId: string;
                         secretId: string;
-                    } | undefined;
+                    };
                 } | {
                     v: 2;
                     name: string;
-                    kind: 'password' | 'apiKey' | 'token' | 'other';
+                    kind: 'apiKey' | 'other' | 'password' | 'token';
                     source: {
                         kind: 'external';
                         contribution: {
@@ -64,26 +83,26 @@ export type RemoteHostsActionInputById = {
                         };
                         account: string;
                         reference: string;
-                        metadata?: {
-                            vault: {
-                                id: string;
-                                name: string;
-                            };
-                            item: {
-                                id: string;
-                                title: string;
-                            };
+                        metadata?: undefined | {
                             field: {
                                 id: string;
                                 title: string;
                                 kind: string;
                             };
-                        } | undefined;
+                            item: {
+                                id: string;
+                                title: string;
+                            };
+                            vault: {
+                                id: string;
+                                name: string;
+                            };
+                        };
                     };
-                    createdByPlugin?: {
+                    createdByPlugin?: undefined | {
                         pluginId: string;
                         secretId: string;
-                    } | undefined;
+                    };
                 } | {
                     v: 2;
                     name: string;
@@ -101,112 +120,99 @@ export type RemoteHostsActionInputById = {
                         userName?: string | undefined;
                         userDisplayName?: string | undefined;
                     };
-                    createdByPlugin?: {
+                    createdByPlugin?: undefined | {
                         pluginId: string;
                         secretId: string;
-                    } | undefined;
+                    };
                 };
-                storage?: {
-                    kind: 'value';
-                } | {
-                    kind: 'passkey';
-                } | {
+                storage?: undefined | {
                     kind: 'external';
                     provider: {
                         pluginId: string;
                         localId: string;
                     };
                     providerLabel?: string | undefined;
-                } | undefined;
-            } | {
-                t: 'encrypted';
-                c: string;
-                storage?: {
-                    kind: 'value';
                 } | {
                     kind: 'passkey';
                 } | {
-                    kind: 'external';
-                    provider: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                    providerLabel?: string | undefined;
-                } | undefined;
+                    kind: 'value';
+                };
             };
             accountGrants?: string[] | undefined;
             teamGrants?: string[] | undefined;
             groupGrants?: string[] | undefined;
-            keyEnvelopes?: {
+            keyEnvelopes?: undefined | {
                 recipientAccountId: string;
                 encryptedDataKey: string;
                 recipientContentPublicKeyFingerprint: string;
-            }[] | undefined;
-        }[] | undefined;
-        referenceCensus?: {
+            }[];
+        }[];
+        referenceCensus?: undefined | {
             scope: 'catalogs';
-            accountMode: 'plain' | 'e2ee';
+            accountMode: 'e2ee' | 'plain';
             catalogs: {
-                mcp?: number | 'absent' | undefined;
-                acp?: number | 'absent' | undefined;
-                providerConnections?: number | 'absent' | undefined;
-                connectedConfigurations?: number | 'absent' | undefined;
-                connectedPurposes?: number | 'absent' | undefined;
-                registrySources?: number | 'absent' | undefined;
+                mcp?: 'absent' | number | undefined;
+                acp?: 'absent' | number | undefined;
+                providerConnections?: 'absent' | number | undefined;
+                connectedConfigurations?: 'absent' | number | undefined;
+                connectedPurposes?: 'absent' | number | undefined;
+                registrySources?: 'absent' | number | undefined;
             };
-            remoteHosts?: {
-                revision: number | 'absent';
+            remoteHosts?: undefined | {
+                revision: 'absent' | number;
                 resourceRefs: string[];
-            } | undefined;
-            notificationChannels?: {
-                revision: number | 'absent';
+            };
+            notificationChannels?: undefined | {
+                revision: 'absent' | number;
                 resourceRefs: string[];
-            } | undefined;
-        } | undefined;
+            };
+        };
     };
     readonly "remote_hosts.duplicate": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         newHostId: string;
         name: string;
     };
     readonly "remote_hosts.delete": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
     };
     readonly "remote_hosts.connect": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.setup_as_machine": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.relay.use": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.relay.configure": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         operation: {
             kind: 'configure';
             config: {
                 provider: {
-                    pluginId: string;
-                    localId: string;
-                } | {
                     kind: 'builtin';
                     id: string;
+                } | {
+                    pluginId: string;
+                    localId: string;
                 };
                 config: JsonValue;
                 credentialRefs: {
                     purpose: string;
                     credentialRef: {
-                        ref: string;
-                        resourceRevision: number;
-                        kind: 'savedSecret';
-                    } | {
                         kind: 'connectedAccount';
                         account: {
                             service: {
@@ -215,64 +221,94 @@ export type RemoteHostsActionInputById = {
                             };
                             accountId: string;
                         };
+                    } | {
+                        ref: string;
+                        resourceRevision: number;
+                        kind: 'savedSecret';
                     };
                 }[];
             };
         } | {
             kind: 'disable';
         };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.relay.test": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.cli.install_or_update": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.daemon.install_or_update": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.daemon.start": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.daemon.stop": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.daemon.restart": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.relay.status": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.relay.access.status": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.relay.install_or_update": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.relay.start": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.relay.stop": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.relay.restart": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.credential.change": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
         credential: {
             kind: 'agent';
         } | {
@@ -289,9 +325,13 @@ export type RemoteHostsActionInputById = {
     };
     readonly "remote_hosts.personal_home.erase": {
         hostId: string;
-        expectedRevision: number | 'absent';
+        expectedRevision: 'absent' | number;
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "remote_hosts.trusted_keys.list": Record<string, never>;
+    readonly "remote_hosts.trusted_keys.list": Record<string, never> & {
+        clientId?: string | undefined;
+    };
     readonly "remote_hosts.trusted_keys.remove": {
         key: {
             host: string;
@@ -299,6 +339,8 @@ export type RemoteHostsActionInputById = {
             algorithm: string;
             fingerprintSha256: string;
         };
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.trusted_keys.clear": {
         keys: {
@@ -307,54 +349,57 @@ export type RemoteHostsActionInputById = {
             algorithm: string;
             fingerprintSha256: string;
         }[];
+    } & {
+        clientId?: string | undefined;
     };
     readonly "remote_hosts.tunnel.stop": {
         target: {
-            kind: 'native';
-            leaseId: string;
-        } | {
             kind: 'desktop';
             tunnelKey: string;
+        } | {
+            kind: 'native';
+            leaseId: string;
         };
+    } & {
+        clientId?: string | undefined;
     };
-    readonly "remote_hosts.tunnel.list": Record<string, never>;
+    readonly "remote_hosts.tunnel.list": Record<string, never> & {
+        clientId?: string | undefined;
+    };
 };
 export type RemoteHostsActionResultById = {
     readonly "remote_hosts.list": {
         status: 'conflict';
         revision: number;
     } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
         status: 'listed';
         hosts: {
             ssh: {
                 target: string;
                 authMode: 'agent' | 'keyfile' | 'password';
-                passwordSecretRef?: string | null | undefined;
-                identityPrivateKeySecretRef?: string | null | undefined;
-                port?: number | null | undefined;
+                passwordSecretRef?: null | string | undefined;
+                identityPrivateKeySecretRef?: null | string | undefined;
+                port?: null | number | undefined;
             };
             id: string;
             name: string;
             createdAt: number;
             updatedAt: number;
-            lastUsedAt: number | null;
-            linkedMachineId?: string | null | undefined;
-            linkedRelayProfileId?: string | null | undefined;
+            lastUsedAt: null | number;
+            linkedMachineId?: null | string | undefined;
+            linkedRelayProfileId?: null | string | undefined;
         }[];
-        revision: number | 'absent';
+        revision: 'absent' | number;
         complete: boolean;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.read": {
         status: 'conflict';
         revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
     } | {
         status: 'outcome_unknown';
     } | {
@@ -363,54 +408,57 @@ export type RemoteHostsActionResultById = {
             ssh: {
                 target: string;
                 authMode: 'agent' | 'keyfile' | 'password';
-                passwordSecretRef?: string | null | undefined;
-                identityPrivateKeySecretRef?: string | null | undefined;
-                port?: number | null | undefined;
+                passwordSecretRef?: null | string | undefined;
+                identityPrivateKeySecretRef?: null | string | undefined;
+                port?: null | number | undefined;
             };
             id: string;
             name: string;
             createdAt: number;
             updatedAt: number;
-            lastUsedAt: number | null;
-            linkedMachineId?: string | null | undefined;
-            linkedRelayProfileId?: string | null | undefined;
+            lastUsedAt: null | number;
+            linkedMachineId?: null | string | undefined;
+            linkedRelayProfileId?: null | string | undefined;
         };
-        revision: number | 'absent';
+        revision: 'absent' | number;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.add": {
         status: 'conflict';
         revision: number;
     } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
         status: 'opened';
         route: string;
         hostId?: string | undefined;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.edit": {
         status: 'conflict';
         revision: number;
     } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
         status: 'opened';
         route: string;
         hostId?: string | undefined;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.save": {
         status: 'conflict';
         revision: number;
     } | {
+        status: 'outcome_unknown';
+    } | {
         status: 'unavailable';
         reason: string;
-    } | {
-        status: 'outcome_unknown';
     } | {
         status: 'updated';
         hostId: string;
@@ -420,10 +468,10 @@ export type RemoteHostsActionResultById = {
         status: 'conflict';
         revision: number;
     } | {
+        status: 'outcome_unknown';
+    } | {
         status: 'unavailable';
         reason: string;
-    } | {
-        status: 'outcome_unknown';
     } | {
         status: 'updated';
         hostId: string;
@@ -433,35 +481,19 @@ export type RemoteHostsActionResultById = {
         status: 'conflict';
         revision: number;
     } | {
+        status: 'outcome_unknown';
+    } | {
         status: 'unavailable';
         reason: string;
-    } | {
-        status: 'outcome_unknown';
     } | {
         status: 'updated';
         hostId: string;
         revision: number;
     };
     readonly "remote_hosts.connect": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -469,33 +501,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.setup_as_machine": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -503,46 +535,46 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.relay.use": {
         status: 'conflict';
         revision: number;
     } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
         status: 'opened';
         route: string;
         hostId?: string | undefined;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.relay.configure": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -550,33 +582,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.relay.test": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -584,33 +616,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.cli.install_or_update": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -618,33 +650,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.daemon.install_or_update": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -652,33 +684,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.daemon.start": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -686,33 +718,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.daemon.stop": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -720,33 +752,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.daemon.restart": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -754,33 +786,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.relay.status": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -788,33 +820,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.relay.access.status": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -822,33 +854,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.relay.install_or_update": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -856,33 +888,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.relay.start": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -890,33 +922,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.relay.stop": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -924,33 +956,33 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.relay.restart": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -958,46 +990,46 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.credential.change": {
         status: 'conflict';
         revision: number;
     } | {
+        status: 'outcome_unknown';
+    } | {
         status: 'unavailable';
         reason: string;
-    } | {
-        status: 'outcome_unknown';
     } | {
         status: 'updated';
         hostId: string;
         revision: number;
     };
     readonly "remote_hosts.personal_home.erase": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -1005,21 +1037,32 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
+    } | {
+        status: 'conflict';
+        revision: number;
+    } | {
+        status: 'connected';
     } | {
         status: 'outcome_unknown';
         taskId: string;
     } | {
-        status: 'connected';
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.trusted_keys.list": {
         status: 'conflict';
         revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
-        status: 'outcome_unknown';
     } | {
         status: 'listed';
         keys: {
@@ -1028,49 +1071,38 @@ export type RemoteHostsActionResultById = {
             algorithm: string;
             fingerprintSha256: string;
         }[];
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.trusted_keys.remove": {
         status: 'conflict';
         revision: number;
     } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
         status: 'outcome_unknown';
     } | {
         status: 'removed';
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
     readonly "remote_hosts.trusted_keys.clear": {
         status: 'conflict';
         revision: number;
     } | {
-        status: 'unavailable';
-        reason: string;
-    } | {
         status: 'outcome_unknown';
     } | {
         status: 'removed';
-    };
-    readonly "remote_hosts.tunnel.stop": {
-        status: 'conflict';
-        revision: number;
     } | {
         status: 'unavailable';
         reason: string;
-    } | {
-        status: 'outcome_unknown';
-    } | {
-        status: 'task_started';
-        taskId: string;
-    } | {
+    };
+    readonly "remote_hosts.tunnel.stop": {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -1078,35 +1110,35 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
-        status: 'outcome_unknown';
-        taskId: string;
+        status: 'conflict';
+        revision: number;
     } | {
         status: 'connected';
     } | {
-        status: 'released';
-    };
-    readonly "remote_hosts.tunnel.list": {
-        status: 'conflict';
-        revision: number;
-    } | {
-        status: 'unavailable';
-        reason: string;
+        status: 'outcome_unknown';
+        taskId: string;
     } | {
         status: 'outcome_unknown';
+    } | {
+        status: 'released';
     } | {
         status: 'task_started';
         taskId: string;
     } | {
+        status: 'unavailable';
+        reason: string;
+    };
+    readonly "remote_hosts.tunnel.list": {
         status: 'completed';
         taskId: string;
         result: {
-            protocolVersion: 1;
-            taskId: string;
-            ok: true;
-            data?: SystemTaskJsonValue | undefined;
-        } | {
             protocolVersion: 1;
             taskId: string;
             ok: false;
@@ -1114,10 +1146,15 @@ export type RemoteHostsActionResultById = {
                 code: string;
                 message: string;
             };
+        } | {
+            protocolVersion: 1;
+            taskId: string;
+            ok: true;
+            data?: SystemTaskJsonValue | undefined;
         };
     } | {
-        status: 'outcome_unknown';
-        taskId: string;
+        status: 'conflict';
+        revision: number;
     } | {
         status: 'connected';
     } | {
@@ -1128,8 +1165,8 @@ export type RemoteHostsActionResultById = {
                 key: string;
                 remoteHostId: string;
                 channelMode: 'loopback-port';
-                purpose: 'server-http' | 'server-websocket' | 'relay-runtime';
-                status: 'starting' | 'ready' | 'degraded' | 'failed' | 'stopped';
+                purpose: 'relay-runtime' | 'server-http' | 'server-websocket';
+                status: 'degraded' | 'failed' | 'ready' | 'starting' | 'stopped';
                 startedAt: string;
                 localUrl?: string | undefined;
                 expiresAt?: string | undefined;
@@ -1137,9 +1174,20 @@ export type RemoteHostsActionResultById = {
             platformLimitations: {
                 id: string;
                 severity: 'error' | 'info' | 'warning';
-                reason: 'authentication-failed' | 'foreground-only' | 'host-key-mismatch' | 'host-key-rejected' | 'host-key-untrusted' | 'loopback-bind-failed' | 'native-module-unavailable' | 'remote-service-unreachable' | 'platform-suspended' | 'network-captive-portal';
+                reason: 'authentication-failed' | 'foreground-only' | 'host-key-mismatch' | 'host-key-rejected' | 'host-key-untrusted' | 'loopback-bind-failed' | 'native-module-unavailable' | 'network-captive-portal' | 'platform-suspended' | 'remote-service-unreachable';
                 message: string;
             }[];
         };
+    } | {
+        status: 'outcome_unknown';
+        taskId: string;
+    } | {
+        status: 'outcome_unknown';
+    } | {
+        status: 'task_started';
+        taskId: string;
+    } | {
+        status: 'unavailable';
+        reason: string;
     };
 };

@@ -9,11 +9,11 @@ export type ProjectSourcesActionInputById = {
         projectSourceId: string;
         expectedSourceRevision: number;
         expectedRevision: number;
-        content: {
+        content: null | {
             contentArtifactId: string;
             contentHeaderVersion: number;
             contentBodyVersion: number;
-        } | null;
+        };
     };
     readonly "projects.sources.moveToTeam": {
         serverId: string;
@@ -21,21 +21,23 @@ export type ProjectSourcesActionInputById = {
         expectedRevision: number;
         teamId: string;
         requestKey: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "projects.sources.list": {
         serverId: string;
         query?: string | undefined;
-        audience?: {
+        audience?: undefined | {
             kind: 'account';
             accountId: string;
-        } | {
-            kind: 'team';
-            teamId: string;
         } | {
             kind: 'group';
             teamId: string;
             groupId: string;
-        } | undefined;
+        } | {
+            kind: 'team';
+            teamId: string;
+        };
         cursor?: string | undefined;
         limit?: number | undefined;
     };
@@ -47,46 +49,46 @@ export type ProjectSourcesActionInputById = {
         name: string;
         serverId: string;
         requestKey: string;
-        repository?: {
+        repository?: undefined | {
             provider: {
                 id: string;
-                kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                 displayName: string;
                 baseUrl: string;
             };
             repository: {
                 nameWithOwner: string;
-                defaultBranch?: string | null | undefined;
-                visibility?: 'private' | 'public' | 'internal' | undefined;
+                defaultBranch?: null | string | undefined;
+                visibility?: 'internal' | 'private' | 'public' | undefined;
                 webUrl?: string | undefined;
                 cloneUrl?: string | undefined;
                 sshUrl?: string | undefined;
             };
-            protocol: 'auto' | 'ssh' | 'https';
-        } | undefined;
-        owner?: {
+            protocol: 'auto' | 'https' | 'ssh';
+        };
+        owner?: undefined | {
             kind: 'account';
             accountId: string;
         } | {
             kind: 'team';
             teamId: string;
-        } | undefined;
+        };
         defaultRef?: string | undefined;
         subdir?: string | undefined;
-        audience?: {
+        audience?: undefined | {
             principal: {
                 kind: 'account';
                 accountId: string;
             } | {
-                kind: 'team';
-                teamId: string;
-            } | {
                 kind: 'group';
                 teamId: string;
                 groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
             };
             level: 'view';
-        }[] | undefined;
+        }[];
     };
     readonly "projects.sources.update": {
         serverId: string;
@@ -94,70 +96,78 @@ export type ProjectSourcesActionInputById = {
         expectedRevision: number;
         patch: {
             name?: string | undefined;
-            repository?: {
+            repository?: null | undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | null | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
-            defaultRef?: string | null | undefined;
-            subdir?: string | null | undefined;
-            audience?: {
+            };
+            defaultRef?: null | string | undefined;
+            subdir?: null | string | undefined;
+            audience?: undefined | {
                 principal: {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
-            }[] | undefined;
-            attachment?: {
+            }[];
+            attachment?: undefined | {
+                enabled: boolean;
+                kind: 'set_enabled';
+                attachmentId: string;
+            } | {
                 kind: 'attach';
                 attachment: {
-                    purpose: 'dashboard';
-                    ref: {
-                        kind: 'doc' | 'bundle';
-                        artifactId: string;
-                        serverId?: string | undefined;
-                    };
-                } | {
                     purpose: 'context';
                     entry: {
                         id: string;
                         ref: {
-                            kind: 'doc' | 'bundle';
+                            kind: 'bundle' | 'doc';
                             artifactId: string;
                             serverId?: string | undefined;
                         };
                         enabled?: boolean | undefined;
-                        maxChars?: number | undefined;
                         required?: boolean | undefined;
+                        maxChars?: number | undefined;
                         placement?: 'system_append' | undefined;
                     };
+                } | {
+                    purpose: 'dashboard';
+                    ref: {
+                        kind: 'bundle' | 'doc';
+                        artifactId: string;
+                        serverId?: string | undefined;
+                    };
                 };
+            } | {
+                kind: 'budget';
+                attachmentId: string;
+                maxChars: null | number;
             } | {
                 kind: 'detach';
                 purpose: 'context';
@@ -166,23 +176,15 @@ export type ProjectSourcesActionInputById = {
                 kind: 'detach';
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
             } | {
                 kind: 'reorder';
                 attachmentId: string;
-                beforeId: string | null;
-            } | {
-                kind: 'budget';
-                attachmentId: string;
-                maxChars: number | null;
-            } | {
-                kind: 'set_enabled';
-                enabled: boolean;
-                attachmentId: string;
-            } | undefined;
+                beforeId: null | string;
+            };
         };
     };
     readonly "projects.sources.delete": {
@@ -193,18 +195,18 @@ export type ProjectSourcesActionInputById = {
 };
 export type ProjectSourcesActionResultById = {
     readonly "projects.deploymentDefaults.set": {
+        ok: false;
+        error: 'project_defaults_access_denied' | 'project_defaults_conflict' | 'project_defaults_content_unavailable' | 'project_defaults_invalid' | 'project_defaults_unavailable';
+    } | {
         ok: true;
         projectSourceId: string;
         sourceRevision: number;
         revision: number;
-        content: {
+        content: null | {
             contentArtifactId: string;
             contentHeaderVersion: number;
             contentBodyVersion: number;
-        } | null;
-    } | {
-        ok: false;
-        error: 'project_defaults_invalid' | 'project_defaults_unavailable' | 'project_defaults_access_denied' | 'project_defaults_conflict' | 'project_defaults_content_unavailable';
+        };
     };
     readonly "projects.sources.moveToTeam": {
         kind: 'completed';
@@ -217,12 +219,12 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
@@ -231,23 +233,23 @@ export type ProjectSourcesActionResultById = {
                 kind: 'team';
                 teamId: string;
             };
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
+                protocol: 'auto' | 'https' | 'ssh';
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -255,9 +257,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -268,7 +270,7 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
@@ -279,14 +281,60 @@ export type ProjectSourcesActionResultById = {
             machineId: string;
             operationId: string;
         }[];
+        resourceEffects?: undefined | {
+            machineGrants: {
+                machineId: string;
+                principal: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                };
+                level: 'admin' | 'view';
+                readiness: 'key_pending' | 'ready' | 'refused';
+            }[];
+            secretCopies: {
+                ref: string;
+                resourceRevision: number;
+                sourceRef: string;
+                sourceRevision: number;
+            }[];
+            artifacts: {
+                artifactId: string;
+                preparation?: undefined | {
+                    status: 'pending';
+                };
+            }[];
+            bindingArtifacts: {
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                environmentId: string;
+            }[];
+            bindings: {
+                environmentId: string;
+                revision: number;
+            }[];
+            renewedTokenIds: string[];
+            renewedTriggers: {
+                automationId: string;
+                triggerId: string;
+                revision: number;
+            }[];
+        };
     } | {
-        kind: 'held' | 'partial' | 'outcome_unknown';
+        kind: 'held' | 'outcome_unknown' | 'partial';
         childOperations: {
             serverId: string;
             machineId: string;
             operationId: string;
         }[];
-        source?: {
+        source?: undefined | {
             id: string;
             revision: number;
             name: string;
@@ -295,40 +343,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -336,9 +384,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -349,16 +397,63 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
             })[] | undefined;
-        } | undefined;
+        };
+        resourceEffects?: undefined | {
+            machineGrants: {
+                machineId: string;
+                principal: {
+                    kind: 'account';
+                    accountId: string;
+                } | {
+                    kind: 'group';
+                    teamId: string;
+                    groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
+                };
+                level: 'admin' | 'view';
+                readiness: 'key_pending' | 'ready' | 'refused';
+            }[];
+            secretCopies: {
+                ref: string;
+                resourceRevision: number;
+                sourceRef: string;
+                sourceRevision: number;
+            }[];
+            artifacts: {
+                artifactId: string;
+                preparation?: undefined | {
+                    status: 'pending';
+                };
+            }[];
+            bindingArtifacts: {
+                contentArtifactId: string;
+                contentHeaderVersion: number;
+                contentBodyVersion: number;
+                environmentId: string;
+            }[];
+            bindings: {
+                environmentId: string;
+                revision: number;
+            }[];
+            renewedTokenIds: string[];
+            renewedTriggers: {
+                automationId: string;
+                triggerId: string;
+                revision: number;
+            }[];
+        };
     } | {
         ok: false;
-        error: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable';
-        current?: {
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        effectAttempted?: boolean | undefined;
+        current?: undefined | {
             id: string;
             revision: number;
             name: string;
@@ -367,40 +462,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -408,9 +503,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -421,17 +516,18 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
             })[] | undefined;
-        } | undefined;
+        };
     };
     readonly "projects.sources.list": {
         ok: false;
-        error: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable';
-        current?: {
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        effectAttempted?: boolean | undefined;
+        current?: undefined | {
             id: string;
             revision: number;
             name: string;
@@ -440,40 +536,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -481,9 +577,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -494,12 +590,12 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
             })[] | undefined;
-        } | undefined;
+        };
     } | {
         ok: true;
         sources: {
@@ -511,40 +607,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -552,9 +648,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -565,7 +661,7 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
@@ -573,13 +669,14 @@ export type ProjectSourcesActionResultById = {
         }[];
         coverage: {
             complete: boolean;
-            nextCursor: string | null;
+            nextCursor: null | string;
         };
     };
     readonly "projects.sources.read": {
         ok: false;
-        error: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable';
-        current?: {
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        effectAttempted?: boolean | undefined;
+        current?: undefined | {
             id: string;
             revision: number;
             name: string;
@@ -588,40 +685,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -629,9 +726,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -642,12 +739,12 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
             })[] | undefined;
-        } | undefined;
+        };
     } | {
         ok: true;
         source: {
@@ -659,40 +756,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -700,9 +797,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -713,7 +810,7 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
@@ -723,8 +820,9 @@ export type ProjectSourcesActionResultById = {
     };
     readonly "projects.sources.create": {
         ok: false;
-        error: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable';
-        current?: {
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        effectAttempted?: boolean | undefined;
+        current?: undefined | {
             id: string;
             revision: number;
             name: string;
@@ -733,40 +831,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -774,9 +872,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -787,12 +885,12 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
             })[] | undefined;
-        } | undefined;
+        };
     } | {
         ok: true;
         source: {
@@ -804,40 +902,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -845,9 +943,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -858,7 +956,7 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
@@ -868,8 +966,9 @@ export type ProjectSourcesActionResultById = {
     };
     readonly "projects.sources.update": {
         ok: false;
-        error: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable';
-        current?: {
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        effectAttempted?: boolean | undefined;
+        current?: undefined | {
             id: string;
             revision: number;
             name: string;
@@ -878,40 +977,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -919,9 +1018,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -932,12 +1031,12 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
             })[] | undefined;
-        } | undefined;
+        };
     } | {
         ok: true;
         source: {
@@ -949,40 +1048,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -990,9 +1089,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -1003,7 +1102,7 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
@@ -1013,8 +1112,9 @@ export type ProjectSourcesActionResultById = {
     };
     readonly "projects.sources.delete": {
         ok: false;
-        error: 'source_unavailable' | 'source_access_denied' | 'source_invalid' | 'source_conflict' | 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_backend_unavailable';
-        current?: {
+        error: 'artifact_unavailable' | 'artifact_wrong_kind' | 'source_access_denied' | 'source_backend_unavailable' | 'source_conflict' | 'source_invalid' | 'source_unavailable';
+        effectAttempted?: boolean | undefined;
+        current?: undefined | {
             id: string;
             revision: number;
             name: string;
@@ -1023,40 +1123,40 @@ export type ProjectSourcesActionResultById = {
                     kind: 'account';
                     accountId: string;
                 } | {
-                    kind: 'team';
-                    teamId: string;
-                } | {
                     kind: 'group';
                     teamId: string;
                     groupId: string;
+                } | {
+                    kind: 'team';
+                    teamId: string;
                 };
                 level: 'view';
             }[];
             createdByAccountId: string;
-            repository?: {
+            repository?: undefined | {
                 provider: {
                     id: string;
-                    kind: 'unknown' | 'custom' | 'github' | 'gitlab' | 'bitbucket' | 'azure-devops';
+                    kind: 'azure-devops' | 'bitbucket' | 'custom' | 'github' | 'gitlab' | 'unknown';
                     displayName: string;
                     baseUrl: string;
                 };
                 repository: {
                     nameWithOwner: string;
-                    defaultBranch?: string | null | undefined;
-                    visibility?: 'private' | 'public' | 'internal' | undefined;
+                    defaultBranch?: null | string | undefined;
+                    visibility?: 'internal' | 'private' | 'public' | undefined;
                     webUrl?: string | undefined;
                     cloneUrl?: string | undefined;
                     sshUrl?: string | undefined;
                 };
-                protocol: 'auto' | 'ssh' | 'https';
-            } | undefined;
-            owner?: {
+                protocol: 'auto' | 'https' | 'ssh';
+            };
+            owner?: undefined | {
                 kind: 'account';
                 accountId: string;
             } | {
                 kind: 'team';
                 teamId: string;
-            } | undefined;
+            };
             defaultRef?: string | undefined;
             subdir?: string | undefined;
             attachments?: ({
@@ -1064,9 +1164,9 @@ export type ProjectSourcesActionResultById = {
                 entry: {
                     id: string;
                     enabled: boolean;
-                    placement: 'system_append' | 'composer_insert' | 'skill_instructions' | 'provider_asset';
+                    placement: 'composer_insert' | 'provider_asset' | 'skill_instructions' | 'system_append';
                     ref: {
-                        kind: 'doc' | 'bundle';
+                        kind: 'bundle' | 'doc';
                         artifactId: string;
                         serverId?: string | undefined;
                     };
@@ -1077,12 +1177,12 @@ export type ProjectSourcesActionResultById = {
             } | {
                 purpose: 'dashboard';
                 ref: {
-                    kind: 'doc' | 'bundle';
+                    kind: 'bundle' | 'doc';
                     artifactId: string;
                     serverId?: string | undefined;
                 };
             })[] | undefined;
-        } | undefined;
+        };
     } | {
         ok: true;
         sourceId: string;

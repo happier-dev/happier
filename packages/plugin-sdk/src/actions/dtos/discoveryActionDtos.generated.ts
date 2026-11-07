@@ -2,7 +2,7 @@
 // Type-only projection of Protocol-owned Action DTO declarations.
 
 import type { JsonValue } from '../../identity.js';
-import type { InputPredicate, InputPredicateWithValue, JSONType, PluginJsonSchemaV2, WidgetDefinitionBodyV1Input } from './pluginActionDtoSupport.generated.js';
+import type { ActionFailureCauseV1, InputPredicate, InputPredicateWithValue, JSONType, PluginJsonSchemaV2, WidgetDefinitionBodyV1Input } from './pluginActionDtoSupport.generated.js';
 
 export type DiscoveryActionInputById = {
     readonly "action.spec.search": {
@@ -20,29 +20,21 @@ export type DiscoveryActionInputById = {
         [x: string]: unknown;
         actionId?: string | undefined;
         fieldPath?: string | undefined;
-        consumer?: {
-            kind: 'workflow';
-            workflow: string;
-        } | {
+        consumer?: undefined | {
             kind: 'widget';
             surface: {
                 serverId: string;
                 accountId: string;
                 owner: {
-                    kind: 'home';
-                } | {
-                    kind: 'sessionBoard';
-                    sessionId: string;
-                } | {
                     kind: 'companion';
                     sessionId: string;
                 } | {
-                    kind: 'workBoard';
-                    boardId: string;
-                } | {
-                    kind: 'project';
-                    projectId: string;
+                    kind: 'corePage';
+                    pageId: string;
+                    area: string;
                     layoutId?: string | undefined;
+                } | {
+                    kind: 'home';
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
@@ -50,25 +42,24 @@ export type DiscoveryActionInputById = {
                     area: string;
                     layoutId?: string | undefined;
                 } | {
-                    kind: 'corePage';
-                    pageId: string;
-                    area: string;
+                    kind: 'project';
+                    projectId: string;
                     layoutId?: string | undefined;
+                } | {
+                    kind: 'sessionBoard';
+                    sessionId: string;
+                } | {
+                    kind: 'workBoard';
+                    boardId: string;
                 };
                 artifactId?: string | undefined;
             };
             definition: {
-                kind: 'installed';
-                surface: {
-                    pluginId: string;
-                    localId: string;
-                };
+                kind: 'artifact';
+                artifactId: string;
             } | {
                 kind: 'builtin';
                 id: string;
-            } | {
-                kind: 'artifact';
-                artifactId: string;
             } | {
                 kind: 'inline';
                 definition: {
@@ -82,14 +73,14 @@ export type DiscoveryActionInputById = {
                             itemId: string;
                         };
                         authorAccountId?: string | undefined;
-                        author?: {
-                            kind: 'person' | 'agent' | 'plugin';
-                        } | undefined;
+                        author?: undefined | {
+                            kind: 'agent' | 'person' | 'plugin';
+                        };
                         createdAt?: number | undefined;
                     };
                     sizeDeclaration: {
-                        sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                        defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                        sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                        defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                     };
                     name: string;
                     body: WidgetDefinitionBodyV1Input<true>;
@@ -99,17 +90,17 @@ export type DiscoveryActionInputById = {
                         submitLabel?: string | undefined;
                         fields?: readonly {
                             path: string;
-                            widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                            widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                             title: string;
-                            inputType?: {
-                                pluginId: string;
-                                localId: string;
+                            inputType?: undefined | {
+                                hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                             } | {
                                 hostType: 'usageQuery';
                                 field?: 'period' | 'session' | undefined;
                             } | {
-                                hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                            } | undefined;
+                                pluginId: string;
+                                localId: string;
+                            };
                             contextMode?: 'follow' | 'own' | undefined;
                             required?: boolean | undefined;
                             requireExplicitSelection?: boolean | undefined;
@@ -133,6 +124,25 @@ export type DiscoveryActionInputById = {
                                 labelKey?: string | undefined;
                                 description?: string | undefined;
                                 disabled?: boolean | undefined;
+                                icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                brand?: undefined | {
+                                    state: 'available';
+                                    resource: {
+                                        pluginId: string;
+                                        localId: string;
+                                    };
+                                    width: number;
+                                    height: number;
+                                    digest: string;
+                                    monochrome?: boolean | undefined;
+                                } | {
+                                    state: 'invalid' | 'missing' | 'retired';
+                                };
+                                source?: undefined | {
+                                    kind: string;
+                                    locator: string;
+                                };
+                                version?: string | undefined;
                             }[] | undefined;
                         }[] | undefined;
                     };
@@ -140,12 +150,12 @@ export type DiscoveryActionInputById = {
                     v: 1;
                     id: string;
                     description?: string | undefined;
-                    publicPresentation?: {
+                    publicPresentation?: undefined | {
                         kind: 'declarative';
                         document: unknown;
-                    } | undefined;
+                    };
                     sessionInputPath?: string | undefined;
-                    connectedAccountPurposeBindings?: {
+                    connectedAccountPurposeBindings?: undefined | {
                         path: string;
                         purpose: string;
                         consumer: {
@@ -153,24 +163,33 @@ export type DiscoveryActionInputById = {
                             localId: string;
                         };
                         nativeServicePath?: string | undefined;
-                    }[] | undefined;
-                    networkOverride?: {
-                        networkOrigins?: string[] | undefined;
+                    }[];
+                    networkOverride?: undefined | {
                         network?: 'none' | 'open' | undefined;
-                    } | undefined;
+                        networkOrigins?: string[] | undefined;
+                    };
+                };
+            } | {
+                kind: 'installed';
+                surface: {
+                    pluginId: string;
+                    localId: string;
                 };
             };
-            selectedSession?: {
+            selectedSession?: undefined | {
                 serverId: string;
                 sessionId: string;
-            } | undefined;
-        } | undefined;
+            };
+        } | {
+            kind: 'workflow';
+            workflow: string;
+        };
         optionsSourceId?: string | undefined;
         sessionId?: string | undefined;
         limit?: number | undefined;
         query?: string | undefined;
         cursor?: string | undefined;
-        values?: unknown[] | undefined;
+        values?: undefined | unknown[];
         draftInput?: Record<string, unknown> | undefined;
     };
     readonly "action.invoke": Omit<{
@@ -195,9 +214,9 @@ export type DiscoveryActionResultById = {
         actionSpecs: {
             id: string;
             title: string;
-            description: string | null;
-            safety: 'safe' | 'danger';
-            placements: ('command_palette' | 'browser_context' | 'agent_input_chips' | 'session_header' | 'session_info' | 'session_action_menu' | 'pending_messages' | 'slash_command' | 'voice_panel' | 'run_list' | 'run_card')[];
+            description: null | string;
+            safety: 'danger' | 'safe';
+            placements: ('agent_input_chips' | 'browser_context' | 'command_palette' | 'pending_messages' | 'run_card' | 'run_list' | 'session_action_menu' | 'session_header' | 'session_info' | 'slash_command' | 'voice_panel')[];
             surfaces: {
                 ui: boolean;
                 voice: boolean;
@@ -208,20 +227,20 @@ export type DiscoveryActionResultById = {
                 api: boolean;
                 plugin: boolean;
             };
-            inputHints: {
+            inputHints: null | {
                 fields: readonly {
                     path: string;
-                    widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                    widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                     title: string;
-                    inputType?: {
-                        pluginId: string;
-                        localId: string;
+                    inputType?: undefined | {
+                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                     } | {
                         hostType: 'usageQuery';
                         field?: 'period' | 'session' | undefined;
                     } | {
-                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                    } | undefined;
+                        pluginId: string;
+                        localId: string;
+                    };
                     contextMode?: 'follow' | 'own' | undefined;
                     required?: boolean | undefined;
                     requireExplicitSelection?: boolean | undefined;
@@ -245,93 +264,122 @@ export type DiscoveryActionResultById = {
                         labelKey?: string | undefined;
                         description?: string | undefined;
                         disabled?: boolean | undefined;
+                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                        brand?: undefined | {
+                            state: 'available';
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            width: number;
+                            height: number;
+                            digest: `sha256:${string}`;
+                            monochrome?: boolean | undefined;
+                        } | {
+                            state: 'invalid' | 'missing' | 'retired';
+                        };
+                        source?: undefined | {
+                            kind: string;
+                            locator: string;
+                        };
+                        version?: string | undefined;
                     }[] | undefined;
                 }[];
                 title?: string | undefined;
                 description?: string | undefined;
                 submitLabel?: string | undefined;
-            } | null;
-            slash: {
+            };
+            slash: null | {
                 tokens: string[];
-            } | null;
-            bindings: {
+            };
+            bindings: null | {
                 voiceClientToolName?: string | undefined;
                 mcpToolName?: string | undefined;
                 sdkMethod?: string | undefined;
                 rpcMethod?: string | undefined;
                 rpcMethodAliases?: string[] | undefined;
-            } | null;
-            examples: {
-                voice?: {
+            };
+            examples: null | {
+                voice?: null | undefined | {
                     argsExample?: string | undefined;
-                } | null | undefined;
-                mcp?: {
+                };
+                mcp?: null | undefined | {
                     argsExample?: string | undefined;
-                } | null | undefined;
-                sdk?: {
+                };
+                sdk?: null | undefined | {
                     codeExample?: string | undefined;
-                } | null | undefined;
-            } | null;
-            confirmVerb?: string | {
+                };
+            };
+            confirmVerb?: string | undefined | {
                 key: string;
                 fallback: string;
-                params?: Record<string, string | number> | undefined;
-            } | undefined;
+                params?: Record<string, number | string> | undefined;
+            };
             irreversible?: true | undefined;
-            approval?: {
-                result: 'optional' | 'required' | 'none';
+            permissionChanging?: true | undefined;
+            approval?: undefined | {
+                result: 'none' | 'optional' | 'required';
+                profile?: undefined | {
+                    status: 'available';
+                    requestedId: string;
+                    effectiveId: string;
+                } | {
+                    status: 'missing';
+                    requestedId: string;
+                    effectiveId: 'builtin:read-propose';
+                };
                 flow?: 'blocking' | 'deferred' | undefined;
-            } | undefined;
+            };
             requiredAuthority?: 'account_automation' | 'present_user' | undefined;
-            executionPlacement?: 'session' | 'machine' | 'account' | 'client' | undefined;
-            toolExposure?: {
+            executionPlacement?: 'account' | 'client' | 'machine' | 'session' | undefined;
+            toolExposure?: undefined | {
                 agent?: 'direct' | 'discoverable_only' | undefined;
                 mcp?: 'direct' | 'discoverable_only' | undefined;
                 cli?: 'direct' | 'discoverable_only' | undefined;
-            } | undefined;
-            prompting?: {
+            };
+            prompting?: undefined | {
                 voiceHotPath?: boolean | undefined;
                 agentGuidance?: string | undefined;
-            } | undefined;
-            contextualDefaults?: {
+            };
+            contextualDefaults?: undefined | {
                 sessionId?: 'current_session' | undefined;
                 machineId?: 'current_session_machine' | undefined;
                 rootPath?: 'current_session_root' | undefined;
-            } | undefined;
-            sessionTarget?: {
+            };
+            sessionTarget?: undefined | {
                 field: string;
-                cardinality: 'one' | 'many';
-            } | undefined;
+                cardinality: 'many' | 'one';
+            };
             outputSchema?: Record<string, unknown> | undefined;
-            sideEffectClass?: 'read' | 'none' | 'danger' | 'write' | 'external' | undefined;
-            operation?: {
+            sideEffectClass?: 'danger' | 'external' | 'none' | 'read' | 'write' | undefined;
+            operation?: undefined | {
                 version: 1;
                 visibility: 'activity';
                 progress: 'indeterminate' | 'reported';
                 presentation: {
                     onStart: 'activity' | 'current' | 'detail';
                 };
-            } | undefined;
-            execution?: {
-                handler?: string | {
-                    target: 'plugin' | 'host' | 'daemon';
+            };
+            execution?: undefined | {
+                handler?: string | undefined | {
+                    target: 'daemon' | 'host' | 'plugin';
                     exportName?: string | undefined;
                     registrationId?: string | undefined;
-                } | undefined;
-                transport?: 'plugin' | 'rpc' | 'api' | 'host' | undefined;
+                };
+                transport?: 'api' | 'host' | 'plugin' | 'rpc' | undefined;
                 routing?: string | undefined;
                 approvalPolicy?: string | undefined;
                 resultSchema?: Record<string, unknown> | undefined;
-            } | undefined;
+            };
         }[];
     };
     readonly "action.spec.get": {
         actionSpec: {
             id: string;
             title: string;
-            description: string | null;
-            safety: 'safe' | 'danger';
-            placements: ('command_palette' | 'browser_context' | 'agent_input_chips' | 'session_header' | 'session_info' | 'session_action_menu' | 'pending_messages' | 'slash_command' | 'voice_panel' | 'run_list' | 'run_card')[];
+            description: null | string;
+            safety: 'danger' | 'safe';
+            placements: ('agent_input_chips' | 'browser_context' | 'command_palette' | 'pending_messages' | 'run_card' | 'run_list' | 'session_action_menu' | 'session_header' | 'session_info' | 'slash_command' | 'voice_panel')[];
             surfaces: {
                 ui: boolean;
                 voice: boolean;
@@ -342,20 +390,20 @@ export type DiscoveryActionResultById = {
                 api: boolean;
                 plugin: boolean;
             };
-            inputHints: {
+            inputHints: null | {
                 fields: readonly {
                     path: string;
-                    widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                    widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                     title: string;
-                    inputType?: {
-                        pluginId: string;
-                        localId: string;
+                    inputType?: undefined | {
+                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                     } | {
                         hostType: 'usageQuery';
                         field?: 'period' | 'session' | undefined;
                     } | {
-                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                    } | undefined;
+                        pluginId: string;
+                        localId: string;
+                    };
                     contextMode?: 'follow' | 'own' | undefined;
                     required?: boolean | undefined;
                     requireExplicitSelection?: boolean | undefined;
@@ -379,120 +427,144 @@ export type DiscoveryActionResultById = {
                         labelKey?: string | undefined;
                         description?: string | undefined;
                         disabled?: boolean | undefined;
+                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                        brand?: undefined | {
+                            state: 'available';
+                            resource: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            width: number;
+                            height: number;
+                            digest: `sha256:${string}`;
+                            monochrome?: boolean | undefined;
+                        } | {
+                            state: 'invalid' | 'missing' | 'retired';
+                        };
+                        source?: undefined | {
+                            kind: string;
+                            locator: string;
+                        };
+                        version?: string | undefined;
                     }[] | undefined;
                 }[];
                 title?: string | undefined;
                 description?: string | undefined;
                 submitLabel?: string | undefined;
-            } | null;
-            slash: {
+            };
+            slash: null | {
                 tokens: string[];
-            } | null;
-            bindings: {
+            };
+            bindings: null | {
                 voiceClientToolName?: string | undefined;
                 mcpToolName?: string | undefined;
                 sdkMethod?: string | undefined;
                 rpcMethod?: string | undefined;
                 rpcMethodAliases?: string[] | undefined;
-            } | null;
-            examples: {
-                voice?: {
+            };
+            examples: null | {
+                voice?: null | undefined | {
                     argsExample?: string | undefined;
-                } | null | undefined;
-                mcp?: {
+                };
+                mcp?: null | undefined | {
                     argsExample?: string | undefined;
-                } | null | undefined;
-                sdk?: {
+                };
+                sdk?: null | undefined | {
                     codeExample?: string | undefined;
-                } | null | undefined;
-            } | null;
+                };
+            };
             kindVersion: 1;
             inputSchema: Record<string, unknown>;
-            confirmVerb?: string | {
+            confirmVerb?: string | undefined | {
                 key: string;
                 fallback: string;
-                params?: Record<string, string | number> | undefined;
-            } | undefined;
+                params?: Record<string, number | string> | undefined;
+            };
             irreversible?: true | undefined;
-            approval?: {
-                result: 'optional' | 'required' | 'none';
+            permissionChanging?: true | undefined;
+            approval?: undefined | {
+                result: 'none' | 'optional' | 'required';
+                profile?: undefined | {
+                    status: 'available';
+                    requestedId: string;
+                    effectiveId: string;
+                } | {
+                    status: 'missing';
+                    requestedId: string;
+                    effectiveId: 'builtin:read-propose';
+                };
                 flow?: 'blocking' | 'deferred' | undefined;
-            } | undefined;
+            };
             requiredAuthority?: 'account_automation' | 'present_user' | undefined;
-            executionPlacement?: 'session' | 'machine' | 'account' | 'client' | undefined;
-            toolExposure?: {
+            executionPlacement?: 'account' | 'client' | 'machine' | 'session' | undefined;
+            toolExposure?: undefined | {
                 agent?: 'direct' | 'discoverable_only' | undefined;
                 mcp?: 'direct' | 'discoverable_only' | undefined;
                 cli?: 'direct' | 'discoverable_only' | undefined;
-            } | undefined;
-            prompting?: {
+            };
+            prompting?: undefined | {
                 voiceHotPath?: boolean | undefined;
                 agentGuidance?: string | undefined;
-            } | undefined;
-            contextualDefaults?: {
+            };
+            contextualDefaults?: undefined | {
                 sessionId?: 'current_session' | undefined;
                 machineId?: 'current_session_machine' | undefined;
                 rootPath?: 'current_session_root' | undefined;
-            } | undefined;
-            sessionTarget?: {
+            };
+            sessionTarget?: undefined | {
                 field: string;
-                cardinality: 'one' | 'many';
-            } | undefined;
+                cardinality: 'many' | 'one';
+            };
             outputSchema?: Record<string, unknown> | undefined;
-            sideEffectClass?: 'read' | 'none' | 'danger' | 'write' | 'external' | undefined;
-            operation?: {
+            sideEffectClass?: 'danger' | 'external' | 'none' | 'read' | 'write' | undefined;
+            operation?: undefined | {
                 version: 1;
                 visibility: 'activity';
                 progress: 'indeterminate' | 'reported';
                 presentation: {
                     onStart: 'activity' | 'current' | 'detail';
                 };
-            } | undefined;
-            execution?: {
-                handler?: string | {
-                    target: 'plugin' | 'host' | 'daemon';
+            };
+            execution?: undefined | {
+                handler?: string | undefined | {
+                    target: 'daemon' | 'host' | 'plugin';
                     exportName?: string | undefined;
                     registrationId?: string | undefined;
-                } | undefined;
-                transport?: 'plugin' | 'rpc' | 'api' | 'host' | undefined;
+                };
+                transport?: 'api' | 'host' | 'plugin' | 'rpc' | undefined;
                 routing?: string | undefined;
                 approvalPolicy?: string | undefined;
                 resultSchema?: Record<string, unknown> | undefined;
-            } | undefined;
-            completion?: {
-                awaits: 'execution_runs' | 'action_operations';
+            };
+            completion?: undefined | {
+                awaits: 'action_operations' | 'execution_runs';
                 terminalOutputSchema: PluginJsonSchemaV2;
-            } | undefined;
+            };
             compatibility?: Record<string, unknown> | undefined;
         };
-        schemaSections?: {
+        schemaSections?: undefined | {
             path: string;
             description: string;
-        }[] | undefined;
-        schemaSection?: {
+        }[];
+        schemaSection?: undefined | {
             path: string;
             schema: Record<string, unknown>;
-        } | undefined;
-        invocationContext?: {
+        };
+        invocationContext?: undefined | {
             sessionId?: string | undefined;
-            widgetSurface?: {
+            widgetSurface?: undefined | {
                 serverId: string;
                 accountId: string;
                 owner: {
-                    kind: 'home';
-                } | {
-                    kind: 'sessionBoard';
-                    sessionId: string;
-                } | {
                     kind: 'companion';
                     sessionId: string;
                 } | {
-                    kind: 'workBoard';
-                    boardId: string;
-                } | {
-                    kind: 'project';
-                    projectId: string;
+                    kind: 'corePage';
+                    pageId: string;
+                    area: string;
                     layoutId?: string | undefined;
+                } | {
+                    kind: 'home';
                 } | {
                     kind: 'pluginArea';
                     pluginId: string;
@@ -500,25 +572,49 @@ export type DiscoveryActionResultById = {
                     area: string;
                     layoutId?: string | undefined;
                 } | {
-                    kind: 'corePage';
-                    pageId: string;
-                    area: string;
+                    kind: 'project';
+                    projectId: string;
                     layoutId?: string | undefined;
+                } | {
+                    kind: 'sessionBoard';
+                    sessionId: string;
+                } | {
+                    kind: 'workBoard';
+                    boardId: string;
                 };
                 artifactId?: string | undefined;
-            } | undefined;
-        } | undefined;
+            };
+        };
     };
     readonly "action.options.resolve": {
-        actionId: string | null;
-        fieldPath: string | null;
-        optionsSourceId: string | null;
+        actionId: null | string;
+        fieldPath: null | string;
+        optionsSourceId: null | string;
         options: readonly {
             value: JsonValue;
             label: string;
             labelKey?: string | undefined;
             description?: string | undefined;
             disabled?: boolean | undefined;
+            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+            brand?: undefined | {
+                state: 'available';
+                resource: {
+                    pluginId: string;
+                    localId: string;
+                };
+                width: number;
+                height: number;
+                digest: `sha256:${string}`;
+                monochrome?: boolean | undefined;
+            } | {
+                state: 'invalid' | 'missing' | 'retired';
+            };
+            source?: undefined | {
+                kind: string;
+                locator: string;
+            };
+            version?: string | undefined;
         }[];
         nextCursor?: string | undefined;
         machineRecipeDetails?: readonly {
@@ -531,11 +627,27 @@ export type DiscoveryActionResultById = {
                 title: string | {
                     key: string;
                     fallback: string;
-                    params?: Record<string, string | number> | undefined;
+                    params?: Record<string, number | string> | undefined;
                 };
                 inputSchema: PluginJsonSchemaV2;
                 steps: ({
-                    username: string | {
+                    args: (string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    })[] | {
                         kind: 'input';
                         path: string;
                     } | {
@@ -552,65 +664,95 @@ export type DiscoveryActionResultById = {
                             fact: 'daemon.primaryGroup' | 'daemon.username';
                         }>;
                     };
-                    kind: 'user';
+                    check: {
+                        args: (string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        })[] | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
+                        executable: string;
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicateWithValue<boolean | null | number | string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }> | undefined;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    kind: 'command';
                     id: string;
-                    home?: string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | undefined;
-                    shell?: string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | undefined;
-                    ownershipMarker?: string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | undefined;
-                    system?: boolean | undefined;
-                    locked?: boolean | undefined;
-                    uid?: number | undefined;
-                    state?: 'present' | 'absent' | undefined;
-                    supplementaryGroups?: string[] | undefined;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -618,35 +760,366 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'firewall';
+                    rules: string;
+                    id: string;
+                    exposures?: undefined | {
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        exposure: 'loopback' | 'privateNetwork' | 'public';
+                        containerPort?: number | undefined;
+                        providerId?: string | undefined;
+                        networkIdentity?: string | undefined;
+                    }[];
+                    requiredFacts?: ({
+                        kind: 'administrator';
                     } | {
                         kind: 'command';
                         executable: string;
                     } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
                         kind: 'journalReadGroup';
                         group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'packageSource';
+                    manager: 'apt';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'pathTraversal';
+                    path: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'script';
+                    shell: 'bash' | 'sh';
+                    body: string;
+                    id: string;
+                    check?: undefined | {
+                        body: string;
+                        unsatisfiedExitCodes: number[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'workspaceAccess';
+                    path: string;
+                    group: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    manager: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    packages: ({
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    })[] | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'package';
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
@@ -669,31 +1142,26 @@ export type DiscoveryActionResultById = {
                             fact: 'daemon.primaryGroup' | 'daemon.username';
                         }>;
                     };
-                    kind: 'group';
-                    members: string[];
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
+                    members: (string | {
+                        kind: 'input';
                         path: string;
                     } | {
-                        kind: 'command';
-                        executable: string;
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
                     } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    })[];
+                    kind: 'group';
+                    id: string;
+                    requiredFacts?: ({
                         group: string | {
                             kind: 'input';
                             path: string;
@@ -712,24 +1180,45 @@ export type DiscoveryActionResultById = {
                             }>;
                         };
                         kind: 'journalReadGroup';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
                     })[] | undefined;
-                    state?: 'present' | 'absent' | undefined;
+                    state?: 'absent' | 'present' | undefined;
                     existingOnly?: true | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
@@ -805,7 +1294,7 @@ export type DiscoveryActionResultById = {
                     };
                     kind: 'directory';
                     id: string;
-                    ownershipMarker?: string | {
+                    ownershipMarker?: string | undefined | {
                         kind: 'input';
                         path: string;
                     } | {
@@ -821,10 +1310,21 @@ export type DiscoveryActionResultById = {
                             kind: 'targetFact';
                             fact: 'daemon.primaryGroup' | 'daemon.username';
                         }>;
-                    } | undefined;
+                    };
                     preserveExistingOwnership?: true | undefined;
                     protectedAncestors?: true | undefined;
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -832,128 +1332,24 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    kind: 'workspaceAccess';
-                    path: string;
-                    group: string;
-                    agentUsername: string;
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    kind: 'pathTraversal';
-                    path: string;
-                    agentUsername: string;
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
@@ -1029,12 +1425,12 @@ export type DiscoveryActionResultById = {
                     };
                     kind: 'file';
                     id: string;
-                    content?: {
-                        kind: 'jsonMerge';
-                        value: Record<string, JSONType>;
-                    } | {
+                    content?: undefined | {
                         kind: 'iniKeys';
                         sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'jsonMerge';
+                        value: Record<string, JSONType>;
                     } | {
                         kind: 'secretGrant';
                         grantRef: string;
@@ -1067,8 +1463,8 @@ export type DiscoveryActionResultById = {
                         }>;
                         kind: 'template';
                         value: string;
-                    } | undefined;
-                    expectedContentDigest?: string | {
+                    };
+                    expectedContentDigest?: string | undefined | {
                         kind: 'renderedContent';
                         content: {
                             value: string | {
@@ -1100,16 +1496,8 @@ export type DiscoveryActionResultById = {
                             kind: 'template';
                             value: string;
                         };
-                    } | undefined;
-                    validate?: 'sudoers' | 'docker' | {
-                        kind: 'docker';
-                    } | {
-                        kind: 'caddy';
-                    } | {
-                        kind: 'nft';
-                    } | {
-                        kind: 'sudoers';
-                    } | {
+                    };
+                    validate?: 'docker' | 'sudoers' | undefined | {
                         contexts: {
                             user: string | {
                                 kind: 'input';
@@ -1164,16 +1552,16 @@ export type DiscoveryActionResultById = {
                             };
                         }[];
                         kind: 'sshd';
-                    } | undefined;
-                    probe?: {
-                        kind: 'docker';
                     } | {
                         kind: 'caddy';
+                    } | {
+                        kind: 'docker';
                     } | {
                         kind: 'nft';
                     } | {
                         kind: 'sudoers';
-                    } | {
+                    };
+                    probe?: undefined | {
                         contexts: {
                             user: string | {
                                 kind: 'input';
@@ -1228,166 +1616,33 @@ export type DiscoveryActionResultById = {
                             };
                         }[];
                         kind: 'sshd';
-                    } | undefined;
-                    state?: 'present' | 'absent' | undefined;
+                    } | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    state?: 'absent' | 'present' | undefined;
                     ownershipMarker?: string | undefined;
-                    onChange?: {
+                    onChange?: undefined | {
                         serviceStepId: string;
                         action: 'reload' | 'restart';
-                    } | undefined;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    args: {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | (string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    })[];
-                    check: {
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | {
-                            kind: 'template';
-                            value: string;
-                            variables: Record<string, string | {
-                                kind: 'input';
-                                path: string;
-                            } | {
-                                kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
-                            }>;
-                        } | undefined;
-                    } | {
-                        kind: 'userManagerGroups';
-                        username: string;
-                    } | {
-                        args: {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | {
-                            kind: 'template';
-                            value: string;
-                            variables: Record<string, string | {
-                                kind: 'input';
-                                path: string;
-                            } | {
-                                kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
-                            }>;
-                        } | (string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | {
-                            kind: 'template';
-                            value: string;
-                            variables: Record<string, string | {
-                                kind: 'input';
-                                path: string;
-                            } | {
-                                kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
-                            }>;
-                        })[];
-                        executable: string;
-                        unsatisfiedExitCodes: number[];
-                        stdoutJson?: InputPredicateWithValue<string | number | boolean | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | null> | undefined;
                     };
-                    executable: string;
-                    kind: 'command';
-                    id: string;
-                    remove?: {
-                        executable: string;
-                        args: string[];
-                    } | undefined;
-                    affects?: 'none' | 'dockerEngine' | {
-                        services: string[];
-                    } | undefined;
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -1395,176 +1650,24 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    manager: string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
-                    packages: {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | ({
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        name: string;
-                        version?: string | undefined;
-                        kind?: 'formula' | 'cask' | undefined;
-                        source?: string | undefined;
-                        scope?: 'machine' | 'user' | undefined;
-                    })[];
-                    kind: 'package';
-                    id: string;
-                    state?: 'present' | 'absent' | undefined;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    kind: 'packageSource';
-                    manager: 'apt';
-                    path: string;
-                    keyPath: string;
-                    url: string;
-                    suite: string;
-                    components: string[];
-                    architectures: string[];
-                    keyUrl: string;
-                    keyFingerprint: string;
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
@@ -1592,6 +1695,17 @@ export type DiscoveryActionResultById = {
                     running: boolean;
                     id: string;
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -1599,54 +1713,116 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
                     })[] | undefined;
                 } | {
-                    kind: 'firewall';
-                    rules: string;
+                    username: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'user';
                     id: string;
-                    exposures?: {
-                        requirementId: string;
-                        hostAddress: string;
-                        hostPort: number;
-                        protocol: 'tcp' | 'udp';
-                        exposure: 'public' | 'privateNetwork' | 'loopback';
-                        containerPort?: number | undefined;
-                        providerId?: string | undefined;
-                        networkIdentity?: string | undefined;
-                    }[] | undefined;
+                    home?: string | undefined | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    shell?: string | undefined | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    ownershipMarker?: string | undefined | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    system?: boolean | undefined;
+                    locked?: boolean | undefined;
+                    uid?: number | undefined;
+                    state?: 'absent' | 'present' | undefined;
+                    supplementaryGroups?: string[] | undefined;
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -1654,65 +1830,54 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
                     })[] | undefined;
                 })[];
-                description?: string | {
+                description?: string | undefined | {
                     key: string;
                     fallback: string;
-                    params?: Record<string, string | number> | undefined;
-                } | undefined;
-                icon?: 'file' | 'workflow' | 'error' | 'check' | 'action' | 'external' | 'search' | 'link' | 'browser' | 'copy' | 'globe' | 'info' | 'preview' | 'refresh' | 'settings' | 'terminal' | 'warning' | 'add' | 'back' | 'close' | 'forward' | 'more' | 'change-open' | 'change-complete' | 'issue' | 'bug' | 'pin' | 'conversations' | 'waveform' | 'desktop' | 'pause' | 'failure' | 'unavailable' | 'denied' | 'review' | 'attention' | 'escalating' | 'merge-ready' | 'mention' | 'assigned' | 'new' | 'waiting' | 'list' | 'board' | 'filter' | 'watch' | 'tag' | 'asset' | 'branch' | 'commit' | 'download' | 'locked' | 'run' | 'stop' | 'send' | 'generate' | 'neutral' | undefined;
+                    params?: Record<string, number | string> | undefined;
+                };
+                icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
                 software?: true | undefined;
-                inputHints?: {
+                inputHints?: undefined | {
                     fields: readonly {
                         path: string;
-                        widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                        widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        inputType?: {
-                            pluginId: string;
-                            localId: string;
+                        inputType?: undefined | {
+                            hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                         } | {
                             hostType: 'usageQuery';
                             field?: 'period' | 'session' | undefined;
                         } | {
-                            hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                        } | undefined;
+                            pluginId: string;
+                            localId: string;
+                        };
                         contextMode?: 'follow' | 'own' | undefined;
                         required?: boolean | undefined;
                         requireExplicitSelection?: boolean | undefined;
@@ -1724,60 +1889,79 @@ export type DiscoveryActionResultById = {
                         visibleWhenContextSlot?: string | undefined;
                         requiredWhen?: InputPredicate | undefined;
                         disabledWhen?: InputPredicate | undefined;
-                        prompt?: string | {
+                        prompt?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                        description?: string | {
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                        placeholder?: string | {
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        placeholder?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
                         options?: readonly {
                             value: JsonValue;
                             label: string | {
                                 key: string;
                                 fallback: string;
-                                params?: Record<string, string | number> | undefined;
+                                params?: Record<string, number | string> | undefined;
                             };
                             labelKey?: string | undefined;
-                            description?: string | {
+                            description?: string | undefined | {
                                 key: string;
                                 fallback: string;
-                                params?: Record<string, string | number> | undefined;
-                            } | undefined;
+                                params?: Record<string, number | string> | undefined;
+                            };
                             disabled?: boolean | undefined;
+                            icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                            brand?: undefined | {
+                                state: 'available';
+                                resource: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                width: number;
+                                height: number;
+                                digest: `sha256:${string}`;
+                                monochrome?: boolean | undefined;
+                            } | {
+                                state: 'invalid' | 'missing' | 'retired';
+                            };
+                            source?: undefined | {
+                                kind: string;
+                                locator: string;
+                            };
+                            version?: string | undefined;
                         }[] | undefined;
                     }[];
-                    title?: string | {
+                    title?: string | undefined | {
                         key: string;
                         fallback: string;
-                        params?: Record<string, string | number> | undefined;
-                    } | undefined;
-                    description?: string | {
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    description?: string | undefined | {
                         key: string;
                         fallback: string;
-                        params?: Record<string, string | number> | undefined;
-                    } | undefined;
-                    submitLabel?: string | {
+                        params?: Record<string, number | string> | undefined;
+                    };
+                    submitLabel?: string | undefined | {
                         key: string;
                         fallback: string;
-                        params?: Record<string, string | number> | undefined;
-                    } | undefined;
-                } | undefined;
-                inputConstraints?: {
+                        params?: Record<string, number | string> | undefined;
+                    };
+                };
+                inputConstraints?: undefined | {
                     kind: 'pathWithin';
                     path: string;
                     root: string;
-                }[] | undefined;
+                }[];
                 checks?: ({
-                    args: {
+                    args: (string | {
                         kind: 'input';
                         path: string;
                     } | {
@@ -1793,7 +1977,7 @@ export type DiscoveryActionResultById = {
                             kind: 'targetFact';
                             fact: 'daemon.primaryGroup' | 'daemon.username';
                         }>;
-                    } | (string | {
+                    })[] | {
                         kind: 'input';
                         path: string;
                     } | {
@@ -1809,11 +1993,9 @@ export type DiscoveryActionResultById = {
                             kind: 'targetFact';
                             fact: 'daemon.primaryGroup' | 'daemon.username';
                         }>;
-                    })[];
+                    };
                     check: {
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | {
+                        args: (string | {
                             kind: 'input';
                             path: string;
                         } | {
@@ -1829,65 +2011,78 @@ export type DiscoveryActionResultById = {
                                 kind: 'targetFact';
                                 fact: 'daemon.primaryGroup' | 'daemon.username';
                             }>;
-                        } | undefined;
+                        })[] | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
+                        executable: string;
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicateWithValue<boolean | null | number | string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }> | undefined;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
                     } | {
                         kind: 'userManagerGroups';
                         username: string;
-                    } | {
-                        args: {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | {
-                            kind: 'template';
-                            value: string;
-                            variables: Record<string, string | {
-                                kind: 'input';
-                                path: string;
-                            } | {
-                                kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
-                            }>;
-                        } | (string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | {
-                            kind: 'template';
-                            value: string;
-                            variables: Record<string, string | {
-                                kind: 'input';
-                                path: string;
-                            } | {
-                                kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
-                            }>;
-                        })[];
-                        executable: string;
-                        unsatisfiedExitCodes: number[];
-                        stdoutJson?: InputPredicateWithValue<string | number | boolean | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | null> | undefined;
                     };
                     executable: string;
                     kind: 'command';
                     id: string;
-                    remove?: {
+                    remove?: undefined | {
                         executable: string;
                         args: string[];
-                    } | undefined;
-                    affects?: 'none' | 'dockerEngine' | {
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
                         services: string[];
-                    } | undefined;
+                    };
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -1895,32 +2090,42 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'kernel';
+                    capability: string;
+                    id: string;
+                    architectures?: string[] | undefined | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
                 } | {
                     manager: string | {
                         kind: 'input';
@@ -1939,93 +2144,16 @@ export type DiscoveryActionResultById = {
                             fact: 'daemon.primaryGroup' | 'daemon.username';
                         }>;
                     };
-                    packages: {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | ({
+                    packages: ({
                         kind: 'input';
                         path: string;
                     } | {
                         name: string;
                         version?: string | undefined;
-                        kind?: 'formula' | 'cask' | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
                         source?: string | undefined;
                         scope?: 'machine' | 'user' | undefined;
-                    })[];
-                    kind: 'package';
-                    id: string;
-                    state?: 'present' | 'absent' | undefined;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                } | {
-                    kind: 'kernel';
-                    capability: string;
-                    id: string;
-                    architectures?: string[] | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | undefined;
-                })[] | undefined;
-                removeSteps?: ({
-                    username: string | {
+                    })[] | {
                         kind: 'input';
                         path: string;
                     } | {
@@ -2042,65 +2170,21 @@ export type DiscoveryActionResultById = {
                             fact: 'daemon.primaryGroup' | 'daemon.username';
                         }>;
                     };
-                    kind: 'user';
+                    kind: 'package';
                     id: string;
-                    home?: string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | undefined;
-                    shell?: string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | undefined;
-                    ownershipMarker?: string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | undefined;
-                    system?: boolean | undefined;
-                    locked?: boolean | undefined;
-                    uid?: number | undefined;
-                    state?: 'present' | 'absent' | undefined;
-                    supplementaryGroups?: string[] | undefined;
+                    state?: 'absent' | 'present' | undefined;
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -2108,35 +2192,512 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                })[] | undefined;
+                removeSteps?: ({
+                    args: (string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    })[] | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    check: {
+                        args: (string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        })[] | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
+                        executable: string;
+                        unsatisfiedExitCodes: number[];
+                        stdoutJson?: InputPredicateWithValue<boolean | null | number | string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }> | undefined;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        } | {
+                            kind: 'template';
+                            value: string;
+                            variables: Record<string, string | {
+                                kind: 'input';
+                                path: string;
+                            } | {
+                                kind: 'targetFact';
+                                fact: 'daemon.primaryGroup' | 'daemon.username';
+                            }>;
+                        };
+                    } | {
+                        kind: 'userManagerGroups';
+                        username: string;
+                    };
+                    executable: string;
+                    kind: 'command';
+                    id: string;
+                    remove?: undefined | {
+                        executable: string;
+                        args: string[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
                     } | {
                         kind: 'command';
                         executable: string;
                     } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
                         kind: 'journalReadGroup';
                         group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'firewall';
+                    rules: string;
+                    id: string;
+                    exposures?: undefined | {
+                        requirementId: string;
+                        hostAddress: string;
+                        hostPort: number;
+                        protocol: 'tcp' | 'udp';
+                        exposure: 'loopback' | 'privateNetwork' | 'public';
+                        containerPort?: number | undefined;
+                        providerId?: string | undefined;
+                        networkIdentity?: string | undefined;
+                    }[];
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'packageSource';
+                    manager: 'apt';
+                    path: string;
+                    keyPath: string;
+                    url: string;
+                    suite: string;
+                    components: string[];
+                    architectures: string[];
+                    keyUrl: string;
+                    keyFingerprint: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'pathTraversal';
+                    path: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'script';
+                    shell: 'bash' | 'sh';
+                    body: string;
+                    id: string;
+                    check?: undefined | {
+                        body: string;
+                        unsatisfiedExitCodes: number[];
+                    };
+                    affects?: 'dockerEngine' | 'none' | undefined | {
+                        services: string[];
+                    };
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    kind: 'workspaceAccess';
+                    path: string;
+                    group: string;
+                    agentUsername: string;
+                    id: string;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
+                        ifInput?: InputPredicate | undefined;
+                    } | {
+                        input: InputPredicate;
+                    })[] | undefined;
+                } | {
+                    manager: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    packages: ({
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        name: string;
+                        version?: string | undefined;
+                        kind?: 'cask' | 'formula' | undefined;
+                        source?: string | undefined;
+                        scope?: 'machine' | 'user' | undefined;
+                    })[] | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'package';
+                    id: string;
+                    state?: 'absent' | 'present' | undefined;
+                    requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
+                    })[] | undefined;
+                    review?: undefined | {
+                        title: string | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                        description?: string | undefined | {
+                            key: string;
+                            fallback: string;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
+                    when?: ({
+                        checkId: string;
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
@@ -2159,31 +2720,26 @@ export type DiscoveryActionResultById = {
                             fact: 'daemon.primaryGroup' | 'daemon.username';
                         }>;
                     };
-                    kind: 'group';
-                    members: string[];
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
+                    members: (string | {
+                        kind: 'input';
                         path: string;
                     } | {
-                        kind: 'command';
-                        executable: string;
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
                     } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    })[];
+                    kind: 'group';
+                    id: string;
+                    requiredFacts?: ({
                         group: string | {
                             kind: 'input';
                             path: string;
@@ -2202,24 +2758,45 @@ export type DiscoveryActionResultById = {
                             }>;
                         };
                         kind: 'journalReadGroup';
+                    } | {
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
+                        kind: 'kernel';
+                        capability: string;
+                        architectures?: string[] | undefined;
+                    } | {
+                        kind: 'packageManager';
+                        manager: string;
+                    } | {
+                        kind: 'path';
+                        path: string;
                     })[] | undefined;
-                    state?: 'present' | 'absent' | undefined;
+                    state?: 'absent' | 'present' | undefined;
                     existingOnly?: true | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
@@ -2295,7 +2872,7 @@ export type DiscoveryActionResultById = {
                     };
                     kind: 'directory';
                     id: string;
-                    ownershipMarker?: string | {
+                    ownershipMarker?: string | undefined | {
                         kind: 'input';
                         path: string;
                     } | {
@@ -2311,10 +2888,21 @@ export type DiscoveryActionResultById = {
                             kind: 'targetFact';
                             fact: 'daemon.primaryGroup' | 'daemon.username';
                         }>;
-                    } | undefined;
+                    };
                     preserveExistingOwnership?: true | undefined;
                     protectedAncestors?: true | undefined;
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -2322,128 +2910,24 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    kind: 'workspaceAccess';
-                    path: string;
-                    group: string;
-                    agentUsername: string;
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    kind: 'pathTraversal';
-                    path: string;
-                    agentUsername: string;
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
@@ -2519,12 +3003,12 @@ export type DiscoveryActionResultById = {
                     };
                     kind: 'file';
                     id: string;
-                    content?: {
-                        kind: 'jsonMerge';
-                        value: Record<string, JSONType>;
-                    } | {
+                    content?: undefined | {
                         kind: 'iniKeys';
                         sections: Record<string, Record<string, string>>;
+                    } | {
+                        kind: 'jsonMerge';
+                        value: Record<string, JSONType>;
                     } | {
                         kind: 'secretGrant';
                         grantRef: string;
@@ -2557,8 +3041,8 @@ export type DiscoveryActionResultById = {
                         }>;
                         kind: 'template';
                         value: string;
-                    } | undefined;
-                    expectedContentDigest?: string | {
+                    };
+                    expectedContentDigest?: string | undefined | {
                         kind: 'renderedContent';
                         content: {
                             value: string | {
@@ -2590,16 +3074,8 @@ export type DiscoveryActionResultById = {
                             kind: 'template';
                             value: string;
                         };
-                    } | undefined;
-                    validate?: 'sudoers' | 'docker' | {
-                        kind: 'docker';
-                    } | {
-                        kind: 'caddy';
-                    } | {
-                        kind: 'nft';
-                    } | {
-                        kind: 'sudoers';
-                    } | {
+                    };
+                    validate?: 'docker' | 'sudoers' | undefined | {
                         contexts: {
                             user: string | {
                                 kind: 'input';
@@ -2654,16 +3130,16 @@ export type DiscoveryActionResultById = {
                             };
                         }[];
                         kind: 'sshd';
-                    } | undefined;
-                    probe?: {
-                        kind: 'docker';
                     } | {
                         kind: 'caddy';
+                    } | {
+                        kind: 'docker';
                     } | {
                         kind: 'nft';
                     } | {
                         kind: 'sudoers';
-                    } | {
+                    };
+                    probe?: undefined | {
                         contexts: {
                             user: string | {
                                 kind: 'input';
@@ -2718,166 +3194,33 @@ export type DiscoveryActionResultById = {
                             };
                         }[];
                         kind: 'sshd';
-                    } | undefined;
-                    state?: 'present' | 'absent' | undefined;
+                    } | {
+                        kind: 'caddy';
+                    } | {
+                        kind: 'docker';
+                    } | {
+                        kind: 'nft';
+                    } | {
+                        kind: 'sudoers';
+                    };
+                    state?: 'absent' | 'present' | undefined;
                     ownershipMarker?: string | undefined;
-                    onChange?: {
+                    onChange?: undefined | {
                         serviceStepId: string;
                         action: 'reload' | 'restart';
-                    } | undefined;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    args: {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | (string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    })[];
-                    check: {
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | {
-                            kind: 'template';
-                            value: string;
-                            variables: Record<string, string | {
-                                kind: 'input';
-                                path: string;
-                            } | {
-                                kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
-                            }>;
-                        } | undefined;
-                    } | {
-                        kind: 'userManagerGroups';
-                        username: string;
-                    } | {
-                        args: {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | {
-                            kind: 'template';
-                            value: string;
-                            variables: Record<string, string | {
-                                kind: 'input';
-                                path: string;
-                            } | {
-                                kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
-                            }>;
-                        } | (string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | {
-                            kind: 'template';
-                            value: string;
-                            variables: Record<string, string | {
-                                kind: 'input';
-                                path: string;
-                            } | {
-                                kind: 'targetFact';
-                                fact: 'daemon.primaryGroup' | 'daemon.username';
-                            }>;
-                        })[];
-                        executable: string;
-                        unsatisfiedExitCodes: number[];
-                        stdoutJson?: InputPredicateWithValue<string | number | boolean | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        } | null> | undefined;
                     };
-                    executable: string;
-                    kind: 'command';
-                    id: string;
-                    remove?: {
-                        executable: string;
-                        args: string[];
-                    } | undefined;
-                    affects?: 'none' | 'dockerEngine' | {
-                        services: string[];
-                    } | undefined;
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -2885,176 +3228,24 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    manager: string | {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
+                            params?: Record<string, number | string> | undefined;
+                        };
                     };
-                    packages: {
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        kind: 'targetFact';
-                        fact: 'daemon.primaryGroup' | 'daemon.username';
-                    } | {
-                        kind: 'template';
-                        value: string;
-                        variables: Record<string, string | {
-                            kind: 'input';
-                            path: string;
-                        } | {
-                            kind: 'targetFact';
-                            fact: 'daemon.primaryGroup' | 'daemon.username';
-                        }>;
-                    } | ({
-                        kind: 'input';
-                        path: string;
-                    } | {
-                        name: string;
-                        version?: string | undefined;
-                        kind?: 'formula' | 'cask' | undefined;
-                        source?: string | undefined;
-                        scope?: 'machine' | 'user' | undefined;
-                    })[];
-                    kind: 'package';
-                    id: string;
-                    state?: 'present' | 'absent' | undefined;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
-                        ifInput?: InputPredicate | undefined;
-                    } | {
-                        input: InputPredicate;
-                    })[] | undefined;
-                } | {
-                    kind: 'packageSource';
-                    manager: 'apt';
-                    path: string;
-                    keyPath: string;
-                    url: string;
-                    suite: string;
-                    components: string[];
-                    architectures: string[];
-                    keyUrl: string;
-                    keyFingerprint: string;
-                    id: string;
-                    requiredFacts?: ({
-                        kind: 'kernel';
-                        capability: string;
-                        architectures?: string[] | undefined;
-                    } | {
-                        kind: 'packageManager';
-                        manager: string;
-                    } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
-                        kind: 'path';
-                        path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
-                    })[] | undefined;
-                    review?: {
-                        title: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        };
-                        description?: string | {
-                            key: string;
-                            fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
-                    when?: ({
-                        checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
@@ -3082,6 +3273,17 @@ export type DiscoveryActionResultById = {
                     running: boolean;
                     id: string;
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -3089,54 +3291,116 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
                     })[] | undefined;
                 } | {
-                    kind: 'firewall';
-                    rules: string;
+                    username: string | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    kind: 'user';
                     id: string;
-                    exposures?: {
-                        requirementId: string;
-                        hostAddress: string;
-                        hostPort: number;
-                        protocol: 'tcp' | 'udp';
-                        exposure: 'public' | 'privateNetwork' | 'loopback';
-                        containerPort?: number | undefined;
-                        providerId?: string | undefined;
-                        networkIdentity?: string | undefined;
-                    }[] | undefined;
+                    home?: string | undefined | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    shell?: string | undefined | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    ownershipMarker?: string | undefined | {
+                        kind: 'input';
+                        path: string;
+                    } | {
+                        kind: 'targetFact';
+                        fact: 'daemon.primaryGroup' | 'daemon.username';
+                    } | {
+                        kind: 'template';
+                        value: string;
+                        variables: Record<string, string | {
+                            kind: 'input';
+                            path: string;
+                        } | {
+                            kind: 'targetFact';
+                            fact: 'daemon.primaryGroup' | 'daemon.username';
+                        }>;
+                    };
+                    system?: boolean | undefined;
+                    locked?: boolean | undefined;
+                    uid?: number | undefined;
+                    state?: 'absent' | 'present' | undefined;
+                    supplementaryGroups?: string[] | undefined;
                     requiredFacts?: ({
+                        kind: 'administrator';
+                    } | {
+                        kind: 'command';
+                        executable: string;
+                    } | {
+                        kind: 'init';
+                        system: 'launchd' | 'systemd' | 'windowsScm';
+                    } | {
+                        kind: 'journalReadGroup';
+                        group: string;
+                    } | {
                         kind: 'kernel';
                         capability: string;
                         architectures?: string[] | undefined;
@@ -3144,46 +3408,35 @@ export type DiscoveryActionResultById = {
                         kind: 'packageManager';
                         manager: string;
                     } | {
-                        kind: 'init';
-                        system: 'systemd' | 'launchd' | 'windowsScm';
-                    } | {
-                        kind: 'administrator';
-                    } | {
                         kind: 'path';
                         path: string;
-                    } | {
-                        kind: 'command';
-                        executable: string;
-                    } | {
-                        kind: 'journalReadGroup';
-                        group: string;
                     })[] | undefined;
-                    review?: {
+                    review?: undefined | {
                         title: string | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
+                            params?: Record<string, number | string> | undefined;
                         };
-                        description?: string | {
+                        description?: string | undefined | {
                             key: string;
                             fallback: string;
-                            params?: Record<string, string | number> | undefined;
-                        } | undefined;
-                    } | undefined;
+                            params?: Record<string, number | string> | undefined;
+                        };
+                    };
                     when?: ({
                         checkId: string;
-                        status: ('satisfied' | 'drifted' | 'packageUnavailable' | 'packageManagerUnavailable')[];
+                        status: ('drifted' | 'packageManagerUnavailable' | 'packageUnavailable' | 'satisfied')[];
                         ifInput?: InputPredicate | undefined;
                     } | {
                         input: InputPredicate;
                     })[] | undefined;
                 })[] | undefined;
-                appliesWhen?: {
+                appliesWhen?: undefined | {
                     posture: 'publicSshOpen';
-                } | undefined;
+                };
             };
             occurrenceId?: string | undefined;
-            executionOrigin?: {
+            executionOrigin?: undefined | {
                 serverIdentityId: string;
                 materializationRef: {
                     machineId: string;
@@ -3196,9 +3449,10 @@ export type DiscoveryActionResultById = {
                     machineId: string;
                     pluginId: string;
                     sourceCustody: {
-                        kind: 'managed';
-                        immutableGenerationId: string;
-                        installSource: 'npm' | 'archive' | 'localPath';
+                        kind: 'account_release';
+                        pluginId: string;
+                        version: string;
+                        archiveDigestSha256: string;
                     } | {
                         kind: 'bundled_first_party';
                         packagedRuntime: {
@@ -3215,18 +3469,17 @@ export type DiscoveryActionResultById = {
                         kind: 'development';
                         registeredRootId: string;
                     } | {
-                        kind: 'account_release';
-                        pluginId: string;
-                        version: string;
-                        archiveDigestSha256: string;
+                        kind: 'managed';
+                        immutableGenerationId: string;
+                        installSource: 'archive' | 'localPath' | 'npm';
                     };
                 };
-            } | undefined;
-            source?: {
+            };
+            source?: undefined | {
                 kind: string;
                 locator: string;
-            } | undefined;
-            brand?: {
+            };
+            brand?: undefined | {
                 state: 'available';
                 resource: {
                     pluginId: string;
@@ -3237,16 +3490,16 @@ export type DiscoveryActionResultById = {
                 digest: `sha256:${string}`;
                 monochrome?: boolean | undefined;
             } | {
-                state: 'missing' | 'invalid' | 'retired';
-            } | undefined;
+                state: 'invalid' | 'missing' | 'retired';
+            };
         }[] | undefined;
-        modelCatalog?: {
+        modelCatalog?: undefined | {
             nativeModels: readonly {
                 value: string;
                 label: string;
                 description?: string | undefined;
             }[];
-            providerProjection: {
+            providerProjection: null | {
                 status: 'success';
                 agentTargetKey: string;
                 groups: {
@@ -3254,28 +3507,31 @@ export type DiscoveryActionResultById = {
                     providerName: string;
                     connectionName: string;
                     connectionRole: 'default' | 'named';
-                    connectionDisplayNameMode: 'custom' | 'automatic';
+                    connectionDisplayNameMode: 'automatic' | 'custom';
                     connectionRevision: number;
                     modelLoadAction: 'available' | 'descriptor_absent' | 'feature_disabled' | 'machine_required';
                     authorization: {
-                        authorized: true;
-                    } | {
                         authorized: false;
                         error: {
                             v: 1;
-                            code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+                            code: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported';
                             retryable: boolean;
-                            action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                            action: 'add_secret' | 'choose_connection' | 'choose_model' | 'enable_connection' | 'enable_on_machine' | 'load_model' | 'reduce_provider_settings' | 'replace_secret' | 'restart_probe' | 'restore_plugin' | 'retry' | 'review_account_grant' | 'review_and_restart' | 'review_compatibility' | 'review_connection' | 'review_credential_transport' | 'review_current_state' | 'review_features' | 'review_machine_grant' | 'review_profile_migration';
+                            requestId?: string | undefined;
+                            failureCause?: ActionFailureCauseV1 | undefined;
                             connectionId?: (string) | undefined;
                             machineId?: string | undefined;
                             sourceProfileId?: string | undefined;
                             retryAfterMs?: number | undefined;
-                            savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
+                            reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
+                            savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
                         };
+                    } | {
+                        authorized: true;
                     };
                     manualModelPolicy: 'allowed' | 'catalog-only';
                     supportsFreeformModelIds: boolean;
-                    suppressedConnectedServiceIds: ('openai-codex' | 'openai' | 'anthropic' | 'claude-subscription' | 'gemini' | 'github' | 'bitbucket')[];
+                    suppressedConnectedServiceIds: ('anthropic' | 'bitbucket' | 'claude-subscription' | 'gemini' | 'github' | 'openai' | 'openai-codex')[];
                     rows: {
                         ref: {
                             agentTargetKey: string;
@@ -3289,53 +3545,80 @@ export type DiscoveryActionResultById = {
                         descriptor: {
                             id: string;
                             name: string;
-                            costTier?: 'low' | 'standard' | 'premium' | undefined;
+                            costTier?: 'low' | 'premium' | 'standard' | undefined;
                             aliases?: string[] | undefined;
                             description?: string | undefined;
                             contextWindowTokens?: number | undefined;
-                            inlineCompletion?: {
+                            inlineCompletion?: undefined | {
                                 operationId: string;
                                 tokenAccounting: 'utf8-bytes';
                                 promptOverheadTokens: number;
                                 outputTokens?: number | undefined;
                                 maxOutputTokens?: number | undefined;
-                                rawFimTemplate?: {
+                                rawFimTemplate?: undefined | {
                                     prefix: string;
                                     suffix: string;
                                     middle: string;
-                                } | undefined;
-                            } | undefined;
+                                };
+                            };
+                            nextEdit?: undefined | {
+                                operationId: string;
+                                tokenAccounting: 'utf8-bytes';
+                                promptOverheadTokens: number;
+                                outputTokens?: number | undefined;
+                                maxOutputTokens?: number | undefined;
+                            };
                             extendedContextModelId?: string | undefined;
-                            modelOptions?: {
+                            modelOptions?: undefined | {
                                 id: string;
                                 name: string;
                                 type: string;
                                 currentValue: string;
                                 description?: string | undefined;
-                                options?: {
+                                options?: undefined | {
                                     value: string;
                                     name: string;
                                     description?: string | undefined;
-                                }[] | undefined;
-                                overridesWhenOn?: {
+                                }[];
+                                overridesWhenOn?: undefined | {
                                     optionIds: string[];
                                     forcedValue?: string | undefined;
-                                } | undefined;
-                            }[] | undefined;
-                            capabilities?: {
-                                toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                                reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                                structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                            } | undefined;
+                                };
+                            }[];
+                            capabilities?: undefined | {
+                                toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                                reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                                structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                            };
                         };
                         sources: {
                             manual: boolean;
                             static: boolean;
                             probe: boolean;
                         };
-                        confidence: 'probe' | 'manual' | 'verified_static' | 'account_unverified';
+                        confidence: 'account_unverified' | 'manual' | 'probe' | 'verified_static';
                         compatibility: {
                             result: {
+                                status: 'experimental';
+                                selectedProtocol: string;
+                                reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                                confirmationScope: {
+                                    kind: 'connection';
+                                } | {
+                                    kind: 'model';
+                                    modelId: string;
+                                };
+                                evidence?: undefined | {
+                                    sourceUrls: string[];
+                                    verifiedAt: string;
+                                    providerVersion?: string | undefined;
+                                    agentVersion?: string | undefined;
+                                    testIds?: string[] | undefined;
+                                };
+                            } | {
+                                status: 'incompatible';
+                                reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                            } | {
                                 status: 'verified';
                                 selectedProtocol: string;
                                 evidence: {
@@ -3345,39 +3628,19 @@ export type DiscoveryActionResultById = {
                                     agentVersion?: string | undefined;
                                     testIds?: string[] | undefined;
                                 };
-                            } | {
-                                status: 'experimental';
-                                selectedProtocol: string;
-                                reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
-                                confirmationScope: {
-                                    kind: 'connection';
-                                } | {
-                                    kind: 'model';
-                                    modelId: string;
-                                };
-                                evidence?: {
-                                    sourceUrls: string[];
-                                    verifiedAt: string;
-                                    providerVersion?: string | undefined;
-                                    agentVersion?: string | undefined;
-                                    testIds?: string[] | undefined;
-                                } | undefined;
-                            } | {
-                                status: 'incompatible';
-                                reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
                             };
                             compatibilityFingerprint: string;
                             confirmed: boolean;
                         };
-                        endpointHealth: 'available' | 'not_checked' | 'unreachable' | 'temporarily_unavailable' | 'rate_limited' | 'unauthorized' | 'invalid_response';
+                        endpointHealth: 'available' | 'invalid_response' | 'not_checked' | 'rate_limited' | 'temporarily_unavailable' | 'unauthorized' | 'unreachable';
                         catalog: {
                             stale: boolean;
                             observedAt?: number | undefined;
                             staleAt?: number | undefined;
                         };
-                        loadState: 'unknown' | 'loaded' | 'unloaded';
-                        visibility: 'visible' | 'hidden_agent' | 'hidden_all_agents' | 'hidden_current_selection';
-                        gatewaySlots?: {
+                        loadState: 'loaded' | 'unknown' | 'unloaded';
+                        visibility: 'hidden_agent' | 'hidden_all_agents' | 'hidden_current_selection' | 'visible';
+                        gatewaySlots?: undefined | {
                             purpose: {
                                 consumer: {
                                     pluginId: string;
@@ -3397,25 +3660,178 @@ export type DiscoveryActionResultById = {
                             } | {
                                 kind: 'group';
                                 service: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | {
                                     pluginId: 'happier';
                                     localId: 'mcp-sign-in';
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
                                 };
                                 groupId: string;
                             };
-                        }[] | undefined;
-                        application?: {
-                            agentTargetKey: string;
+                        }[];
+                        application?: undefined | {
                             implementationIdentity: {
                                 pluginId: string;
                                 localId: string;
                             };
                             endpointTemplateId: string;
                             protocol: string;
-                        } | undefined;
-                        nativeSource?: {
+                            agentTargetKey: string;
+                        };
+                        sourceFacts?: undefined | {
+                            endpoint: {
+                                id: string;
+                                protocol: string;
+                                capabilities: {
+                                    streaming: 'supported' | 'unknown' | 'unsupported';
+                                    toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                                    statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                                    reasoningControls: 'supported' | 'unknown' | 'unsupported';
+                                };
+                                modelIdPattern?: string | undefined;
+                            };
+                            credential?: undefined | {
+                                kind: 'apiKey';
+                                slotId: 'apiKey';
+                                required: boolean;
+                                transports: {
+                                    id: string;
+                                    protocols: string[];
+                                    uses: ('management' | 'probe' | 'runtime')[];
+                                    destination: {
+                                        kind: 'httpHeader';
+                                        name: string;
+                                        format: 'bearer' | 'raw' | {
+                                            template: string;
+                                        };
+                                    } | {
+                                        kind: 'queryParam';
+                                        name: string;
+                                        format: 'bearer' | 'raw' | {
+                                            template: string;
+                                        };
+                                    };
+                                    additionalCredentials?: undefined | {
+                                        slotId: string;
+                                        destination: {
+                                            kind: 'httpHeader';
+                                            name: string;
+                                            format: 'bearer' | 'raw' | {
+                                                template: string;
+                                            };
+                                        } | {
+                                            kind: 'queryParam';
+                                            name: string;
+                                            format: 'bearer' | 'raw' | {
+                                                template: string;
+                                            };
+                                        };
+                                        label?: string | undefined | {
+                                            key: string;
+                                            fallback: string;
+                                            params?: Record<string, number | string> | undefined;
+                                        };
+                                    }[];
+                                }[];
+                                keyUrl?: string | undefined;
+                                authorityDescription?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                            compatibilityOverrides?: undefined | {
+                                agentTargetKey: string;
+                                protocol: string;
+                                status: 'experimental' | 'incompatible' | 'verified';
+                                reason: string;
+                                evidence?: undefined | {
+                                    sourceUrls: string[];
+                                    verifiedAt: string;
+                                    providerVersion?: string | undefined;
+                                    agentVersion?: string | undefined;
+                                    testIds?: string[] | undefined;
+                                };
+                            }[];
+                        };
+                        confirmationSource?: undefined | {
+                            connectionId: string;
+                            catalogSourceKey: string;
+                        };
+                        requestPolicySupport?: undefined | {
+                            descriptor: {
+                                id: string;
+                                name: string;
+                                costTier?: 'low' | 'premium' | 'standard' | undefined;
+                                aliases?: string[] | undefined;
+                                description?: string | undefined;
+                                contextWindowTokens?: number | undefined;
+                                inlineCompletion?: undefined | {
+                                    operationId: string;
+                                    tokenAccounting: 'utf8-bytes';
+                                    promptOverheadTokens: number;
+                                    outputTokens?: number | undefined;
+                                    maxOutputTokens?: number | undefined;
+                                    rawFimTemplate?: undefined | {
+                                        prefix: string;
+                                        suffix: string;
+                                        middle: string;
+                                    };
+                                };
+                                nextEdit?: undefined | {
+                                    operationId: string;
+                                    tokenAccounting: 'utf8-bytes';
+                                    promptOverheadTokens: number;
+                                    outputTokens?: number | undefined;
+                                    maxOutputTokens?: number | undefined;
+                                };
+                                extendedContextModelId?: string | undefined;
+                                modelOptions?: undefined | {
+                                    id: string;
+                                    name: string;
+                                    type: string;
+                                    currentValue: string;
+                                    description?: string | undefined;
+                                    options?: undefined | {
+                                        value: string;
+                                        name: string;
+                                        description?: string | undefined;
+                                    }[];
+                                    overridesWhenOn?: undefined | {
+                                        optionIds: string[];
+                                        forcedValue?: string | undefined;
+                                    };
+                                }[];
+                                capabilities?: undefined | {
+                                    toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                                    reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                                    structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                                };
+                            };
+                            application: {
+                                implementationIdentity: {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                endpointTemplateId: string;
+                                protocol: string;
+                                agentTargetKey?: string | undefined;
+                            };
+                            sourceRevision: string;
+                            protocolKind: 'anthropic_messages' | 'openai_chat_completions' | 'openai_responses';
+                            model: {
+                                canonicalId: string;
+                                aliases: string[];
+                            };
+                            reasoningEffort: {
+                                supported: false;
+                            } | {
+                                supported: true;
+                                allowedValues: string[];
+                                defaultValue: string;
+                            };
+                        };
+                        nativeSource?: undefined | {
                             authorizationTicket: {
                                 connectionId: string;
                                 connectionRevision: number;
@@ -3423,8 +3839,8 @@ export type DiscoveryActionResultById = {
                                 connectionSecurityFingerprint: string;
                                 bindingSecurityFingerprint: string;
                                 grantFingerprint: string;
-                                selectedSecretBindingId: string | null;
-                                selectedSecretRecordFingerprint: string | null;
+                                selectedSecretBindingId: null | string;
+                                selectedSecretRecordFingerprint: null | string;
                             };
                             providerTicket: string;
                             endpoint: {
@@ -3436,184 +3852,44 @@ export type DiscoveryActionResultById = {
                             credentialTransport: {
                                 id: string;
                                 protocols: string[];
-                                uses: ('probe' | 'runtime' | 'management')[];
+                                uses: ('management' | 'probe' | 'runtime')[];
                                 destination: {
                                     kind: 'httpHeader';
                                     name: string;
-                                    format: 'raw' | 'bearer' | {
+                                    format: 'bearer' | 'raw' | {
                                         template: string;
                                     };
                                 } | {
                                     kind: 'queryParam';
                                     name: string;
-                                    format: 'raw' | 'bearer' | {
+                                    format: 'bearer' | 'raw' | {
                                         template: string;
                                     };
                                 };
-                                additionalCredentials?: {
+                                additionalCredentials?: undefined | {
                                     slotId: string;
                                     destination: {
                                         kind: 'httpHeader';
                                         name: string;
-                                        format: 'raw' | 'bearer' | {
+                                        format: 'bearer' | 'raw' | {
                                             template: string;
                                         };
                                     } | {
                                         kind: 'queryParam';
                                         name: string;
-                                        format: 'raw' | 'bearer' | {
+                                        format: 'bearer' | 'raw' | {
                                             template: string;
                                         };
                                     };
-                                    label?: string | {
+                                    label?: string | undefined | {
                                         key: string;
                                         fallback: string;
-                                        params?: Record<string, string | number> | undefined;
-                                    } | undefined;
-                                }[] | undefined;
-                            };
-                        } | undefined;
-                        sourceFacts?: {
-                            endpoint: {
-                                id: string;
-                                protocol: string;
-                                capabilities: {
-                                    streaming: 'unknown' | 'supported' | 'unsupported';
-                                    toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
-                                    statefulResponses: 'unknown' | 'supported' | 'unsupported';
-                                    reasoningControls: 'unknown' | 'supported' | 'unsupported';
-                                };
-                            };
-                            credential?: {
-                                kind: 'apiKey';
-                                slotId: 'apiKey';
-                                required: boolean;
-                                transports: {
-                                    id: string;
-                                    protocols: string[];
-                                    uses: ('probe' | 'runtime' | 'management')[];
-                                    destination: {
-                                        kind: 'httpHeader';
-                                        name: string;
-                                        format: 'raw' | 'bearer' | {
-                                            template: string;
-                                        };
-                                    } | {
-                                        kind: 'queryParam';
-                                        name: string;
-                                        format: 'raw' | 'bearer' | {
-                                            template: string;
-                                        };
+                                        params?: Record<string, number | string> | undefined;
                                     };
-                                    additionalCredentials?: {
-                                        slotId: string;
-                                        destination: {
-                                            kind: 'httpHeader';
-                                            name: string;
-                                            format: 'raw' | 'bearer' | {
-                                                template: string;
-                                            };
-                                        } | {
-                                            kind: 'queryParam';
-                                            name: string;
-                                            format: 'raw' | 'bearer' | {
-                                                template: string;
-                                            };
-                                        };
-                                        label?: string | {
-                                            key: string;
-                                            fallback: string;
-                                            params?: Record<string, string | number> | undefined;
-                                        } | undefined;
-                                    }[] | undefined;
                                 }[];
-                                keyUrl?: string | undefined;
-                            } | undefined;
-                            compatibilityOverrides?: {
-                                agentTargetKey: string;
-                                protocol: string;
-                                status: 'verified' | 'experimental' | 'incompatible';
-                                reason: string;
-                                evidence?: {
-                                    sourceUrls: string[];
-                                    verifiedAt: string;
-                                    providerVersion?: string | undefined;
-                                    agentVersion?: string | undefined;
-                                    testIds?: string[] | undefined;
-                                } | undefined;
-                            }[] | undefined;
-                        } | undefined;
-                        confirmationSource?: {
-                            connectionId: string;
-                            catalogSourceKey: string;
-                        } | undefined;
-                        requestPolicySupport?: {
-                            descriptor: {
-                                id: string;
-                                name: string;
-                                costTier?: 'low' | 'standard' | 'premium' | undefined;
-                                aliases?: string[] | undefined;
-                                description?: string | undefined;
-                                contextWindowTokens?: number | undefined;
-                                inlineCompletion?: {
-                                    operationId: string;
-                                    tokenAccounting: 'utf8-bytes';
-                                    promptOverheadTokens: number;
-                                    outputTokens?: number | undefined;
-                                    maxOutputTokens?: number | undefined;
-                                    rawFimTemplate?: {
-                                        prefix: string;
-                                        suffix: string;
-                                        middle: string;
-                                    } | undefined;
-                                } | undefined;
-                                extendedContextModelId?: string | undefined;
-                                modelOptions?: {
-                                    id: string;
-                                    name: string;
-                                    type: string;
-                                    currentValue: string;
-                                    description?: string | undefined;
-                                    options?: {
-                                        value: string;
-                                        name: string;
-                                        description?: string | undefined;
-                                    }[] | undefined;
-                                    overridesWhenOn?: {
-                                        optionIds: string[];
-                                        forcedValue?: string | undefined;
-                                    } | undefined;
-                                }[] | undefined;
-                                capabilities?: {
-                                    toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                                    reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                                    structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                                } | undefined;
                             };
-                            application: {
-                                agentTargetKey: string;
-                                implementationIdentity: {
-                                    pluginId: string;
-                                    localId: string;
-                                };
-                                endpointTemplateId: string;
-                                protocol: string;
-                            };
-                            sourceRevision: string;
-                            protocolKind: 'openai_responses' | 'openai_chat_completions' | 'anthropic_messages';
-                            model: {
-                                canonicalId: string;
-                                aliases: string[];
-                            };
-                            reasoningEffort: {
-                                supported: true;
-                                allowedValues: string[];
-                                defaultValue: string;
-                            } | {
-                                supported: false;
-                            };
-                        } | undefined;
-                        directMaterialization?: {
+                        };
+                        directMaterialization?: undefined | {
                             endpoint: {
                                 endpointTemplateId: string;
                                 normalizedUrl: string;
@@ -3623,45 +3899,45 @@ export type DiscoveryActionResultById = {
                             credentialTransport: {
                                 id: string;
                                 protocols: string[];
-                                uses: ('probe' | 'runtime' | 'management')[];
+                                uses: ('management' | 'probe' | 'runtime')[];
                                 destination: {
                                     kind: 'httpHeader';
                                     name: string;
-                                    format: 'raw' | 'bearer' | {
+                                    format: 'bearer' | 'raw' | {
                                         template: string;
                                     };
                                 } | {
                                     kind: 'queryParam';
                                     name: string;
-                                    format: 'raw' | 'bearer' | {
+                                    format: 'bearer' | 'raw' | {
                                         template: string;
                                     };
                                 };
-                                additionalCredentials?: {
+                                additionalCredentials?: undefined | {
                                     slotId: string;
                                     destination: {
                                         kind: 'httpHeader';
                                         name: string;
-                                        format: 'raw' | 'bearer' | {
+                                        format: 'bearer' | 'raw' | {
                                             template: string;
                                         };
                                     } | {
                                         kind: 'queryParam';
                                         name: string;
-                                        format: 'raw' | 'bearer' | {
+                                        format: 'bearer' | 'raw' | {
                                             template: string;
                                         };
                                     };
-                                    label?: string | {
+                                    label?: string | undefined | {
                                         key: string;
                                         fallback: string;
-                                        params?: Record<string, string | number> | undefined;
-                                    } | undefined;
-                                }[] | undefined;
+                                        params?: Record<string, number | string> | undefined;
+                                    };
+                                }[];
                             };
-                        } | undefined;
+                        };
                     }[];
-                    connectedAccountTarget?: {
+                    connectedAccountTarget?: undefined | {
                         kind: 'account';
                         account: {
                             service: {
@@ -3673,15 +3949,15 @@ export type DiscoveryActionResultById = {
                     } | {
                         kind: 'group';
                         service: {
-                            pluginId: string;
-                            localId: string;
-                        } | {
                             pluginId: 'happier';
                             localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
                         };
                         groupId: string;
-                    } | undefined;
-                    sourceAuthority?: {
+                    };
+                    sourceAuthority?: undefined | {
                         provider: {
                             identity: {
                                 pluginId: string;
@@ -3690,17 +3966,26 @@ export type DiscoveryActionResultById = {
                             definitionRevision: 1;
                         };
                         connectionSecurityFingerprint: string;
-                    } | undefined;
+                    };
                     sourceRevision?: string | undefined;
-                    modelLoadPreflightPolicy?: 'required' | 'advisory' | null | undefined;
+                    modelLoadPreflightPolicy?: 'advisory' | 'required' | null | undefined;
                 }[];
-                teamCredentialResources?: {
+                teamCredentialResources?: undefined | {
                     id: string;
                     teamId: string;
                     displayName: string;
                     resourceRevision: number;
                     readiness: {
                         kind: 'available';
+                    } | {
+                        kind: 'broker_unavailable';
+                        reason?: 'application_unavailable' | 'catalog_empty' | 'incompatible' | 'model_unavailable' | 'not_granted' | 'projection_unavailable' | 'response_invalid' | undefined;
+                    } | {
+                        kind: 'limit_reached';
+                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
+                        resetsAtUtc: string;
+                    } | {
+                        kind: 'policy_denied';
                     } | {
                         kind: 'resource_corrupt';
                     } | {
@@ -3709,21 +3994,12 @@ export type DiscoveryActionResultById = {
                         kind: 'source_unavailable';
                         reason?: 'connected_service_credential_reconnect_required' | undefined;
                     } | {
-                        kind: 'broker_unavailable';
-                        reason?: 'incompatible' | 'application_unavailable' | 'model_unavailable' | 'projection_unavailable' | 'response_invalid' | 'not_granted' | 'catalog_empty' | undefined;
-                    } | {
                         kind: 'update_required';
-                    } | {
-                        kind: 'policy_denied';
-                    } | {
-                        kind: 'limit_reached';
-                        metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
-                        resetsAtUtc: string;
                     };
-                    recoveryAction: 'retry' | 'update_required' | 'source_owner_action' | 'select_broker' | 'choose_another_resource' | null;
+                    recoveryAction: 'choose_another_resource' | 'retry' | 'select_broker' | 'source_owner_action' | 'update_required' | null;
                     mayBroker: boolean;
                     mayReceiveDirect: boolean;
-                    directMaterialState: 'current' | 'stale' | 'never_delivered' | 'preparing' | 'revoked';
+                    directMaterialState: 'current' | 'never_delivered' | 'preparing' | 'revoked' | 'stale';
                     sessionUsePolicy: 'personal_allowed' | 'team_context_required' | 'team_visibility_required' | null;
                     providerModels: {
                         selection: {
@@ -3733,8 +4009,8 @@ export type DiscoveryActionResultById = {
                             expectedResourceRevision: number;
                             agentTargetKey: string;
                             modelId: string;
-                            deliveryMode: 'direct' | 'brokered' | 'vendor-native';
-                            nativeDelivery?: {
+                            deliveryMode: 'brokered' | 'direct' | 'vendor-native';
+                            nativeDelivery?: undefined | {
                                 managedId: string;
                                 controllerInstallationId: string;
                                 guestInstallationId: string;
@@ -3742,139 +4018,172 @@ export type DiscoveryActionResultById = {
                                 placeholderRef: string;
                                 sourceRevision: string;
                                 providerTicket: string;
-                            } | undefined;
+                            };
                         };
                         descriptor: {
                             id: string;
                             name: string;
-                            costTier?: 'low' | 'standard' | 'premium' | undefined;
+                            costTier?: 'low' | 'premium' | 'standard' | undefined;
                             aliases?: string[] | undefined;
                             description?: string | undefined;
                             contextWindowTokens?: number | undefined;
-                            inlineCompletion?: {
+                            inlineCompletion?: undefined | {
                                 operationId: string;
                                 tokenAccounting: 'utf8-bytes';
                                 promptOverheadTokens: number;
                                 outputTokens?: number | undefined;
                                 maxOutputTokens?: number | undefined;
-                                rawFimTemplate?: {
+                                rawFimTemplate?: undefined | {
                                     prefix: string;
                                     suffix: string;
                                     middle: string;
-                                } | undefined;
-                            } | undefined;
+                                };
+                            };
+                            nextEdit?: undefined | {
+                                operationId: string;
+                                tokenAccounting: 'utf8-bytes';
+                                promptOverheadTokens: number;
+                                outputTokens?: number | undefined;
+                                maxOutputTokens?: number | undefined;
+                            };
                             extendedContextModelId?: string | undefined;
-                            modelOptions?: {
+                            modelOptions?: undefined | {
                                 id: string;
                                 name: string;
                                 type: string;
                                 currentValue: string;
                                 description?: string | undefined;
-                                options?: {
+                                options?: undefined | {
                                     value: string;
                                     name: string;
                                     description?: string | undefined;
-                                }[] | undefined;
-                                overridesWhenOn?: {
+                                }[];
+                                overridesWhenOn?: undefined | {
                                     optionIds: string[];
                                     forcedValue?: string | undefined;
-                                } | undefined;
-                            }[] | undefined;
-                            capabilities?: {
-                                toolRoundTrips?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                                reasoningControls?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                                structuredOutput?: 'unknown' | 'supported' | 'unsupported' | undefined;
-                            } | undefined;
+                                };
+                            }[];
+                            capabilities?: undefined | {
+                                toolRoundTrips?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                                reasoningControls?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                                structuredOutput?: 'supported' | 'unknown' | 'unsupported' | undefined;
+                            };
                         };
                         application: {
-                            agentTargetKey: string;
                             implementationIdentity: {
                                 pluginId: string;
                                 localId: string;
                             };
                             endpointTemplateId: string;
                             protocol: string;
+                            agentTargetKey: string;
                         };
                         sourceRevision: string;
-                        availability: 'available' | 'resource_corrupt' | 'policy_denied' | 'source_owner_required';
-                        sourceFacts?: {
+                        availability: 'available' | 'policy_denied' | 'resource_corrupt' | 'source_owner_required';
+                        sourceFacts?: undefined | {
                             endpoint: {
                                 id: string;
                                 protocol: string;
                                 capabilities: {
-                                    streaming: 'unknown' | 'supported' | 'unsupported';
-                                    toolRoundTrips: 'unknown' | 'supported' | 'unsupported';
-                                    statefulResponses: 'unknown' | 'supported' | 'unsupported';
-                                    reasoningControls: 'unknown' | 'supported' | 'unsupported';
+                                    streaming: 'supported' | 'unknown' | 'unsupported';
+                                    toolRoundTrips: 'supported' | 'unknown' | 'unsupported';
+                                    statefulResponses: 'supported' | 'unknown' | 'unsupported';
+                                    reasoningControls: 'supported' | 'unknown' | 'unsupported';
                                 };
+                                modelIdPattern?: string | undefined;
                             };
-                            credential?: {
+                            credential?: undefined | {
                                 kind: 'apiKey';
                                 slotId: 'apiKey';
                                 required: boolean;
                                 transports: {
                                     id: string;
                                     protocols: string[];
-                                    uses: ('probe' | 'runtime' | 'management')[];
+                                    uses: ('management' | 'probe' | 'runtime')[];
                                     destination: {
                                         kind: 'httpHeader';
                                         name: string;
-                                        format: 'raw' | 'bearer' | {
+                                        format: 'bearer' | 'raw' | {
                                             template: string;
                                         };
                                     } | {
                                         kind: 'queryParam';
                                         name: string;
-                                        format: 'raw' | 'bearer' | {
+                                        format: 'bearer' | 'raw' | {
                                             template: string;
                                         };
                                     };
-                                    additionalCredentials?: {
+                                    additionalCredentials?: undefined | {
                                         slotId: string;
                                         destination: {
                                             kind: 'httpHeader';
                                             name: string;
-                                            format: 'raw' | 'bearer' | {
+                                            format: 'bearer' | 'raw' | {
                                                 template: string;
                                             };
                                         } | {
                                             kind: 'queryParam';
                                             name: string;
-                                            format: 'raw' | 'bearer' | {
+                                            format: 'bearer' | 'raw' | {
                                                 template: string;
                                             };
                                         };
-                                        label?: string | {
+                                        label?: string | undefined | {
                                             key: string;
                                             fallback: string;
-                                            params?: Record<string, string | number> | undefined;
-                                        } | undefined;
-                                    }[] | undefined;
+                                            params?: Record<string, number | string> | undefined;
+                                        };
+                                    }[];
                                 }[];
                                 keyUrl?: string | undefined;
-                            } | undefined;
-                            compatibilityOverrides?: {
+                                authorityDescription?: string | undefined | {
+                                    key: string;
+                                    fallback: string;
+                                    params?: Record<string, number | string> | undefined;
+                                };
+                            };
+                            compatibilityOverrides?: undefined | {
                                 agentTargetKey: string;
                                 protocol: string;
-                                status: 'verified' | 'experimental' | 'incompatible';
+                                status: 'experimental' | 'incompatible' | 'verified';
                                 reason: string;
-                                evidence?: {
+                                evidence?: undefined | {
                                     sourceUrls: string[];
                                     verifiedAt: string;
                                     providerVersion?: string | undefined;
                                     agentVersion?: string | undefined;
                                     testIds?: string[] | undefined;
-                                } | undefined;
-                            }[] | undefined;
-                        } | undefined;
-                        sources?: {
+                                };
+                            }[];
+                        };
+                        sources?: undefined | {
                             manual: boolean;
                             static: boolean;
                             probe: boolean;
-                        } | undefined;
-                        confidence?: 'probe' | 'manual' | 'verified_static' | 'account_unverified' | undefined;
-                        compatibility?: {
+                        };
+                        confidence?: 'account_unverified' | 'manual' | 'probe' | 'verified_static' | undefined;
+                        compatibility?: undefined | {
                             result: {
+                                status: 'experimental';
+                                selectedProtocol: string;
+                                reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                                confirmationScope: {
+                                    kind: 'connection';
+                                } | {
+                                    kind: 'model';
+                                    modelId: string;
+                                };
+                                evidence?: undefined | {
+                                    sourceUrls: string[];
+                                    verifiedAt: string;
+                                    providerVersion?: string | undefined;
+                                    agentVersion?: string | undefined;
+                                    testIds?: string[] | undefined;
+                                };
+                            } | {
+                                status: 'incompatible';
+                                reasons: ('adapter_contract_invalid' | 'agent_external_providers_unsupported' | 'capability_reasoningControls_unknown' | 'capability_reasoningControls_unsupported' | 'capability_statefulResponses_unknown' | 'capability_statefulResponses_unsupported' | 'capability_streaming_unknown' | 'capability_streaming_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_toolRoundTrips_unsupported' | 'compatibility_evidence_missing' | 'compatibility_override_experimental' | 'compatibility_override_incompatible' | 'credential_transport_unavailable' | 'model_capability_evidence_required' | 'model_capability_reasoningControls_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_toolRoundTrips_unsupported' | 'model_required_for_capability_resolution' | 'no_auth_unsupported' | 'no_compatible_protocol' | 'optional_credential_no_auth_unsupported')[];
+                            } | {
                                 status: 'verified';
                                 selectedProtocol: string;
                                 evidence: {
@@ -3884,40 +4193,24 @@ export type DiscoveryActionResultById = {
                                     agentVersion?: string | undefined;
                                     testIds?: string[] | undefined;
                                 };
-                            } | {
-                                status: 'experimental';
-                                selectedProtocol: string;
-                                reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
-                                confirmationScope: {
-                                    kind: 'connection';
-                                } | {
-                                    kind: 'model';
-                                    modelId: string;
-                                };
-                                evidence?: {
-                                    sourceUrls: string[];
-                                    verifiedAt: string;
-                                    providerVersion?: string | undefined;
-                                    agentVersion?: string | undefined;
-                                    testIds?: string[] | undefined;
-                                } | undefined;
-                            } | {
-                                status: 'incompatible';
-                                reasons: ('no_compatible_protocol' | 'no_auth_unsupported' | 'credential_transport_unavailable' | 'optional_credential_no_auth_unsupported' | 'capability_streaming_unsupported' | 'capability_streaming_unknown' | 'capability_toolRoundTrips_unsupported' | 'capability_toolRoundTrips_unknown' | 'capability_statefulResponses_unsupported' | 'capability_statefulResponses_unknown' | 'capability_reasoningControls_unsupported' | 'capability_reasoningControls_unknown' | 'model_required_for_capability_resolution' | 'model_capability_toolRoundTrips_unsupported' | 'model_capability_toolRoundTrips_unknown' | 'model_capability_reasoningControls_unsupported' | 'model_capability_reasoningControls_unknown' | 'compatibility_override_incompatible' | 'compatibility_override_experimental' | 'compatibility_evidence_missing' | 'model_capability_evidence_required' | 'agent_external_providers_unsupported' | 'adapter_contract_invalid')[];
                             };
                             compatibilityFingerprint: string;
                             confirmed: boolean;
-                        } | undefined;
-                        nativeSource?: {
+                        };
+                        nativeSource?: undefined | {
                             providerTicket: string;
-                        } | undefined;
-                        direct?: {
+                        };
+                        direct?: null | undefined | {
                             sourceMemberKey: string;
                             sourceVersion: string;
-                        } | null | undefined;
-                        deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
+                        };
+                        deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
                     }[];
                     connectedServiceSelections: ({
+                        source: 'team_resource';
+                        resourceId: string;
+                        deliveryMode: 'brokered';
+                    } | {
                         source: 'team_resource';
                         resourceId: string;
                         deliveryMode: 'direct';
@@ -3928,20 +4221,15 @@ export type DiscoveryActionResultById = {
                             };
                             accountId: string;
                         };
-                    } | {
-                        source: 'team_resource';
-                        resourceId: string;
-                        deliveryMode: 'brokered';
-                        disclosedMember?: undefined;
                     })[];
-                    sourcePresentation: {
+                    sourcePresentation: null | {
                         kind: 'connected_service';
                         service: {
-                            pluginId: string;
-                            localId: string;
-                        } | {
                             pluginId: 'happier';
                             localId: 'mcp-sign-in';
+                        } | {
+                            pluginId: string;
+                            localId: string;
                         };
                     } | {
                         kind: 'provider';
@@ -3952,35 +4240,35 @@ export type DiscoveryActionResultById = {
                             };
                             definitionRevision: 1;
                         };
-                    } | null;
-                    deliveryPolicy?: {
-                        preferredAllowedModes: ('direct' | 'brokered' | 'vendor-native')[];
-                    } | undefined;
-                    allowedRoutes?: ('direct' | 'brokered' | 'vendor-native')[] | undefined;
-                    deliveryUnavailableReason?: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict' | undefined;
+                    };
+                    deliveryPolicy?: undefined | {
+                        preferredAllowedModes: ('brokered' | 'direct' | 'vendor-native')[];
+                    };
+                    allowedRoutes?: ('brokered' | 'direct' | 'vendor-native')[] | undefined;
+                    deliveryUnavailableReason?: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported' | undefined;
                     directDeliveryRecorded?: boolean | undefined;
-                    usageCapabilities?: {
-                        inferenceRequests: 'unavailable' | 'available';
-                        totalTokens: 'unavailable' | 'available';
-                        costUsd: 'unavailable' | 'available';
-                        limitCoverage: 'unavailable' | 'brokered_only';
-                    } | undefined;
-                    usageLimit?: {
-                        metric: 'inference_requests' | 'total_tokens' | 'cost_usd';
+                    usageCapabilities?: undefined | {
+                        inferenceRequests: 'available' | 'unavailable';
+                        totalTokens: 'available' | 'unavailable';
+                        costUsd: 'available' | 'unavailable';
+                        limitCoverage: 'brokered_only' | 'unavailable';
+                    };
+                    usageLimit?: null | undefined | {
+                        metric: 'cost_usd' | 'inference_requests' | 'total_tokens';
                         remaining: string;
                         resetsAtUtc: string;
-                    } | null | undefined;
-                }[] | undefined;
-                hiddenSources?: {
+                    };
+                }[];
+                hiddenSources?: undefined | {
                     connectionId: string;
                     providerName: string;
                     connectionName: string;
                     connectionRole: 'default' | 'named';
-                    connectionDisplayNameMode: 'custom' | 'automatic';
+                    connectionDisplayNameMode: 'automatic' | 'custom';
                     modelCount: number;
-                }[] | undefined;
-                currentSelectionRecovery?: {
-                    kind: 'contribution_unavailable' | 'connection_deleted' | 'connection_missing' | 'model_not_found';
+                }[];
+                currentSelectionRecovery?: null | undefined | {
+                    kind: 'connection_deleted' | 'connection_missing' | 'contribution_unavailable' | 'model_not_found';
                     ref: {
                         agentTargetKey: string;
                         providerConnectionId: null;
@@ -3992,37 +4280,43 @@ export type DiscoveryActionResultById = {
                     };
                     error: {
                         v: 1;
-                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+                        code: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported';
                         retryable: boolean;
-                        action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                        action: 'add_secret' | 'choose_connection' | 'choose_model' | 'enable_connection' | 'enable_on_machine' | 'load_model' | 'reduce_provider_settings' | 'replace_secret' | 'restart_probe' | 'restore_plugin' | 'retry' | 'review_account_grant' | 'review_and_restart' | 'review_compatibility' | 'review_connection' | 'review_credential_transport' | 'review_current_state' | 'review_features' | 'review_machine_grant' | 'review_profile_migration';
+                        requestId?: string | undefined;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         connectionId?: (string) | undefined;
                         machineId?: string | undefined;
                         sourceProfileId?: string | undefined;
                         retryAfterMs?: number | undefined;
-                        savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
+                        reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
+                        savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
                     };
-                    displaySnapshot: {
+                    displaySnapshot: null | {
                         providerName?: string | undefined;
                         connectionName?: string | undefined;
                         modelName?: string | undefined;
-                    } | null;
-                } | null | undefined;
-                refreshFailures?: {
+                    };
+                };
+                refreshFailures?: undefined | {
                     connectionId: string;
                     error: {
                         v: 1;
-                        code: 'model_not_granted' | 'permission_mode_not_granted' | 'provider_feature_disabled' | 'provider_connection_not_found' | 'provider_connection_changed' | 'provider_contribution_unavailable' | 'provider_connection_disabled' | 'provider_account_grant_stale' | 'provider_not_enabled_on_machine' | 'provider_machine_grant_stale' | 'provider_incompatible_with_agent' | 'provider_compatibility_unverified' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_credential_transport_unavailable' | 'provider_run_credential_selection_required' | 'provider_endpoint_unreachable' | 'provider_endpoint_unavailable' | 'provider_machine_unavailable' | 'machine_offline' | 'agent_unavailable' | 'agent_timeout' | 'agent_error' | 'provider_probe_capacity_exhausted' | 'provider_catalog_unavailable' | 'provider_rpc_response_invalid' | 'provider_rpc_mutation_outcome_unknown' | 'provider_endpoint_rate_limited' | 'provider_endpoint_auth_required' | 'provider_endpoint_unauthorized' | 'provider_probe_response_invalid' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_switch_unsupported' | 'provider_agent_runtime_unsupported' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_probe_authorization_invalid' | 'provider_settings_limit_exceeded' | 'provider_settings_invalid' | 'provider_connection_invalid' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_profile_migration_conflict';
+                        code: 'agent_error' | 'agent_timeout' | 'agent_unavailable' | 'connected_service_credential_reconnect_required' | 'machine_offline' | 'model_not_granted' | 'permission_mode_not_granted' | 'provider_account_grant_stale' | 'provider_account_scope_required' | 'provider_agent_runtime_unsupported' | 'provider_authorization_changed' | 'provider_binding_changed' | 'provider_catalog_unavailable' | 'provider_compatibility_unverified' | 'provider_connection_changed' | 'provider_connection_disabled' | 'provider_connection_invalid' | 'provider_connection_not_found' | 'provider_contribution_unavailable' | 'provider_credential_transport_unavailable' | 'provider_endpoint_auth_required' | 'provider_endpoint_rate_limited' | 'provider_endpoint_unauthorized' | 'provider_endpoint_unavailable' | 'provider_endpoint_unreachable' | 'provider_feature_disabled' | 'provider_incompatible_with_agent' | 'provider_machine_grant_stale' | 'provider_machine_unavailable' | 'provider_managed_requires_daemon' | 'provider_materialization_failed' | 'provider_model_config_option_unsupported' | 'provider_model_not_found' | 'provider_model_unloaded' | 'provider_not_enabled_on_machine' | 'provider_probe_authorization_invalid' | 'provider_probe_capacity_exhausted' | 'provider_probe_response_invalid' | 'provider_profile_migration_conflict' | 'provider_profile_migration_source_changed' | 'provider_profile_migration_source_not_found' | 'provider_rpc_mutation_outcome_unknown' | 'provider_rpc_response_invalid' | 'provider_run_credential_selection_required' | 'provider_secret_missing' | 'provider_secret_unavailable' | 'provider_settings_invalid' | 'provider_settings_limit_exceeded' | 'provider_switch_unsupported';
                         retryable: boolean;
-                        action: 'review_features' | 'choose_connection' | 'restore_plugin' | 'enable_connection' | 'review_account_grant' | 'enable_on_machine' | 'review_machine_grant' | 'review_compatibility' | 'add_secret' | 'review_credential_transport' | 'review_connection' | 'retry' | 'replace_secret' | 'choose_model' | 'load_model' | 'review_and_restart' | 'restart_probe' | 'reduce_provider_settings' | 'review_profile_migration' | 'review_current_state';
+                        action: 'add_secret' | 'choose_connection' | 'choose_model' | 'enable_connection' | 'enable_on_machine' | 'load_model' | 'reduce_provider_settings' | 'replace_secret' | 'restart_probe' | 'restore_plugin' | 'retry' | 'review_account_grant' | 'review_and_restart' | 'review_compatibility' | 'review_connection' | 'review_credential_transport' | 'review_current_state' | 'review_features' | 'review_machine_grant' | 'review_profile_migration';
+                        requestId?: string | undefined;
+                        failureCause?: ActionFailureCauseV1 | undefined;
                         connectionId?: (string) | undefined;
                         machineId?: string | undefined;
                         sourceProfileId?: string | undefined;
                         retryAfterMs?: number | undefined;
-                        savedSecretReason?: 'reference_missing' | 'reference_unavailable' | 'reference_forbidden' | 'reference_deleted' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_corrupt' | 'reference_stale' | 'reference_collision_migration_required' | undefined;
+                        reason?: 'invalid_connection_id' | 'invalid_machine_id' | 'managed_deployment_unavailable' | 'managed_purpose_bindings_invalid' | 'managed_purpose_bindings_missing' | 'unknown_endpoint_override' | undefined;
+                        savedSecretReason?: 'reference_collision_migration_required' | 'reference_corrupt' | 'reference_deleted' | 'reference_forbidden' | 'reference_missing' | 'reference_mode_incompatible' | 'reference_repair_required' | 'reference_stale' | 'reference_unavailable' | undefined;
                     };
-                }[] | undefined;
-            } | null;
-        } | undefined;
+                }[];
+            };
+        };
     };
     readonly "action.invoke": JsonValue;
 };

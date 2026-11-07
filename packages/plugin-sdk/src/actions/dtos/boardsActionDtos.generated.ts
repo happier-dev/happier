@@ -8,633 +8,26 @@ export type BoardsActionInputById = {
     readonly "boards.list": Record<string, never>;
     readonly "boards.apply": {
         intent: {
-            kind: 'widget_add';
-            instance: {
-                v: 1;
-                id: string;
-                definition: {
-                    kind: 'installed';
-                    surface: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                } | {
-                    kind: 'builtin';
-                    id: string;
-                } | {
-                    kind: 'artifact';
-                    artifactId: string;
-                } | {
-                    kind: 'inline';
-                    definition: {
-                        provenance: {
-                            source: {
-                                kind: 'authored';
-                            } | {
-                                kind: 'session';
-                                serverId: string;
-                                sessionId: string;
-                                itemId: string;
-                            };
-                            authorAccountId?: string | undefined;
-                            author?: {
-                                kind: 'person' | 'agent' | 'plugin';
-                            } | undefined;
-                            createdAt?: number | undefined;
-                        };
-                        sizeDeclaration: {
-                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                        };
-                        name: string;
-                        body: WidgetDefinitionBodyV1Input<true>;
-                        inputs: {
-                            title?: string | undefined;
-                            description?: string | undefined;
-                            submitLabel?: string | undefined;
-                            fields?: readonly {
-                                path: string;
-                                widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                title: string;
-                                inputType?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | {
-                                    hostType: 'usageQuery';
-                                    field?: 'period' | 'session' | undefined;
-                                } | {
-                                    hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                } | undefined;
-                                contextMode?: 'follow' | 'own' | undefined;
-                                required?: boolean | undefined;
-                                requireExplicitSelection?: boolean | undefined;
-                                listSeparator?: 'comma' | 'newline' | undefined;
-                                maxSelections?: number | undefined;
-                                defaultValue?: unknown;
-                                unit?: 'bytes' | undefined;
-                                visibleWhen?: unknown;
-                                visibleWhenContextSlot?: string | undefined;
-                                requiredWhen?: unknown;
-                                disabledWhen?: unknown;
-                                optionsSourceId?: string | undefined;
-                                connectedAccountOptions?: true | undefined;
-                                resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                prompt?: string | undefined;
-                                description?: string | undefined;
-                                placeholder?: string | undefined;
-                                options?: readonly {
-                                    value: unknown;
-                                    label: string;
-                                    labelKey?: string | undefined;
-                                    description?: string | undefined;
-                                    disabled?: boolean | undefined;
-                                }[] | undefined;
-                            }[] | undefined;
-                        };
-                        inputSchema: unknown;
-                        v: 1;
-                        id: string;
-                        description?: string | undefined;
-                        publicPresentation?: {
-                            kind: 'declarative';
-                            document: unknown;
-                        } | undefined;
-                        sessionInputPath?: string | undefined;
-                        connectedAccountPurposeBindings?: {
-                            path: string;
-                            purpose: string;
-                            consumer: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            nativeServicePath?: string | undefined;
-                        }[] | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
-                            network?: 'none' | 'open' | undefined;
-                        } | undefined;
-                    };
-                };
-                bindings: Record<string, {
-                    kind: 'value';
-                    value: unknown;
-                } | {
-                    kind: 'context';
-                    slot: string;
-                } | {
-                    kind: 'viewer';
-                    purpose: string;
-                }>;
-                displayName?: string | undefined;
-                networkOverride?: {
-                    networkOrigins?: string[] | undefined;
-                    network?: 'none' | 'open' | undefined;
-                } | undefined;
-            };
+            kind: 'add_items';
             boardId: string;
-            ref: {
-                surface: {
+            refs: ({
+                kind: 'machine' | 'session' | 'workflow' | 'workflow_run';
+                qualifiedId: {
                     serverId: string;
-                    accountId: string;
-                    owner: {
-                        kind: 'home';
-                    } | {
-                        kind: 'sessionBoard';
-                        sessionId: string;
-                    } | {
-                        kind: 'companion';
-                        sessionId: string;
-                    } | {
-                        kind: 'workBoard';
-                        boardId: string;
-                    } | {
-                        kind: 'project';
-                        projectId: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'pluginArea';
-                        pluginId: string;
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'corePage';
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    };
-                    artifactId?: string | undefined;
+                    id: string;
                 };
-                instanceId: string;
-            };
-            size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-            frameStyle?: 'card' | 'plain' | undefined;
-            toIndex?: number | undefined;
-            nativeIndex?: number | undefined;
-            position?: {
+            } | {
+                kind: 'task';
+                qualifiedId: {
+                    serverId: string;
+                    id: string;
+                };
+                pluginId: string;
+            })[];
+            positionsByItemRef?: Record<string, {
                 x: number;
                 y: number;
-            } | undefined;
-        } | {
-            kind: 'widget_remove';
-            boardId: string;
-            ref: {
-                surface: {
-                    serverId: string;
-                    accountId: string;
-                    owner: {
-                        kind: 'home';
-                    } | {
-                        kind: 'sessionBoard';
-                        sessionId: string;
-                    } | {
-                        kind: 'companion';
-                        sessionId: string;
-                    } | {
-                        kind: 'workBoard';
-                        boardId: string;
-                    } | {
-                        kind: 'project';
-                        projectId: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'pluginArea';
-                        pluginId: string;
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'corePage';
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    };
-                    artifactId?: string | undefined;
-                };
-                instanceId: string;
-            };
-            expectedInstance?: {
-                v: 1;
-                id: string;
-                definition: {
-                    kind: 'installed';
-                    surface: {
-                        pluginId: string;
-                        localId: string;
-                    };
-                } | {
-                    kind: 'builtin';
-                    id: string;
-                } | {
-                    kind: 'artifact';
-                    artifactId: string;
-                } | {
-                    kind: 'inline';
-                    definition: {
-                        provenance: {
-                            source: {
-                                kind: 'authored';
-                            } | {
-                                kind: 'session';
-                                serverId: string;
-                                sessionId: string;
-                                itemId: string;
-                            };
-                            authorAccountId?: string | undefined;
-                            author?: {
-                                kind: 'person' | 'agent' | 'plugin';
-                            } | undefined;
-                            createdAt?: number | undefined;
-                        };
-                        sizeDeclaration: {
-                            sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                            defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-                        };
-                        name: string;
-                        body: WidgetDefinitionBodyV1Input<true>;
-                        inputs: {
-                            title?: string | undefined;
-                            description?: string | undefined;
-                            submitLabel?: string | undefined;
-                            fields?: readonly {
-                                path: string;
-                                widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
-                                title: string;
-                                inputType?: {
-                                    pluginId: string;
-                                    localId: string;
-                                } | {
-                                    hostType: 'usageQuery';
-                                    field?: 'period' | 'session' | undefined;
-                                } | {
-                                    hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                } | undefined;
-                                contextMode?: 'follow' | 'own' | undefined;
-                                required?: boolean | undefined;
-                                requireExplicitSelection?: boolean | undefined;
-                                listSeparator?: 'comma' | 'newline' | undefined;
-                                maxSelections?: number | undefined;
-                                defaultValue?: unknown;
-                                unit?: 'bytes' | undefined;
-                                visibleWhen?: unknown;
-                                visibleWhenContextSlot?: string | undefined;
-                                requiredWhen?: unknown;
-                                disabledWhen?: unknown;
-                                optionsSourceId?: string | undefined;
-                                connectedAccountOptions?: true | undefined;
-                                resolvedEmptyConnectedAccountOptions?: true | undefined;
-                                prompt?: string | undefined;
-                                description?: string | undefined;
-                                placeholder?: string | undefined;
-                                options?: readonly {
-                                    value: unknown;
-                                    label: string;
-                                    labelKey?: string | undefined;
-                                    description?: string | undefined;
-                                    disabled?: boolean | undefined;
-                                }[] | undefined;
-                            }[] | undefined;
-                        };
-                        inputSchema: unknown;
-                        v: 1;
-                        id: string;
-                        description?: string | undefined;
-                        publicPresentation?: {
-                            kind: 'declarative';
-                            document: unknown;
-                        } | undefined;
-                        sessionInputPath?: string | undefined;
-                        connectedAccountPurposeBindings?: {
-                            path: string;
-                            purpose: string;
-                            consumer: {
-                                pluginId: string;
-                                localId: string;
-                            };
-                            nativeServicePath?: string | undefined;
-                        }[] | undefined;
-                        networkOverride?: {
-                            networkOrigins?: string[] | undefined;
-                            network?: 'none' | 'open' | undefined;
-                        } | undefined;
-                    };
-                };
-                bindings: Record<string, {
-                    kind: 'value';
-                    value: unknown;
-                } | {
-                    kind: 'context';
-                    slot: string;
-                } | {
-                    kind: 'viewer';
-                    purpose: string;
-                }>;
-                displayName?: string | undefined;
-                networkOverride?: {
-                    networkOrigins?: string[] | undefined;
-                    network?: 'none' | 'open' | undefined;
-                } | undefined;
-            } | undefined;
-            expectedPresentation?: {
-                frameStyle: 'card' | 'plain' | null;
-                nativeIndex: number;
-                area?: 'main' | 'aside' | undefined;
-                groupId?: string | null | undefined;
-                size?: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large' | undefined;
-                tabId?: string | undefined;
-                hidden?: boolean | undefined;
-                canvasPosition?: [
-                    number,
-                    number
-                ] | null | undefined;
-            } | undefined;
-        } | {
-            kind: 'widget_move';
-            boardId: string;
-            ref: {
-                surface: {
-                    serverId: string;
-                    accountId: string;
-                    owner: {
-                        kind: 'home';
-                    } | {
-                        kind: 'sessionBoard';
-                        sessionId: string;
-                    } | {
-                        kind: 'companion';
-                        sessionId: string;
-                    } | {
-                        kind: 'workBoard';
-                        boardId: string;
-                    } | {
-                        kind: 'project';
-                        projectId: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'pluginArea';
-                        pluginId: string;
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'corePage';
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    };
-                    artifactId?: string | undefined;
-                };
-                instanceId: string;
-            };
-            toIndex?: number | undefined;
-            nativeIndex?: number | undefined;
-        } | {
-            kind: 'widget_size';
-            size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
-            boardId: string;
-            ref: {
-                surface: {
-                    serverId: string;
-                    accountId: string;
-                    owner: {
-                        kind: 'home';
-                    } | {
-                        kind: 'sessionBoard';
-                        sessionId: string;
-                    } | {
-                        kind: 'companion';
-                        sessionId: string;
-                    } | {
-                        kind: 'workBoard';
-                        boardId: string;
-                    } | {
-                        kind: 'project';
-                        projectId: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'pluginArea';
-                        pluginId: string;
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'corePage';
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    };
-                    artifactId?: string | undefined;
-                };
-                instanceId: string;
-            };
-        } | {
-            kind: 'widget_frame';
-            frameStyle: 'card' | 'plain' | null;
-            boardId: string;
-            ref: {
-                surface: {
-                    serverId: string;
-                    accountId: string;
-                    owner: {
-                        kind: 'home';
-                    } | {
-                        kind: 'sessionBoard';
-                        sessionId: string;
-                    } | {
-                        kind: 'companion';
-                        sessionId: string;
-                    } | {
-                        kind: 'workBoard';
-                        boardId: string;
-                    } | {
-                        kind: 'project';
-                        projectId: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'pluginArea';
-                        pluginId: string;
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'corePage';
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    };
-                    artifactId?: string | undefined;
-                };
-                instanceId: string;
-            };
-        } | {
-            kind: 'widget_rename';
-            displayName: string | null;
-            boardId: string;
-            ref: {
-                surface: {
-                    serverId: string;
-                    accountId: string;
-                    owner: {
-                        kind: 'home';
-                    } | {
-                        kind: 'sessionBoard';
-                        sessionId: string;
-                    } | {
-                        kind: 'companion';
-                        sessionId: string;
-                    } | {
-                        kind: 'workBoard';
-                        boardId: string;
-                    } | {
-                        kind: 'project';
-                        projectId: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'pluginArea';
-                        pluginId: string;
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'corePage';
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    };
-                    artifactId?: string | undefined;
-                };
-                instanceId: string;
-            };
-        } | {
-            kind: 'widget_inputs';
-            bindings: Record<string, {
-                kind: 'value';
-                value: unknown;
-            } | {
-                kind: 'context';
-                slot: string;
-            } | {
-                kind: 'viewer';
-                purpose: string;
-            }>;
-            boardId: string;
-            ref: {
-                surface: {
-                    serverId: string;
-                    accountId: string;
-                    owner: {
-                        kind: 'home';
-                    } | {
-                        kind: 'sessionBoard';
-                        sessionId: string;
-                    } | {
-                        kind: 'companion';
-                        sessionId: string;
-                    } | {
-                        kind: 'workBoard';
-                        boardId: string;
-                    } | {
-                        kind: 'project';
-                        projectId: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'pluginArea';
-                        pluginId: string;
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'corePage';
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    };
-                    artifactId?: string | undefined;
-                };
-                instanceId: string;
-            };
-            paths?: string[] | undefined;
-        } | {
-            kind: 'widget_inputs_reset';
-            boardId: string;
-            ref: {
-                surface: {
-                    serverId: string;
-                    accountId: string;
-                    owner: {
-                        kind: 'home';
-                    } | {
-                        kind: 'sessionBoard';
-                        sessionId: string;
-                    } | {
-                        kind: 'companion';
-                        sessionId: string;
-                    } | {
-                        kind: 'workBoard';
-                        boardId: string;
-                    } | {
-                        kind: 'project';
-                        projectId: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'pluginArea';
-                        pluginId: string;
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'corePage';
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    };
-                    artifactId?: string | undefined;
-                };
-                instanceId: string;
-            };
-            paths?: string[] | undefined;
-        } | {
-            kind: 'widget_network';
-            network: {
-                networkOrigins?: string[] | undefined;
-                network?: 'none' | 'open' | undefined;
-            };
-            boardId: string;
-            ref: {
-                surface: {
-                    serverId: string;
-                    accountId: string;
-                    owner: {
-                        kind: 'home';
-                    } | {
-                        kind: 'sessionBoard';
-                        sessionId: string;
-                    } | {
-                        kind: 'companion';
-                        sessionId: string;
-                    } | {
-                        kind: 'workBoard';
-                        boardId: string;
-                    } | {
-                        kind: 'project';
-                        projectId: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'pluginArea';
-                        pluginId: string;
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    } | {
-                        kind: 'corePage';
-                        pageId: string;
-                        area: string;
-                        layoutId?: string | undefined;
-                    };
-                    artifactId?: string | undefined;
-                };
-                instanceId: string;
-            };
+            }> | undefined;
         } | {
             kind: 'create';
             board: {
@@ -645,19 +38,51 @@ export type BoardsActionInputById = {
             kind: 'delete';
             boardId: string;
         } | {
+            kind: 'remove_item';
+            boardId: string;
+            ref: {
+                kind: 'machine' | 'session' | 'workflow' | 'workflow_run';
+                qualifiedId: {
+                    serverId: string;
+                    id: string;
+                };
+            } | {
+                kind: 'task';
+                qualifiedId: {
+                    serverId: string;
+                    id: string;
+                };
+                pluginId: string;
+            };
+            membership?: undefined | {
+                liveItemKeys: string[];
+                unavailableServerIds: string[];
+            };
+        } | {
+            kind: 'set_positions';
+            boardId: string;
+            positionsByItemRef: Record<string, {
+                x: number;
+                y: number;
+            }>;
+            membership?: undefined | {
+                liveItemKeys: string[];
+                unavailableServerIds: string[];
+            };
+        } | {
             kind: 'update';
             boardId: string;
             patch: {
                 name?: string | undefined;
-                mode?: 'canvas' | 'by_status' | undefined;
+                mode?: 'by_status' | 'canvas' | undefined;
                 snap?: boolean | undefined;
                 pinnedInSessions?: boolean | undefined;
-                source?: {
-                    sections?: ('needs_you' | 'running' | 'my_machines')[] | null | undefined;
+                source?: undefined | {
+                    sections?: ('my_machines' | 'needs_you' | 'running')[] | null | undefined;
                     filter?: Readonly<{
-                        show: 'sessions' | 'runs' | 'both';
-                        startedBy: readonly ('you' | 'triggers' | 'agents')[];
-                        scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
+                        show: 'both' | 'runs' | 'sessions';
+                        startedBy: readonly ('agents' | 'triggers' | 'you')[];
+                        scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
                         attention: 'any' | 'needs_my_attention';
                         bot?: 'bot' | 'ordinary' | undefined;
                         coordinator?: 'coordinator' | undefined;
@@ -671,8 +96,8 @@ export type BoardsActionInputById = {
                                 projectKey: string;
                             }[];
                         }> | undefined;
-                        statuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-                        excludedStatuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
+                        statuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+                        excludedStatuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
                         machines?: Readonly<{
                             include: readonly Readonly<{
                                 serverId: string;
@@ -721,10 +146,10 @@ export type BoardsActionInputById = {
                             serverId: string;
                             tagId: string;
                         }>[];
-                        source: 'all' | 'persisted' | 'direct';
+                        source: 'all' | 'direct' | 'persisted';
                     }> | null | undefined;
                     picked?: ({
-                        kind: 'session' | 'machine' | 'workflow_run' | 'workflow';
+                        kind: 'machine' | 'session' | 'workflow' | 'workflow_run';
                         qualifiedId: {
                             serverId: string;
                             id: string;
@@ -737,61 +162,674 @@ export type BoardsActionInputById = {
                         };
                         pluginId: string;
                     })[] | undefined;
-                } | undefined;
+                };
             };
         } | {
-            kind: 'add_items';
-            boardId: string;
-            refs: ({
-                kind: 'session' | 'machine' | 'workflow_run' | 'workflow';
-                qualifiedId: {
-                    serverId: string;
+            kind: 'widget_add';
+            instance: {
+                v: 1;
+                id: string;
+                definition: {
+                    kind: 'artifact';
+                    artifactId: string;
+                } | {
+                    kind: 'builtin';
                     id: string;
+                } | {
+                    kind: 'inline';
+                    definition: {
+                        provenance: {
+                            source: {
+                                kind: 'authored';
+                            } | {
+                                kind: 'session';
+                                serverId: string;
+                                sessionId: string;
+                                itemId: string;
+                            };
+                            authorAccountId?: string | undefined;
+                            author?: undefined | {
+                                kind: 'agent' | 'person' | 'plugin';
+                            };
+                            createdAt?: number | undefined;
+                        };
+                        sizeDeclaration: {
+                            sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                            defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                        };
+                        name: string;
+                        body: WidgetDefinitionBodyV1Input<true>;
+                        inputs: {
+                            title?: string | undefined;
+                            description?: string | undefined;
+                            submitLabel?: string | undefined;
+                            fields?: readonly {
+                                path: string;
+                                widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
+                                title: string;
+                                inputType?: undefined | {
+                                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                } | {
+                                    hostType: 'usageQuery';
+                                    field?: 'period' | 'session' | undefined;
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                contextMode?: 'follow' | 'own' | undefined;
+                                required?: boolean | undefined;
+                                requireExplicitSelection?: boolean | undefined;
+                                listSeparator?: 'comma' | 'newline' | undefined;
+                                maxSelections?: number | undefined;
+                                defaultValue?: unknown;
+                                unit?: 'bytes' | undefined;
+                                visibleWhen?: unknown;
+                                visibleWhenContextSlot?: string | undefined;
+                                requiredWhen?: unknown;
+                                disabledWhen?: unknown;
+                                optionsSourceId?: string | undefined;
+                                connectedAccountOptions?: true | undefined;
+                                resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                prompt?: string | undefined;
+                                description?: string | undefined;
+                                placeholder?: string | undefined;
+                                options?: readonly {
+                                    value: unknown;
+                                    label: string;
+                                    labelKey?: string | undefined;
+                                    description?: string | undefined;
+                                    disabled?: boolean | undefined;
+                                    icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                    brand?: undefined | {
+                                        state: 'available';
+                                        resource: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        width: number;
+                                        height: number;
+                                        digest: string;
+                                        monochrome?: boolean | undefined;
+                                    } | {
+                                        state: 'invalid' | 'missing' | 'retired';
+                                    };
+                                    source?: undefined | {
+                                        kind: string;
+                                        locator: string;
+                                    };
+                                    version?: string | undefined;
+                                }[] | undefined;
+                            }[] | undefined;
+                        };
+                        inputSchema: unknown;
+                        v: 1;
+                        id: string;
+                        description?: string | undefined;
+                        publicPresentation?: undefined | {
+                            kind: 'declarative';
+                            document: unknown;
+                        };
+                        sessionInputPath?: string | undefined;
+                        connectedAccountPurposeBindings?: undefined | {
+                            path: string;
+                            purpose: string;
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            nativeServicePath?: string | undefined;
+                        }[];
+                        networkOverride?: undefined | {
+                            network?: 'none' | 'open' | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'installed';
+                    surface: {
+                        pluginId: string;
+                        localId: string;
+                    };
                 };
-            } | {
-                kind: 'task';
-                qualifiedId: {
-                    serverId: string;
-                    id: string;
+                bindings: Record<string, {
+                    kind: 'context';
+                    slot: string;
+                } | {
+                    kind: 'value';
+                    value: unknown;
+                } | {
+                    kind: 'viewer';
+                    purpose: string;
+                }>;
+                displayName?: string | undefined;
+                networkOverride?: undefined | {
+                    network?: 'none' | 'open' | undefined;
+                    networkOrigins?: string[] | undefined;
                 };
-                pluginId: string;
-            })[];
-            positionsByItemRef?: Record<string, {
-                x: number;
-                y: number;
-            }> | undefined;
-        } | {
-            kind: 'remove_item';
+            };
             boardId: string;
             ref: {
-                kind: 'session' | 'machine' | 'workflow_run' | 'workflow';
-                qualifiedId: {
+                surface: {
                     serverId: string;
-                    id: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'home';
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    };
+                    artifactId?: string | undefined;
                 };
-            } | {
-                kind: 'task';
-                qualifiedId: {
-                    serverId: string;
-                    id: string;
-                };
-                pluginId: string;
+                instanceId: string;
             };
-            membership?: {
-                liveItemKeys: string[];
-                unavailableServerIds: string[];
-            } | undefined;
-        } | {
-            kind: 'set_positions';
-            boardId: string;
-            positionsByItemRef: Record<string, {
+            size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
+            frameStyle?: 'card' | 'plain' | undefined;
+            toIndex?: number | undefined;
+            nativeIndex?: number | undefined;
+            position?: undefined | {
                 x: number;
                 y: number;
+            };
+        } | {
+            kind: 'widget_frame';
+            frameStyle: 'card' | 'plain' | null;
+            boardId: string;
+            ref: {
+                surface: {
+                    serverId: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'home';
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    };
+                    artifactId?: string | undefined;
+                };
+                instanceId: string;
+            };
+        } | {
+            kind: 'widget_inputs';
+            bindings: Record<string, {
+                kind: 'context';
+                slot: string;
+            } | {
+                kind: 'value';
+                value: unknown;
+            } | {
+                kind: 'viewer';
+                purpose: string;
             }>;
-            membership?: {
-                liveItemKeys: string[];
-                unavailableServerIds: string[];
-            } | undefined;
+            boardId: string;
+            ref: {
+                surface: {
+                    serverId: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'home';
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    };
+                    artifactId?: string | undefined;
+                };
+                instanceId: string;
+            };
+            paths?: string[] | undefined;
+        } | {
+            kind: 'widget_inputs_reset';
+            boardId: string;
+            ref: {
+                surface: {
+                    serverId: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'home';
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    };
+                    artifactId?: string | undefined;
+                };
+                instanceId: string;
+            };
+            paths?: string[] | undefined;
+        } | {
+            kind: 'widget_move';
+            boardId: string;
+            ref: {
+                surface: {
+                    serverId: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'home';
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    };
+                    artifactId?: string | undefined;
+                };
+                instanceId: string;
+            };
+            toIndex?: number | undefined;
+            nativeIndex?: number | undefined;
+        } | {
+            kind: 'widget_network';
+            network: {
+                network?: 'none' | 'open' | undefined;
+                networkOrigins?: string[] | undefined;
+            };
+            boardId: string;
+            ref: {
+                surface: {
+                    serverId: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'home';
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    };
+                    artifactId?: string | undefined;
+                };
+                instanceId: string;
+            };
+        } | {
+            kind: 'widget_remove';
+            boardId: string;
+            ref: {
+                surface: {
+                    serverId: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'home';
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    };
+                    artifactId?: string | undefined;
+                };
+                instanceId: string;
+            };
+            expectedInstance?: undefined | {
+                v: 1;
+                id: string;
+                definition: {
+                    kind: 'artifact';
+                    artifactId: string;
+                } | {
+                    kind: 'builtin';
+                    id: string;
+                } | {
+                    kind: 'inline';
+                    definition: {
+                        provenance: {
+                            source: {
+                                kind: 'authored';
+                            } | {
+                                kind: 'session';
+                                serverId: string;
+                                sessionId: string;
+                                itemId: string;
+                            };
+                            authorAccountId?: string | undefined;
+                            author?: undefined | {
+                                kind: 'agent' | 'person' | 'plugin';
+                            };
+                            createdAt?: number | undefined;
+                        };
+                        sizeDeclaration: {
+                            sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                            defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+                        };
+                        name: string;
+                        body: WidgetDefinitionBodyV1Input<true>;
+                        inputs: {
+                            title?: string | undefined;
+                            description?: string | undefined;
+                            submitLabel?: string | undefined;
+                            fields?: readonly {
+                                path: string;
+                                widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
+                                title: string;
+                                inputType?: undefined | {
+                                    hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
+                                } | {
+                                    hostType: 'usageQuery';
+                                    field?: 'period' | 'session' | undefined;
+                                } | {
+                                    pluginId: string;
+                                    localId: string;
+                                };
+                                contextMode?: 'follow' | 'own' | undefined;
+                                required?: boolean | undefined;
+                                requireExplicitSelection?: boolean | undefined;
+                                listSeparator?: 'comma' | 'newline' | undefined;
+                                maxSelections?: number | undefined;
+                                defaultValue?: unknown;
+                                unit?: 'bytes' | undefined;
+                                visibleWhen?: unknown;
+                                visibleWhenContextSlot?: string | undefined;
+                                requiredWhen?: unknown;
+                                disabledWhen?: unknown;
+                                optionsSourceId?: string | undefined;
+                                connectedAccountOptions?: true | undefined;
+                                resolvedEmptyConnectedAccountOptions?: true | undefined;
+                                prompt?: string | undefined;
+                                description?: string | undefined;
+                                placeholder?: string | undefined;
+                                options?: readonly {
+                                    value: unknown;
+                                    label: string;
+                                    labelKey?: string | undefined;
+                                    description?: string | undefined;
+                                    disabled?: boolean | undefined;
+                                    icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                    brand?: undefined | {
+                                        state: 'available';
+                                        resource: {
+                                            pluginId: string;
+                                            localId: string;
+                                        };
+                                        width: number;
+                                        height: number;
+                                        digest: string;
+                                        monochrome?: boolean | undefined;
+                                    } | {
+                                        state: 'invalid' | 'missing' | 'retired';
+                                    };
+                                    source?: undefined | {
+                                        kind: string;
+                                        locator: string;
+                                    };
+                                    version?: string | undefined;
+                                }[] | undefined;
+                            }[] | undefined;
+                        };
+                        inputSchema: unknown;
+                        v: 1;
+                        id: string;
+                        description?: string | undefined;
+                        publicPresentation?: undefined | {
+                            kind: 'declarative';
+                            document: unknown;
+                        };
+                        sessionInputPath?: string | undefined;
+                        connectedAccountPurposeBindings?: undefined | {
+                            path: string;
+                            purpose: string;
+                            consumer: {
+                                pluginId: string;
+                                localId: string;
+                            };
+                            nativeServicePath?: string | undefined;
+                        }[];
+                        networkOverride?: undefined | {
+                            network?: 'none' | 'open' | undefined;
+                            networkOrigins?: string[] | undefined;
+                        };
+                    };
+                } | {
+                    kind: 'installed';
+                    surface: {
+                        pluginId: string;
+                        localId: string;
+                    };
+                };
+                bindings: Record<string, {
+                    kind: 'context';
+                    slot: string;
+                } | {
+                    kind: 'value';
+                    value: unknown;
+                } | {
+                    kind: 'viewer';
+                    purpose: string;
+                }>;
+                displayName?: string | undefined;
+                networkOverride?: undefined | {
+                    network?: 'none' | 'open' | undefined;
+                    networkOrigins?: string[] | undefined;
+                };
+            };
+            expectedPresentation?: undefined | {
+                frameStyle: 'card' | 'plain' | null;
+                nativeIndex: number;
+                area?: 'aside' | 'main' | undefined;
+                groupId?: null | string | undefined;
+                size?: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide' | undefined;
+                tabId?: string | undefined;
+                hidden?: boolean | undefined;
+                canvasPosition?: [
+                    number,
+                    number
+                ] | null | undefined;
+            };
+        } | {
+            kind: 'widget_rename';
+            displayName: null | string;
+            boardId: string;
+            ref: {
+                surface: {
+                    serverId: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'home';
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    };
+                    artifactId?: string | undefined;
+                };
+                instanceId: string;
+            };
+        } | {
+            kind: 'widget_size';
+            size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
+            boardId: string;
+            ref: {
+                surface: {
+                    serverId: string;
+                    accountId: string;
+                    owner: {
+                        kind: 'companion';
+                        sessionId: string;
+                    } | {
+                        kind: 'corePage';
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'home';
+                    } | {
+                        kind: 'pluginArea';
+                        pluginId: string;
+                        pageId: string;
+                        area: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'project';
+                        projectId: string;
+                        layoutId?: string | undefined;
+                    } | {
+                        kind: 'sessionBoard';
+                        sessionId: string;
+                    } | {
+                        kind: 'workBoard';
+                        boardId: string;
+                    };
+                    artifactId?: string | undefined;
+                };
+                instanceId: string;
+            };
         };
         boardId?: string | undefined;
     };
@@ -802,11 +840,11 @@ export type BoardsActionResultById = {
             id: string;
             name: string;
             source: Readonly<{
-                sections?: readonly ('needs_you' | 'running' | 'my_machines')[] | undefined;
+                sections?: readonly ('my_machines' | 'needs_you' | 'running')[] | undefined;
                 filter?: Readonly<{
-                    show: 'sessions' | 'runs' | 'both';
-                    startedBy: readonly ('you' | 'triggers' | 'agents')[];
-                    scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
+                    show: 'both' | 'runs' | 'sessions';
+                    startedBy: readonly ('agents' | 'triggers' | 'you')[];
+                    scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
                     attention: 'any' | 'needs_my_attention';
                     bot?: 'bot' | 'ordinary' | undefined;
                     coordinator?: 'coordinator' | undefined;
@@ -820,8 +858,8 @@ export type BoardsActionResultById = {
                             projectKey: string;
                         }[];
                     }> | undefined;
-                    statuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-                    excludedStatuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
+                    statuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+                    excludedStatuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
                     machines?: Readonly<{
                         include: readonly Readonly<{
                             serverId: string;
@@ -870,7 +908,7 @@ export type BoardsActionResultById = {
                         serverId: string;
                         tagId: string;
                     }>[];
-                    source: 'all' | 'persisted' | 'direct';
+                    source: 'all' | 'direct' | 'persisted';
                 }> | undefined;
                 picked: readonly BoardItemRefV1[];
                 unknown?: Readonly<{
@@ -878,7 +916,7 @@ export type BoardsActionResultById = {
                     picked?: readonly unknown[] | undefined;
                 }> | undefined;
             }>;
-            mode: 'canvas' | 'by_status';
+            mode: 'by_status' | 'canvas';
             snap: boolean;
             positionsByItemRef: Readonly<Record<string, Readonly<{
                 x: number;
@@ -892,20 +930,15 @@ export type BoardsActionResultById = {
                         serverId: string;
                         accountId: string;
                         owner: {
-                            kind: 'home';
-                        } | {
-                            kind: 'sessionBoard';
-                            sessionId: string;
-                        } | {
                             kind: 'companion';
                             sessionId: string;
                         } | {
-                            kind: 'workBoard';
-                            boardId: string;
-                        } | {
-                            kind: 'project';
-                            projectId: string;
+                            kind: 'corePage';
+                            pageId: string;
+                            area: string;
                             layoutId?: string | undefined;
+                        } | {
+                            kind: 'home';
                         } | {
                             kind: 'pluginArea';
                             pluginId: string;
@@ -913,10 +946,15 @@ export type BoardsActionResultById = {
                             area: string;
                             layoutId?: string | undefined;
                         } | {
-                            kind: 'corePage';
-                            pageId: string;
-                            area: string;
+                            kind: 'project';
+                            projectId: string;
                             layoutId?: string | undefined;
+                        } | {
+                            kind: 'sessionBoard';
+                            sessionId: string;
+                        } | {
+                            kind: 'workBoard';
+                            boardId: string;
                         };
                         artifactId?: string | undefined;
                     };
@@ -926,17 +964,11 @@ export type BoardsActionResultById = {
                     v: 1;
                     id: string;
                     definition: {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
+                        kind: 'artifact';
+                        artifactId: string;
                     } | {
                         kind: 'builtin';
                         id: string;
-                    } | {
-                        kind: 'artifact';
-                        artifactId: string;
                     } | {
                         kind: 'inline';
                         definition: {
@@ -950,31 +982,31 @@ export type BoardsActionResultById = {
                                     itemId: string;
                                 };
                                 authorAccountId?: string | undefined;
-                                author?: {
-                                    kind: 'person' | 'agent' | 'plugin';
-                                } | undefined;
+                                author?: undefined | {
+                                    kind: 'agent' | 'person' | 'plugin';
+                                };
                                 createdAt?: number | undefined;
                             };
                             sizeDeclaration: {
-                                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                             };
                             name: string;
                             body: WidgetDefinitionBodyV1;
                             inputs: {
                                 fields: readonly {
                                     path: string;
-                                    widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                    widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                     title: string;
-                                    inputType?: {
-                                        pluginId: string;
-                                        localId: string;
+                                    inputType?: undefined | {
+                                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                                     } | {
                                         hostType: 'usageQuery';
                                         field?: 'period' | 'session' | undefined;
                                     } | {
-                                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                    } | undefined;
+                                        pluginId: string;
+                                        localId: string;
+                                    };
                                     contextMode?: 'follow' | 'own' | undefined;
                                     required?: boolean | undefined;
                                     requireExplicitSelection?: boolean | undefined;
@@ -998,6 +1030,25 @@ export type BoardsActionResultById = {
                                         labelKey?: string | undefined;
                                         description?: string | undefined;
                                         disabled?: boolean | undefined;
+                                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                        brand?: undefined | {
+                                            state: 'available';
+                                            resource: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            width: number;
+                                            height: number;
+                                            digest: `sha256:${string}`;
+                                            monochrome?: boolean | undefined;
+                                        } | {
+                                            state: 'invalid' | 'missing' | 'retired';
+                                        };
+                                        source?: undefined | {
+                                            kind: string;
+                                            locator: string;
+                                        };
+                                        version?: string | undefined;
                                     }[] | undefined;
                                 }[];
                                 title?: string | undefined;
@@ -1008,15 +1059,15 @@ export type BoardsActionResultById = {
                             v: 1;
                             id: string;
                             description?: string | undefined;
-                            publicPresentation?: {
+                            publicPresentation?: undefined | {
                                 kind: 'declarative';
                                 document: Readonly<{
                                     version: 1;
                                     root: PluginDeclarativeNodeV2;
                                 }>;
-                            } | undefined;
+                            };
                             sessionInputPath?: string | undefined;
-                            connectedAccountPurposeBindings?: {
+                            connectedAccountPurposeBindings?: undefined | {
                                 path: string;
                                 purpose: string;
                                 consumer: {
@@ -1024,30 +1075,36 @@ export type BoardsActionResultById = {
                                     localId: string;
                                 };
                                 nativeServicePath?: string | undefined;
-                            }[] | undefined;
-                            networkOverride?: {
-                                networkOrigins?: string[] | undefined;
+                            }[];
+                            networkOverride?: undefined | {
                                 network?: 'none' | 'open' | undefined;
-                            } | undefined;
+                                networkOrigins?: string[] | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
                         };
                     };
                     bindings: Record<string, {
-                        kind: 'value';
-                        value: JsonValue;
-                    } | {
                         kind: 'context';
                         slot: string;
+                    } | {
+                        kind: 'value';
+                        value: JsonValue;
                     } | {
                         kind: 'viewer';
                         purpose: string;
                     }>;
                     displayName?: string | undefined;
-                    networkOverride?: {
-                        networkOrigins?: string[] | undefined;
+                    networkOverride?: undefined | {
                         network?: 'none' | 'open' | undefined;
-                    } | undefined;
+                        networkOrigins?: string[] | undefined;
+                    };
                 };
-                size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                 frameStyle?: 'card' | 'plain' | undefined;
             }[] | undefined;
             itemOrder?: readonly string[] | undefined;
@@ -1059,11 +1116,11 @@ export type BoardsActionResultById = {
             id: string;
             name: string;
             source: Readonly<{
-                sections?: readonly ('needs_you' | 'running' | 'my_machines')[] | undefined;
+                sections?: readonly ('my_machines' | 'needs_you' | 'running')[] | undefined;
                 filter?: Readonly<{
-                    show: 'sessions' | 'runs' | 'both';
-                    startedBy: readonly ('you' | 'triggers' | 'agents')[];
-                    scope: 'my_work' | 'assigned_to_me' | 'following' | 'involving_me' | 'all_accessible';
+                    show: 'both' | 'runs' | 'sessions';
+                    startedBy: readonly ('agents' | 'triggers' | 'you')[];
+                    scope: 'all_accessible' | 'assigned_to_me' | 'following' | 'involving_me' | 'my_work';
                     attention: 'any' | 'needs_my_attention';
                     bot?: 'bot' | 'ordinary' | undefined;
                     coordinator?: 'coordinator' | undefined;
@@ -1077,8 +1134,8 @@ export type BoardsActionResultById = {
                             projectKey: string;
                         }[];
                     }> | undefined;
-                    statuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
-                    excludedStatuses?: readonly ('unknown' | 'preparing' | 'repair_needed' | 'locked' | 'access_pending' | 'setup_required' | 'content_unavailable' | 'failed' | 'permission_required' | 'action_required' | 'usage_limited' | 'stopped' | 'finished_unseen' | 'mentioned' | 'unread' | 'ready' | 'pending_input' | 'archiving' | 'waiting_for_startup_lock' | 'archived' | 'recoverable_unservable' | 'resuming' | 'disconnected' | 'stale' | 'background_active' | 'waiting' | 'thinking')[] | undefined;
+                    statuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
+                    excludedStatuses?: readonly ('access_pending' | 'action_required' | 'archived' | 'archiving' | 'background_active' | 'cancelled' | 'claimed' | 'content_unavailable' | 'disconnected' | 'dispatch_failed' | 'expired' | 'failed' | 'finished_unseen' | 'interrupted' | 'locked' | 'mentioned' | 'missed' | 'outcome_uncertain' | 'pause_requested' | 'paused' | 'pending_input' | 'permission_required' | 'preparing' | 'queued' | 'ready' | 'recoverable_unservable' | 'repair_needed' | 'resuming' | 'running' | 'setup_required' | 'skipped' | 'stale' | 'stopped' | 'stopping' | 'succeeded' | 'thinking' | 'unknown' | 'unread' | 'usage_limited' | 'waiting' | 'waiting_for_review' | 'waiting_for_startup_lock')[] | undefined;
                     machines?: Readonly<{
                         include: readonly Readonly<{
                             serverId: string;
@@ -1127,7 +1184,7 @@ export type BoardsActionResultById = {
                         serverId: string;
                         tagId: string;
                     }>[];
-                    source: 'all' | 'persisted' | 'direct';
+                    source: 'all' | 'direct' | 'persisted';
                 }> | undefined;
                 picked: readonly BoardItemRefV1[];
                 unknown?: Readonly<{
@@ -1135,7 +1192,7 @@ export type BoardsActionResultById = {
                     picked?: readonly unknown[] | undefined;
                 }> | undefined;
             }>;
-            mode: 'canvas' | 'by_status';
+            mode: 'by_status' | 'canvas';
             snap: boolean;
             positionsByItemRef: Readonly<Record<string, Readonly<{
                 x: number;
@@ -1149,20 +1206,15 @@ export type BoardsActionResultById = {
                         serverId: string;
                         accountId: string;
                         owner: {
-                            kind: 'home';
-                        } | {
-                            kind: 'sessionBoard';
-                            sessionId: string;
-                        } | {
                             kind: 'companion';
                             sessionId: string;
                         } | {
-                            kind: 'workBoard';
-                            boardId: string;
-                        } | {
-                            kind: 'project';
-                            projectId: string;
+                            kind: 'corePage';
+                            pageId: string;
+                            area: string;
                             layoutId?: string | undefined;
+                        } | {
+                            kind: 'home';
                         } | {
                             kind: 'pluginArea';
                             pluginId: string;
@@ -1170,10 +1222,15 @@ export type BoardsActionResultById = {
                             area: string;
                             layoutId?: string | undefined;
                         } | {
-                            kind: 'corePage';
-                            pageId: string;
-                            area: string;
+                            kind: 'project';
+                            projectId: string;
                             layoutId?: string | undefined;
+                        } | {
+                            kind: 'sessionBoard';
+                            sessionId: string;
+                        } | {
+                            kind: 'workBoard';
+                            boardId: string;
                         };
                         artifactId?: string | undefined;
                     };
@@ -1183,17 +1240,11 @@ export type BoardsActionResultById = {
                     v: 1;
                     id: string;
                     definition: {
-                        kind: 'installed';
-                        surface: {
-                            pluginId: string;
-                            localId: string;
-                        };
+                        kind: 'artifact';
+                        artifactId: string;
                     } | {
                         kind: 'builtin';
                         id: string;
-                    } | {
-                        kind: 'artifact';
-                        artifactId: string;
                     } | {
                         kind: 'inline';
                         definition: {
@@ -1207,31 +1258,31 @@ export type BoardsActionResultById = {
                                     itemId: string;
                                 };
                                 authorAccountId?: string | undefined;
-                                author?: {
-                                    kind: 'person' | 'agent' | 'plugin';
-                                } | undefined;
+                                author?: undefined | {
+                                    kind: 'agent' | 'person' | 'plugin';
+                                };
                                 createdAt?: number | undefined;
                             };
                             sizeDeclaration: {
-                                sizes: ('small' | 'medium' | 'wide' | 'full' | 'tall' | 'large')[];
-                                defaultSize: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                                sizes: ('full' | 'large' | 'medium' | 'small' | 'tall' | 'wide')[];
+                                defaultSize: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                             };
                             name: string;
                             body: WidgetDefinitionBodyV1;
                             inputs: {
                                 fields: readonly {
                                     path: string;
-                                    widget: 'number' | 'boolean' | 'url' | 'text' | 'secret' | 'textarea' | 'integer' | 'text_list' | 'select' | 'multiselect' | 'json';
+                                    widget: 'boolean' | 'integer' | 'json' | 'multiselect' | 'number' | 'secret' | 'select' | 'text' | 'text_list' | 'textarea' | 'url';
                                     title: string;
-                                    inputType?: {
-                                        pluginId: string;
-                                        localId: string;
+                                    inputType?: undefined | {
+                                        hostType: 'agentParticipant' | 'machine' | 'savedSecretReference' | 'session' | 'workspace';
                                     } | {
                                         hostType: 'usageQuery';
                                         field?: 'period' | 'session' | undefined;
                                     } | {
-                                        hostType: 'session' | 'workspace' | 'machine' | 'agentParticipant';
-                                    } | undefined;
+                                        pluginId: string;
+                                        localId: string;
+                                    };
                                     contextMode?: 'follow' | 'own' | undefined;
                                     required?: boolean | undefined;
                                     requireExplicitSelection?: boolean | undefined;
@@ -1255,6 +1306,25 @@ export type BoardsActionResultById = {
                                         labelKey?: string | undefined;
                                         description?: string | undefined;
                                         disabled?: boolean | undefined;
+                                        icon?: 'action' | 'add' | 'asset' | 'assigned' | 'attention' | 'back' | 'board' | 'book' | 'branch' | 'browser' | 'bug' | 'change-complete' | 'change-open' | 'check' | 'close' | 'commit' | 'conversations' | 'copy' | 'denied' | 'desktop' | 'download' | 'edit' | 'error' | 'escalating' | 'external' | 'failure' | 'file' | 'filter' | 'flag' | 'flask' | 'forward' | 'generate' | 'globe' | 'heart' | 'info' | 'issue' | 'link' | 'list' | 'locked' | 'mention' | 'merge-ready' | 'more' | 'neutral' | 'new' | 'pause' | 'pin' | 'preview' | 'refresh' | 'review' | 'rocket' | 'run' | 'search' | 'send' | 'settings' | 'shield' | 'star' | 'stop' | 'tag' | 'target' | 'task' | 'terminal' | 'unavailable' | 'waiting' | 'warning' | 'watch' | 'waveform' | 'workflow' | undefined;
+                                        brand?: undefined | {
+                                            state: 'available';
+                                            resource: {
+                                                pluginId: string;
+                                                localId: string;
+                                            };
+                                            width: number;
+                                            height: number;
+                                            digest: `sha256:${string}`;
+                                            monochrome?: boolean | undefined;
+                                        } | {
+                                            state: 'invalid' | 'missing' | 'retired';
+                                        };
+                                        source?: undefined | {
+                                            kind: string;
+                                            locator: string;
+                                        };
+                                        version?: string | undefined;
                                     }[] | undefined;
                                 }[];
                                 title?: string | undefined;
@@ -1265,15 +1335,15 @@ export type BoardsActionResultById = {
                             v: 1;
                             id: string;
                             description?: string | undefined;
-                            publicPresentation?: {
+                            publicPresentation?: undefined | {
                                 kind: 'declarative';
                                 document: Readonly<{
                                     version: 1;
                                     root: PluginDeclarativeNodeV2;
                                 }>;
-                            } | undefined;
+                            };
                             sessionInputPath?: string | undefined;
-                            connectedAccountPurposeBindings?: {
+                            connectedAccountPurposeBindings?: undefined | {
                                 path: string;
                                 purpose: string;
                                 consumer: {
@@ -1281,30 +1351,36 @@ export type BoardsActionResultById = {
                                     localId: string;
                                 };
                                 nativeServicePath?: string | undefined;
-                            }[] | undefined;
-                            networkOverride?: {
-                                networkOrigins?: string[] | undefined;
+                            }[];
+                            networkOverride?: undefined | {
                                 network?: 'none' | 'open' | undefined;
-                            } | undefined;
+                                networkOrigins?: string[] | undefined;
+                            };
+                        };
+                    } | {
+                        kind: 'installed';
+                        surface: {
+                            pluginId: string;
+                            localId: string;
                         };
                     };
                     bindings: Record<string, {
-                        kind: 'value';
-                        value: JsonValue;
-                    } | {
                         kind: 'context';
                         slot: string;
+                    } | {
+                        kind: 'value';
+                        value: JsonValue;
                     } | {
                         kind: 'viewer';
                         purpose: string;
                     }>;
                     displayName?: string | undefined;
-                    networkOverride?: {
-                        networkOrigins?: string[] | undefined;
+                    networkOverride?: undefined | {
                         network?: 'none' | 'open' | undefined;
-                    } | undefined;
+                        networkOrigins?: string[] | undefined;
+                    };
                 };
-                size: 'small' | 'medium' | 'wide' | 'full' | 'tall' | 'large';
+                size: 'full' | 'large' | 'medium' | 'small' | 'tall' | 'wide';
                 frameStyle?: 'card' | 'plain' | undefined;
             }[] | undefined;
             itemOrder?: readonly string[] | undefined;

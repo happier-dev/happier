@@ -12,20 +12,20 @@ export type RolesActionInputById = {
     readonly "session.roles.override.set": {
         roleId: string;
         sessionId: SessionTargetV1<true>;
-        engine?: {
+        engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
             effort?: string | undefined;
-        } | undefined;
-        runsAs?: {
-            kind: 'session';
-        } | {
+        };
+        runsAs?: undefined | {
             kind: 'background_run';
-            intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
-        } | undefined;
+            intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+        } | {
+            kind: 'session';
+        };
         profileId?: string | undefined;
         workspaceWrites?: 'allow' | 'deny' | undefined;
-        secondOpinion?: 'off' | 'encouraged' | undefined;
+        secondOpinion?: 'encouraged' | 'off' | undefined;
         canDelegateToOtherRoles?: boolean | undefined;
     };
     readonly "session.roles.override.clear": {
@@ -38,19 +38,19 @@ export type RolesActionInputById = {
             name: string;
             instructions: string;
             runsAs: {
-                kind: 'session';
-            } | {
                 kind: 'background_run';
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+            } | {
+                kind: 'session';
             };
             workspaceWrites: 'allow' | 'deny';
-            secondOpinion: 'off' | 'encouraged';
+            secondOpinion: 'encouraged' | 'off';
             enabled: boolean;
-            engine?: {
+            engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
                 effort?: string | undefined;
-            } | undefined;
+            };
             profileId?: string | undefined;
             canDelegateToOtherRoles?: boolean | undefined;
         };
@@ -76,19 +76,19 @@ export type RolesActionInputById = {
             name: string;
             instructions: string;
             runsAs: {
-                kind: 'session';
-            } | {
                 kind: 'background_run';
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+            } | {
+                kind: 'session';
             };
             workspaceWrites: 'allow' | 'deny';
-            secondOpinion: 'off' | 'encouraged';
+            secondOpinion: 'encouraged' | 'off';
             enabled: boolean;
-            engine?: {
+            engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
                 effort?: string | undefined;
-            } | undefined;
+            };
             profileId?: string | undefined;
             canDelegateToOtherRoles?: boolean | undefined;
         };
@@ -104,19 +104,19 @@ export type RolesActionInputById = {
             name: string;
             instructions: string;
             runsAs: {
-                kind: 'session';
-            } | {
                 kind: 'background_run';
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+            } | {
+                kind: 'session';
             };
             workspaceWrites: 'allow' | 'deny';
-            secondOpinion: 'off' | 'encouraged';
+            secondOpinion: 'encouraged' | 'off';
             enabled: boolean;
-            engine?: {
+            engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
                 effort?: string | undefined;
-            } | undefined;
+            };
             profileId?: string | undefined;
             canDelegateToOtherRoles?: boolean | undefined;
         };
@@ -130,20 +130,20 @@ export type RolesActionInputById = {
     };
     readonly "roles.override.set": {
         roleId: string;
-        engine?: {
+        engine?: undefined | {
             agentTargetKey: string;
             modelId?: string | undefined;
             effort?: string | undefined;
-        } | undefined;
-        runsAs?: {
-            kind: 'session';
-        } | {
+        };
+        runsAs?: undefined | {
             kind: 'background_run';
-            intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
-        } | undefined;
+            intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+        } | {
+            kind: 'session';
+        };
         profileId?: string | undefined;
         workspaceWrites?: 'allow' | 'deny' | undefined;
-        secondOpinion?: 'off' | 'encouraged' | undefined;
+        secondOpinion?: 'encouraged' | 'off' | undefined;
         canDelegateToOtherRoles?: boolean | undefined;
         instructionsOverride?: string | undefined;
     };
@@ -180,40 +180,40 @@ export type RolesActionResultById = {
                 name: string;
                 instructions: string;
                 runsAs: {
-                    kind: 'session';
-                } | {
                     kind: 'background_run';
-                    intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                    intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+                } | {
+                    kind: 'session';
                 };
                 workspaceWrites: 'allow' | 'deny';
-                secondOpinion: 'off' | 'encouraged';
+                secondOpinion: 'encouraged' | 'off';
                 enabled: boolean;
-                engine?: {
+                engine?: undefined | {
                     agentTargetKey: string;
                     modelId?: string | undefined;
                     effort?: string | undefined;
-                } | undefined;
+                };
                 profileId?: string | undefined;
                 canDelegateToOtherRoles?: boolean | undefined;
             };
             shared: boolean;
             viewOnly: boolean;
             migratedFromV0_2: boolean;
-            revision?: {
+            revision?: undefined | {
                 headerVersion: number;
                 bodyVersion: number;
-            } | undefined;
+            };
             pluginDisplayName?: string | undefined;
         }[];
         diagnostics: ({
-            source: 'legacy-guidance';
-            reason: 'unavailable' | 'invalid_root' | 'invalid_entry' | 'duplicate_id';
-            index?: number | undefined;
-            entryId?: string | undefined;
-        } | {
             source: 'artifact';
             artifactId: string;
-            reason: 'unavailable' | 'invalid_stored_content';
+            reason: 'invalid_stored_content' | 'unavailable';
+        } | {
+            source: 'legacy-guidance';
+            reason: 'duplicate_id' | 'invalid_entry' | 'invalid_root' | 'unavailable';
+            index?: number | undefined;
+            entryId?: string | undefined;
         })[];
     };
     readonly "roles.get": {
@@ -222,29 +222,29 @@ export type RolesActionResultById = {
             name: string;
             instructions: string;
             runsAs: {
-                kind: 'session';
-            } | {
                 kind: 'background_run';
-                intent: 'review' | 'plan' | 'delegate' | 'agent' | 'task' | 'voice_agent' | 'memory_hints' | 'scm_commit_message' | 'scm_diff_summary';
+                intent: 'agent' | 'delegate' | 'memory_hints' | 'plan' | 'review' | 'scm_commit_message' | 'scm_diff_summary' | 'task' | 'voice_agent';
+            } | {
+                kind: 'session';
             };
             workspaceWrites: 'allow' | 'deny';
-            secondOpinion: 'off' | 'encouraged';
+            secondOpinion: 'encouraged' | 'off';
             enabled: boolean;
-            engine?: {
+            engine?: undefined | {
                 agentTargetKey: string;
                 modelId?: string | undefined;
                 effort?: string | undefined;
-            } | undefined;
+            };
             profileId?: string | undefined;
             canDelegateToOtherRoles?: boolean | undefined;
         };
         shared: boolean;
         viewOnly: boolean;
         migratedFromV0_2: boolean;
-        revision?: {
+        revision?: undefined | {
             headerVersion: number;
             bodyVersion: number;
-        } | undefined;
+        };
         pluginDisplayName?: string | undefined;
     };
     readonly "roles.create": {

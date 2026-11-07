@@ -10,20 +10,22 @@ export type SessionOrganizationMoveActionInputById = {
             accountId: string;
         };
         sourceRowId: string;
-        sourceKind: 'leaf' | 'container';
-        instructionKind: 'reorder-before' | 'reorder-after' | 'nest-into' | 'move-to-root';
-        targetRowId: string | null;
-        containerId: string | null;
-        parentRowId: string | null;
-        depth: number | null;
-        edge: 'top' | 'bottom' | null;
+        sourceKind: 'container' | 'leaf';
+        instructionKind: 'move-to-root' | 'nest-into' | 'reorder-after' | 'reorder-before';
+        targetRowId: null | string;
+        containerId: null | string;
+        parentRowId: null | string;
+        depth: null | number;
+        edge: 'bottom' | 'top' | null;
         projection?: 'rail' | undefined;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "session.organization.pin.set": {
         pinned: boolean;
         sessionId: string;
-        surface?: 'rail' | 'list' | undefined;
-        sortKey?: string | null | undefined;
+        surface?: 'list' | 'rail' | undefined;
+        sortKey?: null | string | undefined;
         serverId?: string | undefined;
     };
     readonly "session.organization.appearance.set": {
@@ -66,13 +68,13 @@ export type SessionOrganizationMoveActionResultById = {
         reason: string;
     };
     readonly "session.organization.pin.set": {
-        pin: {
+        pin: null | {
             sessionId: string;
-            sortKey: string | null;
+            sortKey: null | string;
             pinnedAt: number;
             listPinned: boolean;
             railPinned: boolean;
-        } | null;
+        };
     };
     readonly "session.organization.appearance.set": {
         status: 'applied';

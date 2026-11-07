@@ -3012,8 +3012,8 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            archivedAt: null | number;
             encryptionMode: 'e2ee' | 'plain';
+            archivedAt: null | number;
             creationLocalId: null | string;
             messageSeq: number;
             keyReadiness: boolean;
@@ -3746,8 +3746,8 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            archivedAt: null | number;
             encryptionMode: 'e2ee' | 'plain';
+            archivedAt: null | number;
             creationLocalId: null | string;
             messageSeq: number;
             keyReadiness: boolean;
@@ -4861,8 +4861,8 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            archivedAt: null | number;
             encryptionMode: 'e2ee' | 'plain';
+            archivedAt: null | number;
             creationLocalId: null | string;
             messageSeq: number;
             keyReadiness: boolean;
@@ -6324,8 +6324,8 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            archivedAt: null | number;
             encryptionMode: 'e2ee' | 'plain';
+            archivedAt: null | number;
             creationLocalId: null | string;
             messageSeq: number;
             keyReadiness: boolean;
@@ -7061,8 +7061,8 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            archivedAt: null | number;
             encryptionMode: 'e2ee' | 'plain';
+            archivedAt: null | number;
             creationLocalId: null | string;
             messageSeq: number;
             keyReadiness: boolean;
@@ -7798,8 +7798,8 @@ export type DiscussionActionResultById = {
                 leave: boolean;
             };
             ownerAccountId: string;
-            archivedAt: null | number;
             encryptionMode: 'e2ee' | 'plain';
+            archivedAt: null | number;
             creationLocalId: null | string;
             messageSeq: number;
             keyReadiness: boolean;

@@ -30,18 +30,18 @@ export type PersonalSavedSecretsActionInputById = {
             account: string;
             reference: string;
             metadata?: undefined | {
-                vault: {
+                field: {
                     id: string;
-                    name: string;
+                    title: string;
+                    kind: string;
                 };
                 item: {
                     id: string;
                     title: string;
                 };
-                field: {
+                vault: {
                     id: string;
-                    title: string;
-                    kind: string;
+                    name: string;
                 };
             };
         } | {
@@ -81,18 +81,18 @@ export type PersonalSavedSecretsActionInputById = {
             account: string;
             reference: string;
             metadata?: undefined | {
-                vault: {
+                field: {
                     id: string;
-                    name: string;
+                    title: string;
+                    kind: string;
                 };
                 item: {
                     id: string;
                     title: string;
                 };
-                field: {
+                vault: {
                     id: string;
-                    title: string;
-                    kind: string;
+                    name: string;
                 };
             };
         };
@@ -146,18 +146,18 @@ export type PersonalSavedSecretsActionResultById = {
                 account: string;
                 reference: string;
                 metadata?: undefined | {
-                    vault: {
+                    field: {
                         id: string;
-                        name: string;
+                        title: string;
+                        kind: string;
                     };
                     item: {
                         id: string;
                         title: string;
                     };
-                    field: {
+                    vault: {
                         id: string;
-                        title: string;
-                        kind: string;
+                        name: string;
                     };
                 };
             };

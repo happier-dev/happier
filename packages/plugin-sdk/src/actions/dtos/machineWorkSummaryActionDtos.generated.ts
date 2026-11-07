@@ -19,28 +19,28 @@ export type MachineWorkSummaryActionResultById = {
             accountId: string;
             displayName: string;
         }>[];
-        finiteLoad?: {
+        finiteLoad?: undefined | {
             accepting: boolean;
-            runAtMost: number | null;
+            runAtMost: null | number;
             kind: 'known';
             running: number;
             queued: number;
         } | {
             kind: 'unknown';
-        } | undefined;
+        };
     }> | Readonly<{
         kind: 'unavailable';
-        finiteLoad?: {
+        finiteLoad?: undefined | {
             accepting: boolean;
-            runAtMost: number | null;
+            runAtMost: null | number;
             kind: 'known';
             running: number;
             queued: number;
         } | {
             kind: 'unknown';
-        } | undefined;
+        };
     }> | {
         kind: 'refused';
-        code: 'access_denied' | 'machine_unavailable' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'encryption_material_unavailable' | 'recipient_binding_changed' | 'machine_key_changed' | 'invalid_recipient_envelope' | 'principal_not_found' | 'principal_ineligible' | 'custodian_protected' | 'data_key_not_required' | 'unsupported_operation' | 'custodian_only' | 'daemon_upgrade_required';
+        code: 'access_denied' | 'content_unpublished' | 'custodian_only' | 'custodian_protected' | 'daemon_upgrade_required' | 'data_key_not_required' | 'encryption_material_unavailable' | 'invalid_recipient_envelope' | 'machine_key_changed' | 'machine_unavailable' | 'principal_ineligible' | 'principal_not_found' | 'recipient_binding_changed' | 'recipient_encryption_incompatible' | 'recipient_key_pending' | 'unsupported_operation';
     };
 };

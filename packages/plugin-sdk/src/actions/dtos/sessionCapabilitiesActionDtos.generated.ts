@@ -10,37 +10,40 @@ export type SessionCapabilitiesActionInputById = {
         directory?: string | undefined;
         projectKey?: string | undefined;
         profileId?: string | undefined;
-        capabilitySelection?: {
-            mcp?: {
+        capabilitySelection?: undefined | {
+            mcp?: undefined | {
                 v?: 1 | undefined;
                 managedServersEnabled?: boolean | undefined;
                 happierToolsEnabled?: boolean | undefined;
                 forceIncludeServerIds?: string[] | undefined;
                 forceExcludeServerIds?: string[] | undefined;
-            } | undefined;
-            skills?: {
+            };
+            skills?: undefined | {
                 v?: 1 | undefined;
                 forceIncludeSkillIds?: string[] | undefined;
                 forceExcludeSkillIds?: string[] | undefined;
                 excludeNativeSkillNames?: string[] | undefined;
-            } | undefined;
-        } | undefined;
+            };
+        };
     };
     readonly "session.capabilities.get": {
         sessionId: string;
     };
     readonly "session.capabilities.set": {
         sessionId: string;
-        kind: 'skill' | 'mcp_server' | 'native_skill';
+        kind: 'mcp_server' | 'native_skill' | 'skill';
         id: string;
-        state: 'on' | 'off' | 'inherit';
+        state: 'inherit' | 'off' | 'on';
         reason?: string | undefined;
     };
 };
 export type SessionCapabilitiesActionResultById = {
     readonly "sessions.spawn.capabilities.preview": {
+        ok: false;
+        reason: 'invalid_input' | 'machine_unreachable';
+    } | {
         ok: true;
-        machinePlatform: 'win32' | 'posix' | null;
+        machinePlatform: 'posix' | 'win32' | null;
         mcp: {
             strictMode: boolean;
             items: {
@@ -48,24 +51,25 @@ export type SessionCapabilitiesActionResultById = {
                 name: string;
                 selected: boolean;
                 selectable: boolean;
-                reason: 'rule_on' | 'rule_off' | 'no_rule' | 'session_added' | 'session_removed' | 'managed_off' | 'not_portable' | 'agent_unsupported';
-                decidedBy: {
+                reason: 'agent_unsupported' | 'managed_off' | 'no_rule' | 'not_portable' | 'rule_off' | 'rule_on' | 'session_added' | 'session_removed';
+                decidedBy: null | {
                     ruleId: string;
                     target: 'allMachines' | 'machine' | 'project' | 'workspace';
                     agentQualified: boolean;
-                } | null;
+                };
                 sessionOverride: 'added' | 'removed' | null;
                 kind: 'mcp_server';
                 source: 'catalog' | 'plugin';
                 title?: string | undefined;
-                preview?: {
+                reachEnabled?: boolean | undefined;
+                preview?: undefined | {
                     key: string;
                     name: string;
-                    transport: 'stdio' | 'http' | 'sse';
-                    authMode: 'unknown' | 'none' | 'savedSecret' | 'machineEnv' | 'plainText';
+                    transport: 'http' | 'sse' | 'stdio';
+                    authMode: 'machineEnv' | 'none' | 'plainText' | 'savedSecret' | 'unknown';
                     selected: boolean;
                     selectable: boolean;
-                    availability: 'active' | 'available' | 'unavailable' | 'readOnly';
+                    availability: 'active' | 'available' | 'readOnly' | 'unavailable';
                     serverId: string;
                     sourceKind: 'managed';
                     scopeKind: 'allMachines' | 'machine' | 'workspace';
@@ -73,18 +77,18 @@ export type SessionCapabilitiesActionResultById = {
                     portability: ManagedSessionMcpPortabilityV1;
                     defaultSelected: boolean;
                     title?: string | undefined;
-                } | undefined;
+                };
             }[];
             detected: {
                 key: string;
                 name: string;
-                transport: 'stdio' | 'http' | 'sse';
-                authMode: 'unknown' | 'none' | 'savedSecret' | 'machineEnv' | 'plainText';
+                transport: 'http' | 'sse' | 'stdio';
+                authMode: 'machineEnv' | 'none' | 'plainText' | 'savedSecret' | 'unknown';
                 selected: boolean;
                 selectable: boolean;
-                availability: 'active' | 'available' | 'unavailable' | 'readOnly';
+                availability: 'active' | 'available' | 'readOnly' | 'unavailable';
                 sourceKind: 'detected';
-                scopeKind: 'providerUser' | 'providerProject';
+                scopeKind: 'providerProject' | 'providerUser';
                 provider: string;
                 enabled: boolean | null;
                 envKeyCount: number;
@@ -99,28 +103,29 @@ export type SessionCapabilitiesActionResultById = {
                 name: string;
                 selected: boolean;
                 selectable: boolean;
-                reason: 'rule_on' | 'rule_off' | 'no_rule' | 'session_added' | 'session_removed' | 'managed_off' | 'not_portable' | 'agent_unsupported';
-                decidedBy: {
+                reason: 'agent_unsupported' | 'managed_off' | 'no_rule' | 'not_portable' | 'rule_off' | 'rule_on' | 'session_added' | 'session_removed';
+                decidedBy: null | {
                     ruleId: string;
                     target: 'allMachines' | 'machine' | 'project' | 'workspace';
                     agentQualified: boolean;
-                } | null;
+                };
                 sessionOverride: 'added' | 'removed' | null;
                 kind: 'skill';
                 title?: string | undefined;
-                state?: 'off' | 'unavailable' | 'delivered' | 'masked_by_native' | 'excluded' | 'name_conflict' | undefined;
+                reachEnabled?: boolean | undefined;
+                state?: 'delivered' | 'excluded' | 'masked_by_native' | 'name_conflict' | 'off' | 'unavailable' | undefined;
             }[];
             plan: {
-                plan: 'none' | 'session_dir' | 'index';
+                plan: 'index' | 'none' | 'session_dir';
                 items: {
                     skillId: string;
                     name: string;
                     digest: string;
-                    state: 'off' | 'unavailable' | 'delivered' | 'masked_by_native' | 'excluded' | 'name_conflict';
-                    reason: 'rule_on' | 'rule_off' | 'no_rule' | 'session_added' | 'session_removed' | 'managed_off' | 'not_portable' | 'agent_unsupported' | 'native_same_name' | 'duplicate_name' | 'content_unreadable' | 'materialize_failed' | 'native_scan_failed';
-                    maskedBy?: {
+                    state: 'delivered' | 'excluded' | 'masked_by_native' | 'name_conflict' | 'off' | 'unavailable';
+                    reason: 'agent_unsupported' | 'content_unreadable' | 'duplicate_name' | 'managed_off' | 'materialize_failed' | 'native_same_name' | 'native_scan_failed' | 'no_rule' | 'not_portable' | 'rule_off' | 'rule_on' | 'session_added' | 'session_removed';
+                    maskedBy?: undefined | {
                         path: string;
-                    } | undefined;
+                    };
                 }[];
                 nativeDisables: {
                     name: string;
@@ -137,33 +142,33 @@ export type SessionCapabilitiesActionResultById = {
             mcp: {
                 t: 'applied_now';
             } | {
-                t: 'next_turn';
-            } | {
                 t: 'new_sessions_only';
             } | {
-                t: 'session_not_running';
+                t: 'next_turn';
             } | {
                 t: 'restart_to_apply';
-                restartBy: 'user' | 'terminal';
+                restartBy: 'terminal' | 'user';
+            } | {
+                t: 'session_not_running';
             };
             skills: {
                 t: 'applied_now';
             } | {
-                t: 'next_turn';
-            } | {
                 t: 'new_sessions_only';
             } | {
-                t: 'session_not_running';
+                t: 'next_turn';
             } | {
                 t: 'restart_to_apply';
-                restartBy: 'user' | 'terminal';
+                restartBy: 'terminal' | 'user';
+            } | {
+                t: 'session_not_running';
             };
         };
-    } | {
-        ok: false;
-        reason: 'machine_unreachable' | 'invalid_input';
     };
     readonly "session.capabilities.get": {
+        ok: false;
+        code: 'not_found' | 'preview_timeout' | 'session_unavailable';
+    } | {
         ok: true;
         mcp: {
             items: {
@@ -171,24 +176,25 @@ export type SessionCapabilitiesActionResultById = {
                 name: string;
                 selected: boolean;
                 selectable: boolean;
-                reason: 'rule_on' | 'rule_off' | 'no_rule' | 'session_added' | 'session_removed' | 'managed_off' | 'not_portable' | 'agent_unsupported';
-                decidedBy: {
+                reason: 'agent_unsupported' | 'managed_off' | 'no_rule' | 'not_portable' | 'rule_off' | 'rule_on' | 'session_added' | 'session_removed';
+                decidedBy: null | {
                     ruleId: string;
                     target: 'allMachines' | 'machine' | 'project' | 'workspace';
                     agentQualified: boolean;
-                } | null;
+                };
                 sessionOverride: 'added' | 'removed' | null;
                 kind: 'mcp_server';
                 source: 'catalog' | 'plugin';
                 title?: string | undefined;
-                preview?: {
+                reachEnabled?: boolean | undefined;
+                preview?: undefined | {
                     key: string;
                     name: string;
-                    transport: 'stdio' | 'http' | 'sse';
-                    authMode: 'unknown' | 'none' | 'savedSecret' | 'machineEnv' | 'plainText';
+                    transport: 'http' | 'sse' | 'stdio';
+                    authMode: 'machineEnv' | 'none' | 'plainText' | 'savedSecret' | 'unknown';
                     selected: boolean;
                     selectable: boolean;
-                    availability: 'active' | 'available' | 'unavailable' | 'readOnly';
+                    availability: 'active' | 'available' | 'readOnly' | 'unavailable';
                     serverId: string;
                     sourceKind: 'managed';
                     scopeKind: 'allMachines' | 'machine' | 'workspace';
@@ -196,7 +202,7 @@ export type SessionCapabilitiesActionResultById = {
                     portability: ManagedSessionMcpPortabilityV1;
                     defaultSelected: boolean;
                     title?: string | undefined;
-                } | undefined;
+                };
             }[];
         };
         skills: {
@@ -205,28 +211,29 @@ export type SessionCapabilitiesActionResultById = {
                 name: string;
                 selected: boolean;
                 selectable: boolean;
-                reason: 'rule_on' | 'rule_off' | 'no_rule' | 'session_added' | 'session_removed' | 'managed_off' | 'not_portable' | 'agent_unsupported';
-                decidedBy: {
+                reason: 'agent_unsupported' | 'managed_off' | 'no_rule' | 'not_portable' | 'rule_off' | 'rule_on' | 'session_added' | 'session_removed';
+                decidedBy: null | {
                     ruleId: string;
                     target: 'allMachines' | 'machine' | 'project' | 'workspace';
                     agentQualified: boolean;
-                } | null;
+                };
                 sessionOverride: 'added' | 'removed' | null;
                 kind: 'skill';
                 title?: string | undefined;
-                state?: 'off' | 'unavailable' | 'delivered' | 'masked_by_native' | 'excluded' | 'name_conflict' | undefined;
+                reachEnabled?: boolean | undefined;
+                state?: 'delivered' | 'excluded' | 'masked_by_native' | 'name_conflict' | 'off' | 'unavailable' | undefined;
             }[];
             plan: {
-                plan: 'none' | 'session_dir' | 'index';
+                plan: 'index' | 'none' | 'session_dir';
                 items: {
                     skillId: string;
                     name: string;
                     digest: string;
-                    state: 'off' | 'unavailable' | 'delivered' | 'masked_by_native' | 'excluded' | 'name_conflict';
-                    reason: 'rule_on' | 'rule_off' | 'no_rule' | 'session_added' | 'session_removed' | 'managed_off' | 'not_portable' | 'agent_unsupported' | 'native_same_name' | 'duplicate_name' | 'content_unreadable' | 'materialize_failed' | 'native_scan_failed';
-                    maskedBy?: {
+                    state: 'delivered' | 'excluded' | 'masked_by_native' | 'name_conflict' | 'off' | 'unavailable';
+                    reason: 'agent_unsupported' | 'content_unreadable' | 'duplicate_name' | 'managed_off' | 'materialize_failed' | 'native_same_name' | 'native_scan_failed' | 'no_rule' | 'not_portable' | 'rule_off' | 'rule_on' | 'session_added' | 'session_removed';
+                    maskedBy?: undefined | {
                         path: string;
-                    } | undefined;
+                    };
                 }[];
                 nativeDisables: {
                     name: string;
@@ -243,54 +250,51 @@ export type SessionCapabilitiesActionResultById = {
             mcp: boolean;
             skills: boolean;
             reason?: string | undefined;
-            restartBy?: 'user' | 'terminal' | undefined;
+            restartBy?: 'terminal' | 'user' | undefined;
         };
         applyTiming: {
             mcp: {
                 t: 'applied_now';
             } | {
-                t: 'next_turn';
-            } | {
                 t: 'new_sessions_only';
             } | {
-                t: 'session_not_running';
+                t: 'next_turn';
             } | {
                 t: 'restart_to_apply';
-                restartBy: 'user' | 'terminal';
+                restartBy: 'terminal' | 'user';
+            } | {
+                t: 'session_not_running';
             };
             skills: {
                 t: 'applied_now';
             } | {
-                t: 'next_turn';
-            } | {
                 t: 'new_sessions_only';
             } | {
-                t: 'session_not_running';
+                t: 'next_turn';
             } | {
                 t: 'restart_to_apply';
-                restartBy: 'user' | 'terminal';
+                restartBy: 'terminal' | 'user';
+            } | {
+                t: 'session_not_running';
             };
         };
-    } | {
-        ok: false;
-        code: 'not_found' | 'session_unavailable' | 'preview_timeout';
     };
     readonly "session.capabilities.set": {
+        ok: false;
+        code: 'applies_to_new_sessions_only' | 'conflict' | 'not_found' | 'session_unavailable';
+    } | {
         ok: true;
-        state: 'on' | 'off' | 'inherit';
-        previous: 'on' | 'off' | 'inherit';
+        state: 'inherit' | 'off' | 'on';
+        previous: 'inherit' | 'off' | 'on';
         applyTiming: {
             t: 'applied_now';
         } | {
             t: 'next_turn';
         } | {
-            t: 'session_not_running';
-        } | {
             t: 'restart_to_apply';
-            restartBy: 'user' | 'terminal';
+            restartBy: 'terminal' | 'user';
+        } | {
+            t: 'session_not_running';
         };
-    } | {
-        ok: false;
-        code: 'not_found' | 'session_unavailable' | 'applies_to_new_sessions_only' | 'conflict';
     };
 };

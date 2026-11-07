@@ -17,6 +17,8 @@ export type UsageSourcesActionInputById = {
         serverId: string;
         machineId: string;
         sourceId: string;
+    } & {
+        clientId?: string | undefined;
     };
     readonly "usage.sources.consent.set": {
         serverId: string;
@@ -33,16 +35,16 @@ export type UsageSourcesActionInputById = {
         serverId: string;
         machineId: string;
         sourceId: string;
-        root: string | null;
+        root: null | string;
     };
     readonly "usage.sources.history.delete": {
         serverId: string;
         machineId: string;
         sourceId: string;
-        dateRange?: {
+        dateRange?: undefined | {
             startMs?: number | undefined;
             endMs?: number | undefined;
-        } | undefined;
+        };
     };
 };
 export type UsageSourcesActionResultById = {
@@ -56,14 +58,14 @@ export type UsageSourcesActionResultById = {
                 localId: string;
             };
             root: {
-                kind: 'default' | 'configured' | 'materialized' | 'override';
-                path: string | null;
+                kind: 'configured' | 'default' | 'materialized' | 'override';
+                path: null | string;
             };
-            consent: 'enabled' | 'disabled';
+            consent: 'disabled' | 'enabled';
             status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
-            coverage: 'unknown' | 'unsupported' | 'partial' | 'complete';
+            coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
             pendingCount: number;
-            asOfMs: number | null;
+            asOfMs: null | number;
             accountingSources?: string[] | undefined;
             captureKind?: 'from_logs' | undefined;
             externalSessionSource?: ExternalSessionsSource | undefined;
@@ -81,14 +83,14 @@ export type UsageSourcesActionResultById = {
                 localId: string;
             };
             root: {
-                kind: 'default' | 'configured' | 'materialized' | 'override';
-                path: string | null;
+                kind: 'configured' | 'default' | 'materialized' | 'override';
+                path: null | string;
             };
-            consent: 'enabled' | 'disabled';
+            consent: 'disabled' | 'enabled';
             status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
-            coverage: 'unknown' | 'unsupported' | 'partial' | 'complete';
+            coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
             pendingCount: number;
-            asOfMs: number | null;
+            asOfMs: null | number;
             accountingSources?: string[] | undefined;
             captureKind?: 'from_logs' | undefined;
             externalSessionSource?: ExternalSessionsSource | undefined;
@@ -97,7 +99,7 @@ export type UsageSourcesActionResultById = {
         }[];
     };
     readonly "usage.sources.dismiss": {
-        status: 'unavailable' | 'dismissed';
+        status: 'dismissed' | 'unavailable';
     };
     readonly "usage.sources.consent.set": {
         source: {
@@ -109,14 +111,14 @@ export type UsageSourcesActionResultById = {
                 localId: string;
             };
             root: {
-                kind: 'default' | 'configured' | 'materialized' | 'override';
-                path: string | null;
+                kind: 'configured' | 'default' | 'materialized' | 'override';
+                path: null | string;
             };
-            consent: 'enabled' | 'disabled';
+            consent: 'disabled' | 'enabled';
             status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
-            coverage: 'unknown' | 'unsupported' | 'partial' | 'complete';
+            coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
             pendingCount: number;
-            asOfMs: number | null;
+            asOfMs: null | number;
             accountingSources?: string[] | undefined;
             captureKind?: 'from_logs' | undefined;
             externalSessionSource?: ExternalSessionsSource | undefined;
@@ -134,14 +136,14 @@ export type UsageSourcesActionResultById = {
                 localId: string;
             };
             root: {
-                kind: 'default' | 'configured' | 'materialized' | 'override';
-                path: string | null;
+                kind: 'configured' | 'default' | 'materialized' | 'override';
+                path: null | string;
             };
-            consent: 'enabled' | 'disabled';
+            consent: 'disabled' | 'enabled';
             status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
-            coverage: 'unknown' | 'unsupported' | 'partial' | 'complete';
+            coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
             pendingCount: number;
-            asOfMs: number | null;
+            asOfMs: null | number;
             accountingSources?: string[] | undefined;
             captureKind?: 'from_logs' | undefined;
             externalSessionSource?: ExternalSessionsSource | undefined;
@@ -159,14 +161,14 @@ export type UsageSourcesActionResultById = {
                 localId: string;
             };
             root: {
-                kind: 'default' | 'configured' | 'materialized' | 'override';
-                path: string | null;
+                kind: 'configured' | 'default' | 'materialized' | 'override';
+                path: null | string;
             };
-            consent: 'enabled' | 'disabled';
+            consent: 'disabled' | 'enabled';
             status: 'error' | 'found' | 'reading' | 'ready' | 'stopped' | 'unavailable' | 'unsupported';
-            coverage: 'unknown' | 'unsupported' | 'partial' | 'complete';
+            coverage: 'complete' | 'partial' | 'unknown' | 'unsupported';
             pendingCount: number;
-            asOfMs: number | null;
+            asOfMs: null | number;
             accountingSources?: string[] | undefined;
             captureKind?: 'from_logs' | undefined;
             externalSessionSource?: ExternalSessionsSource | undefined;

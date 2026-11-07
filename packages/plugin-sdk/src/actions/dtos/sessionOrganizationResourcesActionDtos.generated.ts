@@ -7,16 +7,16 @@ export type SessionOrganizationResourcesActionInputById = {
     readonly "session.sections.list": Record<string, never>;
     readonly "session.sections.create": {
         name: string;
-        icon?: string | null | undefined;
+        icon?: null | string | undefined;
     };
     readonly "session.sections.update": {
         sectionId: string;
         name?: string | undefined;
-        icon?: string | null | undefined;
+        icon?: null | string | undefined;
     };
     readonly "session.sections.reorder": {
         sectionId: string;
-        beforeSectionId: string | null;
+        beforeSectionId: null | string;
     };
     readonly "session.sections.delete": {
         sectionId: string;
@@ -27,26 +27,26 @@ export type SessionOrganizationResourcesActionInputById = {
     readonly "session.tags.list": Record<string, never>;
     readonly "session.tags.create": {
         tagKey: string;
-        sortKey: string | null;
-        display: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        sortKey: null | string;
+        display: null | {
             t: 'encrypted';
             c: string;
-        } | null;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         tagId?: string | undefined;
     };
     readonly "session.tags.rename": {
         tagKey: string;
-        sortKey: string | null;
-        display: {
-            t: 'plain';
-            v: unknown;
-        } | {
+        sortKey: null | string;
+        display: null | {
             t: 'encrypted';
             c: string;
-        } | null;
+        } | {
+            t: 'plain';
+            v: unknown;
+        };
         tagId: string;
     };
     readonly "session.tags.delete": {
@@ -62,13 +62,13 @@ export type SessionOrganizationResourcesActionResultById = {
                 status: 'available';
                 value: {
                     name: string;
-                    icon: string | null;
+                    icon: null | string;
                 };
             } | {
                 status: 'locked';
                 reason: 'account_key_unavailable' | 'content_unreadable' | 'invalid_stored_display' | 'storage_mode_mismatch';
             };
-            sortKey: string | null;
+            sortKey: null | string;
         }[];
     };
     readonly "session.sections.create": {
@@ -78,13 +78,13 @@ export type SessionOrganizationResourcesActionResultById = {
                 status: 'available';
                 value: {
                     name: string;
-                    icon: string | null;
+                    icon: null | string;
                 };
             } | {
                 status: 'locked';
                 reason: 'account_key_unavailable' | 'content_unreadable' | 'invalid_stored_display' | 'storage_mode_mismatch';
             };
-            sortKey: string | null;
+            sortKey: null | string;
         };
     };
     readonly "session.sections.update": {
@@ -94,18 +94,18 @@ export type SessionOrganizationResourcesActionResultById = {
                 status: 'available';
                 value: {
                     name: string;
-                    icon: string | null;
+                    icon: null | string;
                 };
             } | {
                 status: 'locked';
                 reason: 'account_key_unavailable' | 'content_unreadable' | 'invalid_stored_display' | 'storage_mode_mismatch';
             };
-            sortKey: string | null;
+            sortKey: null | string;
         };
     };
     readonly "session.sections.reorder": {
         sectionId: string;
-        sortKey: string | null;
+        sortKey: null | string;
     };
     readonly "session.sections.delete": {
         sectionId: string;
@@ -126,7 +126,7 @@ export type SessionOrganizationResourcesActionResultById = {
             version: number;
             pins: {
                 sessionId: string;
-                sortKey: string | null;
+                sortKey: null | string;
                 pinnedAt: number;
                 listPinned: boolean;
                 railPinned: boolean;
@@ -134,23 +134,23 @@ export type SessionOrganizationResourcesActionResultById = {
             folders: {
                 folderId: string;
                 folderKey: string;
-                parentFolderId: string | null;
-                parentFolderKey: string | null;
-                sortKey: string | null;
-                display: {
-                    t: 'plain';
-                    v: JSONType;
-                } | {
+                parentFolderId: null | string;
+                parentFolderKey: null | string;
+                sortKey: null | string;
+                display: null | {
                     t: 'encrypted';
                     c: string;
-                } | null;
-                archivedAt: number | null;
+                } | {
+                    t: 'plain';
+                    v: JSONType;
+                };
+                archivedAt: null | number;
                 createdAt: number;
                 updatedAt: number;
-                displayState?: {
+                displayState?: undefined | {
                     status: 'unavailable';
                     reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-                } | undefined;
+                };
             }[];
             folderAssignments: {
                 sessionId: string;
@@ -159,99 +159,114 @@ export type SessionOrganizationResourcesActionResultById = {
             tags: {
                 tagId: string;
                 tagKey: string;
-                sortKey: string | null;
-                display: {
-                    t: 'plain';
-                    v: JSONType;
-                } | {
+                sortKey: null | string;
+                display: null | {
                     t: 'encrypted';
                     c: string;
-                } | null;
-                archivedAt: number | null;
+                } | {
+                    t: 'plain';
+                    v: JSONType;
+                };
+                archivedAt: null | number;
                 createdAt: number;
                 updatedAt: number;
-                displayState?: {
+                displayState?: undefined | {
                     status: 'unavailable';
                     reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-                } | undefined;
+                };
             }[];
             tagAssignments: {
                 sessionId: string;
                 tagIds: string[];
             }[];
             orderEntries: {
-                scopeKind: 'pinned' | 'folder' | 'tag' | 'workspace' | 'group';
+                scopeKind: 'folder' | 'group' | 'pinned' | 'tag' | 'workspace';
                 scopeKey: string;
-                itemKind: 'folder' | 'tag' | 'workspace' | 'group' | 'session';
+                itemKind: 'folder' | 'group' | 'session' | 'tag' | 'workspace';
                 itemKey: string;
                 sortKey: string;
             }[];
             labels: {
-                labelKind: 'workspace' | 'group';
+                labelKind: 'group' | 'workspace';
                 scopeKey: string;
-                display: {
-                    t: 'plain';
-                    v: JSONType;
-                } | {
+                display: null | {
                     t: 'encrypted';
                     c: string;
-                } | null;
-                archivedAt: number | null;
+                } | {
+                    t: 'plain';
+                    v: JSONType;
+                };
+                archivedAt: null | number;
                 createdAt: number;
                 updatedAt: number;
-                displayState?: {
+                displayState?: undefined | {
                     status: 'unavailable';
                     reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-                } | undefined;
+                };
             }[];
-            attentionStandings?: {
+            attentionStandings?: undefined | {
                 sessionId: string;
                 standing: boolean;
                 updatedAt: number;
                 remindAt?: number | undefined;
-            }[] | undefined;
+            }[];
+            sessionAppearances?: undefined | {
+                sessionId: string;
+                display: null | {
+                    t: 'encrypted';
+                    c: string;
+                } | {
+                    t: 'plain';
+                    v: JSONType;
+                };
+                updatedAt: number;
+                displayState?: undefined | {
+                    status: 'unavailable';
+                    reason: 'invalid_stored_display' | 'storage_mode_mismatch';
+                };
+            }[];
         };
     };
     readonly "session.tags.create": {
         tag: {
             tagId: string;
             tagKey: string;
-            sortKey: string | null;
-            display: {
-                t: 'plain';
-                v: JSONType;
-            } | {
+            sortKey: null | string;
+            display: null | {
                 t: 'encrypted';
                 c: string;
-            } | null;
-            archivedAt: number | null;
+            } | {
+                t: 'plain';
+                v: JSONType;
+            };
+            archivedAt: null | number;
             createdAt: number;
             updatedAt: number;
-            displayState?: {
+            displayState?: undefined | {
                 status: 'unavailable';
                 reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-            } | undefined;
+            };
         };
     };
     readonly "session.tags.rename": {
         tag: {
             tagId: string;
             tagKey: string;
-            sortKey: string | null;
-            display: {
-                t: 'plain';
-                v: JSONType;
-            } | {
+            sortKey: null | string;
+            display: null | {
                 t: 'encrypted';
                 c: string;
-            } | null;
-            archivedAt: number | null;
+            } | {
+                t: 'plain';
+                v: JSONType;
+            };
+            archivedAt: null | number;
             createdAt: number;
             updatedAt: number;
-            displayState?: {
+            displayState?: undefined | {
                 status: 'unavailable';
                 reason: 'invalid_stored_display' | 'storage_mode_mismatch';
-            } | undefined;
+            };
         };
     };
     readonly "session.tags.delete": {

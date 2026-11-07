@@ -13,7 +13,7 @@ export type BugReportSubmissionActionInputById = {
             environment: {
                 appVersion: string;
                 platform: string;
-                deploymentType: 'cloud' | 'self-hosted' | 'enterprise';
+                deploymentType: 'cloud' | 'enterprise' | 'self-hosted';
                 osVersion?: string | undefined;
                 deviceModel?: string | undefined;
                 serverUrl?: string | undefined;
@@ -24,17 +24,36 @@ export type BugReportSubmissionActionInputById = {
             reporterGithubUsername?: string | undefined;
             currentBehavior?: string | undefined;
             expectedBehavior?: string | undefined;
-            frequency?: 'always' | 'often' | 'sometimes' | 'once' | undefined;
-            severity?: 'blocker' | 'high' | 'medium' | 'low' | undefined;
+            frequency?: 'always' | 'often' | 'once' | 'sometimes' | undefined;
+            severity?: 'blocker' | 'high' | 'low' | 'medium' | undefined;
             diagnosticsKinds?: string[] | undefined;
         };
         destination: {
-            providerUrl: string | null;
+            providerUrl: null | string;
             issueOwner: 'happier-dev';
             issueRepo: 'happier';
             existingIssueNumber?: number | undefined;
         };
         pastedCliDoctorSnapshotJson?: string | undefined;
+        preparedDiagnostics?: undefined | {
+            artifacts: {
+                filename: string;
+                sourceKind: string;
+                contentType: string;
+                content: string;
+            }[];
+            environment: {
+                appVersion: string;
+                platform: string;
+                deploymentType: 'cloud' | 'enterprise' | 'self-hosted';
+                osVersion?: string | undefined;
+                deviceModel?: string | undefined;
+                serverUrl?: string | undefined;
+                serverVersion?: string | undefined;
+            };
+        };
+    } & {
+        clientId?: string | undefined;
     };
 };
 export type BugReportSubmissionActionResultById = {
