@@ -750,12 +750,16 @@ function createHarness(options: Readonly<{
                         }),
                         viewer: testkitViewer({ involvement: options.taskEdit ? ['assignee'] : [] }),
                         sourceUpdatedAtMs: observationRevision.current,
+                        ...(options.taskEdit ? { taskFields: {
+                            title: mutated ? 'Replace the duplicated normalizer after mutation' : 'Replace the duplicated normalizer',
+                            body: 'Complete source notes\n\nPreserve Markdown.  \n', dueDate: '2026-11-20',
+                        } } : {}),
                     };
                 },
             });
             if (result.kind !== 'observed') return result;
             const { entryRef, ...observation } = result.observation;
-            return { kind: 'observed', entryRef, observation: toTriageWireObservation(observation) };
+            return { ...result, entryRef, observation: toTriageWireObservation(observation) };
         }
         return await listTriageEntries(TriageListEntriesInputV1Schema.parse(request.input), {
             sourceInstances: collections.sourceInstances,
@@ -1102,11 +1106,6 @@ async function mountShell(
                     }
                     if (action === TRIAGE_READ_ENTRY_DETAIL_ACTION_LOCAL_ID_V1 && options.detailFailure !== undefined) {
                         throw options.detailFailure;
-                    }
-                    if (options.taskEdit && typeof action !== 'string' && action.localId === 'get') {
-                        return { kind: 'present', localRef: { kindId: 'pull-request', collisionScope: 'example/repository', entryId: '17' },
-                            locator: testkitLocator(), snapshot: testkitSnapshot({ projectionTruncated: true }), viewer: testkitViewer(),
-                            taskFields: { title: 'Replace the duplicated normalizer', body: 'Complete source notes\n\nPreserve Markdown.  \n', dueDate: '2026-11-20' } };
                     }
                     if (options.taskEdit && action === 'tasks/edit-v1') {
                         options.onTaskEdit?.(input);
@@ -1499,7 +1498,7 @@ describe('opening a row into the source detail', () => {
         await vi.waitFor(() => { expect(harness.exactReads).toHaveLength(1); });
         await expect(shell.getByText(DETAIL_BODY_TEXT)).resolves.toBeDefined();
         expect(harness.exactReads).toEqual([{ v: 1, entryRef: { source: SOURCE, kindId: 'pull-request',
-            collisionScope: 'example/repository', entryId: '657' }, sourceInstanceId: INSTANCE }]);
+            collisionScope: 'example/repository', entryId: '657' }, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
         expect(harness.readDetailInstanceIds).toEqual([INSTANCE]);
         expect(harness.getEntryIds).toEqual(['657']);
     });
@@ -3317,7 +3316,7 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.getEntryIds).toEqual(['532']);
         expect(currentHarness?.continuedScanPages).toEqual([]);
         expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef: { source: SOURCE, kindId: 'pull-request',
-            collisionScope: 'example/repository', entryId: '532' }, sourceInstanceId: INSTANCE }]);
+            collisionScope: 'example/repository', entryId: '532' }, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
         expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
         await expect(shell.queryByText('These details are not loaded')).resolves.toBeUndefined();
     });
@@ -3332,7 +3331,7 @@ describe('opening a row into the source detail', () => {
         expect(currentHarness?.getEntryIds).toEqual(['710']);
         expect(currentHarness?.continuedScanPages).toEqual([]);
         expect(currentHarness?.exactReads).toEqual([{ v: 1, entryRef: { source: SOURCE, kindId: 'pull-request',
-            collisionScope: 'example/repository', entryId: '710' }, sourceInstanceId: INSTANCE }]);
+            collisionScope: 'example/repository', entryId: '710' }, sourceInstanceId: INSTANCE, includeTaskFields: true }]);
         expect(currentHarness?.readDetailInstanceIds).toEqual([INSTANCE]);
         await expect(shell.queryByText('No connection to open this through')).resolves.toBeUndefined();
         await act(async () => { await shell.updateSurface(surfaceContext()); });

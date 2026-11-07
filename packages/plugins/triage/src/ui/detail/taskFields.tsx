@@ -7,7 +7,7 @@ import {
   useAccountActorName, usePluginHostApi, usePluginHostReadiness, usePluginTranslation, usePluginUiFocusTarget, useSurfaceContext,
   type ActionFormFieldHint, type PropertyNameTones,
 } from '@happier-dev/plugin-ui';
-import { TriageGetResultV1Schema, TriageTaskFieldsV1Schema, TriageTaskTransitionFieldValuesV1Schema, triageTaskStatusCategoryV1,
+import { TriageTaskFieldsV1Schema, TriageTaskTransitionFieldValuesV1Schema, triageTaskStatusCategoryV1,
   type TriageConfiguredSourceInstanceV1, type TriageEntryLocatorV1, type TriageEntryRefV1, type TriageEntryStateV1, type TriageSourceInstanceIdV1, type TriageTaskFieldV1,
   type TriageTaskWriteResultV1, type TriageTaskCapabilitiesV1, type TriageTaskFieldsV1 } from '@happier-dev/triage-protocol/v1';
 import { TRIAGE_TASKS_CREATE_ACTION_LOCAL_ID_V1, TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1,
@@ -16,7 +16,7 @@ import type { TriageListRowV1 } from '../../projection/listWindow.js';
 import type { TriageListTaskFactsV1 } from '../list/sections.js';
 import type { TriageMountedConfiguredSourceV1 } from '../configuration/useTriageConfiguredSources.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
-import { readTriageSourceGetOperationV1, resolveTriageSourceDescriptorV1, resolveTriageSourceTaskOperationV1 } from './sourceSurface.js';
+import { resolveTriageSourceDescriptorV1, resolveTriageSourceTaskOperationV1 } from './sourceSurface.js';
 import { useTriageTaskCommit, useTriageTaskWriteState } from './taskWrite.js';
 import { defaultTriageTaskDraftPlaceV1, suggestTriageTaskDraftPlacesV1 } from '../taskDraftPlaces.js';
 import { projectTriageTaskBlockersV1, projectTriageTaskPropertiesV1, triageTaskFieldTitleV1, triageTaskRelationCandidatesV1 } from './taskProperties.js';
@@ -503,6 +503,8 @@ const NO_TASK_RELATIONS: TriageEditTaskPlacementV1['relations'] = Object.freeze(
  */
 export function TriageEditTaskScope(props: Readonly<{
   row: TriageListRowV1; instance?: TriageConfiguredSourceInstanceV1; disabled: boolean; onApplied(): Promise<void>;
+  /** Complete edit values supplied by the mounted exact-entry read owner. */
+  taskFields?: TriageTaskFieldsV1;
   /** Canonical detail relationship evidence, not a second relation lookup or store. */
   linkedSessionIds?: readonly string[];
   /** The rows the window already holds: what a parent or blocker can be chosen from, and how they are named. */
@@ -511,7 +513,6 @@ export function TriageEditTaskScope(props: Readonly<{
 }>): React.ReactElement {
   const context = useSurfaceContext();
   const assigneeLabels = useTriageTaskAssigneeLabels(context.accountScope?.accountId);
-  const host = usePluginHostApi();
   const text = usePluginTranslation();
   const executionUnavailable = useTriageTaskExecutionUnavailable();
   const selected = readTriageSelectedObservationV1(props.row);
@@ -520,70 +521,31 @@ export function TriageEditTaskScope(props: Readonly<{
   const snapshot = selected?.observation.snapshot;
   const [editing, setEditing] = React.useState(false);
   const [draft, setDraft] = React.useState<Record<string, unknown>>({});
-  // The exact values the source read for an edit; a field without a value here is unknown, never empty.
-  const [loadedValues, setValues] = React.useState<Readonly<Partial<TriageTaskFieldsV1>> | null>(null);
-  const [loadedEditable, setEditable] = React.useState<readonly TriageTaskFieldV1[]>([]);
   const [issues, setIssues] = React.useState<Record<string, string>>({});
-  const [readFailed, setReadFailed] = React.useState(false);
-  const [reading, setReading] = React.useState(false);
   const [statusOpen, setStatusOpen] = React.useState(false);
-  const read = React.useRef<AbortController | null>(null);
-  React.useEffect(() => () => read.current?.abort(), []);
   const write = useTriageTaskCommit(props.onApplied, { entryRef: props.row.entryRef,
     sourceInstanceId: selected?.sourceInstanceId ?? '' }, props.linkedSessionIds);
   const rebaseFields = write.rebaseFields;
-  const values = rebaseFields ?? loadedValues;
-  const editable = rebaseFields === null ? loadedEditable : loadedEditable.filter(field => Object.hasOwn(rebaseFields, field));
+  const capabilities = snapshot?.taskCapabilities ?? kind?.taskCapabilities;
+  const fields = capabilities?.editFields ?? [];
+  const values = rebaseFields ?? props.taskFields ?? null;
+  // Missing fields remain unknown; a partial exact read never grants editing of an absent value.
+  const editable = values === null ? [] : fields.filter(field => Object.hasOwn(values, field));
+  const readFailed = !props.disabled && fields.length > 0 && (values === null || editable.length !== fields.length);
   const workflow = useTaskTransitionFields(write, selected === null ? null : { entryRef: props.row.entryRef,
     sourceInstanceId: selected.sourceInstanceId, lastKnownLocator: selected.observation.locator },
-    props.disabled || executionUnavailable || props.instance === undefined || reading || write.busy || write.checking || write.result?.kind === 'uncertain', descriptor?.displayName);
+    props.disabled || executionUnavailable || props.instance === undefined || write.busy || write.checking || write.result?.kind === 'uncertain', descriptor?.displayName);
   const candidates = React.useMemo(() => triageTaskRelationCandidatesV1(props.relationRows ?? []), [props.relationRows]);
   const labelTones = useTriageTaskLabelTones(snapshot?.labelColors, props.onApplied);
-  const capabilities = snapshot?.taskCapabilities ?? kind?.taskCapabilities;
-  const get = readTriageSourceGetOperationV1(context, props.row.entryRef.source);
-  const canEdit = kind?.task === true && (capabilities?.editFields?.length ?? 0) > 0 && get !== undefined
+  const canEdit = kind?.task === true && fields.length > 0
     && resolveTriageSourceTaskOperationV1(context.targetedContributions, props.row.entryRef.source, 'edit') !== undefined;
-  const instance = props.instance;
-  /** One exact source read gives every editable value; it runs when the task opens and after each applied edit. */
-  const readValues = async (): Promise<Readonly<Partial<TriageTaskFieldsV1>> | null> => {
-    if (!canEdit || !get || !instance || selected === null || read.current) return null;
-    const controller = new AbortController();
-    read.current = controller;
-    setReading(true);
-    const entry = props.row.entryRef;
-    const localRef = { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId };
-    try {
-      const result = TriageGetResultV1Schema.parse(await host.executeAction(get.action, {
-        v: 1, instance, localRef, lastKnownLocator: selected.observation.locator,
-      }, { signal: controller.signal }));
-      if (controller.signal.aborted) return null;
-      if (result.kind !== 'present' || !pluginJsonValuesEqual(result.localRef, localRef) || result.taskFields === undefined) {
-        setReadFailed(true);
-        return null;
-      }
-      const fields = result.snapshot.taskCapabilities?.editFields ?? capabilities?.editFields ?? [];
-      const taskFields = result.taskFields;
-      // Sources publish only complete values here; unrelated snapshot/relationship truncation has no edit authority.
-      const complete = fields.filter(field => Object.hasOwn(taskFields, field));
-      const next = Object.fromEntries(complete.map(field => [field, taskFields[field]])) as Partial<TriageTaskFieldsV1>;
-      setEditable(complete);
-      setValues(next);
-      setReadFailed(complete.length !== fields.length || complete.length === 0);
-      return next;
-    } catch { if (!controller.signal.aborted) setReadFailed(true); return null; }
-    finally { read.current = null; if (!controller.signal.aborted) setReading(false); }
-  };
-  const readValuesRef = React.useRef(readValues);
-  readValuesRef.current = readValues;
-  const readKey = canEdit && instance !== undefined && !props.disabled ? `${selected?.sourceInstanceId}:${selected?.observation.observedAtMs}` : null;
-  React.useEffect(() => { if (readKey !== null) void readValuesRef.current(); }, [readKey]);
   if (kind?.task !== true || selected === null || snapshot === undefined) {
     return props.children({ status: null, controls: null, relations: NO_TASK_RELATIONS, edit: null, form: null });
   }
   const transitions = resolveTriageSourceTaskOperationV1(context.targetedContributions, props.row.entryRef.source, 'transition') === undefined
     ? [] : capabilities?.transitions ?? [];
   const address = { v: 1, entryRef: props.row.entryRef, sourceInstanceId: selected.sourceInstanceId, lastKnownLocator: selected.observation.locator };
-  const pending = props.disabled || executionUnavailable || props.instance === undefined || reading || write.busy || write.checking;
+  const pending = props.disabled || executionUnavailable || props.instance === undefined || write.busy || write.checking;
   const disabled = pending || (write.result?.kind === 'uncertain' && rebaseFields === null);
   const statusDisabled = pending || write.result?.kind === 'uncertain';
   /** One deliberate change, one `tasks/edit-v1` carrying only the changed fields; the source decides it. */
@@ -593,13 +555,12 @@ export function TriageEditTaskScope(props: Readonly<{
       && !pluginJsonValuesEqual(value, values[field as TriageTaskFieldV1])));
     const parsed = TriageTaskFieldsV1Schema.safeParse(changed);
     if (!parsed.success || Object.keys(parsed.data).length === 0) return;
-    const result = await write.commit(TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, { ...address, fields: parsed.data });
-    if (result?.kind === 'applied') await readValues();
+    await write.commit(TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, { ...address, fields: parsed.data });
   };
   const textFields = editable.filter((field): field is (typeof TASK_TEXT_FIELDS)[number] => (TASK_TEXT_FIELDS as readonly string[]).includes(field));
   const openEditor = async () => {
     if (disabled || !canEdit) return;
-    const current = values ?? await readValues();
+    const current = values;
     if (current === null) return;
     setIssues({});
     setDraft(Object.fromEntries(TASK_TEXT_FIELDS.filter(field => Object.hasOwn(current, field)).map(field => [field, current[field]])));
@@ -618,7 +579,7 @@ export function TriageEditTaskScope(props: Readonly<{
   const statusMenu = taskStatusMenu(transitions, { label: currentStatus, state: snapshot.state }, transitionLabel);
   const valuesNotice = readFailed ? <Banner tone="warning" title={text('plugins.triage.tasks.editValuesUnavailable',
     'Some current task values could not be loaded. Only fully loaded fields can be edited.')} /> : null;
-  const canEditText = canEdit && (values === null || textFields.length > 0);
+  const canEditText = canEdit && textFields.length > 0;
   // The Status button is a menu of the source's own transitions and leads the entry's one action row (lab t1); the
   // title and notes open from where the notes are. A source without a role never gets that control.
   const status = transitions.length === 0 ? null : <Menu open={statusOpen && !statusDisabled} onOpenChange={(open) => setStatusOpen(open && !statusDisabled)}
@@ -695,7 +656,7 @@ export function TriageEditTaskScope(props: Readonly<{
         }
         if (Object.keys(fields.data).length === 0) { setEditing(false); return; }
         const result = await write.commit(TRIAGE_TASKS_EDIT_ACTION_LOCAL_ID_V1, { ...address, fields: fields.data });
-        if (result?.kind === 'applied') { setEditing(false); await readValues(); }
+        if (result?.kind === 'applied') setEditing(false);
       }} />
     <TaskWriteNotice result={write.result} sessionLink={write.sessionLink} checking={write.checking} onCheckAgain={checkAgain}
       context={{ sourceName: descriptor?.displayName, operation: 'edit', target: write.progress }}

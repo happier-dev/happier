@@ -454,6 +454,75 @@ describe('registered GitHub detail read dispatch', () => {
     expect(reads).toBe(7);
   });
 
+  it('uses exact opening data, retains a later explicit refresh across tab mounts, and accepts a fresh reopen', async () => {
+    const scope = createTriageEphemeralSharedScopeFixture();
+    const input = launchInput();
+    const { source: _source, ...localRef } = input.observation.entryRef;
+    let body = 'First exact opening body';
+    let reads = 0;
+    const transport = createStubGithubTransport({ respond: request => {
+      if (!new URL(request.url).pathname.endsWith('/pulls/1284')) return undefined;
+      reads++;
+      return { status: 200, body: { ...GITHUB_PULL_REQUEST_RESPONSE, body } };
+    } });
+    const plugin = await createPluginTestkit({ manifest: PLUGIN_MANIFEST, module: { activate, activateAccount }, services: {
+      http: transport.context.services.http, connectedAccounts: transport.context.services.connectedAccounts,
+    } });
+    plugins.push(plugin);
+    const exact = async () => GithubOverviewResultV1Schema.parse(await plugin.invokeAction(
+      GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1.readOverview,
+      { v: 1, instance: input.instance, localRef, routingToken: input.observation.locator.routingToken },
+      { surface: 'ui' },
+    ));
+    let initialOverview = await exact();
+    const observed: { current: GithubOverviewControllerV1 | null } = { current: null };
+    const mount = async () => {
+      function Probe() {
+        observed.current = useGithubOverview(input, { readWhenActive: true, initialOverview });
+        return <Text>{observed.current.value?.body ?? 'pending'}</Text>;
+      }
+      let detail!: PluginUiTestkit;
+      await act(async () => {
+        detail = await createPluginUiTestkit({
+          identity: { instanceId: 'seeded-overview', mountNonce: `seeded-overview-${reads}` },
+          authorPlugin: { id: GITHUB_PLUGIN_ID, version: '0.0.0' },
+          surface: defineUiSurface(() => <Tabs value="overview" onValueChange={() => {}} ariaLabel="Seeded Overview">
+            <Tabs.Item value="overview" title="Overview"><Probe /></Tabs.Item>
+          </Tabs>),
+          surfaceContext: createSurfaceContextFixture(),
+          adapter: createPluginUiRnwSemanticSurfaceAdapter({ ephemeralSharedScope: scope }),
+          handlers: { executeAction: async ({ action, input: request, signal }) => {
+            if (typeof action === 'string' || request === undefined) throw new Error('Expected native Overview Action');
+            return plugin.invokeAction(action.localId, request, { surface: 'ui', signal });
+          } },
+        });
+      });
+      mounted.push(detail);
+      return detail;
+    };
+    const close = async (detail: PluginUiTestkit) => {
+      await act(async () => { await detail.dispose(); });
+      mounted.splice(mounted.indexOf(detail), 1);
+    };
+    const first = await mount();
+    await vi.waitFor(() => expect(observed.current?.value?.body).toBe(body));
+    expect(reads).toBe(1);
+    body = 'Explicit fresh native body';
+    await act(async () => { await observed.current!.refresh(); });
+    expect(observed.current?.value?.body).toBe(body);
+    expect(reads).toBe(2);
+    await close(first);
+    const tab = await mount();
+    await vi.waitFor(() => expect(observed.current?.value?.body).toBe(body));
+    expect(reads).toBe(2);
+    await close(tab);
+    body = 'New exact opening body';
+    initialOverview = await exact();
+    await mount();
+    await vi.waitFor(() => expect(observed.current?.value?.body).toBe(body));
+    expect(reads).toBe(3);
+  });
+
   it.each(['absent', 'unadmitted'] as const)('reads and retains an Account Overview with an %s Machine execution scope', async (executionScope) => {
     const origins = createTriageEphemeralSharedScopeOriginFixture();
     const presentation = origins.forExecutionOrigin('account');

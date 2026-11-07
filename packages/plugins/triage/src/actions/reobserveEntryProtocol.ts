@@ -1,5 +1,6 @@
 import {
   defineProtocolLiteral,
+  defineProtocolJsonValue,
   defineProtocolObject,
   defineProtocolUnion,
   TriageIdentifierV1ProtocolSchema,
@@ -33,6 +34,7 @@ export const TriageReobserveEntryResultV1Schema = defineProtocolUnion([
     entryRef: TriageEntryRefV1Schema,
     observation: TriageProjectedObservationV1Schema,
     taskFields: TriageTaskFieldsV1Schema.optional(),
+    detailData: defineProtocolJsonValue().optional(),
   }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('unavailable') }, { policy: 'closed' }),
   defineProtocolObject({ kind: defineProtocolLiteral('rejected') }, { policy: 'closed' }),

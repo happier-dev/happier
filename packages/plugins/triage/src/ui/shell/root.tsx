@@ -27,6 +27,7 @@ import {
   Select,
   Stack,
   Status,
+  Text,
   useHappierCollection,
   useListMultiSelectionController,
   usePluginAccessibility,
@@ -47,7 +48,8 @@ import {
 } from '@happier-dev/plugin-ui';
 
 import { TRIAGE_DISPLAY_NAME } from '../../displayName.js';
-import { TriageFailureLineAction, TriageListFailureDetails, TriageListFailureStatus } from './sourceFailure.js';
+import { TriageFailureLineAction, TriageListFailureStatus } from './sourceFailure.js';
+import { TriageSourceMark } from '../list/sourceMark.js';
 import { PullRequestFailureDetails } from '../../sessions/pullRequestGlance/PullRequestReadFailure.js';
 import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 import { selectObservationInstance, type CorpusExplicitOpenSelectionV1 } from '../../corpus/selection/selectObservationInstance.js';
@@ -194,6 +196,7 @@ import { readTriageWindowLensV1 } from './lens.js';
 import {
   readTriageListReadFailureNotice,
   readTriageRefreshPacingNotice,
+  readTriageSourceFailureRowV1,
   resolveTriageListRefreshV1,
   resolveTriageListShellState,
 } from './windowState.js';
@@ -458,6 +461,8 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     onCreateDraftClose?.();
   }, [onCreateDraftClose, localTaskDraft]);
   const [editingSources, setEditingSources] = React.useState(false);
+  // The one Manage sources row whose typed cause is open (its ⋯ Details), if any.
+  const [openSourceDetails, setOpenSourceDetails] = React.useState<string | null>(null);
   const [organizing, setOrganizing] = React.useState(false);
   // Which configured action a bulk press applies; `null` takes the first one the selection is offered.
   const [bulkActionId, setBulkActionId] = React.useState<string | null>(null);
@@ -1196,7 +1201,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
     && (surface.selection.sectionId === null || surface.selection.sectionId === 'pinned'
       || pinsByEntry.has(triageEntryRowKey(surface.selection.entryRef)))
     ? surface.selection : null;
-  const { row: selectedRow, completePostMutation, readFailed, failure: selectedReadFailure } = useTriagePostMutationRow(
+  const { row: selectedRow, completePostMutation, readFailed, failure: selectedReadFailure, exactRead } = useTriagePostMutationRow(
     selectedWindowRow,
     state.kind === 'window' ? state.window.lanes : [],
     unobservedSelection,
@@ -2365,6 +2370,7 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
   const detailContent = (headerHosted: boolean, pushed: boolean): React.ReactNode => surface.selection === null ? null : (
     detailRow !== null ? (
       <TriagePublishedDetail
+        exactRead={exactRead}
         sourcePanelActions={sourcePanel.actions}
         onFixPullRequestsRetryChange={reportDetailFixRetry}
         onRetryFixPullRequests={retryDetailFixPullRequests}
@@ -2723,7 +2729,6 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                   onPress={() => { setEditingSources(false); }}
                 />
               </Row>
-              {listWindow?.failure == null ? null : <TriageListFailureDetails failure={listWindow.failure} />}
               {configuredSources.unavailableReason === null ? null : (
                 <Banner
                   tone="warning"
@@ -2755,23 +2760,55 @@ export function TriageListShell(props: TriageListShellProps = {}): React.ReactEl
                     const sourceName = resolveTriageSourceDescriptorV1(surfaceContext.targetedContributions,
                       source.configured.instance.source)?.displayName;
                     const subtitle = source.displayPath ?? sourceName;
+                    // Each connection says its own health on its row: a quiet word and its reason, its fix at the end.
+                    const failure = listWindow?.failure?.sources.find((entry) => entry.sourceInstanceId === source.sourceInstanceId);
+                    const health = failure === undefined ? null : readTriageSourceFailureRowV1(failure, text);
+                    const repair = health?.fix === 'connection'
+                      ? configureOffers.find((offer) => offer.destination.pluginId === source.configured.instance.source.pluginId)
+                      : undefined;
+                    const fixLabel = health?.fix === 'retry' ? retryLabel
+                      : repair === undefined ? null : text('plugins.triage.surface.sources.fix', 'Fix');
+                    const detailsOpen = openSourceDetails === source.sourceInstanceId && health?.details != null;
                     return (
                       <Item
                         key={source.sourceInstanceId}
                         title={source.displayLabel}
+                        icon={<TriageSourceMark source={source.configured.instance.source} />}
                         {...(subtitle === undefined ? {} : { subtitle })}
+                        {...(health === null ? {} : {
+                          detail: `${text('plugins.triage.surface.sources.notRead', 'Not read')} · ${health.reason}`,
+                          detailTone: 'warning' as const,
+                        })}
+                        {...(fixLabel === null ? {} : { accessory: (
+                          <TriageFailureLineAction label={fixLabel} accessibilityLabel={`${fixLabel} ${source.displayLabel}`}
+                            busy={health?.fix === 'retry' && refreshState.kind === 'running'}
+                            disabled={health?.fix === 'retry' && refreshState.kind === 'blocked'}
+                            onPress={repair === undefined ? refreshPage : () => openConfigureSource(repair)} />
+                        ) })}
+                        {...(detailsOpen ? { expanded: true, expandedContent: (
+                          <Text variant="micro" tone="secondary" value={health!.details!} />
+                        ) } : {})}
                         // Removing is the row's only operation and it is destructive, so it waits in the row's menu
                         // (as on a source's own settings page) instead of standing as a column of Remove buttons.
-                        secondaryActions={source.removable === false ? [] : [{
+                        secondaryActions={[...(health?.details == null ? [] : [{
+                          id: 'details',
+                          label: detailsOpen
+                            ? text('plugins.triage.surface.sources.hideDetails', 'Hide details')
+                            : text('plugins.triage.surface.detail.tab.details', 'Details'),
+                        }]), ...(source.removable === false ? [] : [{
                           id: 'remove',
                           label: text('plugins.triage.surface.sources.remove', 'Remove'),
                           destructive: true,
                           disabled: configuredSources.unavailableReason !== null
                             || configuredSources.busySourceInstanceId !== null,
-                        }]}
+                        }])]}
                         secondaryActionAccessibilityLabel={text('plugins.triage.surface.row.moreActions',
                           'More actions for {title}', { title: source.displayLabel })}
-                        onSecondaryAction={() => {
+                        onSecondaryAction={(id) => {
+                          if (id === 'details') {
+                            setOpenSourceDetails(detailsOpen ? null : source.sourceInstanceId);
+                            return;
+                          }
                           void removeConfiguredSource(source.sourceInstanceId);
                         }}
                       />

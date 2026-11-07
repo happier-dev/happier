@@ -1,5 +1,6 @@
 import {
     defineProtocolLiteral,
+    defineProtocolJsonValue,
     defineProtocolArray,
     defineProtocolNumber,
     defineProtocolObject,
@@ -162,6 +163,8 @@ export const TriageGetResultV1Schema = defineProtocolUnion([
          * unavailable, never empty or truncated. Exact-read-only, not snapshot,
          * scan, retained projection, or mutation authority. */
         taskFields: TriageTaskFieldsV1Schema.optional(),
+        /** Source-owned presentation from this exact read, never persisted or used as authority. */
+        detailData: defineProtocolJsonValue().optional(),
         /** Fresh source detail for this exact dispatch. Descriptive data only;
          * the containing Action/input owns the byte budget. Never retained in
          * observations or snapshots, and never interpreted as authority. */

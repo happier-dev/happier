@@ -3,10 +3,9 @@ import * as React from 'react';
 import type {
     DaemonPluginUiTargetedSurfaceMountV1,
     PluginUiResourceBindingCapabilityV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     PluginUiInstanceKeyV1Schema,
-    PluginUiLaunchInputV1Schema,
     type PluginUiChannelV1,
     type PluginUiJsonValueV1,
     type PluginUiInstanceKeyV1,
@@ -42,7 +41,7 @@ import {
 export type TargetedPluginSurfaceMountRequest = Readonly<{
     mount: PluginSurfaceTargetedMountBinding<PreparedDaemonPluginUiTargetedSurfaceMountV1>;
     /**
-     * The one deep-frozen bounded snapshot the child renderer and the
+     * The one deep-frozen snapshot the child renderer and the
      * host-owned Resource context both read. It never aliases the author's
      * source value, and freezing is what keeps either consumer from reaching
      * the other's view — a second clone would only duplicate that guarantee.
@@ -102,7 +101,7 @@ const EMPTY_TARGETED_SURFACE_RESOURCE_SCOPE: readonly PluginUiSurfaceContextV1['
  * Protocol normalizes and stamps this leaf before the daemon projects it, and
  * the response reaches the UI as decoded JSON. Read its declared fields
  * directly and let the schemas below decide what is admissible; the launch
- * input alone still gets the one bounded strict-JSON snapshot, because that is
+ * input alone still gets the one strict-JSON snapshot, because that is
  * the value both the child renderer and the host Resource context retain.
  */
 function readNormalizedTargetedSurfaceLeaf(
@@ -123,7 +122,9 @@ function readTargetedSurfaceInputSnapshot(
 ): Readonly<{ input: PluginUiJsonValueV1 }> | null {
     try {
         const input = cloneStrictPluginJsonValue(value, 'targetedSurface.input') as PluginUiJsonValueV1;
-        return PluginUiLaunchInputV1Schema.safeParse(input).success ? Object.freeze({ input }) : null;
+        // Embedded role data is governed by its declared input schema below;
+        // openSurface's navigation-input budget does not apply to presentation.
+        return Object.freeze({ input });
     } catch {
         // The shared Protocol owner rejects malformed values before either
         // child consumer receives a snapshot.

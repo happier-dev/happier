@@ -40,7 +40,8 @@ export type GithubOverviewControllerV1 = Readonly<{
  */
 export function useGithubOverview(
   input: TriageDetailSurfaceInputV1,
-  options: Readonly<{ readWhenActive?: boolean; includePropertyChoices?: boolean; activity?: ReturnType<typeof useTabPanelActivity> }> = {},
+  options: Readonly<{ readWhenActive?: boolean; includePropertyChoices?: boolean; activity?: ReturnType<typeof useTabPanelActivity>;
+    initialOverview?: GithubOverviewResultV1 }> = {},
 ): GithubOverviewControllerV1 {
   const action = useMemo(() => ({
     pluginId: GITHUB_PLUGIN_ID,
@@ -55,16 +56,27 @@ export function useGithubOverview(
   const includePropertyChoices = options.includePropertyChoices === true;
   const head = input.observation.snapshot.reviewRevision?.headSha;
   const revision = input.observation.sourceUpdatedAtMs;
+  const initialState = useMemo<GithubOverviewReadStateV1>(() => {
+    const empty = { value: null, checkedAtMs: null, refreshing: false, failure: null };
+    return options.initialOverview === undefined ? empty : settleGithubOverviewReadV1(empty, options.initialOverview);
+  }, [options.initialOverview]);
+  const opening = useRef<Readonly<{ overview: GithubOverviewResultV1 | undefined; head: typeof head; revision: typeof revision }> | null>(null);
+  if (opening.current === null || opening.current.overview !== options.initialOverview) {
+    opening.current = { overview: options.initialOverview, head, revision };
+  }
+  const openingScope = opening.current;
+  const initial = useMemo(() => openingScope.overview === undefined ? undefined
+    : { head: openingScope.head, revision: openingScope.revision, state: initialState }, [initialState, openingScope]);
   const retentionKey = useMemo(() => JSON.stringify([request, routingToken]), [request, routingToken]);
-  const retention = useGithubOverviewRetention(retentionKey);
+  const retention = useGithubOverviewRetention(retentionKey, initial);
   const retained = retention.kind === 'ready' ? retention.value : null;
   const settled = useSyncExternalStore(active ? retained?.subscribe ?? noSubscribe : noSubscribe,
     retained?.getSnapshot ?? noSnapshot, retained?.getSnapshot ?? noSnapshot);
   const scope = useMemo(() => ({ request, routingToken, head, retained }), [request, routingToken, head, retained]);
   const scopeNow = useRef(scope);
   const changedScope = scopeNow.current !== scope;
-  const [state, setState] = useState<GithubOverviewReadStateV1>({ value: null, checkedAtMs: null, refreshing: false, failure: null });
-  const visibleState = changedScope ? { value: null, checkedAtMs: null, refreshing: false, failure: null } : state;
+  const [state, setState] = useState<GithubOverviewReadStateV1>(initialState);
+  const visibleState = changedScope ? initialState : state;
   if (changedScope) {
     scopeNow.current = scope;
     setState(visibleState);

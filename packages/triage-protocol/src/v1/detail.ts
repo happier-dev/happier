@@ -2,6 +2,7 @@ import type { PluginJsonSchema } from '@happier-dev/plugin-sdk/protocol';
 
 import {
     defineProtocolArray,
+    defineProtocolJsonValue,
     defineProtocolLiteral,
     defineProtocolNumber,
     defineProtocolObject,
@@ -69,6 +70,8 @@ export type TriageLinkedSessionProjectionV1 = ReturnType<
 export const TriageDetailSurfaceInputV1Schema = defineProtocolObject({
     v: defineProtocolLiteral(1),
     instance: TriageConfiguredSourceInstanceV1Schema,
+    /** Transient exact-read presentation; only the source interprets its contents. */
+    detailData: defineProtocolJsonValue().optional(),
     observation: defineProtocolObject({
         entryRef: TriageEntryRefV1Schema,
         observedAtMs: defineProtocolNumber({ integer: true }),

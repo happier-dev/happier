@@ -1,4 +1,3 @@
-import type { PluginUiActionControlRequestV1, PluginUiActionControlEventV1 } from '@happier-dev/protocol/plugins/ui';
 import { readFile } from 'node:fs/promises';
 import { createContext, Script } from 'node:vm';
 
@@ -12,6 +11,8 @@ import {
     PLUGIN_UI_HOST_METHODS_V1,
     PluginUiHostApiWireEnvelopeV1Schema,
     PluginUiTargetedContributionsV1Schema,
+    type PluginUiActionControlRequestV1,
+    type PluginUiActionControlEventV1,
 } from '@happier-dev/protocol/plugins/ui';
 import {
     PLUGIN_UI_HOST_API_WIRE_VERSION_V1,
@@ -65,6 +66,174 @@ it('returns Connect account references through the real fixture host and SDK cli
         await expect(fixture.context.hostApi.openConnectedAccounts()).resolves.toEqual(result);
         result = undefined;
         await expect(fixture.context.hostApi.openConnectedAccounts()).resolves.toBeUndefined();
+    } finally { await fixture.dispose(); }
+});
+
+it('advertises typed resource opening only with its installed host boundary', async () => {
+    const received: unknown[] = [];
+    const create = (installed: boolean) => createPluginUiTestkit({ identity,
+        authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' }, surface: { kind: 'author-surface' },
+        surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: installed ? { openResource: async (input: Readonly<{ resource: unknown; signal: AbortSignal }>) => {
+            received.push(input.resource);
+        } } : {},
+    });
+    const resource = { kind: 'ciRun' as const, url: 'https://forge.example/acme/repo/actions/runs/42' };
+    const absent = await create(false);
+    try {
+        expect(absent.context.hostApi.version().methods).not.toContain('openResource');
+        await expect(absent.context.hostApi.openResource(resource)).rejects.toMatchObject({ code: 'unsupported_method' });
+    } finally { await absent.dispose(); }
+    const installed = await create(true);
+    try {
+        await installed.context.hostApi.openResource(resource);
+        expect(received).toEqual([resource]);
+        await expect(installed.context.hostApi.openResource({ ...resource, kind: 'repository' } as never))
+            .rejects.toMatchObject({ code: 'invalid_payload' });
+        expect(received).toEqual([resource]);
+    } finally { await installed.dispose(); }
+});
+
+it('routes a host Action control through its installed testkit boundary and retires event delivery', async () => {
+    let publish: ((event: PluginUiActionControlEventV1) => void) | undefined;
+    let hostSignal: AbortSignal | undefined;
+    let releases = 0;
+    const requests: PluginUiActionControlRequestV1[] = [];
+    const execution = { ok: false as const, errorCode: 'action_outcome_unknown', error: 'Acceptance unknown', details: { operationId: 'original' } };
+    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { actionControl(input: Readonly<{ request: PluginUiActionControlRequestV1;
+            publish(event: PluginUiActionControlEventV1): void; signal: AbortSignal }>) {
+            requests.push(input.request);
+            if (input.request.kind === 'bind') {
+                publish = input.publish; hostSignal = input.signal;
+                return { dispose() { releases += 1; } };
+            }
+            if (input.request.kind === 'prepared') input.publish({ kind: 'settled', requestId: input.request.requestId, execution });
+        } },
+    });
+    const prepare = vi.fn(() => ({ input: { freshlyReviewed: true } }));
+    const onSettled = vi.fn();
+    try {
+        const control = await fixture.context.hostApi.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, { prepare, onSettled });
+        expect(fixture.context.hostApi.version().methods).toContain('actionControl');
+        expect(prepare).not.toHaveBeenCalled();
+        publish?.({ kind: 'prepare', requestId: 'physical-press' });
+        await vi.waitFor(() => expect(onSettled).toHaveBeenCalledExactlyOnceWith(execution));
+        expect(requests).toContainEqual(expect.objectContaining({ kind: 'prepared', requestId: 'physical-press',
+            preparation: { input: { freshlyReviewed: true } } }));
+        await control.update({ title: 'Run again', disabled: true });
+        expect(requests.at(-1)).toMatchObject({ kind: 'update', presentation: { title: 'Run again', disabled: true } });
+        await control.dispose();
+        await vi.waitFor(() => expect(releases).toBe(1));
+        expect(hostSignal?.aborted).toBe(true);
+        publish?.({ kind: 'prepare', requestId: 'late-press' });
+        expect(prepare).toHaveBeenCalledTimes(1);
+        expect(onSettled).toHaveBeenCalledTimes(1);
+    } finally { await fixture.dispose(); }
+    expect(releases).toBe(1);
+});
+
+it('aborts testkit Action preparation on retirement and never forwards late input', async () => {
+    let publish: ((event: PluginUiActionControlEventV1) => void) | undefined;
+    let finish: ((value: { input: string }) => void) | undefined;
+    let preparationSignal: AbortSignal | undefined;
+    const requests: PluginUiActionControlRequestV1[] = [];
+    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { actionControl(input: Readonly<{ request: PluginUiActionControlRequestV1;
+            publish(event: PluginUiActionControlEventV1): void; signal: AbortSignal }>) {
+            requests.push(input.request); publish = input.publish;
+        } },
+    });
+    const control = await fixture.context.hostApi.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, {
+        prepare(options) { preparationSignal = options.signal; return new Promise<{ input: string }>(resolve => { finish = resolve; }); }, onSettled() {},
+    });
+    publish?.({ kind: 'prepare', requestId: 'pending-press' });
+    expect(preparationSignal?.aborted).toBe(false);
+    await fixture.dispose();
+    expect(preparationSignal?.aborted).toBe(true);
+    finish?.({ input: 'late' });
+    await Promise.resolve();
+    expect(requests.map(request => request.kind)).toEqual(['bind']);
+    await control.dispose();
+});
+
+it('retires a late Action control admission exactly once after caller cancellation', async () => {
+    let finish: ((value: { dispose(): void }) => void) | undefined;
+    let hostSignal: AbortSignal | undefined;
+    let releases = 0;
+    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { actionControl(input: Readonly<{ request: PluginUiActionControlRequestV1;
+            publish(event: PluginUiActionControlEventV1): void; signal: AbortSignal }>) {
+            hostSignal = input.signal;
+            return new Promise<{ dispose(): void }>(resolve => { finish = resolve; });
+        } },
+    });
+    const cancellation = new AbortController();
+    try {
+        const pending = fixture.context.hostApi.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, {
+            prepare: () => null, onSettled() {},
+        }, { signal: cancellation.signal });
+        await vi.waitFor(() => expect(hostSignal).toBeDefined());
+        cancellation.abort();
+        await expect(pending).rejects.toMatchObject({ code: 'aborted' });
+        expect(hostSignal?.aborted).toBe(true);
+        finish?.({ dispose() { releases += 1; } });
+        await vi.waitFor(() => expect(releases).toBe(1));
+    } finally { await fixture.dispose(); }
+    expect(releases).toBe(1);
+});
+
+it('delivers page declarations and withdrawal through the installed host transport', async () => {
+    const declarations: unknown[] = [];
+    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { setPageNavigation: ({ navigation }) => { declarations.push(navigation); } },
+    });
+    try {
+        const descriptor = { pageKind: { pluginId: 'com.acme.fixture', localId: 'entry' }, value: 'overview',
+            items: [{ value: 'overview', title: 'Overview', kind: 'page' as const, phonePlacement: 'bar' as const }] };
+        expect(fixture.context.hostApi.version().methods).toContain('setPageNavigation');
+        await fixture.context.hostApi.setPageNavigation(descriptor);
+        await fixture.context.hostApi.setPageNavigation(null);
+        expect(declarations).toEqual([descriptor, null]);
+    } finally { await fixture.dispose(); }
+});
+
+it('refuses a dirty declaration when the mounted host has no page guard', async () => {
+    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter });
+    try {
+        expect(fixture.context.hostApi.version().methods).not.toContain('setUnsavedChanges');
+        expect(fixture.context.hostApi.version().methods).not.toContain('setPageNavigation');
+        await expect(fixture.context.hostApi.setPageNavigation(null)).rejects.toMatchObject({ code: 'unsupported_method' });
+        await expect(fixture.context.hostApi.setUnsavedChanges(true)).rejects.toMatchObject({ code: 'unsupported_method' });
+    } finally { await fixture.dispose(); }
+});
+
+it('carries exact-purpose authority retirement through the external UI testkit without resource bytes or a credential digest', async () => {
+    const authority = { readAuthority: { consumer: { pluginId: 'com.acme.fixture', localId: 'read-ci' }, purpose: 'github', input: {} } };
+    let watchedSignal: AbortSignal | undefined;
+    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
+        handlers: { watchResource: ({ resource, signal }) => {
+            expect(resource).toEqual(authority); watchedSignal = signal; return {};
+        } },
+    });
+    try {
+        const events: unknown[] = [];
+        const subscription = await fixture.context.hostApi.watchResource(authority, event => events.push(event));
+        expect(subscription).not.toHaveProperty('admittedDigest');
+        fixture.retireReadAuthority({ readAuthority: { ...authority.readAuthority, purpose: 'unrelated' } });
+        expect(events).toEqual([]);
+        fixture.retireReadAuthority(authority);
+        expect(events).toEqual([expect.objectContaining({ kind: 'error', code: 'expired_resource' })]);
+        expect(watchedSignal?.aborted).toBe(true);
+        fixture.retireReadAuthority(authority);
+        expect(events).toHaveLength(1);
+        await subscription.dispose();
     } finally { await fixture.dispose(); }
 });
 
@@ -265,97 +434,18 @@ function createMutableSemanticAdapter(initialNodes: readonly PluginUiSemanticAda
 }
 
 describe('readPluginUiTestkitTargetedSurfaceAdmission', () => {
-it('routes a host Action control through its installed testkit boundary and retires event delivery', async () => {
-    let publish: ((event: PluginUiActionControlEventV1) => void) | undefined;
-    let hostSignal: AbortSignal | undefined;
-    let releases = 0;
-    const requests: PluginUiActionControlRequestV1[] = [];
-    const execution = { ok: false as const, errorCode: 'action_outcome_unknown', error: 'Acceptance unknown', details: { operationId: 'original' } };
-    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
-        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
-        handlers: { actionControl(input: Readonly<{ request: PluginUiActionControlRequestV1;
-            publish(event: PluginUiActionControlEventV1): void; signal: AbortSignal }>) {
-            requests.push(input.request);
-            if (input.request.kind === 'bind') {
-                publish = input.publish; hostSignal = input.signal;
-                return { dispose() { releases += 1; } };
-            }
-            if (input.request.kind === 'prepared') input.publish({ kind: 'settled', requestId: input.request.requestId, execution });
-        } },
+    it('preserves embedded role data larger than a navigation input while rejecting malformed JSON', () => {
+        const fixture = targetedSurfaceAdmissionFixture();
+        const read = (launchInput: unknown) => readPluginUiTestkitTargetedSurfaceAdmission({
+            mounts: [fixture.mount], target: fixture.target, surface: fixture.surface,
+            launchInput, contributorManifest: targetedSurfaceContributorManifest(fixture.surface.contributor.pluginId),
+        });
+        const input = { entryId: 'Complete typed source content.\n'.repeat(1_000) };
+        expect(read(input)?.input).toEqual(input);
+        const cyclic: Record<string, unknown> = {};
+        cyclic.self = cyclic;
+        for (const malformed of [cyclic, new Date(), { entryId: Number.NaN }]) expect(read(malformed)).toBeNull();
     });
-    const prepare = vi.fn(() => ({ input: { freshlyReviewed: true } }));
-    const onSettled = vi.fn();
-    try {
-        const control = await fixture.context.hostApi.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, { prepare, onSettled });
-        expect(fixture.context.hostApi.version().methods).toContain('actionControl');
-        expect(prepare).not.toHaveBeenCalled();
-        publish?.({ kind: 'prepare', requestId: 'physical-press' });
-        await vi.waitFor(() => expect(onSettled).toHaveBeenCalledExactlyOnceWith(execution));
-        expect(requests).toContainEqual(expect.objectContaining({ kind: 'prepared', requestId: 'physical-press',
-            preparation: { input: { freshlyReviewed: true } } }));
-        await control.update({ title: 'Run again', disabled: true });
-        expect(requests.at(-1)).toMatchObject({ kind: 'update', presentation: { title: 'Run again', disabled: true } });
-        await control.dispose();
-        await vi.waitFor(() => expect(releases).toBe(1));
-        expect(hostSignal?.aborted).toBe(true);
-        publish?.({ kind: 'prepare', requestId: 'late-press' });
-        expect(prepare).toHaveBeenCalledTimes(1);
-        expect(onSettled).toHaveBeenCalledTimes(1);
-    } finally { await fixture.dispose(); }
-    expect(releases).toBe(1);
-});
-
-it('aborts testkit Action preparation on retirement and never forwards late input', async () => {
-    let publish: ((event: PluginUiActionControlEventV1) => void) | undefined;
-    let finish: ((value: { input: string }) => void) | undefined;
-    let preparationSignal: AbortSignal | undefined;
-    const requests: PluginUiActionControlRequestV1[] = [];
-    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
-        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
-        handlers: { actionControl(input: Readonly<{ request: PluginUiActionControlRequestV1;
-            publish(event: PluginUiActionControlEventV1): void; signal: AbortSignal }>) {
-            requests.push(input.request); publish = input.publish;
-        } },
-    });
-    const control = await fixture.context.hostApi.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, {
-        prepare(options) { preparationSignal = options.signal; return new Promise<{ input: string }>(resolve => { finish = resolve; }); }, onSettled() {},
-    });
-    publish?.({ kind: 'prepare', requestId: 'pending-press' });
-    expect(preparationSignal?.aborted).toBe(false);
-    await fixture.dispose();
-    expect(preparationSignal?.aborted).toBe(true);
-    finish?.({ input: 'late' });
-    await Promise.resolve();
-    expect(requests.map(request => request.kind)).toEqual(['bind']);
-    await control.dispose();
-});
-
-it('retires a late Action control admission exactly once after caller cancellation', async () => {
-    let finish: ((value: { dispose(): void }) => void) | undefined;
-    let hostSignal: AbortSignal | undefined;
-    let releases = 0;
-    const fixture = await createPluginUiTestkit({ identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
-        surface: { kind: 'author-surface' }, surfaceContext: initialSurface, adapter: createSemanticAdapter().adapter,
-        handlers: { actionControl(input: Readonly<{ request: PluginUiActionControlRequestV1;
-            publish(event: PluginUiActionControlEventV1): void; signal: AbortSignal }>) {
-            hostSignal = input.signal;
-            return new Promise<{ dispose(): void }>(resolve => { finish = resolve; });
-        } },
-    });
-    const cancellation = new AbortController();
-    try {
-        const pending = fixture.context.hostApi.actionControl({ action: 'projects.compute.exec', presentation: { title: 'Run' } }, {
-            prepare: () => null, onSettled() {},
-        }, { signal: cancellation.signal });
-        await vi.waitFor(() => expect(hostSignal).toBeDefined());
-        cancellation.abort();
-        await expect(pending).rejects.toMatchObject({ code: 'aborted' });
-        expect(hostSignal?.aborted).toBe(true);
-        finish?.({ dispose() { releases += 1; } });
-        await vi.waitFor(() => expect(releases).toBe(1));
-    } finally { await fixture.dispose(); }
-    expect(releases).toBe(1);
-});
 
     it('projects one exact strict cold admission and changes only its lifecycle key across generations', () => {
         const first = targetedSurfaceAdmissionFixture();
@@ -486,6 +576,23 @@ it('retires a late Action control admission exactly once after caller cancellati
 });
 
 describe('createPluginUiTestkit', () => {
+    it('serves typed unavailable Machine names until an exact fixture read is provided', async () => {
+        const options = { identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+            surface: { kind: 'author-surface' as const }, surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter };
+        const request = { serverId: 'home', machineId: 'machine' };
+        const unavailable = await createPluginUiTestkit(options);
+        try {
+            await expect(unavailable.context.hostApi.readMachineDisplayName(request)).resolves.toEqual({ status: 'unavailable' });
+        } finally { await unavailable.dispose(); }
+        const available = await createPluginUiTestkit({ ...options, handlers: {
+            readMachineDisplayName: ({ request: target }) => target.serverId === request.serverId && target.machineId === request.machineId
+                ? { status: 'ready', displayName: 'Studio' } : { status: 'unavailable' },
+        } });
+        try {
+            await expect(available.context.hostApi.readMachineDisplayName(request)).resolves.toEqual({ status: 'ready', displayName: 'Studio' });
+        } finally { await available.dispose(); }
+    });
     it('keeps public UI testkit option signatures independently nameable', async () => {
         const sourceText = await readFile(new URL('./uiHost.ts', import.meta.url), 'utf8');
         const sourceFile = ts.createSourceFile(
@@ -543,8 +650,8 @@ describe('createPluginUiTestkit', () => {
 
         expect(policy.initializer.type.getText(sourceFile))
             .toBe('Readonly<Record<(typeof PLUGIN_UI_HOST_METHODS_V1)[number], PluginUiTestkitHostMethodPolicy>>');
-        expect(policyObject.properties.map((property) => property.name?.getText(sourceFile)))
-            .toEqual([...PLUGIN_UI_HOST_METHODS_V1]);
+        expect(policyObject.properties.map((property) => property.name?.getText(sourceFile)).sort())
+            .toEqual([...PLUGIN_UI_HOST_METHODS_V1].sort());
 
         const probeFileName = 'fixture-host-method-policy-probe.ts';
         const probeSource = [
@@ -571,6 +678,25 @@ describe('createPluginUiTestkit', () => {
 
         expect(diagnostics.map((diagnostic) => ts.flattenDiagnosticMessageText(diagnostic.messageText, '\n')))
             .toEqual(expect.arrayContaining([expect.stringContaining('newCanonicalMethod')]));
+    });
+
+    it('offers exact input reveal only with its installed host boundary and keeps opaque lookup IDs', async () => {
+        const revealSessionInput = vi.fn(async () => undefined);
+        const options = { identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
+            surface: { kind: 'author-surface' as const }, surfaceContext: initialSurface,
+            adapter: createSemanticAdapter().adapter };
+        const fixture = await createPluginUiTestkit({ ...options, handlers: { revealSessionInput } });
+        try {
+            const request = { sessionId: 'exact-session', localId: '  opaque/input  ' };
+            await fixture.context.hostApi.revealSessionInput(request);
+            expect(revealSessionInput).toHaveBeenCalledWith({ request, signal: expect.any(AbortSignal) });
+        } finally { await fixture.dispose(); }
+        const unsupported = await createPluginUiTestkit(options);
+        try {
+            expect(unsupported.context.hostApi.version().methods).not.toContain('revealSessionInput');
+            await expect(unsupported.context.hostApi.revealSessionInput({ sessionId: 'exact-session', localId: 'exact-input' }))
+                .rejects.toMatchObject({ code: 'unsupported_method' });
+        } finally { await unsupported.dispose(); }
     });
 
     it('accepts the browser-safe client negotiation envelope at the fixture ingress', () => {
@@ -1358,15 +1484,19 @@ describe('createPluginUiTestkit', () => {
                     return resource;
                 },
                 watchResource: ({ resource: requested, signal }) => {
-                    calls.push(`watch:${typeof requested === 'string' ? requested : 'hostRead' in requested ? requested.hostRead : requested.localId}`);
+                    calls.push(`watch:${typeof requested === 'string' ? requested : 'hostRead' in requested ? requested.hostRead
+                        : 'readAuthority' in requested ? requested.readAuthority.consumer.localId : requested.localId}`);
                     expect(signal.aborted).toBe(false);
                     return { digest: firstDigest };
                 },
-                openSurface: async ({ view, input, subPath, instanceKey }) => {
-                    calls.push(`open:${typeof view === 'string' ? view : view.localId}:${subPath ?? ''}:${instanceKey ?? ''}:${JSON.stringify(input)}`);
+                openSurface: async ({ view, input, subPath, instanceKey, presentation }) => {
+                    calls.push(`open:${typeof view === 'string' ? view : view.localId}:${subPath ?? ''}:${instanceKey ?? ''}:${presentation ?? ''}:${JSON.stringify(input)}`);
                 },
-                replacePageLocation: async ({ subPath, backLocation }) => {
-                    calls.push(`replace:${subPath}:${backLocation ?? ''}`);
+                setUnsavedChanges: async ({ isDirty }) => {
+                    calls.push(`dirty:${isDirty}`);
+                },
+                replacePageLocation: async ({ subPath, backLocation, preserveUnsavedChanges, view }) => {
+                    calls.push(`replace:${subPath}:${backLocation ?? ''}:${preserveUnsavedChanges}:${view ?? ''}`);
                     return subPath;
                 },
                 notify: async ({ message }) => { calls.push(`notify:${message}`); },
@@ -1418,8 +1548,15 @@ describe('createPluginUiTestkit', () => {
             subPath: 'details',
             instanceKey: 'review-7',
         });
+        await fixture.context.hostApi.openSurface('review-detail', { reviewId: 'review-8' }, { presentation: 'window' });
+        await fixture.context.hostApi.setUnsavedChanges(true);
+        await fixture.context.hostApi.setUnsavedChanges(false);
+        expect(calls).toContain('dirty:true');
+        expect(calls).toContain('dirty:false');
         await expect(fixture.context.hostApi.replacePageLocation('/details/7/', {
             backLocation: '/details/',
+            preserveUnsavedChanges: true,
+            view: 'review-detail',
         })).resolves.toEqual({ subPath: 'details/7' });
         await fixture.context.hostApi.notify('Review saved');
         await expect(fixture.context.hostApi.confirm('Publish review?')).resolves.toBe(true);
@@ -1435,7 +1572,7 @@ describe('createPluginUiTestkit', () => {
         await expect(fixture.context.hostApi.readClipboard()).resolves.toBe('copied review');
         await fixture.context.hostApi.writeClipboard('review link');
         await fixture.context.hostApi.openExternalLink('https://example.test/reviews/7');
-        expect(calls).toContain('replace:details/7:details');
+        expect(calls).toContain('replace:details/7:details:true:review-detail');
 
         const contextUpdates: string[] = [];
         const contextSubscription = await fixture.context.hostApi.watchContext((context) => {
@@ -1481,7 +1618,8 @@ describe('createPluginUiTestkit', () => {
             'select:setup',
             'resource:review',
             'watch:review',
-            'open:review-detail:details:review-7:{"reviewId":"review-7"}',
+            'open:review-detail:details:review-7::{"reviewId":"review-7"}',
+            'open:review-detail:::window:{"reviewId":"review-8"}',
             'notify:Review saved',
             'confirm:Publish review?',
             'diagnostic:fixture.ready',
@@ -1674,6 +1812,7 @@ describe('createPluginUiTestkit', () => {
                     const refusal = new PluginError({
                         code: 'denied',
                         message: 'The host did not admit the Review details panel.',
+                        details: { requestId: 'fixture-request-refusal' },
                         diagnostics: [{ code: 'destination_not_admitted', severity: 'error' }],
                     });
                     throw refusal;
@@ -1690,6 +1829,7 @@ describe('createPluginUiTestkit', () => {
                 name: 'PluginError',
                 code: 'denied',
                 message: 'The host did not admit the Review details panel.',
+                details: { requestId: 'fixture-request-refusal' },
                 retryable: false,
                 diagnostics: [{ code: 'destination_not_admitted', severity: 'error' }],
             });
@@ -2009,41 +2149,4 @@ describe('createPluginUiTestkit', () => {
         }
         await fixture.dispose();
     });
-    it('serves typed unavailable Machine names until an exact fixture read is provided', async () => {
-        const options = { identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
-            surface: { kind: 'author-surface' as const }, surfaceContext: initialSurface,
-            adapter: createSemanticAdapter().adapter };
-        const request = { serverId: 'home', machineId: 'machine' };
-        const unavailable = await createPluginUiTestkit(options);
-        try {
-            await expect(unavailable.context.hostApi.readMachineDisplayName(request)).resolves.toEqual({ status: 'unavailable' });
-        } finally { await unavailable.dispose(); }
-        const available = await createPluginUiTestkit({ ...options, handlers: {
-            readMachineDisplayName: ({ request: target }) => target.serverId === request.serverId && target.machineId === request.machineId
-                ? { status: 'ready', displayName: 'Studio' } : { status: 'unavailable' },
-        } });
-        try {
-            await expect(available.context.hostApi.readMachineDisplayName(request)).resolves.toEqual({ status: 'ready', displayName: 'Studio' });
-        } finally { await available.dispose(); }
-    });
-    it('offers exact input reveal only with its installed host boundary and keeps opaque lookup IDs', async () => {
-        const revealSessionInput = vi.fn(async () => undefined);
-        const options = { identity, authorPlugin: { id: 'com.acme.fixture', version: '1.0.0' },
-            surface: { kind: 'author-surface' as const }, surfaceContext: initialSurface,
-            adapter: createSemanticAdapter().adapter };
-        const fixture = await createPluginUiTestkit({ ...options, handlers: { revealSessionInput } });
-        try {
-            const request = { sessionId: 'exact-session', localId: '  opaque/input  ' };
-            await fixture.context.hostApi.revealSessionInput(request);
-            expect(revealSessionInput).toHaveBeenCalledWith({ request, signal: expect.any(AbortSignal) });
-        } finally { await fixture.dispose(); }
-        const unsupported = await createPluginUiTestkit(options);
-        try {
-            expect(unsupported.context.hostApi.version().methods).not.toContain('revealSessionInput');
-            await expect(unsupported.context.hostApi.revealSessionInput({ sessionId: 'exact-session', localId: 'exact-input' }))
-                .rejects.toMatchObject({ code: 'unsupported_method' });
-        } finally { await unsupported.dispose(); }
-    });
-
-
 });

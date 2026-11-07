@@ -153,7 +153,7 @@ import type {
 import { GITHUB_CHANGED_FILES_CEILING_V1 } from '../triage/detail/routes.js';
 import { githubMarkdownDisplayText } from '../triage/detail/markdown/projectGithubMarkdownForDisplay.js';
 import { GithubOverviewMarkdown } from './detail/markdown.js';
-import type { GithubOverviewResultV1 } from '../triage/detail/contracts.js';
+import { GithubIssueOpeningDetailV1Schema, type GithubOverviewResultV1 } from '../triage/detail/contracts.js';
 import {
   GITHUB_TRIAGE_MUTATION_ACTION_IDS_V1,
   GITHUB_TRIAGE_DETAIL_RENDERER_ID_V1,
@@ -4820,6 +4820,11 @@ function GithubDetailBody({
     launched.observation.entryRef.kindId,
   ]);
   const input = launched;
+  const openingDetail = React.useMemo(() => {
+    if (kindId !== 'issue' || input.detailData === undefined) return undefined;
+    const parsed = GithubIssueOpeningDetailV1Schema.safeParse(input.detailData);
+    return parsed.success ? parsed.data : undefined;
+  }, [input.detailData, kindId]);
   const primaryHost = useTriageEvidenceDisclosure().primaryWrite;
   const tabActivity = useTabPanelActivity();
   const publishesPrimaryWrite = primaryHost !== undefined && input.panel !== undefined && input.panel !== 'actions';
@@ -4831,8 +4836,9 @@ function GithubDetailBody({
   const checksDemanded = useGithubChecksDemanded();
   const propertiesDemanded = kindId === 'pull-request' && input.panel === 'actions';
   const overview = useGithubOverview(input, { readWhenActive: readWhenActive || checksDemanded || propertiesDemanded,
-    includePropertyChoices: propertiesDemanded, activity });
-  const capabilities = useGithubCapabilities(input, activity, kindId === 'pull-request' && readWhenActive ? overview : undefined);
+    includePropertyChoices: propertiesDemanded, activity, initialOverview: openingDetail?.overview });
+  const capabilities = useGithubCapabilities(input, activity, kindId === 'pull-request' && readWhenActive ? overview : undefined,
+    openingDetail?.capabilities);
   const primaryController = useGithubPrimaryWrite(input, overview, onObserved, activity);
   const primaryWrite = primaryController.value;
   const publishPrimaryWrite = primaryHost?.offer;

@@ -658,6 +658,19 @@ values were returned, and submits only changes through `tasks/edit-v1`.
 Snapshot `projectionTruncated` describes display completeness and does not
 disable an unrelated complete field. Sources without full values remain
 readable and show the edit-read failure rather than seeding an empty field.
+The mounted detail consumes these fields from its opening `entries/reobserve-v1`
+read, including after a completed write or deliberate refresh; the task form
+does not invoke the source `get` again on mount or after that callback.
+
+An exact `get` may also return optional source-owned `detailData`. Triage carries
+it through that same opening result into the embedded detail input, without
+persisting it in observations, snapshots or list rows. The source validates its
+inner presentation shape. GitHub issues use it for the full Overview and
+repository capabilities already read by `get`; tabs and header facts consume
+that result instead of fetching the same issue and repository again. Each open
+still reads afresh, and deliberate refresh and completed writes start fresh reads.
+Embedded typed detail data is governed by its declared role and containing
+transport, rather than the 8 KiB navigation `openSurface` launch-input limit.
 
 The mounted task commit shares pending, outcome and recovery state by entry
 through the existing Account/plugin/generation ephemeral scope. Row glyphs,

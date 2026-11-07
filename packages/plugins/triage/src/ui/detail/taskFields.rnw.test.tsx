@@ -23,6 +23,8 @@ import { TriageTaskStory } from './taskStory.js';
 import { INTERNAL_TASK_SOURCE_V1 } from '../../internalTasks/identity.js';
 import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../../internalTasks/configuration.js';
 import { checkTriageTaskWrite } from './taskWrite.js';
+import { useTriagePostMutationRow } from './useTriagePostMutationRow.js';
+import { toTriageWireObservation } from '../../projection/listWindowWire.js';
 
 (globalThis as typeof globalThis & { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 const mounted: PluginUiTestkit[] = [];
@@ -459,16 +461,23 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
   let reads = 0;
   let fixture!: PluginUiTestkit;
   const scope = createTriageEphemeralSharedScopeFixture();
+  const lanes = Object.freeze([]);
+  const initialValues = options.values ?? { title: row.content!.outcome.snapshot.title, body: 'Full body\n\nOriginal Markdown.  \n' };
   await act(async () => {
     fixture = await createPluginUiTestkit({ identity: { instanceId: 'task-edit', mountNonce: `edit-${mounted.length}` },
       authorPlugin: { id: 'happier.triage', version: '0.0.0' },
-      surface: defineUiSurface(() => <TriageEditTaskScope row={row} instance={source.configuredInstance} disabled={false} onApplied={async () => {
-        rereads++;
-        if (options.rereadFails) throw new Error('Refresh unavailable');
-      }}
-        relationRows={[row, ...(options.relationRows ?? [])]}>
-        {(task) => <>{task.status}{task.controls}<TriageTaskStory task={task} notes={null} renderAgentStep={() => null} /></>}
-      </TriageEditTaskScope>),
+      surface: defineUiSurface(() => {
+        const detail = useTriagePostMutationRow(row, lanes);
+        return <TriageEditTaskScope row={detail.row ?? row} instance={source.configuredInstance} disabled={false}
+          taskFields={detail.exactRead?.taskFields} onApplied={async () => {
+            rereads++;
+            if (options.rereadFails) throw new Error('Refresh unavailable');
+            await detail.completePostMutation();
+          }}
+          relationRows={[row, ...(options.relationRows ?? [])]}>
+          {(task) => <>{task.status}{task.controls}<TriageTaskStory task={task} notes={null} renderAgentStep={() => null} /></>}
+        </TriageEditTaskScope>;
+      }),
       surfaceContext: createSurfaceContextFixture({ targetedContributions: targeted,
         ...(options.viewerAccountId === undefined ? {} : { accountScope: { serverId: 'fixture-home', accountId: options.viewerAccountId } }) }),
       adapter: createPluginUiRnwSemanticSurfaceAdapter({ overlays: true, ephemeralSharedScope: scope }),
@@ -478,7 +487,13 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
         if (typeof action === 'string') {
           if (action === 'tasks/check-write-v1') return checkTriageTaskWrite(scope, entryRef, fixture.context.hostApi,
             new AbortController().signal).then(resolved => ({ status: resolved ? 'applied' : 'unavailable' }));
-          if (action === 'entries/reobserve-v1') return { kind: 'observed', entryRef, observation, taskFields: options.recoveryValues };
+          if (action === 'entries/reobserve-v1') {
+            reads++;
+            if (options.readFailed) throw new Error('Source unavailable');
+            const { entryRef: _entryRef, ...projected } = observation;
+            return { kind: 'observed', entryRef, observation: toTriageWireObservation(projected),
+              taskFields: reads > 1 ? options.recoveryValues ?? initialValues : initialValues };
+          }
           if (action === 'tasks.internal.labels.setColor' || action === 'tasks.internal.labels.clearColor') {
             colored.push({ action, input });
             if (options.labelOutcome) return { status: options.labelOutcome, reason: 'task_conflict' };
@@ -496,12 +511,7 @@ async function mountEditor(options: Readonly<{ readOnly?: boolean; uncertain?: b
             viewer: { involvement: [] },
           } };
         }
-        expect(action.localId).toBe('get');
-        reads++;
-        if (options.readFailed) throw new Error('Source unavailable');
-        return { kind: 'present', localRef: { kindId: entryRef.kindId, collisionScope: entryRef.collisionScope, entryId: entryRef.entryId },
-          locator: row.content!.outcome.locator, snapshot: row.content!.outcome.snapshot, viewer: { involvement: [] },
-          taskFields: options.values ?? { title: row.content!.outcome.snapshot.title, body: 'Full body\n\nOriginal Markdown.  \n' } };
+        throw new Error(`Task fields must consume the opening read, received ${action.localId}`);
       } },
     });
   });
@@ -547,7 +557,7 @@ it('shows the projected owner to a view-only recipient without an editor or an a
   expect(property?.textContent).toContain('Mara');
   expect(property?.getAttribute('role')).not.toBe('button');
   expect(property?.querySelector('button, [role="button"], input')).toBeNull();
-  expect(reads()).toBe(0);
+  expect(reads()).toBe(1);
   expect(saved).toEqual([]);
 });
 
@@ -628,9 +638,7 @@ it.each([true, false])('refuses an editor when the admitted source cannot supply
     targetedContributions: targetedTaskSource(source.configuredInstance.instance.source, entry.kindId, 'edit'),
     machineConnectionPending: pending, machineExecutionReady: false,
   })); });
-  const edit = await fixture.getByRole('button', { name: 'Edit title and notes' });
-  expect(edit.state?.disabled).not.toBe(true);
-  await act(async () => { await fixture.press(edit); });
+  await expect(fixture.queryByRole('button', { name: 'Edit title and notes' })).resolves.toBeUndefined();
   expect(document.querySelector('[aria-label="Notes"]')).toBeNull();
   expect(saved).toEqual([]);
 });
@@ -673,7 +681,7 @@ it('edits the full body independently of truncated display facts and sends only 
 
 it('does not open an edit form with fabricated values when the full read fails', async () => {
   const { fixture, saved } = await mountEditor({ readFailed: true });
-  await act(async () => { await fixture.press(await fixture.getByRole('button', { name: 'Edit title and notes' })); });
+  await expect(fixture.queryByRole('button', { name: 'Edit title and notes' })).resolves.toBeUndefined();
   expect(document.querySelector('[role="form"]')).toBeNull();
   expect(saved).toEqual([]);
 });
@@ -829,7 +837,7 @@ it.each(['refused', 'uncertain'] as const)('says a %s typed field change and lea
   expect(saved.map(input => input.fields)).toEqual([{ labelIds: ['bug', 'ui'] }]);
   expect(document.body.textContent).toContain(outcome === 'refused' ? 'This change is not available for this task.'
     : `${createTriageSourceV1Fixture().descriptor.displayName} may have saved`);
-  expect(reads()).toBe(1);
+  expect(reads()).toBe(outcome === 'uncertain' ? 2 : 1);
   const control = await fixture.getByRole('button', { name: 'Labels, bug' });
   if (outcome === 'uncertain') expect(control.state?.disabled).toBe(true);
 });

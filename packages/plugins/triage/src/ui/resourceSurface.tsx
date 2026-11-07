@@ -50,7 +50,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
   const launch = result?.resource === resource ? result.launch : null;
   const selection = React.useMemo(() => launch === null ? null : ({ sectionId: null, entryRef: launch.entryRef,
     sourceInstanceId: launch.sourceInstance.sourceInstanceId }), [launch]);
-  const { row, completePostMutation, readFailed } = useTriagePostMutationRow(null, EMPTY_LANES, selection);
+  const { row, completePostMutation, readFailed, exactRead } = useTriagePostMutationRow(null, EMPTY_LANES, selection);
   const actions = useTriageActions();
   const pins = useTriagePinnedEntries();
   const identity = launch === null ? null : JSON.stringify(launch.entryRef);
@@ -148,7 +148,7 @@ function TriageResourceDetail({ resource }: Readonly<{ resource: PluginUiResourc
   } />;
   if (row === null || selection === null) return <TriageStoryLoadingLines label={text('plugins.triage.surface.detail.reading', 'Reading this entry')} />;
   return <Stack gap="small" style={{ flex: 1, minHeight: 0 }}>
-    <TriageDetailRegion sourcePanelActions={sourcePanel.actions} row={row} completePostMutation={completePostMutation}
+    <TriageDetailRegion exactRead={exactRead} sourcePanelActions={sourcePanel.actions} row={row} completePostMutation={completePostMutation}
       refreshGeneration={refreshGeneration} onFixPullRequestsRetryChange={reportFixRetry} onRetryFixPullRequests={() => execute({ kind: 'retryFixPullRequests' })}
       tabSelection={{ value: tab, onChange: value => execute({ kind: 'selectDetailTab', tab: value }) }}
       sessionSelection={{ value: sessionId, onChange: id => execute({ kind: 'selectLinkedSession', sessionId: id }),

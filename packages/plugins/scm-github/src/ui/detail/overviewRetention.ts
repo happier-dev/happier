@@ -25,9 +25,9 @@ type RetainedOverview = {
  * value publishes settled answers to mounted exact-target readers. It holds no
  * transport, pending work, or automatic demand.
  */
-export function useGithubOverviewRetention(key: string): GithubReadStateV1<RetainedOverview> {
+export function useGithubOverviewRetention(key: string, initial?: SettledOverview): GithubReadStateV1<RetainedOverview> {
   const scope = usePluginUiEphemeralSharedScope();
-  const [held, setHeld] = useState<Readonly<{ scope: typeof scope; key: string; state: GithubReadStateV1<RetainedOverview> }> | null>(null);
+  const [held, setHeld] = useState<Readonly<{ scope: typeof scope; key: string; initial: typeof initial; state: GithubReadStateV1<RetainedOverview> }> | null>(null);
   useEffect(() => {
     const create = () => {
       let settled: SettledOverview | null = null;
@@ -45,8 +45,18 @@ export function useGithubOverviewRetention(key: string): GithubReadStateV1<Retai
     const lease = scope?.acquire(`github.overview.v1:${key}`, create) ?? null;
     const local = scope === null ? create() : null;
     const value = lease?.value ?? local?.value;
-    setHeld({ scope, key, state: value === undefined ? UNAVAILABLE : { kind: 'ready', value } });
+    // Fresh opening facts replace older retained presentation. A tab mounting
+    // with its original launch data must preserve a later explicit refresh.
+    if (initial !== undefined && value !== undefined) {
+      const current = value.getSnapshot();
+      const openingAtMs = initial.state.value?.observedAtMs;
+      const retainedAtMs = current?.state.value?.observedAtMs;
+      if (current === null || (openingAtMs !== undefined && (retainedAtMs === undefined || openingAtMs > retainedAtMs))) {
+        value.settle(initial);
+      }
+    }
+    setHeld({ scope, key, initial, state: value === undefined ? UNAVAILABLE : { kind: 'ready', value } });
     return () => { lease?.release(); local?.dispose(); };
-  }, [key, scope]);
-  return held?.scope === scope && held.key === key ? held.state : LOADING;
+  }, [initial, key, scope]);
+  return held?.scope === scope && held.key === key && held.initial === initial ? held.state : LOADING;
 }

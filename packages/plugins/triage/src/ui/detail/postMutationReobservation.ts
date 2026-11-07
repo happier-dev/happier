@@ -11,6 +11,10 @@ import {
   TriageReobserveEntryResultV1Schema,
 } from '../../actions/reobserveEntryProtocol.js';
 import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
+import type { TriageTaskFieldsV1 } from '@happier-dev/triage-protocol/v1';
+
+/** Transient values from the exact read; never part of a retained list row. */
+export type TriageExactEntryReadV1 = Readonly<{ taskFields?: TriageTaskFieldsV1; detailData?: JsonValue }>;
 
 type TriagePostMutationHostV1 = Readonly<{
   executeAction(
@@ -39,10 +43,11 @@ export async function reobserveTriagePostMutationRow(
     sharedScope?: PluginEphemeralSharedScope | null;
     keepViewerFacts?: boolean;
     onReadFailure?: (error: unknown) => void;
+    onExactRead?: (read: TriageExactEntryReadV1, observation: CorpusQualifiedObservationV1) => void;
     publishObservation?: (observation: CorpusQualifiedObservationV1, keepViewerFacts?: boolean) => TriageListRowV1 | null;
   }>,
 ): Promise<TriageListRowV1 | null> {
-  const { keepViewerFacts, onReadFailure, publishObservation, sharedScope, ...cancellation } = options;
+  const { keepViewerFacts, onReadFailure, onExactRead, publishObservation, sharedScope, ...cancellation } = options;
   const previous = 'observations' in row ? row : null;
   const prior = previous?.observations.find(
     (observation) => observation.sourceInstanceId === sourceInstanceId,
@@ -58,6 +63,7 @@ export async function reobserveTriagePostMutationRow(
         v: 1,
         entryRef: row.entryRef,
         sourceInstanceId,
+        ...(onExactRead === undefined ? {} : { includeTaskFields: true }),
         ...(lastKnownLocator === undefined ? {} : { lastKnownLocator }),
       },
       options,
@@ -100,6 +106,8 @@ export async function reobserveTriagePostMutationRow(
     ...result.observation,
   };
   if (options.signal?.aborted) return null;
+  onExactRead?.({ ...(result.taskFields === undefined ? {} : { taskFields: result.taskFields }),
+    ...(result.detailData === undefined ? {} : { detailData: result.detailData }) }, observation);
   const published = publishObservation?.(observation, keepViewerFacts);
   if (published != null) return published;
   return foldTriagePostMutationObservation({

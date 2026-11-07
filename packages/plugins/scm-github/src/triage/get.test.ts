@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { TriageSourceEntrySnapshotV1Schema } from '@happier-dev/triage-protocol/v1';
+import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 
 import {
   GITHUB_ISSUE_RESPONSE,
@@ -16,7 +17,8 @@ import {
   type StubHttpResponse,
 } from './testkit/githubTriage.test-support.js';
 import { readGithubPullRequest, runGithubTriageGet } from './get.js';
-import { toTriageSnapshot } from './mapping/protocol.js';
+import { toTriageGetResult, toTriageObservation, toTriageScanObservation, toTriageSnapshot } from './mapping/protocol.js';
+import { GithubIssueOpeningDetailV1Schema } from './detail/contracts.js';
 import { createGithubRepositoryReader } from './repositories.js';
 import type { GithubTriageEntryLocalRefV1 } from './types.js';
 
@@ -73,6 +75,32 @@ async function runGet(input: Readonly<{
 }
 
 describe('GitHub triage get', () => {
+  it('carries complete native issue opening data only through the exact get result', async () => {
+    const body = '# Full issue\n' + 'Complete native Markdown.\n'.repeat(1_000);
+    const { observation, transport } = await runGet({ localRef: ISSUE_REF,
+      respond: request => request.url.endsWith('/issues/7')
+        ? { status: 200, body: { ...GITHUB_ISSUE_RESPONSE, body,
+          repository_url: `https://api.github.com/repos/${ROUTING_TOKEN}`,
+          html_url: `https://github.com/${ROUTING_TOKEN}/issues/7` } }
+        : request.url.endsWith('/parent') ? { status: 404, body: {} }
+          : request.url.endsWith('/sub_issues') || request.url.endsWith('/blocked_by') ? { status: 200, body: [] }
+            : undefined,
+    });
+    expect(observation.kind).toBe('present');
+    if (observation.kind !== 'present') return;
+    const result = toTriageGetResult(observation, createTriageSourceV1Fixture().configuredInstance);
+    expect(result.kind).toBe('present');
+    if (result.kind !== 'present') return;
+    const opening = GithubIssueOpeningDetailV1Schema.parse(result.detailData);
+    expect(opening.overview).toMatchObject({ kind: 'overview', kindId: 'issue', body });
+    expect(opening.capabilities).toMatchObject({ kind: 'capabilities', operations: { issueComment: { kind: 'available' } } });
+    expect(transport.requests).toHaveLength(5);
+    expect(toTriageObservation(observation)).not.toHaveProperty('detailData');
+    expect(toTriageScanObservation(observation)).not.toHaveProperty('detailData');
+    expect(GithubIssueOpeningDetailV1Schema.safeParse({ ...opening, credentials: 'not detail data' }).success).toBe(false);
+    expect(GithubIssueOpeningDetailV1Schema.safeParse({ ...opening, overview: { kind: 'overview', kindId: 'another-source' } }).success).toBe(false);
+  });
+
   it('does not replace a malformed supplied routing token with another route', async () => {
     for (const routingToken of ['', 'https://api.github.com/repos/octo-org/example-app', 'octo-org', 'a/b/c']) {
       const { observation, transport } = await runGet({

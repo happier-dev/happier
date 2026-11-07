@@ -116,6 +116,8 @@ export type GithubTriagePresentObservationV1 = Readonly<{
   viewer: GithubTriageViewerFactsV1;
   /** Exact-read-only values; the scan/observation mapper never copies these. */
   taskFields?: TriageTaskFieldsV1;
+  /** Transient native detail facts from this exact read; never projected into scans. */
+  detailData?: import('./detail/contracts.js').GithubIssueOpeningDetailV1;
 }>;
 
 export type GithubTriageObservationV1 =

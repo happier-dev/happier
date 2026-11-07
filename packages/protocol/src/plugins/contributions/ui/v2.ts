@@ -26,7 +26,6 @@ import {
 import { PluginUiHostMethodV1Schema } from '../../ui/hostApiDefinition.js';
 import {
   PluginUiInstanceKeyV1Schema,
-  PluginUiLaunchInputV1Schema,
 } from '../../ui/semanticCommands.js';
 import {
   ComposerTransactionV1Schema,
@@ -193,7 +192,7 @@ export type PluginDeclarativeTargetedSurfaceReferenceV1 = z.infer<
 export const PluginDeclarativeTargetedSurfaceNodeV2Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('targetedSurface'),
   surface: PluginDeclarativeTargetedSurfaceReferenceV1Schema,
-  input: PluginUiLaunchInputV1Schema,
+  input: PluginJsonValueV2Schema,
   instanceKey: PluginUiInstanceKeyV1Schema,
   fallback: z.optional(PluginDeclarativeStateNodeV2Schema),
 }));

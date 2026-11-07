@@ -6054,6 +6054,12 @@ the surface-navigation launch-input budget does not limit Action data. This
 0.3 development correction also applies to external plugins and retains closed
 Action references, Session addresses and request envelopes.
 
+Embedded targeted surfaces likewise carry strict JSON validated by the admitted
+role's normalizer and input schema. Their presentation data is not an
+`openSurface(view, input)` navigation operand, so the navigation launch-input
+byte limit does not apply. The containing transport retains its own bounds;
+full typed detail data need not be fetched again merely to fit a navigation input.
+
 Preparation must establish read admission, not merely prepare remote delivery.
 The current API-token preparation path defers server grant checks until
 execution, so mounted host Resources refuse that path rather than borrow

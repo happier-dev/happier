@@ -20,6 +20,15 @@ import { PluginDeclarativeNodeV2Schema } from './v2.js';
 import { PluginDeclarativeProjectedModelV1Schema, PluginDeclarativeProjectedNodeV1Schema, projectPluginDeclarativeModelComparisonV1 } from './declarativeProjectedModelV1.js';
 
 describe('declarative document normalizer v1', () => {
+  it('preserves full embedded targeted content beyond the navigation input budget', () => {
+    const body = 'Complete source detail body.\n'.repeat(1_000);
+    const node = { kind: 'targetedSurface',
+      surface: { point: { pointId: 'details', protocol: { id: 'review-detail', version: 1 } },
+        contributor: { pluginId: 'com.acme.review', contributionId: 'detail' }, role: 'detail' },
+      input: { body }, instanceKey: 'detail' };
+    expect(PluginDeclarativeNodeV2Schema.parse(node)).toEqual(node);
+  });
+
   it('admits canonical Settings field ids even when a renderer has no field controls', () => {
     const normalized = normalizePluginDeclarativeDocumentV1({
       pluginId: 'com.acme.dashboard', actions: [],

@@ -722,3 +722,10 @@ export const GithubOverviewResultV1Schema = defineProtocolUnion([
   GithubDetailUnavailableSchema,
 ]);
 export type GithubOverviewResultV1 = ReturnType<typeof GithubOverviewResultV1Schema.parse>;
+
+/** Transient exact issue-read data for the mounted source detail, never a corpus row. */
+export const GithubIssueOpeningDetailV1Schema = defineProtocolObject({
+  overview: GithubOverviewResultV1Schema,
+  capabilities: GithubCapabilitiesResultV1Schema,
+}, { policy: 'closed' });
+export type GithubIssueOpeningDetailV1 = ReturnType<typeof GithubIssueOpeningDetailV1Schema.parse>;

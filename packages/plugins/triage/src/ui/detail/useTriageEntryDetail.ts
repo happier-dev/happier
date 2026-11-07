@@ -137,6 +137,7 @@ function createActionTriageEntryDetailTransport(
 }
 
 export type TriageEntryDetailInputSourceV1 = Readonly<{
+  detailData?: JsonValue;
   selection: Pick<TriageReadEntryDetailInputV1, 'entryRef' | 'sourceInstanceId' | 'sourceInstanceRowId'>;
   /** The host-applied present observation for the selected entry and connection. */
   observation: TriageDetailSurfaceInputV1['observation'];
@@ -178,6 +179,7 @@ async function readTriageEntryDetailStateThrough(
     selection: source.selection,
     instance: result.instance,
     observation: source.observation,
+    ...(source.detailData === undefined ? {} : { detailData: source.detailData }),
     linkedSessions: result.linkedSessions,
     linkedSessionsHasMore: result.linkedSessionsNextCursor !== undefined,
   });
@@ -239,6 +241,7 @@ export function useTriageEntryDetail(
   const sourceInstanceId = source?.selection.sourceInstanceId;
   const sourceInstanceRowId = source?.selection.sourceInstanceRowId;
   const observation = source?.observation;
+  const detailData = source?.detailData;
   const currentObservation = useRef(observation);
   currentObservation.current = observation;
   const sourceUpdatedAtMs = observation?.sourceUpdatedAtMs;
@@ -304,6 +307,7 @@ export function useTriageEntryDetail(
         selection: { entryRef, sourceInstanceId },
         instance: result.instance,
         observation,
+        ...(detailData === undefined ? {} : { detailData }),
         linkedSessions: result.linkedSessions,
         linkedSessionsHasMore: result.linkedSessionsNextCursor !== undefined,
       });
@@ -350,7 +354,7 @@ export function useTriageEntryDetail(
         }));
       }
     })();
-  }, [entryRef, observation, publish, sourceInstanceId, sourceInstanceRowId, transport, readiness.pending, readiness.ready]);
+  }, [detailData, entryRef, observation, publish, sourceInstanceId, sourceInstanceRowId, transport, readiness.pending, readiness.ready]);
 
   useEffect(() => {
     readPending.current = false;
@@ -442,6 +446,7 @@ export function useTriageEntryDetail(
         selection: { entryRef, sourceInstanceId },
         instance: state.input.instance,
         observation,
+        ...(detailData === undefined ? {} : { detailData }),
         linkedSessions: state.input.linkedSessions,
         linkedSessionsHasMore: state.input.linkedSessionsHasMore,
       });
@@ -450,5 +455,5 @@ export function useTriageEntryDetail(
         : Object.freeze({ kind: 'refused' as const, reason: built.reason });
     }
     return state?.kind === 'unreachable' ? Object.freeze({ ...state, retry }) : state;
-  }, [entryRef, owner, observation, sourceInstanceId, loadMoreLinkedSessions, retry, state, readiness.pending]);
+  }, [entryRef, owner, observation, detailData, sourceInstanceId, loadMoreLinkedSessions, retry, state, readiness.pending]);
 }

@@ -1,5 +1,5 @@
 import type { TriageDataActionContext, TriageDataActionHandler } from './dataContext.js';
-import type { PluginCancellationOptions, } from '@happier-dev/plugin-sdk';
+import type { PluginCancellationOptions, JsonValue } from '@happier-dev/plugin-sdk';
 import { throwIfAborted } from '@happier-dev/plugin-sdk/async';
 import type {
   TriageConfiguredSourceInstanceV1,
@@ -38,7 +38,7 @@ export type TriageReobserveEntryInputV1 = Readonly<{
 }>;
 
 export type TriageReobserveEntryResultV1 =
-  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1 }>
+  | Readonly<{ kind: 'observed'; observation: CorpusQualifiedObservationV1; taskFields?: TriageTaskFieldsV1; detailData?: JsonValue }>
   | Readonly<{ kind: 'unavailable' }>
   | Readonly<{ kind: 'rejected'; reason: CorpusQualificationRejectionV1 }>;
 
@@ -119,7 +119,8 @@ export async function reobserveTriageEntry(
     return qualified.status === 'qualified'
       ? { kind: 'observed', observation: qualified.observation,
           ...(input.includeTaskFields === true && observed.kind === 'present' && observed.taskFields !== undefined
-            ? { taskFields: observed.taskFields } : {}) }
+            ? { taskFields: observed.taskFields } : {}),
+          ...(observed.kind === 'present' && observed.detailData !== undefined ? { detailData: observed.detailData } : {}) }
       : { kind: 'rejected', reason: qualified.reason };
   })();
   try {
@@ -164,7 +165,8 @@ export function createTriageReobserveEntryActionHandler(): TriageDataActionHandl
     if (result.kind === 'observed') {
       const { entryRef, ...observation } = result.observation;
       return { kind: 'observed', entryRef, observation: toTriageWireObservation(observation),
-        ...(result.taskFields === undefined ? {} : { taskFields: result.taskFields }) };
+        ...(result.taskFields === undefined ? {} : { taskFields: result.taskFields }),
+        ...(result.detailData === undefined ? {} : { detailData: result.detailData }) };
     }
     return result.kind === 'unavailable'
       ? { kind: 'unavailable' }

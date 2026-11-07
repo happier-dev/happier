@@ -5,7 +5,6 @@ import {
   type TriageConfiguredSourceInstanceV1,
   type TriageDetailSurfaceInputV1,
 } from '@happier-dev/triage-protocol/v1';
-import { PluginUiLaunchInputV1Schema } from '@happier-dev/plugin-sdk/ui';
 
 import { sameTriageSourceIdentity } from '../../corpus/identity/components.js';
 import { sameTriageEntryRefV1, type TriageSurfaceSelectionV1 } from '../state/surface.js';
@@ -47,59 +46,12 @@ export type TriageDetailSurfaceInputBuildInputV1 = Readonly<{
   linkedSessions: TriageDetailSurfaceInputV1['linkedSessions'];
   /** Whether another page exists; absence is complete, as in the published detail input. */
   linkedSessionsHasMore?: boolean;
-  /** Include the actual panel before fitting the physical mount's launch input. */
+  /** Transient source-owned facts from this exact opening read. */
+  detailData?: TriageDetailSurfaceInputV1['detailData'];
+  /** The panel rendered by this physical mount. */
   panel?: string;
   panelScrollOwner?: TriageDetailSurfaceInputV1['panelScrollOwner'];
 }>;
-
-/** Full native relationships/workflows remain source-owned live detail reads. */
-function fitLaunchProjection(input: TriageDetailSurfaceInputV1): TriageDetailSurfaceInputV1 | null {
-  if (PluginUiLaunchInputV1Schema.safeParse(input).success) return input;
-
-  const snapshot = input.observation.snapshot;
-  const relations = snapshot.relations;
-  const taskCapabilities = snapshot.taskCapabilities;
-  const hasRelationEntries = Boolean(relations?.children?.entries?.length || relations?.blockedBy?.length);
-  const hasTransitions = Boolean(taskCapabilities?.transitions?.length);
-  const projectedSnapshot = hasRelationEntries || hasTransitions ? {
-    ...snapshot,
-    ...(hasRelationEntries && relations ? {
-      relations: {
-        ...(relations.parent === undefined ? {} : { parent: relations.parent }),
-        ...(relations.children === undefined ? {} : { children: {
-          total: relations.children.total,
-          ...(relations.children.completed === undefined ? {} : { completed: relations.children.completed }),
-        } }),
-      },
-    } : {}),
-    ...(hasTransitions && taskCapabilities ? { taskCapabilities: {
-      ...(taskCapabilities.createFields === undefined ? {} : { createFields: taskCapabilities.createFields }),
-      ...(taskCapabilities.editFields === undefined ? {} : { editFields: taskCapabilities.editFields }),
-    } } : {}),
-    projectionTruncated: true as const,
-  } : snapshot;
-  const projection = { ...input, observation: { ...input.observation, snapshot: projectedSnapshot } };
-  if (PluginUiLaunchInputV1Schema.safeParse(projection).success) {
-    return TriageDetailSurfaceInputV1Schema.parse(projection);
-  }
-
-  // Keep the largest prefix admitted by the real host, rather than choosing a
-  // second Session-count limit. The common header retains the full read page.
-  const prefix = (count: number) => ({
-    ...projection,
-    linkedSessions: input.linkedSessions.slice(0, count),
-    linkedSessionsHasMore: input.linkedSessionsHasMore === true || count < input.linkedSessions.length,
-  });
-  if (!PluginUiLaunchInputV1Schema.safeParse(prefix(0)).success) return null;
-  let low = 0;
-  let high = input.linkedSessions.length;
-  while (low < high) {
-    const mid = Math.ceil((low + high) / 2);
-    if (PluginUiLaunchInputV1Schema.safeParse(prefix(mid)).success) low = mid;
-    else high = mid - 1;
-  }
-  return TriageDetailSurfaceInputV1Schema.parse(prefix(low));
-}
 
 export function buildTriageDetailSurfaceInputV1(
   input: TriageDetailSurfaceInputBuildInputV1,
@@ -121,18 +73,20 @@ export function buildTriageDetailSurfaceInputV1(
       v: 1,
       instance: input.instance,
       observation: input.observation,
+      ...(input.detailData === undefined ? {} : { detailData: input.detailData }),
       linkedSessions: sessions.slice(0, MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1),
       linkedSessionsHasMore: input.linkedSessionsHasMore || sessions.length > MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
       ...(input.panel === undefined ? {} : { panel: input.panel }),
       ...(input.panelScrollOwner === undefined ? {} : { panelScrollOwner: input.panelScrollOwner }),
     });
-    const fitted = fitLaunchProjection(parsed);
-    if (fitted === null) return REFUSED_INVALID_CONTRACT_VALUE;
     return Object.freeze({
       kind: 'admitted',
       // Parsing the presentation must not replace the unchanged connection:
       // its identity owns pending native relationship reads across refreshes.
-      input: { ...fitted, instance: input.instance },
+      input: { ...parsed, instance: input.instance,
+        // This validated exact-read value belongs to the open, not to Session
+        // paging or retained-row publications rebuilding the detail envelope.
+        ...(input.detailData === undefined ? {} : { detailData: input.detailData }) },
     });
   } catch {
     // Invalid trusted values are still refused whole. Valid presentation may

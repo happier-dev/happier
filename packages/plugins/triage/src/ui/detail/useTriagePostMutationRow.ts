@@ -5,7 +5,7 @@ import { usePluginHostApi, usePluginUiEphemeralSharedScope } from '@happier-dev/
 import type { TriageListLaneV1, TriageListRowV1 } from '../../projection/listWindow.js';
 import { readTriageSelectedObservationV1 } from '../window/selectedObservation.js';
 import { deriveTriageDetailMountInstanceKey } from './mountKey.js';
-import { reobserveTriagePostMutationRow } from './postMutationReobservation.js';
+import { reobserveTriagePostMutationRow, type TriageExactEntryReadV1 } from './postMutationReobservation.js';
 import type { TriageSurfaceSelectionV1 } from '../state/surface.js';
 import type { TriageListWindowStoreV1 } from '../../projection/listWindowStore.js';
 import { triageEntryRowKey } from '../../projection/listWindow.js';
@@ -36,12 +36,16 @@ export function useTriagePostMutationRow(
     row: TriageListRowV1 | null;
     readFailed: boolean;
     failure?: PluginError;
-  }>>({ ownerKey, generation: 0, row: null, readFailed: false });
+    exactRead: TriageExactEntryReadV1 | null;
+  }>>({ ownerKey, generation: 0, row: null, readFailed: false, exactRead: null });
   // Retire A before even one render can combine B's selection with A's observation.
   if (state.ownerKey !== ownerKey) {
-    setState({ ownerKey, generation: state.generation + 1, row: null, readFailed: false });
+    setState({ ownerKey, generation: state.generation + 1, row: null, readFailed: false, exactRead: null });
   }
   const reobservation = React.useRef<AbortController | null>(null);
+  const readObservation = React.useRef<Readonly<{
+    ownerKey: string | null; observedAtMs?: number; sourceUpdatedAtMs?: number; nativeRevision?: string;
+  }> | null>(null);
   const row = state.ownerKey === ownerKey ? state.row ?? windowRow : windowRow;
   const reobserveRow = React.useCallback(async (
     candidate: TriageListRowV1 | null,
@@ -49,17 +53,33 @@ export function useTriagePostMutationRow(
   ): Promise<void> => {
     if (entryRef === undefined || sourceInstanceId === undefined) return;
     const lifecycleGeneration = state.generation;
+    const requested = candidate === null ? null : readTriageSelectedObservationV1(candidate);
+    // A failed read still spends this publication's demand; Retry remains explicit.
+    readObservation.current = { ownerKey, observedAtMs: requested?.observation.observedAtMs,
+      sourceUpdatedAtMs: requested?.observation.sourceUpdatedAtMs, nativeRevision: requested?.observation.nativeRevision };
     reobservation.current?.abort();
     const controller = new AbortController();
     reobservation.current = controller;
     setState(current => current.ownerKey === ownerKey && current.readFailed ? { ...current, readFailed: false } : current);
     let failure: PluginError | undefined;
+    let exactRead: TriageExactEntryReadV1 | null = null;
     const next = await reobserveTriagePostMutationRow(hostApi, candidate ?? { entryRef }, lanes, sourceInstanceId, {
       signal: controller.signal,
       // Mounts share their opening read; an explicit refresh or completed write
       // must observe after that action, even while another mount is still opening.
       ...(keepViewerFacts ? { sharedScope } : {}),
       keepViewerFacts,
+      onExactRead: (read, observation) => {
+        exactRead = read;
+        // Record before publishing, so this read's own row cannot reopen it.
+        const prior = readObservation.current;
+        if (observation.outcome.kind === 'present'
+          && (prior?.sourceUpdatedAtMs === undefined || observation.outcome.sourceUpdatedAtMs === undefined
+            || observation.outcome.sourceUpdatedAtMs >= prior.sourceUpdatedAtMs)) {
+          readObservation.current = { ownerKey, observedAtMs: observation.observedAtMs,
+            sourceUpdatedAtMs: observation.outcome.sourceUpdatedAtMs, nativeRevision: observation.outcome.nativeRevision };
+        }
+      },
       ...(publication == null ? {} : { publishObservation: (observation: CorpusQualifiedObservationV1, preserveViewerFacts?: boolean) =>
         publication.publishObservation(observation, preserveViewerFacts) }),
       onReadFailure: (error) => { if (isPluginError(error)) failure = error; },
@@ -70,8 +90,9 @@ export function useTriagePostMutationRow(
       // window still needs its exact result to open the subscribed detail.
       const publishedInWindow = windowRow !== null && next !== null && retained === next;
       setState((current) => current.ownerKey !== ownerKey || current.generation !== lifecycleGeneration
-        || (publishedInWindow && !current.readFailed) ? current
-        : { ...current, ...(next === null || publishedInWindow ? {} : { row: next }), readFailed: next === null, failure });
+        ? current
+        : { ...current, ...(next === null || publishedInWindow ? {} : { row: next }), exactRead,
+          readFailed: next === null, failure });
     }
     if (reobservation.current === controller) reobservation.current = null;
   }, [entryRef, hostApi, lanes, ownerKey, publication, sharedScope, sourceInstanceId, state.generation, windowRow]);
@@ -92,6 +113,21 @@ export function useTriagePostMutationRow(
       reobservation.current = null;
     };
   }, [ownerKey]);
-  return { row, completePostMutation, readFailed: state.ownerKey === ownerKey && state.readFailed,
+  const sourceUpdatedAtMs = selectedFromWindow?.observation.sourceUpdatedAtMs;
+  const nativeRevision = selectedFromWindow?.observation.nativeRevision;
+  const observedAtMs = selectedFromWindow?.observation.observedAtMs;
+  React.useEffect(() => {
+    const read = readObservation.current;
+    if (ownerKey === null || read?.ownerKey !== ownerKey) return;
+    // External source changes refresh full fields through this same owner.
+    // A later read stamp alone is merely a retained publication, not new demand.
+    if ((sourceUpdatedAtMs !== undefined && (read.sourceUpdatedAtMs === undefined || sourceUpdatedAtMs > read.sourceUpdatedAtMs))
+      || (nativeRevision !== undefined && nativeRevision !== read.nativeRevision
+        && observedAtMs !== undefined && (read.observedAtMs === undefined || observedAtMs > read.observedAtMs))) {
+      void reobserveSelection();
+    }
+  }, [ownerKey, sourceUpdatedAtMs, nativeRevision, observedAtMs, state.exactRead]);
+  return { row, completePostMutation, exactRead: state.ownerKey === ownerKey ? state.exactRead : null,
+    readFailed: state.ownerKey === ownerKey && state.readFailed,
     failure: state.ownerKey === ownerKey && state.readFailed ? state.failure : undefined };
 }

@@ -5,8 +5,6 @@ import {
 } from '@happier-dev/triage-protocol/v1';
 import { createTriageSourceV1Fixture } from '@happier-dev/triage-protocol/testing/v1';
 import { describe, expect, it } from 'vitest';
-import { PluginUiLaunchInputV1Schema } from '@happier-dev/protocol/plugins/ui/client';
-import { PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1 } from '@happier-dev/protocol/plugins/ui/semanticCommands';
 
 import type { GithubApiClientV1 } from '../../../../scm-github/src/observations/githubApiClient.js';
 
@@ -35,7 +33,14 @@ function build(overrides: Partial<Parameters<typeof buildTriageDetailSurfaceInpu
 }
 
 describe('Triage detail surface input', () => {
-  it('fits source-produced relationships at physical launch admission, retaining their summary', async () => {
+  it('preserves full exact source detail beyond the navigation launch budget', () => {
+    const body = 'Full issue body. '.repeat(1024);
+    const built = build({ detailData: { overview: { body } } });
+    expect(built.kind).toBe('admitted');
+    if (built.kind !== 'admitted') throw new Error('expected admitted embedded detail');
+    expect(built.input.detailData).toEqual({ overview: { body } });
+  });
+  it('preserves source-produced relationships in the embedded typed detail', async () => {
     const [{ readGithubIssueRelations }, { createGithubRepositoryReader }, {
       GITHUB_ISSUE_RESPONSE, GITHUB_OTHER_REPOSITORY_RESPONSE,
     }] = await Promise.all([
@@ -77,35 +82,21 @@ describe('Triage detail surface input', () => {
     const built = build({ observation });
     expect(built.kind).toBe('admitted');
     if (built.kind !== 'admitted') throw new Error('expected admitted source detail');
-    expect(PluginUiLaunchInputV1Schema.safeParse(built.input).success).toBe(true);
-    expect(built.input.observation.snapshot).toMatchObject({
-      projectionTruncated: true,
-      relations: { children: { total: 100, completed: 20 } },
-    });
-    expect(built.input.observation.snapshot.relations?.children?.complete).toBeUndefined();
+    expect(built.input.observation.snapshot.relations).toEqual(relations);
+    expect(built.input.observation.snapshot.relations?.children?.entries).toHaveLength(100);
     expect(observation.snapshot.relations?.children?.entries).toHaveLength(100);
   });
 
-  it('fits linked Sessions by bytes and marks the retained prefix incomplete', () => {
-    // Each title fits beside the detail envelope, while the full page exceeds the host's launch budget.
-    const titleBytes = Math.min(MAX_TRIAGE_TEXT_UTF8_BYTES_V1, PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1 / 2);
+  it('preserves a full typed linked-Session page beyond navigation bytes', () => {
     const linkedSessions = Array.from({ length: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1 }, (_, index) => ({
       sessionId: `session-${index}`,
-      displayTitle: '🦊'.repeat(Math.floor(titleBytes / 4)),
+      displayTitle: '🦊'.repeat(Math.floor(MAX_TRIAGE_TEXT_UTF8_BYTES_V1 / 4)),
     }));
     const built = build({ linkedSessions });
     expect(built.kind).toBe('admitted');
     if (built.kind !== 'admitted') throw new Error('expected admitted source detail');
-    expect(PluginUiLaunchInputV1Schema.safeParse(built.input).success).toBe(true);
-    expect(built.input.linkedSessionsHasMore).toBe(true);
-    expect(built.input.linkedSessions.length).toBeGreaterThan(0);
-    expect(built.input.linkedSessions.length).toBeLessThan(linkedSessions.length);
-    expect(built.input.linkedSessions).toEqual(linkedSessions.slice(0, built.input.linkedSessions.length));
-    // A short title permits more links: this is the physical byte boundary,
-    // not a new semantic Session-count cap.
-    const short = build({ linkedSessions: linkedSessions.map(({ sessionId }) => ({ sessionId })) });
-    expect(short.kind === 'admitted' && short.input.linkedSessions).toHaveLength(linkedSessions.length);
-    expect(short.kind === 'admitted' && short.input.linkedSessionsHasMore).toBe(false);
+    expect(built.input.linkedSessionsHasMore).toBe(false);
+    expect(built.input.linkedSessions).toEqual(linkedSessions);
   });
 
   it('includes the actual source panel in the same launch admission', () => {
@@ -118,10 +109,9 @@ describe('Triage detail surface input', () => {
     expect(built.kind).toBe('admitted');
     if (built.kind !== 'admitted') throw new Error('expected admitted source panel');
     expect(built.input.panel).toBe('stack-trace');
-    expect(PluginUiLaunchInputV1Schema.safeParse(built.input).success).toBe(true);
   });
 
-  it('keeps editable-field summaries when a source workflow needs a live detail read', () => {
+  it('preserves complete source workflow choices from the exact read', () => {
     const taskCapabilities = {
       editFields: ['title'] as const,
       transitions: Array.from({ length: 100 }, (_, index) => ({
@@ -134,10 +124,8 @@ describe('Triage detail surface input', () => {
     } });
     expect(built.kind).toBe('admitted');
     if (built.kind !== 'admitted') throw new Error('expected admitted workflow detail');
-    expect(PluginUiLaunchInputV1Schema.safeParse(built.input).success).toBe(true);
-    expect(built.input.observation.snapshot.projectionTruncated).toBe(true);
     expect(built.input.observation.snapshot.taskCapabilities?.editFields).toEqual(['title']);
-    expect(built.input.observation.snapshot.taskCapabilities?.transitions).toBeUndefined();
+    expect(built.input.observation.snapshot.taskCapabilities?.transitions).toEqual(taskCapabilities.transitions);
     expect(taskCapabilities.transitions).toHaveLength(100);
   });
 

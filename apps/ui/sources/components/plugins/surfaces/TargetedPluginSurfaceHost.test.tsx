@@ -2,9 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
     DaemonPluginUiTargetedSurfaceMountV1Schema,
-    rehydrateCanonicalProtocolComposableSchema,
     type DaemonPluginUiTargetedSurfaceMountV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import {
+    rehydrateCanonicalProtocolComposableSchema} from '@happier-dev/protocol/plugins/actions/protocol-composable-schema';
 import { PluginUiTargetedSurfaceMountCoreV1Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import {
     defineProtocolJsonValue,
@@ -333,7 +334,7 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
         }
     });
 
-    it('admits deep strict launch input within the named aggregate ceiling and rejects maximum-plus-one bytes on both entry paths', () => {
+    it('preserves complete embedded data beyond the navigation input budget on both entry paths', () => {
         const readRequests = [
             (input: PluginUiJsonValueV1) => readTargetedPluginSurfaceMountRequest({
                 node: { ...node, input },
@@ -346,8 +347,7 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
                 target,
             }),
         ];
-        // This exceeds the retired public depth quota while remaining far below
-        // the owner-declared complete serialized-byte ceiling.
+        // Embedded typed presentation data is not an openSurface navigation request.
         const deepInput = nestedLaunchInput(128);
         expect(new TextEncoder().encode(JSON.stringify(deepInput)).byteLength)
             .toBeLessThan(PLUGIN_UI_LAUNCH_INPUT_MAX_UTF8_BYTES_V1);
@@ -357,7 +357,7 @@ describe('readTargetedPluginSurfaceMountRequest', () => {
         for (const readRequest of readRequests) {
             expect(readRequest(deepInput)).toMatchObject({ input: deepInput });
             expect(readRequest(atLimit)).toMatchObject({ input: atLimit });
-            expect(readRequest(overLimit)).toBeNull();
+            expect(readRequest(overLimit)).toMatchObject({ input: overLimit });
         }
     });
 

@@ -10,6 +10,7 @@ import { GITHUB_PLUGIN_ID } from '../../observations/githubProviderContracts.js'
 import { GITHUB_TRIAGE_DETAIL_ACTION_IDS_V1 } from '../../triage/contribution.js';
 import {
   GithubCapabilitiesResultV1Schema,
+  type GithubCapabilitiesResultV1,
   GithubChangedFilesResultV1Schema,
   GithubFeedbackResultV1Schema,
   type GithubFeedbackInputV1,
@@ -74,6 +75,7 @@ export function useGithubCapabilities(
   input: TriageDetailSurfaceInputV1,
   activity?: ReturnType<typeof useTabPanelActivity>,
   overview?: GithubOverviewControllerV1,
+  initialCapabilities?: GithubCapabilitiesResultV1,
 ): GithubReadStateV1<GithubRepositoryCapabilitiesV1> {
   const action = useMemo(() => ({
     pluginId: GITHUB_PLUGIN_ID,
@@ -98,7 +100,7 @@ export function useGithubCapabilities(
     setState({ kind: 'loading' });
   }
   useEffect(() => {
-    if (!active || activeSignal.aborted || shared !== undefined || summaryPending
+    if (!active || activeSignal.aborted || shared !== undefined || initialCapabilities !== undefined || summaryPending
       || settledAuthority.current === authority) return undefined;
     const controller = new AbortController();
     const abort = () => controller.abort();
@@ -129,8 +131,13 @@ export function useGithubCapabilities(
         }
       });
     return () => { activeSignal.removeEventListener('abort', abort); controller.abort(); };
-  }, [active, activeSignal, authority, execute, instance, localRef, routingToken, shared, summaryPending]);
-  return useMemo(() => shared === undefined ? state : { kind: 'ready' as const, value: shared }, [shared, state]);
+  }, [active, activeSignal, authority, execute, initialCapabilities, instance, localRef, routingToken, shared, summaryPending]);
+  return useMemo(() => {
+    if (shared !== undefined) return { kind: 'ready' as const, value: shared };
+    if (initialCapabilities?.kind === 'capabilities') return { kind: 'ready' as const, value: initialCapabilities };
+    if (initialCapabilities?.kind === 'unavailable') return { kind: 'unavailable' as const, failure: initialCapabilities.failure };
+    return state;
+  }, [initialCapabilities, shared, state]);
 }
 
 /* -------------------------------------------------------------------- overview */

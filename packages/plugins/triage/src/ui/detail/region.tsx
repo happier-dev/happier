@@ -131,6 +131,8 @@ import { TriageSourceMark } from '../list/sourceMark.js';
  */
 
 export type TriageDetailRegionProps = Readonly<{
+  /** Opening and subsequent exact reads belong to the shell's one read owner. */
+  exactRead?: import('./postMutationReobservation.js').TriageExactEntryReadV1 | null;
   sourcePanelActions?: TriageSourcePanelActionsV1;
   tabSelection: TriageDetailTabSelectionV1;
   sessionSelection: Readonly<{
@@ -761,9 +763,10 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   }), [insertion, offerPrimaryWrite, props.sourcePanelActions, sourcePrimaryWrite]);
 
   const observedDetail = useTriageEntryDetail(
-    props.lastKnown === true || selection === null || observation === null ? null : { selection, observation },
+    props.lastKnown === true || props.exactRead === null || selection === null || observation === null ? null
+      : { selection, observation, ...(props.exactRead?.detailData === undefined ? {} : { detailData: props.exactRead.detailData }) },
   );
-  const detail = props.lastKnown === true ? null : observedDetail;
+  const detail = props.lastKnown === true ? null : props.exactRead === null ? { kind: 'reading' as const } : observedDetail;
   const linkedSessions = detail?.kind === 'ready' ? detail.linkedSessions : EMPTY_SESSIONS;
   const linkedSessionsHasMore = detail?.kind === 'ready'
     ? detail.linkedSessionsNextCursor !== undefined
@@ -1259,6 +1262,7 @@ export function TriageDetailRegion(props: TriageDetailRegionProps): React.ReactE
   // story holds a second copy of its state.
   return (
     <TriageEditTaskScope key={`task-fields:${selected === null ? 'unavailable' : deriveTriageDetailMountInstanceKey(row.entryRef, selected.sourceInstanceId)}`}
+      taskFields={props.exactRead?.taskFields}
       row={row} {...(detail?.kind === 'ready' ? { instance: detail.input.instance } : {})}
       linkedSessionIds={linkedSessionIds} relationRows={props.rows}
       disabled={detail?.kind !== 'ready'} onApplied={completePostMutation}>{(task) => {

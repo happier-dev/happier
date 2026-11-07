@@ -34,6 +34,7 @@ import {
   type GithubPullRequestOverviewV1,
 } from './detail/overview.js';
 import { createGithubRepositoryReader, type GithubRepositoryReaderV1 } from './repositories.js';
+import { projectGithubRepositoryCapabilities } from './capabilities.js';
 import { readGithubIssueRelations } from './relations.js';
 import { readGithubNativeSecurityAlert } from './securityAlerts/reads.js';
 import { projectGithubSecurityAlertDispatchEvidence } from './securityAlerts/dispatchEvidence.js';
@@ -266,15 +267,27 @@ async function readGithubNonAlertTriageGet(
     return (await readGithubPullRequest(input.localRef, route, repositories, dependencies)).observation;
   }
   if (input.localRef.kindId !== 'issue') return unresolved(input.localRef, { class: 'unsupportedContract', code: 'github_detail_kind_unsupported' });
-  const observation = (await readGithubIssue(input.localRef, route, repositories, dependencies)).observation;
+  const read = await readGithubIssue(input.localRef, route, repositories, dependencies);
+  const observation = read.observation;
   if (observation.kind !== 'present') return observation;
   const currentRoute = parseGithubRoutingToken(observation.locator.routingToken);
   if (currentRoute === null) return observation;
   const relations = await readGithubIssueRelations(input.localRef, currentRoute, repositories, dependencies,
     observation.snapshot.relations?.children);
-  return relations === undefined ? observation : Object.freeze({
+  // Reuse the invocation-local repository reader, including any facts already
+  // acquired for issue identity or relations, for the native capability controls.
+  const repository = await repositories.read(currentRoute);
+  const detailData = read.overview === null ? undefined : Object.freeze({
+    overview: Object.freeze({ kind: 'overview' as const, kindId: 'issue' as const,
+      observedAtMs: dependencies.now(), ...read.overview }),
+    capabilities: repository.kind === 'readable'
+      ? Object.freeze({ kind: 'capabilities' as const, ...projectGithubRepositoryCapabilities(repository, 'issue') })
+      : Object.freeze({ kind: 'unavailable' as const, failure: repository.failure }),
+  });
+  return Object.freeze({
     ...observation,
-    snapshot: Object.freeze({ ...observation.snapshot, relations }),
+    ...(detailData === undefined ? {} : { detailData }),
+    ...(relations === undefined ? {} : { snapshot: Object.freeze({ ...observation.snapshot, relations }) }),
   });
 }
 
