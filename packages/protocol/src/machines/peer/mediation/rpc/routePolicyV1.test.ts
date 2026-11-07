@@ -11,18 +11,35 @@ import {
 } from '../../../../rpc/index.js';
 import { PeerFlowKindV1Schema } from '../flowKind.js';
 import { resolveMachineRpcGovernance } from './governanceV1.js';
-import { getActionSpec } from '../../../../actions/actionSpecs.js';
+import { getActionSpec, isReadOnlyMachineRpcMethod } from '../../../../actions/actionSpecs.js';
 import { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from '../../../../actions/operations/v1.js';
 import { CONNECTED_SERVICE_POOL_SELECTION_RPC_METHOD } from '../../../../connect/connectedServicePoolSelection.js';
 import { CONNECTED_ACCOUNT_AUTHENTICATION_COMMAND_RPC_METHOD, CONNECTED_ACCOUNT_CONTROL_COMMAND_RPC_METHOD } from '../../../../connect/connectedAccountDaemonRpcV1.js';
 import { resolveSocketRpcSessionAuthorization } from '../../../../rpc/socket.js';
 import { ACTION_IDS, isWorkspaceSyncRelationshipWriteActionId } from '../../../../actions/actionIds.js';
+import { MACHINE_CAPABILITIES_DETECT_ACTION_ID } from '../../../../actions/specs/machineConnectionActionIdsV1.js';
 
 async function importRpcPolicy() {
   return await import('./index').catch((error: unknown) => ({ importError: error }));
 }
 
 describe('MachineRpcRoutePolicyV1', () => {
+  it('spends the admitted capability-refresh Action on its native detection effect', async () => {
+    const { resolveMachineRpcExternalActionEffectV1, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
+    const binding = ExternalActionExecutionAuthorizationV1Schema.parse({ v: 1, token: 'refresh-root', binding: {
+      accountId: 'owner', custodianAccountId: 'owner', authentication: { kind: 'account', tokenEpoch: 1 },
+      serverIdentityId: 'home', machineId: 'machine', installationId: 'installation',
+      actionId: MACHINE_CAPABILITIES_DETECT_ACTION_ID, requestId: 'refresh', requestEnvelopeDigest: 'a'.repeat(43),
+      target: { kind: 'machine', machineId: 'machine' },
+    } }).binding;
+    expect(resolveMachineRpcExternalActionEffectV1(RPC_METHODS.CAPABILITIES_DETECT, binding)).toBe(binding.actionId);
+    expect(resolveMachineRpcRoutePolicy(RPC_METHODS.CAPABILITIES_DETECT)).toMatchObject({
+      actionSpecId: MACHINE_CAPABILITIES_DETECT_ACTION_ID, rpcClassification: 'action_spec_bound',
+      sharedMachineAccess: 'use', requesterExecutionIsolationRequired: true,
+    });
+    expect(getActionSpec(MACHINE_CAPABILITIES_DETECT_ACTION_ID).sideEffectClass).toBe('read');
+    expect(isReadOnlyMachineRpcMethod(RPC_METHODS.CAPABILITIES_DETECT)).toBe(true);
+  });
   it('preserves declared methods and effective access through declaration consolidation', async () => {
     const { MACHINE_RPC_ROUTE_POLICIES, resolveMachineRpcRoutePolicy } = await import('./routePolicyV1');
     // Captured from the public table before removing access overlays, including
@@ -122,8 +139,11 @@ describe('MachineRpcRoutePolicyV1', () => {
       RPC_METHODS.CAPABILITIES_DETECT]) {
       expect(resolve(method, binding, selected)).toBe('machines.agents.list');
       expect(resolve(method, { ...binding, accountId: 'owner' }, selected)).toBe('machines.agents.list');
-      expect(resolve(method)).toBeNull();
-      expect(resolve(method, { ...binding, actionId: 'machines.agents.install' }, selected)).toBeNull();
+      // A native detection call has its own Action identity. The inventory
+      // composite above retains its exact root; unrelated roots cannot match it.
+      const nativeEffect = method === RPC_METHODS.CAPABILITIES_DETECT ? MACHINE_CAPABILITIES_DETECT_ACTION_ID : null;
+      expect(resolve(method)).toBe(nativeEffect);
+      expect(resolve(method, { ...binding, actionId: 'machines.agents.install' }, selected)).toBe(nativeEffect);
       expect(resolve(method, { ...binding, target: { kind: 'machine', machineId: 'foreign' } }, selected)).toBeNull();
       expect(resolve(method, binding, { ...selected, machineId: 'foreign' })).toBeNull();
       expect(resolve(method, binding, { ...selected, installationId: 'replacement' })).toBeNull();

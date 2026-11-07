@@ -4,6 +4,7 @@ import { MANAGED_MACHINE_ACTION_IDS_V1 } from '../../../managed/actionIdsV1.js';
 import { MANAGED_ACTIVITY_READ_RPC_METHOD, MANAGED_ADMISSION_DRAIN_CONFIRM_RPC_METHOD } from '../../../managed/actionIdsV1.js';
 import { USAGE_SOURCE_ACTION_IDS } from '../../../../usage/usageSourcesActionIdsV1.js';
 import { MACHINE_SERVICE_ACTION_IDS } from '../../../../local/services/actionIdsV1.js';
+import { MACHINE_CAPABILITIES_DETECT_ACTION_ID } from '../../../../actions/specs/machineConnectionActionIdsV1.js';
 
 export type MachineRpcGovernanceClassification = 'action_spec_bound' | 'internal_only' | 'advisory_unclassified';
 
@@ -15,6 +16,7 @@ export type MachineRpcGovernanceMetadataV1 = Readonly<{
 }>;
 
 const ACTION_SPEC_RPC_METHOD_IDS = Object.freeze({
+  [RPC_METHODS.CAPABILITIES_DETECT]: MACHINE_CAPABILITIES_DETECT_ACTION_ID,
   [RPC_METHODS.DAEMON_EXECUTION_RUNS_LIST]: 'machines.runs.list',
   [RPC_METHODS.MACHINES_COMMAND_RUN]: 'machines.command.run',
   [RPC_METHODS.MACHINE_ADMIN_ACCESS_SET]: 'machines.setup.adminAccess.set',
@@ -254,7 +256,6 @@ const SESSION_SPAWN_PRIVATE_INTERNAL_METHODS = new Set<string>([
 const READ_ONLY_RPC_GOVERNANCE = Object.freeze({
   [RPC_METHODS.CAPABILITIES_DESCRIBE]: 'internal_only',
   [SESSION_RPC_METHODS.SESSION_AGENT_START_SELECTION_READ_V1]: 'internal_only',
-  [RPC_METHODS.CAPABILITIES_DETECT]: 'advisory_unclassified',
   [RPC_METHODS.DAEMON_PROVIDERS_MODEL_PROJECTION]: 'advisory_unclassified',
   [RPC_METHODS.DAEMON_MERGED_CONTRIBUTION_REGISTRY_PROJECTION_DESCRIBE]: 'internal_only',
   [RPC_METHODS.DAEMON_GUARD_WATCH]: 'internal_only',

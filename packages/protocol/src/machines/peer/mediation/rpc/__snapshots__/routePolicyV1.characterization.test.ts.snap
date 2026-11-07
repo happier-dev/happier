@@ -9563,14 +9563,14 @@ exports[`preserves every declared method and complete effective policy through d
     "sharedMachineAccess": "use",
   },
   {
+    "actionSpecId": "machines.capabilities.detect",
     "commandReceiptRequired": false,
     "method": "capabilities.detect",
     "ownerPacket": "PMS-5",
     "rationale": "Read or external-service behavior has privacy, access-policy, transcript, or side-effect ambiguity and must stay on the server route until proven safe.",
-    "readOnly": true,
     "requesterExecutionIsolationRequired": true,
     "routeClass": "server_required",
-    "rpcClassification": "advisory_unclassified",
+    "rpcClassification": "action_spec_bound",
     "scope": {
       "accountRequired": true,
       "machineRequired": true,
