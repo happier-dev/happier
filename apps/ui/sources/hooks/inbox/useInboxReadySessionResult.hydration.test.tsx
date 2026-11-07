@@ -5,6 +5,7 @@ import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { buildSessionActivityAttention } from '@/activity/attention/buildSessionActivityAttention';
 import { buildSessionTurnsProjectionV1 } from '@happier-dev/protocol/sessions/turns/sessionTurnV1';
 import { useInboxReadySessionResult } from './useInboxReadySessionResult';
+import { readSessionPresentationInputSource } from '@/sync/domains/session/listing/sessionListRenderableSessionProjection';
 
 vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
 vi.mock('socket.io-client', async (importOriginal) => (
@@ -21,7 +22,11 @@ afterEach(() => h.cleanup());
 afterAll(() => h.dispose());
 
 describe('useInboxReadySessionResult exact transcript demand', () => {
-    it.each(['completed', 'in_progress'] as const)('hydrates exact %s output through consumption ACK and follows completion without scanning Sessions', async initialStatus => {
+    it.each([
+        { initialStatus: 'completed', hydrateTranscript: false },
+        { initialStatus: 'completed', hydrateTranscript: true },
+        { initialStatus: 'in_progress', hydrateTranscript: true },
+    ] as const)('hydrates $initialStatus output (full transcript: $hydrateTranscript) without scanning Sessions', async ({ initialStatus, hydrateTranscript }) => {
         const { getSyncSingleton } = await import('@/sync/runtime/getSyncSingleton');
         const { readMountedSessionRealtimeTranscriptConsumerSessionIds } = await import('@/sync/runtime/sessionRealtimeTranscriptConsumers');
         const sessionId = `linked-${initialStatus}-session`;
@@ -55,17 +60,16 @@ describe('useInboxReadySessionResult exact transcript demand', () => {
         const messagesBefore = h.httpRequests.filter(({ url }) => url.pathname.endsWith('/messages')).length;
         const address = { serverId: h.homeB.id, sessionId };
         const hook = await renderHook(({ hydrateTranscript, active }: { hydrateTranscript: boolean; active: boolean }) => {
-            const session = h.storage(state => state.sessions[sessionId], { sessions: [sessionId] });
-            const candidate = session ? buildSessionActivityAttention({ session, nowMs: 10 }) : null;
+            const session = h.storage(state => state.sessions[sessionId]
+                ?? state.sessionListRowsByServerId[h.homeB.id]?.[sessionId], { sessions: [sessionId] });
+            const candidate = session ? buildSessionActivityAttention({ session, nowMs: 10,
+                presentationSource: readSessionPresentationInputSource({ record: session, serverId: h.homeB.id }) }) : null;
             return useInboxReadySessionResult(candidate, { transcriptAddress: hydrateTranscript ? address : null,
                 active, selection: 'latestTurn' });
         },
-        { initialProps: { hydrateTranscript: false, active: true } });
+        { initialProps: { hydrateTranscript, active: true } });
         try {
-            expect(hook.getCurrent().preview.state).toBe('unavailable');
-            expect(h.httpRequests.filter(({ url }) => url.pathname.endsWith('/messages'))).toHaveLength(messagesBefore);
-            await hook.rerender({ hydrateTranscript: true, active: true });
-            await vi.waitFor(() => expect(h.storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(true));
+            await vi.waitFor(() => expect(h.storage.getState().sessionMessages[sessionId]?.isLoaded).toBe(hydrateTranscript));
             if (initialStatus === 'in_progress') {
                 expect(hook.getCurrent().preview.state).toBe('unavailable');
                 projection = buildSessionTurnsProjectionV1({ ...projection, updatedAt: 7,
@@ -82,14 +86,21 @@ describe('useInboxReadySessionResult exact transcript demand', () => {
             const messageReads = h.httpRequests.filter(({ url }) => url.pathname.endsWith('/messages')).slice(messagesBefore);
             expect(messageReads.length).toBeGreaterThan(0);
             expect(messageReads.every(({ url }) => url.pathname === `/v1/sessions/${sessionId}/messages`)).toBe(true);
-            const readsBeforePush = h.httpRequests.length;
-            await act(async () => {
-                h.socket().trigger('update', { id: 'final-answer-revision', seq: 8, createdAt: 8,
-                    body: { t: 'message-updated', sid: sessionId, delivery: 'full', message: message('Updated finding', 8) } });
-            });
-            await vi.waitFor(() => expect(hook.getCurrent().preview).toEqual({ state: 'available', text: 'Updated finding' }));
-            expect(h.httpRequests).toHaveLength(readsBeforePush);
-            await hook.rerender({ hydrateTranscript: true, active: false });
+            if (!hydrateTranscript) {
+                expect(messageReads).toHaveLength(1);
+                expect(messageReads[0]!.url.searchParams.get('limit')).toBe('1');
+                expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(h.homeB.id)).not.toContain(sessionId);
+            }
+            if (hydrateTranscript) {
+                const readsBeforePush = h.httpRequests.length;
+                await act(async () => {
+                    h.socket().trigger('update', { id: 'final-answer-revision', seq: 8, createdAt: 8,
+                        body: { t: 'message-updated', sid: sessionId, delivery: 'full', message: message('Updated finding', 8) } });
+                });
+                await vi.waitFor(() => expect(hook.getCurrent().preview).toEqual({ state: 'available', text: 'Updated finding' }));
+                expect(h.httpRequests).toHaveLength(readsBeforePush);
+            }
+            await hook.rerender({ hydrateTranscript, active: false });
             expect(readMountedSessionRealtimeTranscriptConsumerSessionIds(h.homeB.id)).not.toContain(sessionId);
             expect(hook.getCurrent().preview.state).toBe('unavailable');
         } finally { await hook.unmount(); }

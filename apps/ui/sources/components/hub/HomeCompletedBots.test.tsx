@@ -83,6 +83,7 @@ const initialStorageState = storage.getState();
 const SLOW_RENDER_TIMEOUT_MS = 240_000;
 let harness: Awaited<ReturnType<typeof serveActionHomes>>;
 let home = '';
+const remoteResults = new Map<string, string | null>();
 const initialServerId = getActiveServerId();
 const initialProfileIds = new Set(
   listServerProfiles().map((profile) => profile.id),
@@ -230,7 +231,7 @@ function readRequests() {
     .sort();
 }
 
-async function renderSection(onCommit?: () => void) {
+async function renderSection(onCommit?: () => void, visibleIds?: ReadonlySet<string>) {
   const { HomeCompletedBots } = await import('./HomeCompletedBots');
   const { ItemList } = await import('@/components/ui/lists/ItemList');
   // The web face's pixel buffer is a DOM global this host renderer lacks.
@@ -248,8 +249,15 @@ async function renderSection(onCommit?: () => void) {
         </ItemList>
       </ModalProvider>,
       // Canvas paint and DOM geometry are the platform boundaries; viewport eligibility stays real.
-      { createNodeMock: (node) => node.type === 'canvas' ? { getContext: () => ({ putImageData() {} }) }
-        : { ...content, getInnerViewRef: () => content } },
+      { createNodeMock: (node) => {
+        if (node.type === 'canvas') return { getContext: () => ({ putImageData() {} }) };
+        const testID = String(node.props.testID ?? '');
+        const prefix = `home.completed-bots.${home}.`;
+        const sessionId = testID.startsWith(prefix) ? testID.slice(prefix.length).split('.')[0] : null;
+        const top = sessionId && visibleIds && !visibleIds.has(sessionId) ? 10_000 : 0;
+        return { getBoundingClientRect: () => ({ left: 0, top, width: 800, height: 48 }),
+          getInnerViewRef: () => content };
+      } },
     )
   ).tree;
 }
@@ -258,6 +266,7 @@ await loadSyncSingletonForTests();
 
 describe('HomeCompletedBots', () => {
   beforeEach(async () => {
+    remoteResults.clear();
     await loadSyncSingletonForTests();
     storage.setState(initialStorageState, true);
     harness = await serveActionHomes({
@@ -265,6 +274,19 @@ describe('HomeCompletedBots', () => {
         { key: 'a', serverUrl: 'https://completed-bots.test', accountId: 'me' },
       ],
       route: ({ path }) => {
+        const messages = /^\/v1\/sessions\/([^/]+)\/messages$/.exec(path);
+        if (messages) {
+          const id = messages[1]!;
+          const text = remoteResults.get(id);
+          return Response.json({ messages: typeof text === 'string' ? [{ id: `${id}-result`, seq: 4,
+            localId: null, createdAt: 4, updatedAt: 4, content: { t: 'plain', v: {
+              role: 'agent', content: { type: 'output', data: { type: 'assistant', uuid: `${id}-result`,
+                parentUuid: null, isSidechain: false,
+                message: { role: 'assistant', content: [{ type: 'text', text }] } },
+              },
+            } },
+          }] : [], hasMore: false });
+        }
         if (path === '/v1/features' || path === '/v1/features/authenticated')
           return Response.json(
             createRootLayoutFeaturesResponse({
@@ -315,6 +337,36 @@ describe('HomeCompletedBots', () => {
       await import('@/sync/runtime/orchestration/connectionManager')
     ).restoreConnectionToActiveServer(credentials);
   });
+
+  it('loads a cold visible completed Bot result without opening it, with one anchored message read', async () => {
+    seed([readySession('cold', { bot: true, name: 'Release helper' })]);
+    remoteResults.set('cold', 'The release notes are ready');
+    const tree = await renderSection();
+    await vi.waitFor(() => expect(textOf(tree, `home.completed-bots.${home}.cold`)).toContain('The release notes are ready'));
+    const reads = harness.requests.filter(({ path }) => path.endsWith('/messages'));
+    expect(reads).toHaveLength(1);
+    expect(reads[0]!.url.searchParams.get('limit')).toBe('1');
+    expect(reads[0]!.url.searchParams.get('beforeSeq')).toBe('5');
+    expect(storage.getState().sessionMessages.cold?.isLoaded).toBe(false);
+    expect(readRequests()).toEqual([]);
+  }, SLOW_RENDER_TIMEOUT_MS);
+
+  it('reads only visible result rows in a large inventory and keeps a genuinely absent preview openable', async () => {
+    const bots = Array.from({ length: 20 }, (_, n) => readySession(`bot-${n}`, { bot: true, name: `Helper ${n}` }));
+    // Match the observed Account A census used by sessionDisplayBackfill.composed.test.ts (3,391 rows).
+    const ordinary = Array.from({ length: 3_371 }, (_, n) => readySession(`ordinary-${n}`, { bot: false, name: `Work ${n}` }));
+    seed([...bots, ...ordinary]);
+    for (const bot of bots) remoteResults.set(bot.id, bot.id === 'bot-1' ? null : `Finished ${bot.id}`);
+    const tree = await renderSection(undefined, new Set(['bot-0', 'bot-1']));
+    await vi.waitFor(() => expect(textOf(tree, `home.completed-bots.${home}.bot-0`)).toContain('Finished bot-0'));
+    const reads = harness.requests.filter(({ path }) => path.endsWith('/messages'));
+    expect(reads.map(({ path }) => path.split('/')[3]).sort()).toEqual(['bot-0', 'bot-1']);
+    expect(reads.every(({ url }) => url.searchParams.get('limit') === '1')).toBe(true);
+    const unavailable = tree.root.findAll(node => node.props.testID === `home.completed-bots.${home}.bot-1`
+      && typeof node.props.title === 'string')[0]!;
+    expect(unavailable.props.subtitle).toBe('homeIndex.completedBotPreviewUnavailable');
+    expect(unavailable.props.onPress).toBeTypeOf('function');
+  }, SLOW_RENDER_TIMEOUT_MS);
 
   afterEach(async () => {
     await standardCleanup();

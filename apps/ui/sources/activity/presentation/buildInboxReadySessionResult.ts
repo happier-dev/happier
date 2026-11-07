@@ -15,6 +15,17 @@ export type InboxReadySessionResult = Readonly<{
     output?: Readonly<{ text: string; messageRef: SessionMessageRefV1 }>;
 }>;
 
+/** Select the admitted result even before its Turn projection has been loaded. */
+export function readInboxReadySessionTurnId(
+    candidate: SessionActivityAttention,
+    selection?: 'latestTurn',
+): string | null {
+    if (!isSessionAwarenessContentReadableV1(candidate.awareness.encryption)
+        || candidate.session.access?.capabilities.readTranscript === false) return null;
+    return (selection === 'latestTurn' ? candidate.session.latestTurnId
+        : candidate.session.viewer?.follow.onceDelivery?.turnId ?? candidate.session.latestTurnId) ?? null;
+}
+
 /** Match provenance to Inbox's admitted completion, never to the newest loaded Run. */
 export function readInboxReadySessionTurn(
     candidate: SessionActivityAttention,
@@ -22,10 +33,8 @@ export function readInboxReadySessionTurn(
     /** Receipts show only the latest Turn's completed output, never an older delivery or partial reply. */
     selection?: 'latestTurn',
 ): SessionTurnV1 | null {
-    if (!isSessionAwarenessContentReadableV1(candidate.awareness.encryption)
-        || candidate.session.access?.capabilities.readTranscript === false) return null;
-    const turnId = selection === 'latestTurn' ? candidate.session.latestTurnId
-        : candidate.session.viewer?.follow.onceDelivery?.turnId ?? candidate.session.latestTurnId;
+    const turnId = readInboxReadySessionTurnId(candidate, selection);
+    if (!turnId) return null;
     const turn = turns?.sessionId === candidate.sessionId ? turns.turns.find(turn => turn.turnId === turnId) ?? null : null;
     return selection === 'latestTurn' && turn?.status !== 'completed' ? null : turn;
 }

@@ -1,6 +1,6 @@
 import * as React from 'react';
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
-import { buildInboxReadySessionResult, readInboxReadySessionTurn, readInboxReadySessionMessage, type InboxReadySessionResult } from '@/activity/presentation/buildInboxReadySessionResult';
+import { buildInboxReadySessionResult, readInboxReadySessionTurnId, readInboxReadySessionTurn, readInboxReadySessionMessage, type InboxReadySessionResult } from '@/activity/presentation/buildInboxReadySessionResult';
 import type { Message } from '@happier-dev/session-core/messages';
 import { storage } from '@/sync/domains/state/storageStore';
 import { useWorkflowRun } from '@/sync/store/hooks';
@@ -17,7 +17,7 @@ const NO_SESSION_IDS: readonly string[] = [];
 const UNAVAILABLE_RESULT: InboxReadySessionResult = Object.freeze({ preview: Object.freeze({ state: 'unavailable' }),
     workflowInvocation: null, completedAt: null });
 
-/** Inbox rows read loaded content; an opened receipt may demand its exact Session transcript. */
+/** Visible result rows demand their selected reply; an opened receipt demands its exact transcript. */
 export function useInboxReadySessionResult(
     candidate: SessionActivityAttention | null,
     options: Readonly<{ active?: boolean; transcriptAddress?: SessionAddress | null; selection?: 'latestTurn' }> = {},
@@ -27,6 +27,9 @@ export function useInboxReadySessionResult(
     const serverId = candidate?.address?.serverId ?? candidate?.serverId ?? null;
     const address = normalizeSessionAddress(serverId, sessionId);
     const transcriptAddress = options.transcriptAddress;
+    const resultTurnId = !transcriptAddress && candidate
+        ? readInboxReadySessionTurnId(candidate, options.selection) ?? undefined
+        : undefined;
     useSessionRealtimeTranscriptConsumer(active ? transcriptAddress?.sessionId : null, transcriptAddress?.serverId);
     useHydrateSession(active ? transcriptAddress?.sessionId ?? '' : '', 'inbox-ready-session-result', {
         serverId: transcriptAddress?.serverId,
@@ -35,6 +38,7 @@ export function useInboxReadySessionResult(
     });
     useSessionContentDemand(address ? [address] : NO_ADDRESSES, {
         tag: 'inbox.hydrateReadySessionRow', hydrate: 'unsettled', active,
+        resultTurnId,
     });
     const turns = storage(state => {
         if (!active || !candidate) return null;

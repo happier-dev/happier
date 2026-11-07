@@ -41,23 +41,28 @@ export function useSessionContentDemand(
         resetVersion?: number;
         /** Reports completion of this entry's acquisition, including a settled refusal. */
         onSettled?: () => void;
+        /** A visible result row also consumes its selected Turn's final reply. */
+        resultTurnId?: string;
     }>,
 ): void {
-    const { tag, hydrate, active = true, resetVersion = 0, onSettled } = options;
+    const { tag, hydrate, active = true, resetVersion = 0, onSettled, resultTurnId } = options;
     const previous = React.useRef<Readonly<{ keys: ReadonlySet<string>; resetVersion: number }>>({ keys: new Set(), resetVersion });
     // Callers rebuild their arrays freely; the demand follows the Sessions, not the array identity.
-    const identity = addresses.map(sessionAddressKey).join('\u0000');
+    const demandKey = (address: SessionAddress) => JSON.stringify([sessionAddressKey(address), resultTurnId]);
+    const identity = addresses.map(demandKey).join('\u0000');
     React.useEffect(() => {
         const demanded = active ? addresses : [];
         const earlier = previous.current.resetVersion === resetVersion ? previous.current.keys : new Set<string>();
-        previous.current = { keys: new Set(demanded.map(sessionAddressKey)), resetVersion };
+        previous.current = { keys: new Set(demanded.map(demandKey)), resetVersion };
         if (demanded.length === 0) return;
-        const entered = demanded.filter(address => !earlier.has(sessionAddressKey(address)));
+        const entered = demanded.filter(address => !earlier.has(demandKey(address)));
         const release = retainVisibleSessionListSurfaces(demanded);
-        const toHydrate = hydrate === 'unsettled' ? entered.filter(isSessionContentUnsettled) : entered;
+        const toHydrate = hydrate === 'unsettled' && !resultTurnId ? entered.filter(isSessionContentUnsettled) : entered;
         let current = true;
         const settled = () => { if (current) onSettled?.(); };
-        if (toHydrate.length > 0) fireAndForget(sync.hydrateSessionListRows(toHydrate).finally(settled), { tag });
+        if (toHydrate.length > 0) fireAndForget((resultTurnId
+            ? sync.hydrateSessionListRows(toHydrate, { resultTurnId })
+            : sync.hydrateSessionListRows(toHydrate)).finally(settled), { tag });
         else settled();
         return () => { current = false; release(); };
         // The addresses are fully described by their identity key.

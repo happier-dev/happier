@@ -684,6 +684,7 @@ import {
     fetchAndApplyTargetWindowMessages,
 } from './engine/sessions/fetchAndApplyTargetWindowMessages';
 import { fetchAndApplyTranscriptRepair } from './engine/sessions/fetchAndApplyTranscriptRepair';
+import { fetchAndApplySessionResultPreview } from './engine/sessions/fetchAndApplySessionResultPreview';
 import {
     SessionMessagePageDecryptionError,
     SessionMessagePageResponseError,
@@ -7248,15 +7249,34 @@ class Sync {
     };
 
     /** A virtualized list batches its newly visible rows; exact reads share route acquisition. */
-    public hydrateSessionListRows = async (addresses: readonly SessionAddress[]): Promise<void> => {
+    public hydrateSessionListRows = async (
+        addresses: readonly SessionAddress[],
+        options?: Readonly<{ resultTurnId?: string }>,
+    ): Promise<void> => {
         if (!await this.awaitBootstrapForegroundAcquisition()) return;
         const unique = new Map(addresses.map(address => [sessionAddressKey(address), address]));
         await runTasksWithLimit([...unique.values()].map(address => async () => {
             if (!isSessionListRowVisible(address.sessionId, address.serverId)) return;
-            await this.ensureSessionVisibleForMessageRoute(address.sessionId, {
+            const result = await this.ensureSessionVisibleForMessageRoute(address.sessionId, {
                 serverId: address.serverId,
                 hydrateMessages: false,
+                ...(options?.resultTurnId ? { includeTurnsProjection: true } : {}),
             });
+            if (!options?.resultTurnId || result.kind !== 'available') return;
+            const session = storage.getState().sessions[address.sessionId];
+            const turn = session?.sessionTurns?.turns.find(turn => turn.turnId === options.resultTurnId) ?? null;
+            await this.withSessionTranscriptRead(address.sessionId, read => fetchAndApplySessionResultPreview({
+                sessionId: address.sessionId, turn,
+                messages: Object.values(storage.getState().sessionMessages[address.sessionId]?.messagesById ?? {}),
+                getSessionEncryption: id => read.encryption?.getSessionEncryption(id) ?? null,
+                isSessionKnown: read.isSessionKnown,
+                request: read.request,
+                sessionReceivedMessages: this.sessionReceivedMessages,
+                applyMessages: (sid, messages) => this.applyMessages(sid, messages, { notifyVoice: false }),
+                ...read.pageOptions,
+                sessionEncryptionMode: session?.encryptionMode === 'plain' ? 'plain' : 'e2ee',
+                log,
+            }));
         }), this.syncTuning.sessionListHydrationConcurrencyLimit);
     };
 

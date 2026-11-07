@@ -1,4 +1,6 @@
 import * as React from 'react';
+import type { Pressable } from 'react-native';
+import { useOptionalPluginUiScrollActivityTracker } from '@happier-dev/plugin-ui/advanced';
 
 import type { SessionActivityAttention } from '@/activity/attention/activityAttentionTypes';
 import { useHomeCompletedBots } from '@/activity/source/useActivityOverview';
@@ -15,6 +17,8 @@ import { readSessionListPresentationDisplay } from '@/sync/domains/session/listi
 import { buildServerScopedSessionKey } from '@/sync/domains/session/navigation/sessionNavigationOrder';
 import { t } from '@/text';
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
+import { useMeasuredNearViewport } from '@/components/widgets/nearViewport';
+import { useLayoutPresentationActive } from '@/components/ui/presentation/PluginSurfaceFocusEligibility';
 
 /** R6 list form: rows carry the Bot's face at its largest still list size. */
 const FACE_SIZE = 32;
@@ -77,7 +81,11 @@ const HomeCompletedBotRow = React.memo(function HomeCompletedBotRow(
   }>,
 ) {
   const { candidate, serverId, onOpen } = props;
-  const result = useInboxReadySessionResult(candidate);
+  const rowRef = React.useRef<React.ComponentRef<typeof Pressable>>(null);
+  const tracker = useOptionalPluginUiScrollActivityTracker();
+  const presented = useLayoutPresentationActive();
+  const { near } = useMeasuredNearViewport(tracker, rowRef, presented, candidate.sessionId);
+  const result = useInboxReadySessionResult(candidate, { active: presented && near });
   const facts = React.useMemo(
     () =>
       readSessionBotFaceFacts(
@@ -95,6 +103,7 @@ const HomeCompletedBotRow = React.memo(function HomeCompletedBotRow(
   const route = candidate.route;
   return (
     <Item
+      pressableRef={rowRef}
       testID={testID}
       title={
         result.preview.state === 'available'

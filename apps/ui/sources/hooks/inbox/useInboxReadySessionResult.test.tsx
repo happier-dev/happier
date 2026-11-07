@@ -14,6 +14,9 @@ import { createReducer } from '@happier-dev/session-core/reducer';
 import type { Message } from '@happier-dev/session-core/messages';
 import { useInboxReadySessionResult } from './useInboxReadySessionResult';
 import { isSessionListRowVisible, resetSessionSurfaceVisibilityForTests } from '@/sync/domains/session/sessionSurfaceVisibility';
+import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
+
+await loadSyncSingletonForTests();
 
 afterEach(async () => { await standardCleanup(); resetSessionSurfaceVisibilityForTests(); });
 
