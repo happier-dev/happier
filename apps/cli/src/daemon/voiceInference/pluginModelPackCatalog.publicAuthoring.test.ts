@@ -1,6 +1,6 @@
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'node:http';
 
@@ -16,6 +16,9 @@ import { createDaemonPluginRuntimeOwner } from '@/plugins/daemon/runtimeOwner';
 import { createPackedTestConnectedAccountsRuntime } from '@/plugins/daemon/packedTestConnectedAccounts';
 import type { PluginReloadController } from '@/plugins/runtime/reload/controller';
 import { createAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { evaluatePluginDevelopmentCandidate } from '@/plugins/authoring/sourceModule';
+import { bindPluginRuntimeSourceAuthority } from '@/plugins/runtime/sourceAuthority';
+import { createResolvedContributionRegistry } from '@/plugins/projection/registry/createResolvedContributionRegistry';
 import { readInstalledPluginCatalog } from '@/plugins/projection/catalog/installed';
 import { projectInstalledDaemonPluginVoiceModelPackCatalogV1 } from './pluginModelPackCatalog.js';
 import { manifest as publicAuthoringManifest } from '../../../../../packages/plugin-sdk/examples/public-authoring/index';
@@ -23,6 +26,22 @@ import { manifest as publicAuthoringManifest } from '../../../../../packages/plu
 const pluginId = 'examples.public-sdk-review-assistant';
 const pluginVersion = '0.1.0';
 const publicAuthoringEntry = new URL('../../../../../packages/plugin-sdk/examples/public-authoring/index.ts', import.meta.url);
+// Warm the actual development loader's host SDK graph with the fixture graph.
+// Doctor evaluation uses native ESM and cannot warm this Jiti candidate cache.
+// Registration still evicts and re-evaluates the mutable example source files.
+const publicAuthoringPath = fileURLToPath(publicAuthoringEntry);
+const publicAuthoringSourceAuthority = bindPluginRuntimeSourceAuthority({
+  custody: { kind: 'development', registeredRootId: publicAuthoringPath },
+  resolvedRoot: dirname(publicAuthoringPath),
+  observedRevision: 0,
+});
+if (publicAuthoringSourceAuthority.kind !== 'development') {
+  throw new Error('Expected development source authority for the public authoring fixture');
+}
+await evaluatePluginDevelopmentCandidate({
+  locator: publicAuthoringPath,
+  sourceAuthority: publicAuthoringSourceAuthority,
+});
 
 const daemonHost = {
   executionHost: 'daemon' as const,
@@ -115,7 +134,7 @@ async function installPublicAuthoringFixture() {
     // development owner establish source trust, host-access approval and custody.
     runtime = await createAdmittedPluginRuntimeFixture({
       happyHomeDir,
-      runtimeOptions: { pluginIds: [] },
+      runtimeOptions: { pluginIds: [], contributes: createResolvedContributionRegistry({}) },
     });
     const connectedAccounts = createPackedTestConnectedAccountsRuntime({
       happyHomeDir,
