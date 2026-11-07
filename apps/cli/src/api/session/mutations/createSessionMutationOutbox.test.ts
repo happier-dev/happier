@@ -1387,6 +1387,79 @@ describe('createSessionMutationOutbox', () => {
         }
     });
 
+    it('waits for a blocked head mutation backoff instead of re-arming the retry timer at 0 ms', async () => {
+        // Never-attempted mutations queued behind a retryably failing head keep nextAttemptAt 0.
+        // The retry timer must wake for the head's backoff, not for mutations the next flush
+        // cannot attempt; a 0 ms timer re-runs flush continuously while the head backs off.
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_BASE_RETRY_MS = '1000';
+        process.env.HAPPIER_SESSION_MUTATION_OUTBOX_JITTER_MS = '0';
+        vi.mocked(axios.post).mockRejectedValue({ response: { status: 503 } });
+        const socket = createApiSessionSocketStub({ connected: false });
+        const { createSessionMutationOutbox } = await import('./createSessionMutationOutbox');
+        const { createSessionTurnMutation } = await import('./sessionMutationTypes');
+        const { saveSessionMutationOutbox } = await import('./sessionMutationPersistence');
+        const sessionId = 's-blocked-head-retry-delay';
+        const head = createSessionTurnMutation({
+            sessionId,
+            action: 'begin',
+            turnId: 'turn-head',
+            provider: 'claude',
+            mutationId: 'mutation-head-begin',
+            observedAt: 1_000,
+        });
+        const behind = createSessionTurnMutation({
+            sessionId,
+            action: 'complete',
+            turnId: 'turn-head',
+            provider: 'claude',
+            mutationId: 'mutation-behind-complete',
+            observedAt: 1_100,
+        });
+        await saveSessionMutationOutbox(await createRuntimePersistenceContext(sessionId), [
+            {
+                kind: 'session_turn',
+                mutationId: head.mutationId,
+                payload: head,
+                createdAt: 1_000,
+                attempts: 0,
+                nextAttemptAt: 0,
+            },
+            {
+                kind: 'session_turn',
+                mutationId: behind.mutationId,
+                payload: behind,
+                createdAt: 1_100,
+                attempts: 0,
+                nextAttemptAt: 0,
+            },
+        ]);
+        const outbox = createSessionMutationOutbox({
+            token: 'tok',
+            sessionId,
+            getSocket: () => socket,
+            requestReconnect: () => {},
+        });
+        // The retry timer is the outbox's only timer; the clock is a system boundary.
+        const setTimeoutSpy = vi.spyOn(globalThis, 'setTimeout');
+
+        try {
+            await outbox.flush('flush');
+
+            const scheduledDelays = setTimeoutSpy.mock.calls.map(([, delay]) => delay ?? 0);
+            expect(scheduledDelays).not.toEqual([]);
+            // The head failed its first attempt: backoff is 1000 * 2^1 with no jitter.
+            expect(Math.min(...scheduledDelays)).toBeGreaterThan(1_000);
+            const persisted = await readPersistedOutboxMutations(sessionId);
+            expect(persisted).toEqual([
+                expect.objectContaining({ mutationId: head.mutationId, attempts: 1 }),
+                expect.objectContaining({ mutationId: behind.mutationId, attempts: 0, nextAttemptAt: 0 }),
+            ]);
+        } finally {
+            setTimeoutSpy.mockRestore();
+            await outbox.close();
+        }
+    });
+
     it('delivers a runtime-activity terminal snapshot even when an earlier session turn is retryably blocked', async () => {
         const sessionId = 's-runtime-activity-not-blocked-by-turn';
         const deliveredSnapshots: unknown[] = [];
