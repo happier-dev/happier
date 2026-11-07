@@ -33,7 +33,7 @@ import { ExecutionRunTurnStreamStartV2RequestSchema, ExecutionRunTurnStreamStart
   ExecutionRunTurnStreamReadRequestSchema, ExecutionRunTurnStreamReadResponseSchema,
   ExecutionRunTurnStreamCancelResponseSchema, ExecutionRunUserTranscriptCommitRequestSchema,
   ExecutionRunUserTranscriptCommitResponseSchema, type ExecutionRunTurnStreamEvent } from '@happier-dev/protocol/execution/runs/streaming';
-import type { VoiceAssistantAction } from '@happier-dev/protocol';
+import type { VoiceAssistantAction } from '@happier-dev/protocol/voice/actions';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { settingsDefaults, settingsParse } from '@/sync/domains/settings/settings';
 import { readLocalConversationVoiceSettings } from '@/sync/domains/settings/voiceSettings';
@@ -467,6 +467,59 @@ describe('sendVoiceTextTurn native-session transcript ownership', () => {
         }
       }));
     });
+
+  it.each([false, true])('never arms a read-back with unrelated model speech (streaming=%s)', async streaming => {
+    const { sendVoiceTextTurn } = await loadSendVoiceTextTurnWithProductionBinding();
+    const { setVoiceSessionSnapshot, resetVoiceSessionStoreForTests,
+      getVoiceSessionSpokenActionConfirmation } = await import('@/voice/session/voiceSessionStore');
+    setVoiceSessionSnapshot({ adapterId: 'local_conversation', sessionId: VOICE_AGENT_GLOBAL_SESSION_ID,
+      status: 'connected', mode: 'listening', canStop: true });
+    const carrier = getVoiceSessionSpokenActionConfirmation();
+    if (!carrier) throw new Error('Missing live call');
+    const actionId = 'notifications.webhooks.remove';
+    carrier.prepare({ actionId, actionRequestId: 'remove-webhook',
+      serverId: account.homes.voice!.id, defaultSessionId: 's1',
+      normalizedInput: { channelId: 'deployment-webhook' },
+      summary: 'Remove the deployment webhook.' });
+    const pendingReadBack = carrier.readPending();
+    const base = buildAccountSettings();
+    const local = readLocalConversationVoiceSettings(base.voice);
+    const settings = settingsParse({ ...base, ...normalizeVoiceSettingsLocalDelta({ voice: { ...base.voice, providers: { ...base.voice.providers,
+      local_conversation: { schemaVersion: 1, config: { ...local,
+        tts: { ...local.tts, provider: 'device', autoSpeakReplies: true },
+        streaming: { ...local.streaming, enabled: streaming, ttsEnabled: streaming },
+      } },
+    } } }) });
+    expect(readLocalConversationVoiceSettings(settings.voice).tts.autoSpeakReplies).toBe(true);
+    const enteredSpeech = createDeferred<SpeechOptions>();
+    let spokenOptions: SpeechOptions | undefined;
+    turnReplies = () => ({ assistantText: 'Okay.', actions: [] });
+    const controller = new AbortController();
+    await speech.speak.withImplementation((_text, options) => {
+      spokenOptions = options;
+      options.onStart?.();
+      enteredSpeech.resolve(options);
+    }, async () => await speech.stop.withImplementation(() => { spokenOptions?.onStopped?.(); }, async () => {
+      const sending = sendVoiceTextTurn({ sessionId: VOICE_AGENT_GLOBAL_SESSION_ID, settings,
+        userText: 'remove the deployment webhook', playbackController: createVoicePlaybackController(),
+        voiceAgentSessions, signal: controller.signal });
+      try {
+        const options = await Promise.race([enteredSpeech.promise, sending.then(() => {
+          throw new Error('The read-back turn settled without reaching OS speech');
+        })]);
+        expect(carrier.readPending()).toBe(pendingReadBack);
+        options.onDone?.();
+        await sending;
+        expect(carrier.readPending()).toBe(pendingReadBack);
+        expect(webhookRevision).toBe(1);
+      } finally {
+        controller.abort();
+        spokenOptions?.onStopped?.();
+        await sending.catch(() => undefined);
+        resetVoiceSessionStoreForTests();
+      }
+    }));
+  });
 
   it.each([
     { streaming: false, completion: 'done' },
