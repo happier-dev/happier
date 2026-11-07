@@ -1447,7 +1447,12 @@ describe('voice tool handlers', () => {
     expect(JSON.parse(res)).toMatchObject({ ok: true });
   });
 
-  it('routes strict V2 session creation through the canonical Voice Action executor', async () => {
+  it('keeps Session creation on the Voice action channel and returns the created Session', async () => {
+    const { buildLocalVoiceAgentSystemPrompt } = await import('@happier-dev/agents');
+    const { extractVoiceActionsFromAssistantText } = await import('@happier-dev/protocol/voice/actions');
+    const prompt = buildLocalVoiceAgentSystemPrompt({ sessionId: 's1' });
+    expect(prompt).toContain('A native Agent/Task subagent or execution run is not a Happier Session');
+    expect(prompt).toContain('Only report a Session as created or started after the Session creation Action returns success with its sessionId');
     const { getAppliedActiveServerSnapshot, publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
     const incumbentHome = getAppliedActiveServerSnapshot();
     // Restored runtime scopes carry the durable Home identity, not its device alias.
@@ -1487,6 +1492,12 @@ describe('voice tool handlers', () => {
         status: 'notRequested' as const,
       },
     };
+    const { MACHINE_PLAIN_DATA_KEY_MARKER } = await import('@happier-dev/protocol/machines/machineStoredContent');
+    storage.getState().applyMachines([{
+      ...storage.getState().machines.m1,
+      dataEncryptionKey: MACHINE_PLAIN_DATA_KEY_MARKER,
+      storageMode: 'plain',
+    }], true);
     daemonRpc.mockImplementation(async request => {
       if (request.method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
         return createExistingSessionDirectoryPreflightResult(request.payload);
@@ -1501,20 +1512,22 @@ describe('voice tool handlers', () => {
     const { getActionSpec} = await import('@happier-dev/protocol/actions/actionSpecs');
     const parsedSpawnInput = getActionSpec('session.spawn_new').inputSchema.safeParse(spawnInput);
     expect(parsedSpawnInput.success, JSON.stringify(parsedSpawnInput)).toBe(true);
-    const response = JSON.parse(await tools.spawnSession(spawnInput, {
+    const turn = extractVoiceActionsFromAssistantText(
+      `<voice_actions>${JSON.stringify({ actions: [{ t: 'spawnSession', args: spawnInput }] })}</voice_actions>`,
+    );
+    expect(turn.actions).toHaveLength(1);
+    const action = turn.actions[0]!;
+    const response = JSON.parse(await tools[action.t]!(action.args, {
       serverId: homeA,
       callId: 'voice-spawn-call',
       effectId: 'voice-spawn-effect',
     }));
 
-    expect(response, JSON.stringify(response)).toMatchObject({ ok: true });
+    expect(response, JSON.stringify(response)).toEqual({ ok: true, ...spawnResult });
     expect(daemonRpc).toHaveBeenCalledWith(expect.objectContaining({
-      serverUrl: homeUrlA,
-      sessionId: 'm1',
-      method: RPC_METHODS.SESSION_SPAWN_NEW,
+      serverUrl: homeUrlA, sessionId: 'm1', method: RPC_METHODS.SESSION_SPAWN_NEW,
       payload: spawnInput,
     }));
-    expect(response).toEqual({ ok: true, ...spawnResult });
   });
 
   it('rejects retired flat spawnSession arguments before dispatching', async () => {

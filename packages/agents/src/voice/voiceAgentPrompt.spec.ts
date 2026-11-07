@@ -21,6 +21,18 @@ import {
 } from './voiceAgentPrompt.js';
 
 describe('voiceAgentPrompt', () => {
+  it('distinguishes native subagents from created Happier Sessions in every Voice mode', () => {
+    for (const prompt of [
+      renderPromptPlanV1(buildGlobalVoiceAgentStartupInstructionsPlanV1()),
+      buildLocalVoiceAgentSystemPrompt(),
+      buildVoiceClientToolAgentPrompt(),
+    ]) {
+      expect(prompt).toContain('A native Agent/Task subagent or execution run is not a Happier Session');
+      expect(prompt).toContain('Only report a Session as created or started after the Session creation Action returns success with its sessionId');
+    }
+    expect(buildLocalVoiceAgentSystemPrompt()).toContain('Do not look them up with native ToolSearch; emit the action block directly.');
+  });
+
   it('documents Account settings and request discovery through the real admitted Voice catalog', () => {
     const specs = listVoiceToolActionSpecs();
     const tools = [
@@ -124,14 +136,14 @@ describe('voiceAgentPrompt', () => {
       digest: createHash('sha256').update(rendered, 'utf8').digest('hex'),
     }).toEqual({
       id: 'happier.global_voice_agent',
-      revision: 5,
+      revision: 6,
       blockIds: [
         'voice.global_agent.identity',
         'voice.global_agent.authority',
         'voice.global_agent.custody',
         'voice.global_agent.results',
       ],
-      digest: '45bf29aa1c62c076d616ecc714d378bef7fc2761a20d54297b234e8667db499b',
+      digest: '55cc992b20a8be861c6dcd6be686140cb3bfac8b158b3aaac975777214d30495',
     });
 
     expect(rendered).toContain("Happier's global Voice agent");

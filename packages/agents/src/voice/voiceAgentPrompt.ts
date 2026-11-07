@@ -18,12 +18,16 @@ export const DEFAULT_VOICE_ASSISTANT_NAME = 'Happier Voice';
 
 export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_ID =
   'happier.global_voice_agent';
-export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 5;
+export const GLOBAL_VOICE_AGENT_STARTUP_INSTRUCTIONS_REVISION = 6;
 
 const VOICE_AGENT_DIRECT_IDENTITY_RULE =
   'Speak as the coding assistant directly, not as a coordinator or wrapper.';
 const VOICE_AGENT_IRREVERSIBLE_ACTION_RULE =
   'Do not take irreversible actions unless the user explicitly asked you to.';
+const VOICE_AGENT_SESSION_CREATION_RULES = [
+  'Create a requested Happier Session through the canonical Session creation Action. A native Agent/Task subagent or execution run is not a Happier Session and does not create a Session list row.',
+  'Only report a Session as created or started after the Session creation Action returns success with its sessionId. Pending approval is not a created Session; report failures or unavailable Actions honestly instead of substituting a native subagent.',
+] as const;
 const VOICE_AGENT_APPROVAL_RULES = [
   'Voice agent can approve requests is enabled by default: you may approve or deny pending requests on the person\'s behalf through canonical tools.',
   'Read the specific request aloud within the sharing policy. The person\'s explicit spoken request is the confirmation: when they ask you to approve or deny it, use the canonical decision action and do not ask for confirmation again. Ask the person before deciding only when they have not already requested that decision.',
@@ -69,6 +73,7 @@ export function buildGlobalVoiceAgentStartupInstructionsPlanV1() {
           'Report delegated results truthfully.',
           'Do not claim completion before canonical results exist.',
           'Distinguish accepted work, progress, completed results, failures, and unknown outcomes.',
+          ...VOICE_AGENT_SESSION_CREATION_RULES,
         ].join('\n'),
       },
     ],
@@ -142,6 +147,7 @@ function buildVoiceAgentBaseText(params?: Readonly<{
     ...(params?.memoryRecallGuidanceEnabled === true ? ['', buildMemoryRecallGuidanceBlockV1('voice')] : []),
     '',
     'Session semantics:',
+    ...VOICE_AGENT_SESSION_CREATION_RULES.map(rule => `- ${rule}`),
     '- You can talk with the user freely.',
     '- Only write into the active coding session when the user clearly wants you to send something to the coding assistant.',
     '- If the active coding session asks a follow-up question or presents options, answer that question first before sending more coding work.',
@@ -366,7 +372,8 @@ export function buildLocalVoiceAgentSystemPrompt(params?: Readonly<{
             '- If you have no actions to trigger, omit the block entirely.',
             `- After actions run, you may receive a follow-up user message that starts with "${VOICE_TOOL_RESULTS_JSON_PREFIX}". Parse the JSON after that prefix (next line) as { toolResults: [...] } and use it to confirm success or explain errors.`,
             '- Always include sessionId internally when the action accepts it.',
-            '- These actions run through the Happier Voice host. Use this action channel for app settings and request discovery or decisions; native coding tools retain their own authority and do not gain Voice delegation.',
+            '- These actions run through the Happier Voice host. Use this action channel for Session creation, Session messages, app settings, and request discovery or decisions; native coding tools retain their own authority and do not gain Voice delegation.',
+            `- Names in Available actions and the Discovery checklist are Voice action aliases for <${tag}>, not native tool names. Do not look them up with native ToolSearch; emit the action block directly.`,
             `- The listed actions are available through <${tag}> even when no corresponding native tool is listed. Emit the action block for a supported request and use its typed result; do not claim an action is unavailable merely because it is absent from the native tool list.`,
             '- The action list below is only the hot path. For anything else, use searchActionSpecs first instead of guessing.',
             '',
