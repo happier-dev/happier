@@ -32,6 +32,7 @@ import {
     scheduleReleasedDirectShareEvent,
 } from "@/app/session/access/publishSessionAccessChange";
 import { ACCOUNT_DISPLAY_PROFILE_SELECT } from "@/app/account/profile/accountDisplayProfile";
+import { bindManagedCreationScopeRetentionInTx, validateManagedCreationBirthInTx } from "@/app/machines/managed/managedCreationBirth";
 import { validateDiscussionParticipantBirthInTx, bindDiscussionParticipantSessionInTx } from "@/app/discussions/accessService";
 import {
     validatePlannedSessionTeamCredentialBindingIntentInTx,
@@ -198,6 +199,7 @@ export async function insertLayout1SessionRowInTx(
         for (const binding of selectedTeamCredentialBindings) {
             const bindingAdmission = await validatePlannedSessionTeamCredentialBindingIntentInTx(tx, {
                 accountId: prepared.accountId,
+            managedCreationId: prepared.managedCreation?.managedId ?? null,
                 intent: binding,
                 plannedSession: {
                     primaryTeamId: prepared.primaryTeamId ?? null,
@@ -235,6 +237,9 @@ export async function insertLayout1SessionRowInTx(
         if (!admission.ok || admission.value.sessionId !== null) throw new SessionCreationOriginError();
     }
     const createdAt = new Date();
+    const managedBirth = prepared.managedCreation ? await validateManagedCreationBirthInTx(tx, { accountId: prepared.accountId,
+        birth: prepared.managedCreation }) : undefined;
+    if (managedBirth === false) throw new SessionCreationOriginError();
     const createdByApiTokenId = await readSessionCreationApiTokenIdInTx(tx, prepared.accountId, params.sessionCreationAuthorization);
     const session = await tx.session.create({
         data: {
@@ -263,6 +268,7 @@ export async function insertLayout1SessionRowInTx(
             ...(prepared.primaryTeamId !== undefined ? { primaryTeamId: prepared.primaryTeamId } : {}),
         },
     });
+    if (managedBirth) await bindManagedCreationScopeRetentionInTx(tx, managedBirth, { kind: 'session', sessionId: session.id });
     // The owner is an ordinary recipient of their own Session key, so their
     // envelope lands in the one canonical tuple inside this same transaction. A
     // plain Session is genuinely keyless and writes nothing; a legacy-credential

@@ -34,6 +34,7 @@ import { WorkflowCombinedActionHostReviewV1Schema } from '../../workflows/workfl
 import { RPC_METHODS } from '../../rpc/methods.js';
 import { ExternalActionManagedContinuationV1Schema } from '../../actions/externalActionApi.js';
 import { ManagedCredentialInstallInputV1Schema, ManagedCredentialDeliveryResultV1Schema, ManagedNativeCredentialBindingV1Schema } from './credentialDeliveryV1.js';
+import { ManagedCreationScopeRetentionChoiceV1Schema } from './managedMachineV1.js';
 import { ManagedMachineBirthResultV1Schema } from './birthSourceV1.js';
 export { ManagedMachineBirthResultV1Schema } from './birthSourceV1.js';
 export * from './credentialDeliveryV1.js';
@@ -263,9 +264,9 @@ export type MachineSetupReportInputV1 = z.infer<typeof MachineSetupReportInputV1
 // Classic roots are the actual public Action-spec consumer seam. Internal
 // fields remain one Mini tree; stored projections derive from these owners.
 export const ManagedAcquireInputV1Schema = lazyZodSchema(() => z.union([
-  z.strictObject({ selection: ManagedOneOffSelectionV1Schema, enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema, agentStart: z.optional(ManagedAcquireAgentStartV1Schema),
+  z.strictObject({ selection: ManagedOneOffSelectionV1Schema, creationScopeRetention: z.optional(ManagedCreationScopeRetentionChoiceV1Schema), enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema, agentStart: z.optional(ManagedAcquireAgentStartV1Schema),
     reviewedFacts: z.optional(ManagedConfigurationFactsV1Schema) }),
-  z.strictObject({ selection: ManagedPresetSelectionV1Schema, enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema, controller: z.optional(ManagedControllerV1Schema),
+  z.strictObject({ selection: ManagedPresetSelectionV1Schema, creationScopeRetention: z.optional(ManagedCreationScopeRetentionChoiceV1Schema), enrollmentIdentity: ManagedMachineEnrollmentIdentityV1Schema, controller: z.optional(ManagedControllerV1Schema),
     retention: RetentionV1Schema, wakeOnAcceptedMessage: mini.boolean(),
     agentStart: z.optional(ManagedAcquireAgentStartV1Schema), reviewedFacts: z.optional(ManagedConfigurationFactsV1Schema) }),
 ]));
@@ -299,7 +300,10 @@ export const ManagedDeleteOutputV1Schema = lazyZodSchema(() => z.discriminatedUn
   z.strictObject({ ...ManagedIntentResultSchema.def.options[1].def.shape, machineReferences: MachineReferenceCensusV1Schema }),
   z.strictObject({ ...ManagedIntentResultSchema.def.options[2].def.shape, machineReferences: MachineReferenceCensusV1Schema }),
 ]));
-export const ManagedRetentionUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), retention: RetentionV1Schema, wakeOnAcceptedMessage: mini.boolean() }));
+export const ManagedRetentionUpdateInputV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ ...target(), expectedIntentRevision: revision(), retention: RetentionV1Schema, wakeOnAcceptedMessage: mini.boolean() }),
+  z.strictObject({ ...target(), expectedIntentRevision: revision(), creationScopeRetention: z.nullable(ManagedCreationScopeRetentionChoiceV1Schema) }),
+]));
 export const ManagedControllerUpdateInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), controller: z.nullable(ManagedControllerV1Schema), reviewedPendingEffects: z.literal(true) }));
 export const ManagedRetireInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision(), manualResponsibility: z.literal(true) }));
 export const ManagedCancelInputV1Schema = lazyZodSchema(() => z.strictObject({ ...target(), expectedIntentRevision: revision() }));

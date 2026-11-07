@@ -1,6 +1,6 @@
 import type { ActionExecuteResult, ActionExecutorContext, ActionExecutorDeps, ExternalActionExecutionAuthorizationV1 } from '@happier-dev/protocol';
 import { ActionExecuteFailureSchema } from '@happier-dev/protocol/actions/actionExecutionResult';
-import { ManagedAcquireInputV1Schema, ManagedControllerUpdateInputV1Schema, ManagedCredentialInstallInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAcquireInputV1Schema, ManagedCredentialInstallInputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import { resolveAccountExecutionRuntime, type AccountExecutionRuntime } from '@/plugins/runtime/accountExecutionRuntime';
 import { runWithServerHttpBaseUrl } from '@/api/client/serverHttpBaseUrl';
@@ -223,28 +223,7 @@ export function createDaemonManagedMachineActionAdapter(params: ManagedMachineAc
                     }
                 } } : {}),
             }));
-        if (actionId !== 'machines.managed.controller.update') return result;
-        const machine = ManagedMachineV1Schema.parse(result);
-        try {
-            const move = ManagedControllerUpdateInputV1Schema.parse(input);
-            if (machine.id !== move.managedId || machine.homeId !== move.homeId
-                || !sameStrictJsonValue(machine.controller, move.controller ?? undefined)
-                || machine.custodianAccountId !== readAccountIdFromToken(params.credentials.token)) {
-                throw Object.assign(new Error('Moved controller receipt is not current'), { code: 'controller_unavailable' });
-            }
-            // The admitted native owner alone uses its private custodian FIN
-            // material. A foreign Manage requester gains no generic recipe rewrite.
-            const { createCliWorkflowTriggerActions } = await import('@/session/actions/workflowTriggers');
-            const triggers = createCliWorkflowTriggerActions({ credentials: params.credentials,
-                serverHttpBaseUrl: params.serverBaseUrl,
-                resolveWorkflow: async () => { throw Object.assign(new Error('Not an inline managed scope binding'), { code: 'source_unavailable' }); } });
-            await triggers.moveManagedMachineScopeBindings({ machine, ...(signal ? { signal } : {}) });
-            return machine;
-        } catch (error) {
-            const code = readRpcErrorCode(error)
-                ?? (error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : 'binding_outcome_unknown');
-            return { ok: false, errorCode: 'managed_binding_move_incomplete', error: 'managed_binding_move_incomplete', details: { machine, code } };
-        }
+        return result;
     };
     const executeNativeAction: NonNullable<ActionExecutorDeps['managedMachineAction']> = async request => {
         if (request.actionId !== 'machines.managed.credentials.install') return executeNativeActionNow(request);

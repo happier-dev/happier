@@ -4,7 +4,7 @@ import { createManagedConfigurationFactsV1Schema } from '@happier-dev/protocol/m
 import { type MachineSetupV1 } from '@happier-dev/protocol/machines/managed/machineSetupV1';
 import { createPluginJsonSchemaZodValueAdapter } from "@happier-dev/protocol/plugins/actions/json-schema-validation";
 import { db, isPrismaUniqueConstraintError } from "@/storage/db";
-import { resolveMachineRetentionPolicyV1 } from "@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1";
+import { resolveMachineRetentionNativeIntentV1, resolveMachineRetentionPolicyV1 } from "@happier-dev/protocol/machines/managed/resolveMachineRetentionPolicyV1";
 import type { RetentionCapabilitiesV1 } from "@happier-dev/protocol/machines/managed/providerFactsV1";
 import {
     ManagedMachineError, invalidateManagedMachineInTx, projectManagedMachine,
@@ -119,6 +119,12 @@ export async function admitManagedAcquire(params: Readonly<{
             if (parsedFacts && !parsedFacts.success) throw new ManagedMachineError("invalid_request");
             const reviewedFacts = parsedFacts?.success ? parsedFacts.data : undefined;
             const policy = delegatedPolicy ?? qualifyManagedAcquisitionPolicy(review, declaration, reviewedFacts?.retentionCapabilities);
+            const scopeChoice = request.input.creationScopeRetention;
+            if (scopeChoice && !resolveMachineRetentionNativeIntentV1(scopeChoice.effect, declaration.retention.supportedIntents)) {
+                throw new ManagedMachineError('invalid_request');
+            }
+            const creationScopeRetention = scopeChoice ? { ...scopeChoice,
+                ...(policy.retention.kind === 'unused' && policy.retention.afterMs > 0 ? { afterMs: policy.retention.afterMs } : {}) } : undefined;
             const { credentials: _credentials, ...publicLaunch } = launch;
             if (reviewedFacts && (!sameManagedInput(reviewedFacts.launch, delegatedPolicy ? publicLaunch : launch)
                 || !sameManagedInput(reviewedFacts.controller, review.controller)
@@ -143,6 +149,7 @@ export async function admitManagedAcquire(params: Readonly<{
                 controllerMachineId: canonical.controller?.machineId ?? null, controllerInstallationId: canonical.controller?.installationId ?? null,
                 admittedActionRequestId: request.requestId, admittedInput: { ...admittedInputIdentity,
                     enrollmentAccountId: params.requesterAccountId,
+                    ...(creationScopeRetention ? { creationScopeRetention } : {}),
                     requestEnvelopeDigest: params.requestEnvelopeDigest,
                     ...(setup ? { machineSetup: { requestEnvelopeDigest: params.requestEnvelopeDigest } } : {}) },
                 ...(preset ? { presetId: preset.id, presetRevision: preset.revision } : {}),

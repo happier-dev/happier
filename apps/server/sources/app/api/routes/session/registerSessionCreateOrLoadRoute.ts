@@ -302,6 +302,7 @@ export function registerSessionCreateOrLoadRoute(app: Fastify) {
             organizationPlacement: layoutOneRequest.organizationPlacement,
             initialAccess: layoutOneRequest.initialAccess,
             initialTriggers: layoutOneRequest.initialTriggers,
+                managedCreation: layoutOneRequest.managedCreation,
             primaryTeamId: layoutOneRequest.primaryTeamId,
             teamCredentialBindings: layoutOneRequest.teamCredentialBindings,
                 manager: layoutOneRequest.manager,

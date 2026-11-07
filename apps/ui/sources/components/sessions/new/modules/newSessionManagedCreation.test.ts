@@ -82,15 +82,16 @@ it('uses the strict acquire schema as the single identity admission in the creat
     expect(failure).toMatchObject({ issues: admitted.error.issues });
 });
 
-function bindingTransport(options: Readonly<{ beforeWrite?: () => Promise<void>; custodianAccountId?: string; homeId?: string; unrelatedRuns?: number }> = {}) {
+function bindingTransport(options: Readonly<{ beforeWrite?: () => Promise<void>; custodianAccountId?: string; homeId?: string; unrelatedRuns?: number; retainedEffect?: 'stop' | 'delete' }> = {}) {
     const rows = new Map<string, AutomationDefinitionDetail>();
     const births = new Map<string, string>(Array.from({ length: options.unrelatedRuns ?? 0 }, (_, index) =>
         [`unrelated-home:unrelated-managed-${index}`, `unrelated-run-${index}`] as const));
     let finCreates = 0;
     const confirmations: string[] = [];
-    const machine = { ...baseMachine, homeId: options.homeId ?? baseMachine.homeId,
+    let machine: ManagedMachineV1 = { ...baseMachine, homeId: options.homeId ?? baseMachine.homeId,
         custodianAccountId: options.custodianAccountId ?? baseMachine.custodianAccountId,
-        enrolledMachineId: 'guest', reviewedFacts: draft.receipt };
+        enrolledMachineId: 'guest', reviewedFacts: draft.receipt,
+        ...(options.retainedEffect ? { creationScopeRetention: { effect: options.retainedEffect, source: { kind: 'session', sessionId: 'created-session' } } } : {}) };
     const runs = createWorkflowAccountRunActionOwner({
         resolveAccountId: async () => 'account',
         resolveEncryption: async () => ({ kind: 'available', witness: { mode: 'plain', version: 1, contentKeyFingerprint: null } }),
@@ -166,6 +167,17 @@ function bindingTransport(options: Readonly<{ beforeWrite?: () => Promise<void>;
         },
         managedMachineAction: async request => {
             if (request.actionId === 'machines.managed.get') return machine;
+            if (request.actionId === 'machines.managed.retention.update') {
+                await options.beforeWrite?.();
+                const policy = ManagedMachineActionInputSchemasV1['machines.managed.retention.update'].parse(request.input);
+                if (!('creationScopeRetention' in policy)) throw new Error('Unexpected ordinary policy edit');
+                const runId = births.get(`${machine.homeId}:${machine.id}`);
+                machine = { ...machine, intentRevision: machine.intentRevision + 1,
+                    creationScopeRetention: policy.creationScopeRetention ? { ...policy.creationScopeRetention,
+                        source: runId ? { kind: 'run', source: { kind: 'workflow_run', runId } }
+                            : { kind: 'session', sessionId: 'created-session' } } : undefined };
+                return machine;
+            }
             throw new Error('unexpected_power_effect');
         },
         workflowAction: async request => {
@@ -182,13 +194,13 @@ function bindingTransport(options: Readonly<{ beforeWrite?: () => Promise<void>;
             throw new Error('unexpected_trigger_action');
         },
     }));
-    return { rows, machine, confirmations, executeAction: createFrontDoorActionExecute(executor), finCreates: () => finCreates,
+    return { rows, get machine() { return machine; }, confirmations, executeAction: createFrontDoorActionExecute(executor), finCreates: () => finCreates,
         lookupBirth: (input: unknown) => {
             const request = ManagedMachineActionInputSchemasV1['machines.managed.birth.get'].parse(input);
             const runId = births.get(`${request.homeId}:${request.managedId}`);
             return ManagedMachineBirthResultV1Schema.parse({ source: runId
                 ? { kind: 'run', source: { kind: 'workflow_run', runId } } : null });
-        }, runCount: () => births.size };
+        }, runCount: () => births.size, admitBirth: (runId: string) => births.set(`${machine.homeId}:${machine.id}`, runId) };
 }
 
 describe('New managed durable workflow continuation', () => {
@@ -249,12 +261,7 @@ describe('New managed durable workflow continuation', () => {
                 machine: h.machine, source: expectedSource, scope, signal, isCurrent: () => true, executeAction: h.executeAction });
             expect(bound).toMatchObject({ kind: 'bound', binding: { source: expectedSource } });
             if (bound.kind !== 'bound') throw new Error('Missing FIN binding');
-            const listed = await h.executeAction('workflow.trigger.list', { scope: 'account_inline' },
-                { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'account' });
-            expect(listed.ok).toBe(true);
-            if (!listed.ok) throw new Error(listed.error);
-            expect(readManagedCreationScopeRule(WorkflowTriggerListResultV1Schema.parse(listed.result).sets, h.machine))
-                .toMatchObject({ effect, binding: { source: expectedSource } });
+            expect(readManagedCreationScopeRule(h.machine)).toMatchObject({ effect, binding: { source: expectedSource } });
             expect(await readSource()).toEqual(expectedSource);
             const createsBeforeKeep = h.finCreates();
             expect(await bindNewManagedMachineCreationScope({ draft: creationDraft, machine: h.machine, source: expectedSource,
@@ -262,11 +269,7 @@ describe('New managed durable workflow continuation', () => {
                 .toEqual({ kind: 'kept' });
             expect(h.finCreates()).toBe(createsBeforeKeep);
             expect([...h.rows.values()].flatMap(row => row.triggers)).toEqual([]);
-            const cleared = await h.executeAction('workflow.trigger.list', { scope: 'account_inline' },
-                { surface: 'ui', authority: 'present_user', serverId, expectedAccountId: 'account' });
-            expect(cleared.ok).toBe(true);
-            if (!cleared.ok) throw new Error(cleared.error);
-            expect(readManagedCreationScopeRule(WorkflowTriggerListResultV1Schema.parse(cleared.result).sets, h.machine)).toBeNull();
+            expect(readManagedCreationScopeRule(h.machine)).toBeNull();
             expect(await readSource()).toEqual(expectedSource);
             const reads = homes.requests.slice(before);
             expect(reads.filter(request => /^\/v[12]\/sessions(?:[/?]|$)/.test(request.path))).toHaveLength(0);
@@ -304,12 +307,8 @@ describe('New managed durable workflow continuation', () => {
         });
         expect(result).toMatchObject({ kind: 'accepted', binding: effect === 'keep' ? { kind: 'kept' } : { kind: 'bound',
             binding: { source: { kind: 'run', source: { kind: 'workflow_run', runId } } } } });
-        expect(h.rows.size).toBe(effect === 'keep' ? 0 : 1);
-        if (effect !== 'keep') {
-            const row = [...h.rows.values()][0]!;
-            expect(row.assignments.map(item => item.machineId)).toEqual(['controller']);
-            expect(row.triggers[0]).toMatchObject({ kind: 'runLifecycle', source: { kind: 'workflow_run', runId }, condition: 'terminal' });
-        }
+        expect(h.rows.size).toBe(0);
+        expect(h.machine.creationScopeRetention?.effect).toBe(effect === 'keep' ? undefined : effect);
     });
 
     it('repairs an incomplete binding without starting its admitted Run again', async () => {
@@ -322,7 +321,7 @@ describe('New managed durable workflow continuation', () => {
             scope: { serverId: 'server', accountId: 'account' }, signal: new AbortController().signal, isCurrent: () => true,
             onAcquisitionChange: () => {}, onProgress: () => {}, onApprovalPending: () => {}, executeAction: h.executeAction,
             onAccepted: (value: AcceptedManagedWorkflowCreation) => { accepted = value; },
-            startRun: async () => { starts++; return { admission: 'created' as const,
+            startRun: async () => { starts++; h.admitBirth('11111111-1111-4111-8111-111111111111'); return { admission: 'created' as const,
                 run: createWorkflowRunSummaryFixture({ id: '11111111-1111-4111-8111-111111111111', machineId: 'guest', origin: { kind: 'direct' } }) }; },
         };
         expect(await runNewManagedWorkflowCreation(input)).toMatchObject({ kind: 'accepted', binding: { kind: 'incomplete' } });
@@ -330,7 +329,7 @@ describe('New managed durable workflow continuation', () => {
         failWrite = false;
         expect(await runNewManagedWorkflowCreation({ ...input, accepted })).toMatchObject({ kind: 'accepted', binding: { kind: 'bound' } });
         expect(starts).toBe(1);
-        expect(h.rows.size).toBe(1);
+        expect(h.rows.size).toBe(0);
     });
 
     it('does not bind a refused or retired durable Run admission', async () => {
@@ -357,6 +356,7 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
         'machines.setup.adminAccess.set': ['ui'], 'machines.agentIsolation.set': ['ui'],
         'machines.managed.acquire': ['ui', 'agent'], 'machines.managed.bootstrap.retry': ['ui'],
         'machines.managed.bootstrap.respond': ['ui'], 'machines.managed.cancel': ['ui'],
+        'machines.managed.get': ['ui'], 'action.operations.get': ['ui'],
     } });
     const actions: Array<{ actionId: string; input: unknown }> = [];
     const additionalConfirmations: string[] = [];
@@ -515,6 +515,12 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
         ...context, actionsSettings: settings, actionCaller: { kind: 'host' as const }, runtimeAccountId: 'account',
         actionRequestId: context?.actionRequestId ?? `managed-confirm:${actionId}`,
     });
+    const executeAsAgent: typeof executor.execute = (actionId, value, context) => executor.execute(actionId, value, { ...context,
+        surface: 'agent', authority: 'account_automation', defaultSessionId: 'parent', callerPermissionMode: 'yolo',
+        causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' },
+        sessionInputSource: { sourceSessionId: 'parent', sourceTurnId: 'turn', via: 'action' },
+        sessionAgentSpawnPolicyV1: { allowCrossMachine: false },
+    });
     const runInput = (options: Readonly<{ retryInstallation?: boolean; setupRecovery?: 'retry' | 'skip' | 'delete';
         reviewDelete?: (census: MachineReferenceCensusV1) => Promise<boolean>;
         acquisition?: ManagedMachineAcquisitionDraft; draft?: typeof draft; agentStart?: ManagedAcquireAgentStartV1 }> = {}): Parameters<typeof runManagedMachineCreation>[0]
@@ -522,14 +528,13 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
         draft: options.draft ?? draft, acquisition: options.acquisition ?? acquisition, scope: { serverId: input.serverId ?? 'server', accountId: 'account' },
         signal: new AbortController().signal, isCurrent: input.current ?? (() => true),
         executeAction: createFrontDoorActionExecute(input.denyCrossMachine ? {
-            execute: (actionId, value, context) => executor.execute(actionId, value, { ...context,
-                surface: 'agent', authority: 'account_automation', defaultSessionId: 'parent', callerPermissionMode: 'yolo',
-                causalPermissionAuthority: { kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'yolo' },
-                sessionInputSource: { sourceSessionId: 'parent', sourceTurnId: 'turn', via: 'action' },
-                sessionAgentSpawnPolicyV1: { allowCrossMachine: false },
-            }),
+            execute: executeAsAgent,
+            executeConfirmed: executeAsAgent,
         } : { ...executor,
-            execute: async (actionId, value, context) => {
+            execute: (actionId, value, context) => executor.execute(actionId, value, hostContext(actionId, context)),
+            // New's real entry calls the confirmed front door. Model its human
+            // surface at that boundary, preserving the real confirmation binding.
+            executeConfirmed: async (actionId, value, context) => {
                 // The surface's designed Create confirmation is a human UI boundary;
                 // its exact-input admission still comes from the real binding owner.
                 if (input.createConfirmation && actionId === 'machines.managed.acquire') {
@@ -537,15 +542,10 @@ function transport(input: Readonly<{ current?: () => boolean; wait?: () => Promi
                     if (!await Modal.confirm('Create machine', 'Create the reviewed Team machine?')) {
                         return { ok: false, errorCode: 'approval_canceled', error: 'approval_canceled' };
                     }
-                    return executor.execute(actionId, value,
-                        bindPresentUserActionConfirmation(actionId, value, hostContext(actionId, context)));
                 }
-                return executor.execute(actionId, value, hostContext(actionId, context));
+                const bound = bindPresentUserActionConfirmation(actionId, value, hostContext(actionId, context));
+                return executor.execute(actionId, value, bound);
             },
-            // Use the same confirmation-binding owner as the default UI executor;
-            // this process-neutral harness substitutes only persistence/transport.
-            executeConfirmed: (actionId, value, context) => executor.execute(actionId, value,
-                bindPresentUserActionConfirmation(actionId, value, hostContext(actionId, context))),
         }),
         onAcquisitionChange: value => { acquisition = value; }, onProgress: value => progress.push(value),
         onApprovalPending: () => { throw new Error('unexpected_approval'); }, ...options,
@@ -953,62 +953,30 @@ describe('ordinary managed creation continuation', () => {
         expect(boundary.progress).toContainEqual(expect.objectContaining({ kind: 'failed', managedId: 'paid',
             machineSetup: expect.objectContaining({ state: 'failed' }), retrySetupAvailable: true, retryInstallationAvailable: false }));
     });
-    it('keeps foreign-controller acquisition usable but makes automatic archive rules owner-only before any FIN write', async () => {
+    it('retains the offered archive Delete choice on a shared controller without creating a FIN trigger', async () => {
         const created = transport({ custodianAccountId: 'alice' });
-        expect(await created.run()).toMatchObject({ kind: 'enrolled', machine: { enrolledMachineId: 'guest' } });
-        const boundary = bindingTransport({ custodianAccountId: 'alice' });
-        for (const selected of [{ ...draft, archiveEffect: 'stop' as const }, { ...draft, archiveEffect: 'delete' as const },
-            { ...draft, archiveEffect: 'delete' as const, receipt: { ...draft.receipt,
-                retentionCapabilities: { supportedIntents: ['stop'] as ['stop'] } } }]) {
-            expect(await bindNewManagedMachineCreationScope({ draft: selected,
-                // The fresh admitted read wins over an earlier controller ownership snapshot.
-                machine: { ...boundary.machine, custodianAccountId: 'account' },
-                source: { kind: 'session', sessionId: 'created-session' }, scope: { serverId: 'server', accountId: 'account' },
-                signal: new AbortController().signal, isCurrent: () => true, executeAction: boundary.executeAction }))
-                .toMatchObject({ kind: 'unavailable', availability: { supportedEffects: ['keep'],
-                    reason: 'shared_unsupported', controllerMachineId: 'controller' } });
-        }
-        expect(boundary.rows.size).toBe(0);
-        expect(await bindNewManagedMachineCreationScope({ draft, machine: boundary.machine,
+        const creation = await created.run({ draft: { ...draft, archiveEffect: 'delete' } });
+        expect(creation)
+            .toMatchObject({ kind: 'enrolled', machine: { enrolledMachineId: 'guest' } });
+        expect(created.actions.find(action => action.actionId === 'machines.managed.acquire')?.input)
+            .toMatchObject({ creationScopeRetention: { effect: 'delete' } });
+        const boundary = bindingTransport({ custodianAccountId: 'alice', retainedEffect: 'delete' });
+        expect(await bindNewManagedMachineCreationScope({ draft: { ...draft, archiveEffect: 'delete' },
+            machine: boundary.machine,
             source: { kind: 'session', sessionId: 'created-session' }, scope: { serverId: 'server', accountId: 'account' },
-            signal: new AbortController().signal, isCurrent: () => true, executeAction: boundary.executeAction })).toEqual({ kind: 'kept' });
+            signal: new AbortController().signal, isCurrent: () => true, executeAction: boundary.executeAction }))
+            .toMatchObject({ kind: 'bound' });
+        expect(boundary.rows.size).toBe(0);
     });
 
-    it('installs only the accepted Session rule on its controller with selected idle interval and no future revision', async () => {
-        for (const archiveEffect of ['stop', 'delete'] as const) {
-            const boundary = bindingTransport();
-            const selected = { ...draft, archiveEffect, receipt: { ...draft.receipt,
-                retention: { kind: 'unused' as const, afterMs: 12345, effect: archiveEffect } } };
-            const result = await bindNewManagedMachineCreationScope({ draft: selected, machine: boundary.machine,
-                source: { kind: 'session', sessionId: 'created-session' }, scope: { serverId: 'server', accountId: 'account' },
-                signal: new AbortController().signal, isCurrent: () => true, executeAction: boundary.executeAction });
-            expect(result).toMatchObject({ kind: 'bound' });
-            const row = [...boundary.rows.values()][0]!;
-            expect(row.scopeSessionId).toBe('created-session');
-            expect(row.assignments.map(value => value.machineId)).toEqual(['controller']);
-            const context = row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain' ? row.executionRecipe.workflow.v : null;
-            expect(context).toMatchObject({ executionTarget: { kind: 'detached_run' }, inlineDefinition: { blocks: [{
-                actionId: archiveEffect === 'stop' ? 'machines.managed.power.set' : 'machines.managed.delete',
-                input: { managedId: { kind: 'literal', value: 'paid' }, when: { kind: 'literal', value: 'after-idle' },
-                    afterMs: { kind: 'literal', value: 12345 } },
-            }] } });
-            expect(JSON.stringify(context)).not.toContain('expectedRevision');
-        }
-    });
-
-    it('ends a suspend-only provider with its native Suspend instead of refusing or deleting', async () => {
-        const boundary = bindingTransport();
-        const selected = { ...draft, archiveEffect: 'stop' as const, receipt: { ...draft.receipt,
-            retentionCapabilities: { supportedIntents: ['start', 'suspend', 'resume', 'delete'] as ('start' | 'suspend' | 'resume' | 'delete')[] },
-            retention: { kind: 'unused' as const, afterMs: 12345, effect: 'stop' as const } } };
-        const result = await bindNewManagedMachineCreationScope({ draft: selected, machine: boundary.machine,
+    it.each(['stop', 'delete'] as const)('reads the admitted %s choice without a FIN workflow', async effect => {
+        const boundary = bindingTransport({ retainedEffect: effect });
+        const result = await bindNewManagedMachineCreationScope({ draft: { ...draft, archiveEffect: effect }, machine: boundary.machine,
             source: { kind: 'session', sessionId: 'created-session' }, scope: { serverId: 'server', accountId: 'account' },
             signal: new AbortController().signal, isCurrent: () => true, executeAction: boundary.executeAction });
-        expect(result, JSON.stringify(result)).toMatchObject({ kind: 'bound' });
-        const row = [...boundary.rows.values()][0]!;
-        const context = row.executionRecipe?.v === 2 && row.executionRecipe.workflow.t === 'plain' ? row.executionRecipe.workflow.v : null;
-        expect(context).toMatchObject({ inlineDefinition: { blocks: [{ actionId: 'machines.managed.power.set',
-            input: { intent: { kind: 'literal', value: 'suspend' }, when: { kind: 'literal', value: 'after-idle' } } }] } });
+        expect(result).toMatchObject({ kind: 'bound', binding: { source: { kind: 'session', sessionId: 'created-session' } } });
+        expect(boundary.rows.size).toBe(0);
+        expect(boundary.confirmations).toEqual([]);
     });
 
     it('Keep writes no rule, and a retired creation cannot write a selected rule', async () => {
@@ -1032,32 +1000,12 @@ describe('ordinary managed creation continuation', () => {
         expect(bound).toMatchObject({ kind: 'bound' });
         if (bound.kind !== 'bound') throw new Error('Expected selected binding');
         expect(await bindNewManagedMachineCreationScope(input)).toEqual(bound);
-        expect(boundary.rows.size).toBe(1);
+        expect(boundary.rows.size).toBe(0);
         expect(await bindNewManagedMachineCreationScope({ ...input, draft, existingBinding: bound.binding })).toEqual({ kind: 'kept' });
         expect([...boundary.rows.values()].flatMap(row => row.triggers)).toEqual([]);
     });
 
-    it('uses the committed durable Run source, while unsupported Stop remains refused', async () => {
-        const boundary = bindingTransport();
-        const input = { draft: { ...draft, archiveEffect: 'stop' as const }, machine: boundary.machine,
-            source: { kind: 'run' as const, source: { kind: 'workflow_run' as const, runId: 'actual-run' } },
-            scope: { serverId: 'server', accountId: 'account' }, signal: new AbortController().signal,
-            isCurrent: () => true, executeAction: boundary.executeAction };
-        expect(await bindNewManagedMachineCreationScope({ ...input, draft: { ...input.draft,
-            receipt: { ...draft.receipt, retentionCapabilities: { supportedIntents: ['delete'] } } } }))
-            .toEqual({ kind: 'incomplete', code: 'native_intent_unsupported' });
-        expect(boundary.rows.size).toBe(0);
-        const bound = await bindNewManagedMachineCreationScope(input);
-        expect(bound, JSON.stringify(bound)).toMatchObject({ kind: 'bound' });
-        // Adding this reversible rule uses the catalog's direct UI admission.
-        // Explicit Account Ask policy is exercised by the approval composition.
-        expect(boundary.confirmations).toEqual([]);
-        expect([...boundary.rows.values()][0]?.triggers[0]).toMatchObject({ kind: 'runLifecycle', condition: 'terminal',
-            source: { kind: 'workflow_run', runId: 'actual-run' } });
-
-    });
-
-    it('keeps a failed or unacknowledged FIN write visibly incomplete', async () => {
+    it('keeps a failed retention edit visibly incomplete', async () => {
         const boundary = bindingTransport({ beforeWrite: async () => { throw Object.assign(new Error('Unknown transport delivery'), { code: 'outcome_unknown' }); } });
         const result = await bindNewManagedMachineCreationScope({ draft: { ...draft, archiveEffect: 'stop' }, machine: boundary.machine,
             source: { kind: 'session', sessionId: 'created-session' }, scope: { serverId: 'server', accountId: 'account' },
@@ -1066,17 +1014,15 @@ describe('ordinary managed creation continuation', () => {
         expect(boundary.rows.size).toBe(0);
     });
 
-    it('changing the selected effect updates the same FIN binding instead of leaving two future effects', async () => {
+    it('changes the Home choice and keeps FIN empty', async () => {
         const boundary = bindingTransport();
         const input = { machine: boundary.machine, source: { kind: 'session' as const, sessionId: 'created-session' },
             scope: { serverId: 'server', accountId: 'account' }, signal: new AbortController().signal,
             isCurrent: () => true, executeAction: boundary.executeAction };
         expect(await bindNewManagedMachineCreationScope({ ...input, draft: { ...draft, archiveEffect: 'stop' } })).toMatchObject({ kind: 'bound' });
         expect(await bindNewManagedMachineCreationScope({ ...input, draft: { ...draft, archiveEffect: 'delete' } })).toMatchObject({ kind: 'bound' });
-        expect(boundary.rows.size).toBe(1);
-        expect([...boundary.rows.values()][0]?.executionRecipe).toMatchObject({ workflow: { t: 'plain', v: {
-            inlineDefinition: { blocks: [{ actionId: 'machines.managed.delete' }] },
-        } } });
+        expect(boundary.machine.creationScopeRetention?.effect).toBe('delete');
+        expect(boundary.rows.size).toBe(0);
     });
 
     it('admits a supported reviewed archive effect without binding before a Session exists', async () => {

@@ -1,10 +1,6 @@
-import type { AutomationRunLifecycleSource } from '@happier-dev/protocol/automations/automationRunLifecycle';
-import type { ActionId } from '@happier-dev/protocol/actions/actionIds';
-import { readManagedMachineTriggerAction } from '@happier-dev/protocol/actions/executor/workflowTriggerActions';
+import type { ManagedMachineBirthSourceV1 } from '@happier-dev/protocol/machines/managed/birthSourceV1';
 import { ManagedGetOutputV1Schema, ManagedMachineBirthResultV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
-import { SessionTriggerAddRequestV1Schema, SessionTriggerUpdateRequestV1Schema, WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerListResultV1Schema,
-    WorkflowTriggerWriteResultV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import { sameStrictJsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { ManagedMachineSelectionDraft } from '@/sync/domains/state/newSessionManagedMachineDraft';
 import type { ServerAccountScope, ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
@@ -12,19 +8,17 @@ import { createFrontDoorActionExecute } from './frontDoorRuntimeActionExecutor';
 import { classifyHomeActionOutcome, observeHomeActionOutcome } from '@/sync/ops/home/homeActionOutcome';
 import { homeDomainFailureCode } from '@/sync/api/home/homeDomainActions';
 import { awaitActionApprovalResult, createActionApprovalContinuation, type ActionApprovalRegistration } from '@/components/approvals/actionApprovalContinuation';
-import { resolveManagedMachineArchiveChoiceAvailability, type ManagedMachineArchiveChoiceAvailability } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
-import { buildManagedCreationScopeTriggerTarget } from '@/sync/domains/machines/managedCreationScopeTrigger';
+import { type ManagedMachineArchiveChoiceAvailability } from '@/components/sessions/new/components/machineSelection/managedMachineSelection';
 
-export type ManagedCreationScopeSource = Readonly<{ kind: 'session'; sessionId: string }>
-    | Readonly<{ kind: 'run'; source: AutomationRunLifecycleSource }>;
-export type ManagedCreationScopeBinding = Readonly<{ automationId: string; triggerId: string; source: ManagedCreationScopeSource }>;
+export type ManagedCreationScopeSource = ManagedMachineBirthSourceV1;
+export type ManagedCreationScopeBinding = Readonly<{ source: ManagedCreationScopeSource }>;
 export type ManagedCreationScopeBindingResult = Readonly<{ kind: 'kept' }>
     | Readonly<{ kind: 'bound'; binding: ManagedCreationScopeBinding }>
     | Readonly<{ kind: 'unavailable'; availability: ManagedMachineArchiveChoiceAvailability }>
     | Readonly<{ kind: 'incomplete'; code: string; artifactId?: string }>;
 
 /**
- * Keep has no FIN trigger to name its source. Read the exact non-content birth relationship
+ * Keep has no retained scope choice to name its source. Read the exact non-content birth relationship
  * from the Run or Session owner without opening content or scanning either inventory.
  */
 export async function readManagedCreationScopeBirthSource(input: Readonly<{
@@ -59,50 +53,22 @@ export async function readManagedCreationScopeBirthSource(input: Readonly<{
     });
 }
 
-/**
- * The one recognizer of a managed creation-scope rule inside FIN's trigger sets: an inline Stop/Delete
- * of this exact managed row, with its single enabled session-archived or run-terminal trigger. The
- * binder below writes through it and the Machine page reads through it, so both agree on what counts.
- */
-function matchManagedCreationScopeTrigger(set: WorkflowTriggerSetV1, machine: Readonly<{ homeId: string; id: string }>) {
-    const managed = set.target && readManagedMachineTriggerAction(set.target);
-    if (!managed || managed.input.homeId !== machine.homeId || managed.input.managedId !== machine.id
-        || set.triggers.length !== 1) return null;
-    const trigger = set.triggers[0]!;
-    if (!trigger.enabled) return null;
-    const source: ManagedCreationScopeSource | null = trigger.kind === 'sessionLifecycle' && trigger.events.includes('sessionArchived')
-        ? { kind: 'session', sessionId: trigger.sourceSessionId }
-        : trigger.kind === 'runLifecycle' && trigger.condition === 'terminal' ? { kind: 'run', source: trigger.source } : null;
-    return source ? { managed, trigger, source } : null;
-}
-
-/** What a created machine's page shows about its scope rule; FIN's trigger stays the only editor. */
+/** Home projects the admitted source lifecycle; FIN does not hold a retention decision. */
 export type ManagedCreationScopeRule = Readonly<{
     binding: ManagedCreationScopeBinding;
     effect: 'stop' | 'delete';
     afterMs?: number;
-    /** The source ended and the rule's run is waiting for work on the machine to finish. */
     waiting: boolean;
 }>;
-
-/** Reads the creation-scope rule FIN holds for this managed row, if the owner chose Stop or Delete. */
-export function readManagedCreationScopeRule(sets: readonly WorkflowTriggerSetV1[],
-    machine: Readonly<{ homeId: string; id: string }>, birth?: ManagedCreationScopeSource | null): ManagedCreationScopeRule | null {
-    for (const set of sets) {
-        if (!set.enabled) continue;
-        const match = matchManagedCreationScopeTrigger(set, machine);
-        if (!match || birth && !sameStrictJsonValue(match.source, birth)) continue;
-        const status = 'status' in match.trigger ? match.trigger.status : null;
-        const afterMs = 'afterMs' in match.managed.input ? match.managed.input.afterMs : undefined;
-        return { binding: { automationId: set.automationId, triggerId: match.trigger.id, source: match.source },
-            effect: match.managed.actionId === 'machines.managed.delete' ? 'delete' : 'stop',
-            ...(afterMs === undefined ? {} : { afterMs }),
-            waiting: status?.state === 'triggered' || status?.state === 'running' };
-    }
-    return null;
+export function readManagedCreationScopeRule(machine: Pick<ManagedMachineV1, 'creationScopeRetention'>,
+    birth?: ManagedCreationScopeSource | null): ManagedCreationScopeRule | null {
+    const scope = machine.creationScopeRetention;
+    if (!scope?.source || birth && !sameStrictJsonValue(scope.source, birth)) return null;
+    return { binding: { source: scope.source }, effect: scope.effect,
+        ...(scope.afterMs === undefined ? {} : { afterMs: scope.afterMs }), waiting: scope.endedAt !== undefined };
 }
 
-/** After real creation acceptance, FIN alone stores and executes the selected scope rule. */
+/** Acquisition owns the choice; birth owns its source. This joins their acknowledged Home projection. */
 export async function bindNewManagedMachineCreationScope(input: Readonly<{
     draft: ManagedMachineSelectionDraft;
     machine: ManagedMachineV1;
@@ -121,11 +87,32 @@ export async function bindNewManagedMachineCreationScope(input: Readonly<{
     const execute = input.executeAction ?? createFrontDoorActionExecute();
     const context = { surface: 'ui' as const, authority: 'present_user' as const,
         serverId: input.scope.serverId, expectedAccountId: input.scope.accountId, signal: input.signal };
-    const mutate = (actionId: ActionId, request: unknown, completed: (value: unknown) => ManagedCreationScopeBindingResult) =>
-        awaitActionApprovalResult<unknown, ManagedCreationScopeBindingResult>({
+    try {
+        const read = classifyHomeActionOutcome(await execute('machines.managed.get', { homeId: input.machine.homeId, managedId: input.machine.id }, context));
+        if (!current()) return incomplete('continuation_retired');
+        if (read.kind !== 'completed') return incomplete(read.kind === 'failed' ? homeDomainFailureCode(read.failure) : 'approval_required');
+        const machine = ManagedGetOutputV1Schema.parse(read.result);
+        if (machine.homeId !== input.draft.selection.homeId || machine.id !== input.machine.id || machine.creationState !== 'active'
+            || machine.allocation !== 'bound' || !machine.enrolledMachineId
+            || !sameStrictJsonValue(machine.controller, input.machine.controller)) return incomplete('managed_target_scope_changed');
+        const effect = input.draft.archiveEffect;
+        const selected = readManagedCreationScopeRule(machine, input.source);
+        if (selected?.effect === effect) return { kind: 'bound', binding: selected.binding };
+        // A shared controller's admitted creator receives the acquisition choice,
+        // not ordinary retention-edit or manual power authority.
+        if (machine.custodianAccountId !== input.scope.accountId) return incomplete('permission_denied');
+        const actionId = 'machines.managed.retention.update';
+        const request = { homeId: machine.homeId, managedId: machine.id, expectedIntentRevision: machine.intentRevision,
+            creationScopeRetention: effect === 'keep' ? null : { effect } };
+        const completed = (value: unknown): ManagedCreationScopeBindingResult => {
+            const updated = ManagedGetOutputV1Schema.parse(value);
+            if (effect === 'keep') return updated.creationScopeRetention ? incomplete('binding_response_invalid') : { kind: 'kept' };
+            const rule = readManagedCreationScopeRule(updated, input.source);
+            return rule?.effect === effect ? { kind: 'bound', binding: rule.binding } : incomplete('binding_response_invalid');
+        };
+        return await awaitActionApprovalResult<unknown, ManagedCreationScopeBindingResult>({
             signal: input.signal,
             execute: async callbacks => {
-                if (!current()) return incomplete('continuation_retired');
                 const outcome = classifyHomeActionOutcome(await execute(actionId, request, context));
                 if (!current()) return incomplete('continuation_retired');
                 if (outcome.kind === 'failed') return incomplete(homeDomainFailureCode(outcome.failure));
@@ -138,71 +125,11 @@ export async function bindNewManagedMachineCreationScope(input: Readonly<{
                 }
                 return completed(outcome.result);
             },
-            succeeded: result => current() ? completed(result) : incomplete('continuation_retired'),
+            succeeded: value => current() ? completed(value) : incomplete('continuation_retired'),
             failed: incomplete, aborted: () => incomplete('continuation_retired'),
         });
-    try {
-        if (input.draft.archiveEffect === 'keep') {
-            const binding = input.existingBinding!;
-            if (!sameStrictJsonValue(binding.source, input.source)) return incomplete('binding_scope_mismatch');
-            const actionId = input.source.kind === 'session' ? 'session.trigger.remove' as const : 'workflow.trigger.remove' as const;
-            const request = input.source.kind === 'session' ? { sessionId: input.source.sessionId, triggerId: binding.triggerId }
-                : { automationId: binding.automationId, triggerId: binding.triggerId };
-            return await mutate(actionId, request, value => {
-                WorkflowTriggerWriteResultV1Schema.parse(value);
-                return { kind: 'kept' };
-            });
-        }
-        const read = classifyHomeActionOutcome(await execute('machines.managed.get', { homeId: input.machine.homeId, managedId: input.machine.id }, context));
-        if (!current()) return incomplete('continuation_retired');
-        if (read.kind !== 'completed') return incomplete(read.kind === 'failed' ? homeDomainFailureCode(read.failure) : 'approval_required');
-        const machine = ManagedGetOutputV1Schema.parse(read.result);
-        if (machine.homeId !== input.draft.selection.homeId || machine.id !== input.machine.id || machine.creationState !== 'active'
-            || machine.allocation !== 'bound' || !machine.enrolledMachineId
-            || !sameStrictJsonValue(machine.controller, input.machine.controller)) return incomplete('managed_target_scope_changed');
-        const availability = resolveManagedMachineArchiveChoiceAvailability({ draft: input.draft,
-            controllerOwnership: machine.custodianAccountId === input.scope.accountId ? 'owned' : 'shared',
-            custodianAccountId: machine.custodianAccountId });
-        if (availability.reason) return { kind: 'unavailable', availability };
-        if (!availability.supportedEffects.includes(input.draft.archiveEffect)) return incomplete('native_intent_unsupported');
-        const listed = classifyHomeActionOutcome(await execute('workflow.trigger.list',
-            { managedTarget: { homeId: machine.homeId, managedId: machine.id } }, context));
-        if (!current()) return incomplete('continuation_retired');
-        if (listed.kind !== 'completed') return incomplete(listed.kind === 'failed' ? homeDomainFailureCode(listed.failure) : 'approval_required');
-        const sets = WorkflowTriggerListResultV1Schema.parse(listed.result).sets;
-        const effect = input.draft.archiveEffect;
-        const afterMs = input.draft.receipt.retention.kind === 'unused' ? input.draft.receipt.retention.afterMs : undefined;
-        const target = buildManagedCreationScopeTriggerTarget({ homeId: machine.homeId, managedId: machine.id, effect,
-            supportedIntents: input.draft.receipt.retentionCapabilities.supportedIntents, afterMs });
-        const project = machine.controller ? { machineId: machine.controller.machineId, directory: '~' } : undefined;
-        const common = { project, target, executionTarget: { kind: 'detached_run' as const } };
-        for (const set of sets) {
-            const match = matchManagedCreationScopeTrigger(set, machine);
-            if (!match || !sameStrictJsonValue(match.source, input.source)) continue;
-            const existing = match.trigger;
-            if (sameStrictJsonValue(set.target, common.target) && set.project?.machineId === project?.machineId && set.enabled) {
-                return { kind: 'bound', binding: { automationId: set.automationId, triggerId: existing.id, source: input.source } };
-            }
-            const actionId = input.source.kind === 'session' ? 'session.trigger.update' as const : 'workflow.trigger.update' as const;
-            const request = input.source.kind === 'session' ? SessionTriggerUpdateRequestV1Schema.parse({ sessionId: input.source.sessionId,
-                triggerId: existing.id, expectedRevision: set.revision, patch: common })
-                : WorkflowTriggerUpdateRequestV1Schema.parse({ automationId: set.automationId, triggerId: existing.id,
-                    expectedRevision: set.revision, patch: common });
-            return await mutate(actionId, request, bound);
-        }
-        const actionId = input.source.kind === 'session' ? 'session.trigger.add' as const : 'workflow.trigger.add' as const;
-        const request = input.source.kind === 'session' ? SessionTriggerAddRequestV1Schema.parse({ ...common, sessionId: input.source.sessionId,
-            trigger: { kind: 'sessionLifecycle', sourceSessionId: input.source.sessionId, events: ['sessionArchived'], policy: { kind: 'everyMatch' }, enabled: true } })
-            : WorkflowTriggerAddRequestV1Schema.parse({ ...common, trigger: { kind: 'runLifecycle', source: input.source.source, condition: 'terminal', enabled: true } });
-        if (!current()) return incomplete('continuation_retired');
-        return await mutate(actionId, request, bound);
-        function bound(value: unknown): ManagedCreationScopeBindingResult {
-            const result = WorkflowTriggerWriteResultV1Schema.parse(value);
-            if (!result.triggerId || result.set.project?.machineId !== project?.machineId) return incomplete('binding_response_invalid');
-            return { kind: 'bound', binding: { automationId: result.set.automationId, triggerId: result.triggerId, source: input.source } };
-        }
     } catch (error) {
         return incomplete(!current() ? 'continuation_retired' : error instanceof Error && 'code' in error && typeof error.code === 'string'
-            ? error.code : 'binding_outcome_unknown');
+            ? error.code : 'binding_response_invalid');
     }
 }

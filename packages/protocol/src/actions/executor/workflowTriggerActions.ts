@@ -141,9 +141,6 @@ export interface WorkflowTriggerActions {
   update: (raw: WorkflowTriggerUpdateRequestV1, caller?: Caller) => Promise<WorkflowTriggerWriteResult>;
   remove: (raw: WorkflowTriggerRemoveRequestV1, caller?: Caller) => Promise<ReturnType<typeof WorkflowTriggerRemoveResultV1Schema.parse>>;
   removeForWorkflow: (workflow: string) => Promise<void>;
-  moveManagedMachineScopeBindings: (input: Readonly<{
-    machine: ManagedMachineV1; signal?: AbortSignal;
-  }>) => Promise<void>;
   prepareSessionInitialTriggers: (input: Readonly<{
     initialTriggers: readonly SessionInitialTriggerV1[]; project: WorkflowProjectTargetV1; caller?: Caller;
   }>) => Promise<SessionInitialTriggerAdmissionV1[]>;
@@ -898,38 +895,6 @@ export function createWorkflowTriggerActions(deps: WorkflowTriggerActionsDepende
     if (nativeGoalOwner === null) refuse('target_unavailable');
   };
   return { ...actions,
-    /** Host-only consequence of an admitted native Move, using this Account's private FIN custody. */
-    moveManagedMachineScopeBindings: async (input: Readonly<{ machine: ManagedMachineV1; signal?: AbortSignal }>): Promise<void> => {
-      const controller = input.machine.controller;
-      input.signal?.throwIfAborted();
-      for (const row of await automationRows(deps.automations.listDetails, {
-        managedTarget: { homeId: input.machine.homeId, managedId: input.machine.id }, includeUnindexedManagedTargets: true,
-      })) {
-        input.signal?.throwIfAborted();
-        if (row.executionRecipe?.v !== 2 || row.workflowDefinitionId != null || row.triggers.length !== 1) continue;
-        const trigger = row.triggers[0]!;
-        const scopeEnd = row.scopeSessionId
-          ? trigger.kind === 'sessionLifecycle' && trigger.sourceSessionId === row.scopeSessionId
-            && trigger.events.length === 1 && trigger.events[0] === 'sessionArchived'
-          : trigger.kind === 'runLifecycle' && trigger.condition === 'terminal';
-        if (!scopeEnd) continue;
-        const openedContext = await opened(row, false);
-        const managed = readManagedMachineTriggerAction(openedContext.target);
-        if (!managed || managed.input.homeId !== input.machine.homeId || managed.input.managedId !== input.machine.id) continue;
-        if (!controller) refuse('target_unavailable');
-        if (row.assignments.length === 1 && row.assignments[0]?.machineId === controller.machineId) continue;
-        const executionRecipe = await deps.sealContext({ automationId: row.id, templateVersion: row.templateVersion + 1,
-          context: openedContext.context });
-        input.signal?.throwIfAborted();
-        await deps.automations.reconcile(row.id, {
-          expectedTemplateVersion: row.templateVersion, name: row.name, description: row.description, enabled: row.enabled,
-          workflowDefinitionId: null, executionRecipe,
-          assignments: [{ machineId: controller.machineId, enabled: row.assignments[0]?.enabled ?? true,
-            priority: row.assignments[0]?.priority ?? 0 }], triggers: retainedTriggers(row), removedTriggers: [],
-        }, row, async () => { input.signal?.throwIfAborted(); });
-      }
-      input.signal?.throwIfAborted();
-    },
     prepareSessionInitialTriggers: async (input: Readonly<{ initialTriggers: readonly SessionInitialTriggerV1[];
       project: WorkflowProjectTargetV1; caller?: Caller }>): Promise<SessionInitialTriggerAdmissionV1[]> => {
       const prepared: SessionInitialTriggerAdmissionV1[] = [];

@@ -1,3 +1,4 @@
+import { readManagedCreationBirthInTx } from './managedCreationBirth';
 import { ManagedControllerCurrentnessV1Schema, ManagedControllerReportV1Schema, ManagedControllerSubmitInputV1Schema, type ManagedControllerSubmitInputV1, ManagedEnrollmentCorrelationV1Schema, ManagedBootstrapCredentialCreateV1Schema, type ManagedControllerCurrentnessV1, type ManagedControllerReportV1, type ManagedEnrollmentCorrelationV1, type ManagedBootstrapCredentialCreateV1, ManagedControlAdmissionInputV1Schema, ManagedControllerIntentReportV1Schema, type ManagedControlAdmissionInputV1, type ManagedControllerIntentReportV1 } from '@happier-dev/protocol/machines/managed/actionsV1';
 import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
@@ -240,9 +241,26 @@ export async function admitManagedControl(params: Readonly<{
                 data.controllerInstallationId = request.input.controller?.installationId ?? null;
             } else if (request.action === "machines.managed.retention.update") {
                 const policy = request.input;
-                if (!isMachineRetentionPolicySupportedV1(policy, declaration.retention)) throw new ManagedMachineError("provider_unavailable");
-                data.retention = policy.retention;
-                data.wakeOnAcceptedMessage = policy.wakeOnAcceptedMessage;
+                if ('creationScopeRetention' in policy) {
+                    const { creationScopeRetention: _previousScope, ...admission } = admitted;
+                    const choice = policy.creationScopeRetention;
+                    if (choice && !resolveMachineRetentionNativeIntentV1(choice.effect, declaration.retention.supportedIntents)) {
+                        throw new ManagedMachineError('provider_unavailable');
+                    }
+                    const birth = choice ? await readManagedCreationBirthInTx(tx, {
+                        accountId: readManagedEnrollmentAccountId(row), managedId: row.id,
+                    }) : null;
+                    if (choice && !birth) throw new ManagedMachineError('resource_mismatch');
+                    const retention = projectManagedMachine({ ...row, admittedInput: admission }).retention;
+                    data.admittedInput = { ...admission, currentAdmission,
+                        ...(choice && birth ? { creationScopeRetention: { ...choice, ...birth,
+                            ...(retention.kind === 'unused' && retention.afterMs > 0 ? { afterMs: retention.afterMs } : {}) } } : {}),
+                    };
+                } else {
+                    if (!isMachineRetentionPolicySupportedV1(policy, declaration.retention)) throw new ManagedMachineError("provider_unavailable");
+                    data.retention = policy.retention;
+                    data.wakeOnAcceptedMessage = policy.wakeOnAcceptedMessage;
+                }
             } else if (request.action === "machines.managed.rebuild") {
                 if (declaration.resourceKind !== 'devcontainer' || !declaration.retention.supportedIntents.includes('rebuild')
                     || !declaration.actions.rebuild) throw new ManagedMachineError("provider_unavailable");

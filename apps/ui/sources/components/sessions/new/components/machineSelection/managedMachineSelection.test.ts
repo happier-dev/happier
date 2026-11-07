@@ -22,6 +22,12 @@ const receipt = {
 };
 
 describe('managed machine selection draft', () => {
+    it('offers retained archive Delete for an admitted shared controller', () => {
+        const draft = createManagedMachineSelectionDraft({ selection, receipt, archiveEffect: 'delete' });
+        expect(resolveManagedMachineArchiveChoiceAvailability({ draft, controllerOwnership: 'shared', custodianAccountId: 'alice' }))
+            .toMatchObject({ supportedEffects: ['keep', 'stop', 'delete'] });
+    });
+
     it('offers only current-Home unarchived recipes alongside one-off configuration without acquiring', () => {
         const onConfigure = vi.fn();
         const preset = { id: 'preset-a', homeId: 'home-a', revision: 3, name: 'Guest',

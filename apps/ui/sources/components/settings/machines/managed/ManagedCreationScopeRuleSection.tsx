@@ -1,8 +1,9 @@
+import { useManagedCreationScopeBirth } from './useManagedCreationScopeBirth';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import * as React from 'react';
 import { useUnistyles } from 'react-native-unistyles';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { Icon } from '@/components/ui/icons/Icon';
 import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
@@ -26,68 +27,52 @@ import {
   getSessionSubtitle,
 } from '@/utils/sessions/sessionUtils';
 import { t } from '@/text';
+import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
 
 import { ManagedScopeRuleRow } from './ManagedMachineDetailSections';
 import { formatRetentionDuration } from './managedRetentionPresentation';
 
-/**
- * D23: a machine created for one session (or task) shows that scope and the rule chosen when it was
- * created, read from FIN's own trigger through the creation-scope owner. The row is a summary; it
- * opens the trigger where FIN edits it. Keep writes no trigger; Session birth provenance still names its source.
- */
+/** The machine's Home retention owner supplies the choice; birth supplies its source. */
 export function ManagedCreationScopeRuleSection(
-  props: Readonly<{ machine: ManagedMachineV1; serverId: string; binding?: ServerCredentialAccountScopeBinding }>,
+  props: Readonly<{ machine: ManagedMachineV1; serverId: string; binding?: ServerCredentialAccountScopeBinding; onChange?: (effect: 'keep' | 'stop' | 'delete') => void; disabled?: boolean; supportedEffects: readonly ('stop' | 'delete')[] }>,
 ) {
   const binding = props.binding;
   if (!binding?.isCurrent() || !areServerProfileIdentifiersEquivalent(binding.serverId, props.serverId)) return null;
-  return <ScopeRuleReader machine={props.machine} serverId={props.serverId} accountId={binding.accountId} binding={binding} />;
+  return <ScopeRuleReader machine={props.machine} serverId={props.serverId} accountId={binding.accountId} binding={binding} onChange={props.onChange} disabled={props.disabled} supportedEffects={props.supportedEffects} />;
 }
 
 function ScopeRuleReader(
-  props: Readonly<{ machine: ManagedMachineV1; serverId: string; accountId: string; binding: ServerCredentialAccountScopeBinding }>,
+  props: Readonly<{ machine: ManagedMachineV1; serverId: string; accountId: string; binding: ServerCredentialAccountScopeBinding; onChange?: (effect: 'keep' | 'stop' | 'delete') => void; disabled?: boolean; supportedEffects: readonly ('stop' | 'delete')[] }>,
 ) {
-  const request = React.useMemo(() => ({ managedTarget: { homeId: props.machine.homeId, managedId: props.machine.id } }),
-    [props.machine.homeId, props.machine.id]);
-  const { sets, status } = useWorkflowTriggerSets(request, props.binding);
-  const sourceSessionId = getStorage()(React.useCallback(state => {
-    if (state.sessionLocalStateScope?.accountId !== props.accountId
-      || !areServerProfileIdentifiersEquivalent(state.sessionLocalStateScope.serverId, props.serverId)) return null;
-    const matches: string[] = [];
-    for (const session of Object.values(state.sessions)) {
-      if (session.serverId && !areServerProfileIdentifiersEquivalent(session.serverId, props.serverId)) continue;
-      if (isManagedCreationScopeBirthSession(session, props.machine)) matches.push(session.id);
-    }
-    return matches.length === 1 ? matches[0]! : null;
-  }, [props.serverId, props.accountId, props.machine.homeId, props.machine.id]));
-  const rule = React.useMemo(
-    () => readManagedCreationScopeRule(sets, props.machine),
-    [sets, props.machine.homeId, props.machine.id],
-  );
-  const identity = React.useMemo(() => ({}), [props.binding, props.machine.homeId, props.machine.id]);
-  const [birthRead, setBirthRead] = React.useState<Readonly<{ identity: object; sessionId: string | null }> | null>(null);
-  React.useEffect(() => {
-    if (sourceSessionId || rule || !props.binding.isCurrent()) return;
-    const controller = new AbortController();
-    const retirement = props.binding.onRetire(() => controller.abort());
-    readManagedCreationScopeBirthSessionId({ machine: { homeId: props.machine.homeId, id: props.machine.id },
-      accountLifetime: props.binding, signal: controller.signal }).then(sessionId => {
-      if (!controller.signal.aborted && props.binding.isCurrent()) setBirthRead({ identity, sessionId });
-    }).catch(() => {
-      if (!controller.signal.aborted && props.binding.isCurrent()) setBirthRead(previous =>
-        previous?.identity === identity ? previous : { identity, sessionId: null });
-    });
-    return () => { controller.abort(); retirement.dispose(); };
-  }, [identity, sourceSessionId, rule, sets, props.binding, props.machine.homeId, props.machine.id]);
-  const birthSessionId = sourceSessionId ?? (birthRead?.identity === identity && props.binding.isCurrent() ? birthRead.sessionId : null);
-  const source = rule?.binding.source ?? (birthSessionId ? { kind: 'session' as const, sessionId: birthSessionId } : null);
-  if (!source) return null;
+  const birthRead = useManagedCreationScopeBirth(props.machine, props.binding);
+  const rule = readManagedCreationScopeRule(props.machine, birthRead.source);
+  const source = birthRead.source ?? rule?.binding.source;
+  if (!source) {
+    // A failed exact birth read is not "made for nothing": keep its place with the cause and the same read's Retry.
+    // Pending and a known absent birth stay silent; most machines were not created for a session or task.
+    return birthRead.status === 'failed' ? (
+      <ItemGroup testID="managed-machine.scope-birth">
+        <SurfaceStateCard
+          testID="managed-machine.scope-birth-failed"
+          size="line"
+          kind="warning"
+          title={t('managedRetention.scopeBirthFailed', { name: props.machine.launch.name })}
+          diagnosticCode="managed_birth_lookup_failed"
+          action={{ label: t('common.retry'), testID: 'managed-machine.scope-birth-failed:retry', onPress: birthRead.retry }}
+        />
+      </ItemGroup>
+    ) : null;
+  }
   return (
     <ScopeRuleSection
       rule={rule ?? undefined}
       source={source}
-      canEdit={props.accountId === props.machine.custodianAccountId && (Boolean(rule) || status === 'ready')}
-      readStatus={status}
+      canEdit={props.accountId === props.machine.custodianAccountId && birthRead.status === 'ready'}
+      readStatus={birthRead.status === 'pending' ? 'loading' : birthRead.status}
+      onChange={props.onChange}
+      disabled={props.disabled}
       machineName={props.machine.launch.name}
+      supportedEffects={props.supportedEffects}
       serverId={props.serverId}
     />
   );
@@ -120,22 +105,18 @@ function ScopeRuleSection(
     canEdit: boolean;
     readStatus: 'loading' | 'ready' | 'failed';
     machineName: string;
+    supportedEffects: readonly ('stop' | 'delete')[];
     serverId: string;
+    onChange?: (effect: 'keep' | 'stop' | 'delete') => void;
+    disabled?: boolean;
   }>,
 ) {
-  const router = useRouter();
+  const [open, setOpen] = React.useState(false);
   const { rule } = props;
   const source = props.source;
   const summary = rule ? describeScopeRule(rule, props.machineName) : props.readStatus === 'loading' ? t('common.loading')
     : props.readStatus === 'failed' ? t('managedMachines.options.unavailable') : t('common.keep');
-  const openRule = () =>
-    router.push(
-      resolveTriggerEditorHref({
-        automationId: rule?.binding.automationId,
-        serverId: props.serverId,
-        scopeSessionId: source.kind === 'session' ? source.sessionId : null,
-      }),
-    );
+
   return (
     <ItemGroup
       title={t(
@@ -155,15 +136,20 @@ function ScopeRuleSection(
           serverId={props.serverId}
         />
       ) : null}
-      <ManagedScopeRuleRow
-        testID="managed-machine.scope-rule"
-        rule={{
-          scope: source.kind === 'session' ? 'session' : 'task',
-          summary,
-          waiting: rule?.waiting,
-          onOpen: props.canEdit ? openRule : undefined,
-        }}
-      />
+      {props.canEdit && props.onChange ? <DropdownMenu open={open} onOpenChange={setOpen}
+        variant="selectable" search={false} selectedId={rule?.effect ?? 'keep'} showCategoryTitles={false}
+        matchTriggerWidth connectToTrigger rowKind="item"
+        trigger={({ openMenu }) => <ManagedScopeRuleRow testID="managed-machine.scope-rule" rule={{
+          scope: source.kind === 'session' ? 'session' : 'task', summary, waiting: rule?.waiting,
+          onOpen: props.disabled ? undefined : openMenu,
+        }} />}
+        items={['keep' as const, ...props.supportedEffects]
+          .map(effect => ({ id: effect, title: t(effect === 'keep' ? 'common.keep' : effect === 'stop' ? 'common.stop' : 'common.delete') }))}
+        onSelect={effect => { setOpen(false); if (effect === 'keep' || effect === 'stop' || effect === 'delete') props.onChange?.(effect); }} />
+        : <ManagedScopeRuleRow testID="managed-machine.scope-rule" rule={{
+          scope: source.kind === 'session' ? 'session' : 'task', summary, waiting: rule?.waiting,
+        }} />}
+
     </ItemGroup>
   );
 }
@@ -174,7 +160,7 @@ function ScopeSessionRow(
   const { theme } = useUnistyles();
   const session = useSession(props.sessionId, props.serverId);
   const navigateToSession = useNavigateToSession();
-  // A session this device has not loaded stays reachable through its rule's editor; no placeholder row.
+  // An unloaded session has no local name to show; the exact birth still supplies its scope.
   if (!session) return null;
   return (
     <Item

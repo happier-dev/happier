@@ -1,3 +1,4 @@
+import { readManagedCreationBirthInTx } from './managedCreationBirth';
 import type { FastifyRequest, FastifyReply } from "fastify";
 import { z } from 'zod/mini';
 import type { Fastify } from "@/app/api/types";
@@ -168,12 +169,8 @@ export function registerManagedMachineRoutes(app: Fastify): void {
             response: { 200: ManagedMachineActionOutputSchemasV1['machines.managed.birth.get'] } } },
         async (request, reply) => inReadSnapshot(async tx => {
             if (request.body.homeId !== await readCurrentServerIdentityId(process.env, tx)) return reply.send({ source: null });
-            const where = { accountId: request.userId, managedCreationId: request.body.managedId };
-            // Two ids disprove uniqueness without selecting any private content.
-            const runs = await tx.automationRun.findMany({ where, select: { id: true }, take: 2 });
-            if (runs.length === 1) return reply.send({ source: { kind: 'run', source: { kind: 'workflow_run', runId: runs[0]!.id } } });
-            const sessions = await tx.session.findMany({ where, select: { id: true }, take: 2 });
-            return reply.send({ source: sessions.length === 1 ? { kind: 'session', sessionId: sessions[0]!.id } : null });
+            const birth = await readManagedCreationBirthInTx(tx, { accountId: request.userId, managedId: request.body.managedId });
+            return reply.send({ source: birth?.source ?? null });
         }));
     app.post('/v1/machines/setup/resolve', { preHandler: app.authenticate,
         schema: { body: MachineSetupResolveInputV1Schema, response: { 200: MachineSetupResolveResultV1Schema } } },

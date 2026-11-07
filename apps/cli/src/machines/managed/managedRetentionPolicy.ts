@@ -19,6 +19,10 @@ export function hasSubmittedManagedRetentionEffect(machine: ManagedMachineV1, co
 export function canPrepareManagedRetentionPolicy(machine: ManagedMachineV1, continuationRequestId?: string): boolean {
     if (machine.desired === 'delete' || machine.submittedNativeEffect?.intent === 'delete') return false;
     if (hasSubmittedManagedRetentionEffect(machine, continuationRequestId)) return true;
+    // A source-ended Delete is the explicit retained choice even if the guest
+    // was manually parked. Pending native work keeps its existing owner.
+    if (!machine.submittedNativeEffect && machine.creationScopeRetention?.endedAt !== undefined
+        && machine.creationScopeRetention.effect === 'delete') return true;
     return !machine.submittedNativeEffect
         && (continuationRequestId !== undefined || machine.desired !== 'stop' && machine.desired !== 'suspend');
 }

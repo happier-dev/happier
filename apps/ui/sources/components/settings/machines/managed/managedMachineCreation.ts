@@ -46,7 +46,7 @@ export type ManagedMachineCreationResult =
 
 /** Receipt fields disclose consequences; only the strict reviewed effect enters admission. */
 export function buildManagedMachineAcquireInput(
-    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt' | 'enrollmentIdentity'>,
+    draft: Pick<ManagedMachineSelectionDraft, 'selection' | 'receipt' | 'enrollmentIdentity'> & Partial<Pick<ManagedMachineSelectionDraft, 'archiveEffect'>>,
     agentStart?: ManagedAcquireAgentStartV1,
 ): ManagedAcquireInputV1 {
     const reviewed = draft.selection.kind === 'one-off'
@@ -54,7 +54,8 @@ export function buildManagedMachineAcquireInput(
         : { selection: draft.selection, controller: draft.receipt.controller,
             retention: draft.receipt.retention, wakeOnAcceptedMessage: draft.receipt.wakeOnAcceptedMessage,
             reviewedFacts: draft.receipt };
-    return ManagedAcquireInputV1Schema.parse({ ...reviewed, enrollmentIdentity: draft.enrollmentIdentity, ...(agentStart ? { agentStart } : {}) });
+    return ManagedAcquireInputV1Schema.parse({ ...reviewed, enrollmentIdentity: draft.enrollmentIdentity,
+        ...(draft.archiveEffect && draft.archiveEffect !== 'keep' ? { creationScopeRetention: { effect: draft.archiveEffect } } : {}), ...(agentStart ? { agentStart } : {}) });
 }
 
 /** Explicit Run/Send joins managed creation, then reads the actual enrolled target. */

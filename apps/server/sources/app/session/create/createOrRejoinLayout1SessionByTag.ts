@@ -69,6 +69,10 @@ async function resolveExistingLayout1SessionInTx(
         },
     });
     if (!existing) return null;
+    // A retry may omit the additive field, but cannot rewrite a recorded birth.
+    // Retained rows without the relation keep their original encrypted provenance.
+    if (prepared.managedCreation && existing.managedCreationId
+        && existing.managedCreationId !== prepared.managedCreation.managedId) throw new SessionCreationOriginError();
     if (existing.originKind === "discussion" || prepared.discussionParticipant) {
         if (!authentication || !prepared.discussionParticipant || !prepared.discussionParticipantLaunch
             || existing.originKind !== "discussion"

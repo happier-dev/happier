@@ -2262,6 +2262,28 @@ describe('managed native intent through the accepted Action', () => {
         expect(test.effects).toEqual([]);
         expect(test.readActivity).not.toHaveBeenCalled();
     });
+    it.each([0, 12345])('deletes a parked guest only after its admitted source ends and drains (%s ms)', async afterMs => {
+        const test = setup(undefined, undefined, 'delete');
+        const scope = { effect: 'delete' as const, source: { kind: 'session' as const, sessionId: 'birth' } };
+        test.setMachine({ desired: 'stop', retention: { kind: 'unused', effect: 'delete', afterMs }, creationScopeRetention: scope });
+        await expect(test.driver.executePolicy(test.readMachine(), { kind: 'retention' }, test.options))
+            .rejects.toMatchObject({ code: 'admission_unavailable' });
+        expect(test.effects).toEqual([]);
+        expect(test.readActivity).not.toHaveBeenCalled();
+        test.setMachine({ creationScopeRetention: { ...scope, endedAt: Date.now() } });
+        const busy = createDeferred<void>();
+        const drain = createDeferred<'activity'>();
+        test.readActivity.mockImplementationOnce(async () => ({ kind: 'busy', reasons: ['finite'] }));
+        test.waitForChange.mockImplementationOnce(async () => { busy.resolve(); return await drain.promise; });
+        const work = test.driver.executePolicy(test.readMachine(), { kind: 'retention' }, test.options);
+        await busy.promise;
+        expect(test.effects).toEqual([]);
+        expect(test.post.mock.calls.some(([url]) => String(url).endsWith('/admit-policy'))).toBe(false);
+        drain.resolve('activity');
+        await expect(work).resolves.toMatchObject({ kind: 'accepted', managedId: 'managed' });
+        expect(test.effects).toEqual(['destroy']);
+        expect(test.readMachine().allocation).toBe('confirmed-absent');
+    });
     it('keeps an explicit after-idle control failure when its guest target becomes unavailable', async () => {
         const test = setup();
         test.setMachine({ desiredWhen: 'after-idle' });
@@ -3205,9 +3227,11 @@ describe('managed native intent through the accepted Action', () => {
         await expect(test.run()).rejects.toMatchObject({ code: 'controller_unavailable' });
         expect(test.effects).toEqual(['destroy']);
     });
-    it('rechecks installed Account policy after guest work interrupts an approved unused Delete', async () => {
+    it.each([false, true])('rechecks installed Account policy after guest work interrupts an approved unused Delete (creation scope: %s)', async scopeEnded => {
         const test = setup();
-        test.setMachine({ desired: 'start', retention: { kind: 'unused', afterMs: 1, effect: 'delete' } });
+        test.setMachine({ desired: 'start', retention: { kind: 'unused', afterMs: scopeEnded ? 0 : 1, effect: 'delete' },
+            ...(scopeEnded ? { creationScopeRetention: { effect: 'delete' as const, endedAt: Date.now(), source: { kind: 'session' as const, sessionId: 'source' } } } : {}),
+        });
         const lifetime = new AbortController();
         let enabled = true;
         let interrupted = false;

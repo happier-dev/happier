@@ -1,3 +1,4 @@
+import { SessionManagedCreationV1Schema, type SessionManagedCreationV1 } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import * as z from 'zod/mini';
 import { isSessionEncryptionModeAllowedByStoragePolicy, resolveEffectiveDefaultAccountEncryptionMode } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
 import { SessionSharedMetadataV1Schema, validateSessionOwnerMetadataEnvelopeForAccountModeV1, type SessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
@@ -65,6 +66,7 @@ export type FreshBoundLayout1SessionCreateRejection =
     | Readonly<{ reason: "session-tag-taken" }>;
 
 export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 & {
+    managedCreation?: SessionManagedCreationV1;
     manager?: SessionManagerV1;
     accountId: string;
     tag: string;
@@ -88,6 +90,7 @@ export type Layout1SessionCreateRequest = Readonly<SessionCreateOriginFieldsV1 &
 }>;
 
 export type PreparedLayout1SessionCreate = Readonly<SessionCreateOriginFieldsV1 & {
+    managedCreation?: SessionManagedCreationV1;
     manager?: SessionManagerV1;
     accountId: string;
     tag: string;
@@ -202,6 +205,8 @@ export function admitRequestedSessionEncryptionMode(params: Readonly<{
 export function prepareLayout1SessionCreate(
     request: Layout1SessionCreateRequest,
 ): PrepareLayout1SessionCreateResult {
+    const managedCreation = z.optional(SessionManagedCreationV1Schema).safeParse(request.managedCreation);
+    if (!managedCreation.success) return { ok: false, rejection: { reason: "invalid-params" } };
     const origin = SessionCreateOriginFieldsV1Schema.safeParse({
         originKind: request.originKind,
         originSessionId: request.originSessionId,
@@ -252,6 +257,7 @@ export function prepareLayout1SessionCreate(
     return {
         ok: true,
         prepared: {
+            ...(managedCreation.data ? { managedCreation: managedCreation.data } : {}),
             ...origin.data,
             ...(manager.data ? { manager: manager.data } : {}),
             accountId: request.accountId,

@@ -1,3 +1,4 @@
+import { applyManagedCreationScopeEndInTx } from '@/app/machines/managed/managedCreationBirth';
 import { applySessionArchiveTransitionToFollowsInTx } from "@/app/session/follow/lifecycle";
 import { applySessionArchiveTransitionToManagerInTx } from "@/app/session/follow/sessionManagerService";
 import type { Tx } from "@/storage/inTx";
@@ -37,6 +38,8 @@ export async function transitionSessionArchiveStateInTx(params: Readonly<{
         sessionId: params.sessionId, wasArchived: params.wasArchived, isArchived: params.archivedAt !== null,
     });
     if (!params.wasArchived && params.archivedAt !== null) {
+        await applyManagedCreationScopeEndInTx(params.tx, { managedId: session.managedCreationId, accountId: session.accountId,
+            source: { kind: 'session', sessionId: session.id }, endedAt: params.archivedAt.getTime() });
         await publishSessionProviderBrokerConsumersChangedInTx(params.tx, params.sessionId);
         await admitSessionLifecycleAutomationRunsTx({
             tx: params.tx,
