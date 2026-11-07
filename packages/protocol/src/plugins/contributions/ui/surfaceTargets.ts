@@ -19,6 +19,13 @@ export const PluginSurfaceAppTargetV1Schema = lazyZodSchema(() => z.strictObject
   kind: z.literal('app'),
 }));
 
+/** Whole Machine pages use an exact Machine identity, separately from Services panels. */
+export const PluginSurfaceMachineTargetV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('machine'),
+  serverIdPath: z.optional(z.string().check(z.trim(), z.minLength(1))),
+  machineIdPath: z.optional(z.string().check(z.trim(), z.minLength(1))),
+}));
+
 export const PluginSurfaceBrowserTargetV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('browser'),
   browserViewIdPath: z.string().check(z.trim(), z.minLength(1)),
@@ -37,6 +44,7 @@ export const PluginSurfaceTargetV1Schema = lazyZodSchema(() => z.discriminatedUn
   PluginSurfaceSessionTargetV1Schema,
   PluginSurfaceProjectTargetV1Schema,
   PluginSurfaceAppTargetV1Schema,
+  PluginSurfaceMachineTargetV1Schema,
   PluginSurfaceBrowserTargetV1Schema,
   PluginSurfaceServicesTargetV1Schema,
 ]));

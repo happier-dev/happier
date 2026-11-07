@@ -74,6 +74,11 @@ export type PluginSurfaceTargetFacts = Readonly<{
     agentId?: string | null;
     /** Supplied by the canonical admitted Project context, never a checkout-address alias. */
     project?: ProjectSurfaceTargetV1 | null;
+    /** The addressed Machine, independently of the plugin's selected execution origin. */
+    serverId?: string | null;
+    machineId?: string | null;
+    homeId?: string | null;
+    installationId?: string | null;
     browserTarget?: BrowserViewTargetV1 | null;
 }>;
 
@@ -107,6 +112,7 @@ export type PluginSurfaceTargetUnavailableReason =
     | PluginSurfaceTargetUndeclaredReason
     | 'session_target_identity_unavailable'
     | 'project_target_identity_unavailable'
+    | 'machine_target_identity_unavailable'
     | 'browser_target_identity_unavailable';
 
 /**
@@ -171,6 +177,16 @@ export function resolvePluginSurfaceTarget(
             const origin = readBrowserOrigin(browserTarget);
             return resolvedTarget({ kind: 'browser', targetId, ...(origin ? { origin } : {}) });
         }
+        case 'machine': {
+            const serverId = readId(facts.serverId);
+            const machineId = readId(facts.machineId);
+            const homeId = readId(facts.homeId);
+            const installationId = readId(facts.installationId);
+            return serverId && machineId
+                ? resolvedTarget({ kind: 'machine', serverId, machineId,
+                    ...(homeId ? { homeId } : {}), ...(installationId ? { installationId } : {}) })
+                : unresolvedTarget('machine_target_identity_unavailable');
+        }
         case 'services':
             return resolvedTarget({ kind: 'services' });
         case 'app':
@@ -198,6 +214,8 @@ export function getPluginSurfaceTargetAuthorityKey(target: PluginSurfaceTarget):
             // Account/Home and exact-checkout resource authority have their own
             // lifetimes. Enrichment does not replace the logical Project page.
             return JSON.stringify([target.kind, target.projectKey]);
+        case 'machine':
+            return JSON.stringify([target.kind, target.serverId, target.machineId, target.homeId ?? null, target.installationId ?? null]);
         case 'browser':
             return JSON.stringify([target.kind, target.targetId, target.origin ?? null]);
     }

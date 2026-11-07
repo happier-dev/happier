@@ -74,6 +74,14 @@ const PluginUiHostApiSurfaceNonBlankStringV1Schema = lazyZodSchema(() => z.strin
 export const PluginUiHostApiSurfaceTargetV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('app') }),
   z.strictObject({
+    kind: z.literal('machine'),
+    serverId: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    machineId: PluginUiHostApiSurfaceNonBlankStringV1Schema,
+    /** Verified Home identity and current enrolled installation, when the host has those facts. */
+    homeId: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
+    installationId: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),
+  }),
+  z.strictObject({
     kind: z.literal('session'),
     sessionId: PluginUiHostApiSurfaceNonBlankStringV1Schema,
     agentId: z.optional(PluginUiHostApiSurfaceNonBlankStringV1Schema),

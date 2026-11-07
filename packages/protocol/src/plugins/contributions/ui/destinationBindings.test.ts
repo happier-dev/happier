@@ -28,6 +28,14 @@ import type { PluginUiPageHeaderActionV1Input } from './sessionHeaderActions.js'
 import { PluginSurfaceTargetV1Schema } from './surfaceTargets.js';
 
 if (false) {
+  const acceptedMachinePage: PluginUiViewV2Input = {
+    id: 'machine-tools', renderer: 'machine-renderer', container: 'appPage',
+    target: { kind: 'machine', serverIdPath: '/serverId', machineIdPath: '/machineId' },
+  };
+  // @ts-expect-error Services-panel context cannot declare a Machine app page.
+  const rejectedServicesPage: PluginUiViewV2Input = { id: 'service-tools', renderer: 'machine-renderer', container: 'appPage', target: { kind: 'services' } };
+  void [acceptedMachinePage, rejectedServicesPage];
+
   const acceptedHomeWidget: PluginUiViewV2Input = { sizeDeclaration: { sizes: ['small', 'medium', 'wide', 'full', 'tall', 'large'], defaultSize: 'medium' },
     id: 'home', renderer: 'native', container: 'widget', target: { kind: 'app' },
     home: { default: 'shown' },
@@ -137,6 +145,29 @@ describe('plugin UI destination declaration grammar', () => {
 });
 
 describe('plugin UI destination binding normalization', () => {
+  it('admits a public Machine page through the registry without accepting Services-panel masquerades', () => {
+    const declaration = {
+      id: 'machine-tools', renderer: 'machine-renderer', container: 'appPage',
+      target: { kind: 'machine', serverIdPath: '/serverId', machineIdPath: '/machineId' },
+    };
+    expect(PluginUiViewV2Schema.safeParse(declaration).success).toBe(true);
+    const binding = normalizePluginUiDestinationBindingV1({
+      pluginId: 'acme.machine-tools', destinationId: declaration.id,
+      rendererId: declaration.renderer, container: declaration.container, target: declaration.target,
+    });
+    expect(binding).toMatchObject({
+      container: 'appPage', targetKind: 'machine', target: declaration.target,
+      surfaceContextPlacement: 'machineSurface', instancePolicy: 'singleton',
+    });
+    expect(PluginUiDestinationBindingV1Schema.safeParse(binding).success).toBe(true);
+    for (const target of [{ kind: 'services' }, { ...declaration.target, sessionIdPath: '/sessionId' }]) {
+      expect(PluginUiViewV2Schema.safeParse({ ...declaration, target }).success).toBe(false);
+    }
+    expect(PluginUiViewV2Schema.safeParse({ ...declaration, container: 'servicesPanel' }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...declaration, container: 'rightSidebarTab' }).success).toBe(false);
+    expect(PluginUiViewV2Schema.safeParse({ ...declaration, target: { kind: 'services' }, container: 'servicesPanel' }).success).toBe(true);
+  });
+
   it('closes retired generic display vocabulary while retaining static destination badges', () => {
     expect(tokens).not.toHaveProperty('PluginUiThemeRoleV1Schema');
     expect(tokens).not.toHaveProperty('PluginUiBadgeVariantV1Schema');

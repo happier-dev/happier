@@ -48,6 +48,7 @@ const SURFACE_TARGET_KINDS: ReadonlySet<PluginSurfaceTargetKind> = new Set(
     Object.keys({
         session: true,
         project: true,
+        machine: true,
         app: true,
         browser: true,
         services: true,
@@ -101,6 +102,7 @@ function deriveResourceScope(
             return Object.freeze(scope);
         }
         case 'browser':
+        case 'machine':
         case 'app':
             // App + browser surfaces have no derivable session-resource scope from
             // the surface target alone (browser scope is the browser-view, handled

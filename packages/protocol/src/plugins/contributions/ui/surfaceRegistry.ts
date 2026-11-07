@@ -26,6 +26,7 @@ export const PluginUiTargetKindV1Schema = lazyZodSchema(() => z.enum([
   'app',
   'session',
   'project',
+  'machine',
   'browser',
   'services',
 ]));
@@ -308,6 +309,8 @@ function surfaceContextPlacementForDestinationBindingSlot(
       return 'sessionPane';
     case 'project':
       return 'projectSurface';
+    case 'machine':
+      return 'machineSurface';
     case 'app':
       return 'appSurface';
     case 'browser':
@@ -350,6 +353,11 @@ export const PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1 = Object.freeze([
     defineDestinationBindingSlot(
       'appPage',
       'app',
+      ALL_DESTINATION_PLATFORMS,
+    ),
+    defineDestinationBindingSlot(
+      'appPage',
+      'machine',
       ALL_DESTINATION_PLATFORMS,
     ),
     defineDestinationBindingSlot(

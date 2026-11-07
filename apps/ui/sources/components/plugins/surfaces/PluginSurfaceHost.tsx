@@ -3,11 +3,12 @@ import { useProjectAccountWorkspaceRef } from '@/sync/domains/workspaces/project
 import { useProjectContext } from '@/components/projects/useProjectContext';
 import { MountedPluginActionControls } from './MountedPluginActionControls';
 import * as React from 'react';
+import type { Machine } from '@/sync/domains/state/storageTypes';
 import { readCurrentPluginUiRendererProjection, resolveBundledPluginUiRendererArtifact } from '@/sync/domains/plugins/availability/bundledPluginUiRendererArtifact';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import { ActionApprovalPendingNotice } from '@/components/approvals/ActionApprovalPendingNotice';
 import { usePluginSurfaceActionApproval } from './usePluginSurfaceActionApproval';
-import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver } from '@/sync/domains/server/serverProfiles';
+import { areServerProfileIdentifiersEquivalent, captureServerProfileScopeResolver, getServerProfileById, subscribeServerProfiles } from '@/sync/domains/server/serverProfiles';
 import { useFindSurfaceRegistrationHost } from '@/keyboard/KeyboardShortcutProvider';
 import { useWidgetPresentation } from '@happier-dev/plugin-ui';
 import type { PluginUiResourceStore, PluginUiWidgetAreaPresentation } from '@happier-dev/plugin-ui/advanced';
@@ -133,7 +134,7 @@ import {
     type PluginSurfacePresentationState,
 } from '@/sync/domains/surfaces/copy';
 import { getPreferredLanguage, t } from '@/text';
-import { useHomeHasMachines, useMachineDisplayNamesById } from '@/sync/store/hooks';
+import { useHomeHasMachines, useMachineDisplayNamesById, useServerScopedMachine } from '@/sync/store/hooks';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { stableJsonStringify } from '@/utils/json/stableJsonStringify';
 import { resolvePluginDisplayString } from '@/components/plugins/surfaces/resolvePluginDisplayString';
@@ -2793,11 +2794,23 @@ function PluginSurfaceHostMount(props: Readonly<(
     const declaredBrowserTargetUrl = declaredBrowserTarget?.kind === 'externalUrl'
         ? declaredBrowserTarget.url
         : null;
-    // One scope resolution for this mount. An undeclared/unrecognized target kind
-    // reaches the target resolver as `null`, which fails resolution there rather
-    // than being coerced into a target the descriptor never declared.
+    const surfaceTargetKind = surfaceScope.declared ? surfaceScope.targetKind : null;
+    // Addressed record facts are independent of the selected plugin execution origin.
+    // Subscribe only to the installation scalar; presence/daemon changes do not republish context.
+    const addressedInstallationId = useServerScopedMachine(props.serverId,
+        surfaceTargetKind === 'machine' ? props.machineId : null,
+        React.useCallback((machine: Machine | null) => machine && !machine.revokedAt && !machine.replacedByMachineId
+            ? machine.installationId ?? null : null, []));
+    const readAddressedHomeId = React.useCallback(() => surfaceTargetKind === 'machine' && props.serverId
+        ? getServerProfileById(props.serverId)?.serverIdentityId ?? null : null, [surfaceTargetKind, props.serverId]);
+    const addressedHomeId = React.useSyncExternalStore(React.useCallback((listener: () => void) => surfaceTargetKind === 'machine'
+        ? subscribeServerProfiles(listener) : () => {}, [surfaceTargetKind]), readAddressedHomeId, readAddressedHomeId);
     const surfaceTargetResolution = React.useMemo(() => resolvePluginSurfaceTarget({
-        targetKind: surfaceScope.declared ? surfaceScope.targetKind : null,
+        targetKind: surfaceTargetKind,
+        serverId: props.serverId,
+        machineId: props.machineId,
+        homeId: addressedHomeId,
+        installationId: addressedInstallationId,
         sessionId: props.sessionId,
         agentId: props.agentId,
         project: projectContext?.target,
@@ -2806,10 +2819,14 @@ function PluginSurfaceHostMount(props: Readonly<(
         declaredBrowserTarget?.kind,
         declaredBrowserTarget?.targetId,
         declaredBrowserTargetUrl,
+        addressedHomeId,
+        addressedInstallationId,
         props.agentId,
         projectContext?.target,
+        props.serverId,
+        props.machineId,
         props.sessionId,
-        surfaceScope,
+        surfaceTargetKind,
     ]);
     const resolvedSurfaceTarget: PluginSurfaceTargetResolution = targetedMount
         ? Object.freeze({ resolved: true as const, target: targetedMount.physicalTarget })

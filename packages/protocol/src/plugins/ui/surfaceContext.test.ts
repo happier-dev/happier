@@ -10,6 +10,25 @@ import {
 import { PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1 } from '../contributions/ui/surfaceRegistry.js';
 
 describe('plugin UI surface context', () => {
+  it('discloses exact Machine identity through a closed target distinct from Services panels', () => {
+    const target = { kind: 'machine', serverId: 'home-a', machineId: 'machine-a', homeId: 'home-identity-a', installationId: 'installation-a' };
+    expect(PluginUiHostApiSurfaceTargetV1Schema.parse(target)).toEqual(target);
+    expect(PluginUiHostApiSurfaceTargetV1Schema.parse({ kind: 'machine', serverId: 'home-a', machineId: 'machine-a' }))
+      .toEqual({ kind: 'machine', serverId: 'home-a', machineId: 'machine-a' });
+    for (const candidate of [
+      { kind: 'machine' }, { kind: 'machine', serverId: 'home-a' },
+      { kind: 'machine', machineId: 'machine-a' },
+      { ...target, serverId: ' ' }, { ...target, machineId: '' },
+      { ...target, homeId: '' }, { ...target, installationId: ' ' },
+      { ...target, sessionId: 'session-a' }, { ...target, permission: 'manage' },
+    ]) {
+      expect(PluginUiHostApiSurfaceTargetV1Schema.safeParse(candidate).success).toBe(false);
+    }
+    expect(PluginUiHostApiSurfaceTargetV1Schema.safeParse({ kind: 'services' }).success).toBe(true);
+    expect(PluginUiHostApiSurfaceTargetV1Schema.safeParse({ ...target, kind: 'services' }).success).toBe(false);
+    expect(PluginUiSurfacePlacementV1Schema.safeParse('machineSurface').success).toBe(true);
+  });
+
   it('discloses canonical Project identity and accepted context through a closed target', () => {
     const target = { kind: 'project', projectKey: 'logical-project',
       repository: { kind: 'github', deployment: 'https://github.com', repository: 'acme/repo' },
@@ -174,6 +193,7 @@ describe('plugin UI surface context', () => {
       'sessionPane',
       'sessionHeaderAction',
       'projectSurface',
+      'machineSurface',
       'appSurface',
       'browserSurface',
       'rightSidebarSurface',
@@ -185,6 +205,7 @@ describe('plugin UI surface context', () => {
 
     for (const placement of [
       'projectSurface',
+      'machineSurface',
       'appSurface',
       'browserSurface',
       'rightSidebarSurface',
@@ -212,6 +233,7 @@ describe('plugin UI surface context', () => {
     expect(destinationPlacements).toEqual(new Set([
       'sessionPane',
       'projectSurface',
+      'machineSurface',
       'appSurface',
       'browserSurface',
       'rightSidebarSurface',

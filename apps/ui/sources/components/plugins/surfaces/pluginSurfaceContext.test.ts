@@ -20,6 +20,30 @@ const targetedContributions: PluginUiTargetedContributionsV1 = {
 };
 
 describe('createPluginSurfaceContext', () => {
+    it('discloses the exact Machine target and refuses a missing Home or Machine identity', () => {
+        const facts = { targetKind: 'machine' as const, serverId: 'home-a', machineId: 'machine-a',
+            homeId: 'home-identity-a', installationId: 'installation-a' };
+        const resolution = resolvePluginSurfaceTarget(facts);
+        expect(resolution).toEqual({ resolved: true, target: { kind: 'machine', serverId: 'home-a', machineId: 'machine-a',
+            homeId: 'home-identity-a', installationId: 'installation-a' } });
+        expect(resolvePluginSurfaceTarget({ ...facts, serverId: '' })).toEqual({ resolved: false, reason: 'machine_target_identity_unavailable' });
+        expect(resolvePluginSurfaceTarget({ ...facts, machineId: null })).toEqual({ resolved: false, reason: 'machine_target_identity_unavailable' });
+        expect(resolvePluginSurfaceTarget({ ...facts, homeId: null, installationId: null })).toEqual({ resolved: true,
+            target: { kind: 'machine', serverId: facts.serverId, machineId: facts.machineId } });
+        if (!resolution.resolved || resolution.target.kind !== 'machine') throw new Error('Machine identity was not resolved');
+        const fixture = createPluginSurfaceContextFixture();
+        const published = createPluginSurfaceContext({ mount: { kind: 'destination', destination: { pluginId: 'acme.machine', localId: 'tools' }, container: 'appPage' },
+            target: resolution.target, accountEncryptionMode: fixture.accountEncryptionMode,
+            environment: { ...fixture, columnVisible: false }, translations: fixture.translations });
+        expect(PluginUiHostApiSurfaceContextV1Schema.parse(published).target).toEqual(resolution.target);
+        expect(getPluginSurfaceTargetAuthorityKey(resolution.target)).not.toBe(getPluginSurfaceTargetAuthorityKey({ kind: 'machine', serverId: 'home-b', machineId: 'machine-a' }));
+        expect(getPluginSurfaceTargetAuthorityKey(resolution.target)).not.toBe(getPluginSurfaceTargetAuthorityKey({ kind: 'machine', serverId: 'home-a', machineId: 'machine-b' }));
+        expect(getPluginSurfaceTargetAuthorityKey(resolution.target)).not.toBe(getPluginSurfaceTargetAuthorityKey({
+            ...resolution.target, installationId: 'replacement-installation' }));
+        expect(getPluginSurfaceTargetAuthorityKey(resolution.target)).not.toBe(getPluginSurfaceTargetAuthorityKey({
+            ...resolution.target, homeId: 'replacement-home' }));
+        expect(resolvePluginSurfaceTarget({ targetKind: 'services' })).toEqual({ resolved: true, target: { kind: 'services' } });
+    });
     it('publishes the canonical logical Project target through the public context reader', () => {
         const checkout = WorkspaceRefV1Schema.parse({ id: 'checkout-address', projectKey: 'logical-project', serverId: 'home', machineId: 'machine', rootPath: '/repo', createdAtMs: 1,
             futurePrivateFact: 'not disclosed', source: { sourceId: 'source', revision: 1, futurePrivateFact: 'not disclosed' },
