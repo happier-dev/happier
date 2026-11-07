@@ -4112,10 +4112,11 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                             <AgentInputReadOnlyDocumentText source={textSource} mentions={structuredInputMentions} accessibilityLabel={props.inputAccessibilityLabel} clamp={documentPanel}
                                 style={[isConversation ? styles.sessionInputText : styles.newSessionInputText, styles.readOnlyText]} />
                         </View>
-                        {renderedActionControlNodes.length > 0 || secondaryLeadingControlsForWrap.length > 0 || secondaryTrailingControlsForWrap.length > 0 ? (
+                        {renderedActionControlNodes.length > 0 || secondaryLeadingControlsForWrap.length > 0 || secondaryTrailingControlsForWrap.length > 0 || trailingAccessory != null ? (
                             <AgentInputReadOnlyChipRow testID="agent-input-read-only-chips"
                                 engine={renderedActionControlNodes}
-                                chips={[...secondaryLeadingControlsForWrap, ...secondaryTrailingControlsForWrap]} />
+                                chips={[...secondaryLeadingControlsForWrap, ...secondaryTrailingControlsForWrap,
+                                    <React.Fragment key="trailing-accessory">{trailingAccessory}</React.Fragment>]} />
                         ) : null}
                     </GlassSurface>
                 </View>

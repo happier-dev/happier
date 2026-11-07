@@ -3,6 +3,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { createNewSessionPromptStore } from '../hooks/screenModel/newSessionPromptStore';
 import { NewSessionComposerCard } from './NewSessionComposerCard';
+import { NewSessionSimplePanel } from './NewSessionSimplePanel';
+import { ComposerKeyboardScaffold } from '@/components/sessions/keyboardAvoidance';
 import type { NewSessionSimplePanelProps } from './NewSessionSimplePanel';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
 import { useNewSessionWorkflowStart } from '../hooks/useNewSessionWorkflowStart';
@@ -10,7 +12,10 @@ import { getStorage } from '@/sync/domains/state/storageStore';
 import { act } from 'react-test-renderer';
 import { createMachineFixture, flattenTestStyle } from '@/dev/testkit';
 import Color from 'color';
-import { activateStorageAccountScope } from '@/dev/testkit/mocks/storage';
+import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
+import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
+import { publishAppliedActiveServerSnapshot } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
+import { createMountedCurrentUiContextWrapper } from '@/dev/testkit/harness/mountedCurrentUiContext';
 import { GlassRuntimeEnvironmentProvider } from '@/components/ui/glass/glassRuntimeEnvironment';
 import { reportPopoverContentLayout, withPopoverWebGlobals } from '@/dev/testkit/harness/popoverHarness';
 import { OverlayPortalHost, OverlayPortalProvider } from '@/components/ui/popover/OverlayPortal';
@@ -19,14 +24,22 @@ import { SelectableRow } from '@/components/ui/lists/SelectableRow';
 import { NewSessionEmbeddedHostProvider, type NewSessionEmbeddedHost } from '../navigation/newSessionHost';
 
 const platformState = vi.hoisted(() => ({ os: 'web' as 'web' | 'android', width: 1440 }));
-let activeAccountScope: Awaited<ReturnType<typeof activateStorageAccountScope>> | null = null;
+let home: Awaited<ReturnType<typeof serveActionHomes>> | null = null;
+let serverId = '';
+let CurrentContextWrapper: React.ComponentType<React.PropsWithChildren>;
 
 beforeEach(async () => {
-    activeAccountScope = await activateStorageAccountScope({ serverId: 'server-a', accountId: 'account-a' });
+    home = await serveActionHomes({
+        homes: [{ key: 'workflow', serverUrl: 'https://new-workflow.test', accountId: 'account-a' }],
+        route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined,
+    });
+    serverId = home.homes.workflow!.id;
+    publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
+    CurrentContextWrapper = await createMountedCurrentUiContextWrapper();
 });
-afterEach(() => {
-    activeAccountScope?.dispose();
-    activeAccountScope = null;
+afterEach(async () => {
+    await home?.dispose();
+    home = null;
 });
 
 vi.mock('react-native', async () => {
@@ -54,6 +67,11 @@ vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
     return createTextModuleMock({ translate: (key: string) => key });
 });
+// Radix owns the browser DOM boundary; the workflow picker and placement stay real.
+vi.mock('@/utils/web/radixCjs', async () => {
+    const { createRadixCjsModuleMock } = await import('@/dev/testkit/mocks/radixCjs');
+    return createRadixCjsModuleMock();
+});
 
 function panelProps(): NewSessionSimplePanelProps {
     return {
@@ -73,7 +91,9 @@ function panelProps(): NewSessionSimplePanelProps {
 }
 
 const workflowPopoverOptions = {
-    wrapper: ({ children }: React.PropsWithChildren) => <OverlayPortalProvider>{children}<OverlayPortalHost /></OverlayPortalProvider>,
+    wrapper: ({ children }: React.PropsWithChildren) => <CurrentContextWrapper>
+        <OverlayPortalProvider>{children}<OverlayPortalHost /></OverlayPortalProvider>
+    </CurrentContextWrapper>,
     // Supply only the native ref boundary; menu placement and selection remain real.
     createNodeMock: () => ({
         measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(80, 120, 44, 44),
@@ -97,6 +117,25 @@ async function openWorkflowPicker(screen: Awaited<ReturnType<typeof renderScreen
 }
 
 describe('New workflow entry', () => {
+    it.each([1440, 390])('seats the selected workflow on its own ground and retains its removable chip at %s', async width => {
+        const previousWidth = platformState.width;
+        platformState.width = width;
+        try { await withPopoverWebGlobals(async () => {
+            const screen = await renderScreen(<NewSessionSimplePanel {...panelProps()} />, workflowPopoverOptions);
+            try {
+                expect(screen.findByType(ComposerKeyboardScaffold).props.surface).toBe('transparent');
+                await openWorkflowPicker(screen);
+                await screen.pressByTestIdAsync('workflow-choice:builtin:plan-with-a-panel');
+                expect(screen.findByTestId('workflow-run-inputs')).not.toBeNull();
+                expect(screen.findByType(ComposerKeyboardScaffold).props.surface).not.toBe('transparent');
+                expect(screen.findByTestId('new-session-backdrop-dismiss')).toBeNull();
+                expect(screen.findByTestId('new-session-workflow-chip')).not.toBeNull();
+                await screen.pressByTestIdAsync('new-session-workflow-remove');
+                expect(screen.findByType(ComposerKeyboardScaffold).props.surface).toBe('transparent');
+                expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('Keep this brief');
+            } finally { await screen.unmount(); }
+        }); } finally { platformState.width = previousWidth; }
+    });
     it('lets an empty embedded composer hide its status without hiding the next draft or launch status', async () => {
         const props = { ...panelProps(), promptStore: createNewSessionPromptStore(''),
             connectionStatus: { text: 'Machine unavailable', color: 'red', dotColor: 'red' } };
@@ -135,7 +174,7 @@ describe('New workflow entry', () => {
     });
     it('does not observe Machine inventory while no unsettled Workflow project needs a Where label', async () => {
         const store = getStorage(), previous = store.getState();
-        const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: 'server-a' };
+        const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: serverId };
         let renders = 0;
         const hook = await renderHook(() => {
             renders++;
@@ -144,13 +183,13 @@ describe('New workflow entry', () => {
         try {
             const settled = renders;
             await act(async () => store.getState().applyMachines([createMachineFixture({ id: 'unrelated-machine' })], false,
-                { sourceServerId: 'server-a', sourceAccountId: 'account-a' }));
+                { sourceServerId: serverId, sourceAccountId: 'account-a' }));
             expect(renders).toBe(settled);
             expect(hook.getCurrent().composer).toBeNull();
             // The current picker choice is not the retained request: without an unsettled request,
             // even this Machine has no Workflow Where presentation to refresh.
             await act(async () => store.getState().applyMachines([createMachineFixture({ id: 'machine-1' })], false,
-                { sourceServerId: 'server-a', sourceAccountId: 'account-a' }));
+                { sourceServerId: serverId, sourceAccountId: 'account-a' }));
             expect(renders).toBe(settled);
         } finally {
             await hook.unmount();
@@ -190,8 +229,9 @@ describe('New workflow entry', () => {
             } }] }],
         } }} layout="screen" attachments={false} />);
         expect(screen.getTextContent()).toContain('DeepSeek Flash renamed');
+        // The settled failure may name the id; a projection still pending stays on the Agent.
         await screen.update(<NewSessionComposerCard panelProps={{ ...props, modelPickerPresentation: {
-            ...props.modelPickerPresentation, providerGroups: [], providerProjectionAuthoritative: false,
+            ...props.modelPickerPresentation, providerGroups: [], providerProjectionAuthoritative: false, providerProjectionFailed: true,
         } }} layout="screen" attachments={false} />);
         expect(screen.getTextContent()).toContain(ref.modelId);
         expect(screen.getTextContent()).not.toContain('Loading model');
@@ -228,13 +268,13 @@ describe('New workflow entry', () => {
     it('retains the selected workflow and its inputs when the screen panel recomposes across phone width', async () => {
         const { NewSessionSimplePanel } = await import('./NewSessionSimplePanel');
         const previous = getStorage().getState().profileScope;
-        const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: 'server-a' };
+        const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: serverId };
         platformState.width = 1440;
         const restorePopoverGlobals = withPopoverWebGlobals();
         let cleanupScreen: Awaited<ReturnType<typeof renderScreen>> | undefined;
         try {
             await act(async () => {
-                getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
+                getStorage().setState({ profileScope: { serverId, accountId: 'account-a' } });
             });
             const screen = await renderScreen(<NewSessionSimplePanel {...props} />, workflowPopoverOptions);
             cleanupScreen = screen;
@@ -318,17 +358,11 @@ describe('New workflow entry', () => {
         });
     });
     it('lets an agent open, arm, change and remove the mounted Workflow through current-context commands', async () => {
-        const { serveActionHomes } = await import('@/dev/testkit/harness/actionHomesHttpHarness');
-        const { publishAppliedActiveServerSnapshot } = await import('@/sync/runtime/orchestration/appliedActiveServerRuntime');
-        const home = await serveActionHomes({ homes: [{ key: 'a', serverUrl: 'https://new-workflow-command.test', accountId: 'account-a' }],
-            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined });
-        const server = home.homes.a!;
-        publishAppliedActiveServerSnapshot({ serverId: server.id, serverUrl: server.serverUrl, generation: 0 });
         const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
         const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
         const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
         const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
-        try { await withPopoverWebGlobals(async () => {
+        await withPopoverWebGlobals(async () => {
             const screen = await renderMountedCurrentUiContext(<OverlayPortalProvider>
                 <NewSessionComposerCard panelProps={panelProps()} layout="screen" attachments={false} /><OverlayPortalHost />
             </OverlayPortalProvider>, { createNodeMock: workflowPopoverOptions.createNodeMock });
@@ -354,23 +388,33 @@ describe('New workflow entry', () => {
                 expect(screen.findByTestId('new-session-workflow-remove')).toBeNull();
                 expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('Keep this brief');
             } finally { await screen.unmount(); }
-        }); } finally { await home.dispose(); }
+        });
     });
     it('retains the floating material when a selected workflow replaces the phone composer', async () => {
         const store = getStorage();
         const previous = store.getState();
+        await home!.dispose();
+        home = null;
         platformState.os = 'android';
+        // The native host reads SecureStore rather than the browser's credential storage.
+        const nativeHome = await serveActionHomes({
+            homes: [{ key: 'workflow', serverUrl: 'https://new-workflow.test', accountId: 'account-a', currentAccount: true }],
+            route: request => request.path === '/v1/kv/bulk' ? Response.json({ values: [] }) : undefined,
+        });
         try {
+            const NativeContextWrapper = await createMountedCurrentUiContextWrapper();
+            const nativeServerId = nativeHome.homes.workflow!.id;
+            publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
             await act(async () => {
-                store.setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' }, settings: { ...previous.settings, glassBlurEnabled: true, glassSurfaceMaterials: null } });
+                store.setState({ settings: { ...previous.settings, glassBlurEnabled: true, glassSurfaceMaterials: null } });
             });
-            const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: 'server-a' };
+            const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: nativeServerId };
             const hook = await renderHook(() => useNewSessionWorkflowStart({ panelProps: props, prompt: 'Keep this brief', surfaceGroup: 'floating' }));
             const content = hook.getCurrent().chip.collapsedContentPopover?.renderContent;
             if (typeof content !== 'function') throw new Error('Workflow picker content is missing');
             const pickerNode = content({ requestClose: () => {}, maxHeight: 420 });
             if (!React.isValidElement(pickerNode)) throw new Error('Workflow picker is missing');
-            const picker = await renderScreen(pickerNode);
+            const picker = await renderScreen(pickerNode, { wrapper: NativeContextWrapper });
             await picker.pressByTestIdAsync('workflow-choice:builtin:plan-with-a-panel');
             const composer = hook.getCurrent().composer;
             if (composer === null) throw new Error('Selected workflow composer is missing');
@@ -380,19 +424,20 @@ describe('New workflow entry', () => {
             expect(Color(flattenTestStyle(screen.findByTestId('agent-input-material-surface')?.props.style).backgroundColor as string).alpha()).toBe(0.02);
             expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('Keep this brief');
         } finally {
+            await nativeHome.dispose();
             platformState.os = 'web';
             await act(async () => { store.setState({ settings: previous.settings, profileScope: previous.profileScope }); });
         }
     });
     it('keeps typed text as the first text input, then withdraws that private draft on Account change', async () => {
-        getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-a' } });
-        const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: 'server-a' };
+        getStorage().setState({ profileScope: { serverId, accountId: 'account-a' } });
+        const props = { ...panelProps(), selectedMachineId: 'machine-1', targetServerId: serverId };
         const hook = await renderHook(() => useNewSessionWorkflowStart({ panelProps: props, prompt: 'Keep this brief' }));
         const content = hook.getCurrent().chip.collapsedContentPopover?.renderContent;
         if (typeof content !== 'function') throw new Error('Workflow picker content is missing');
         const pickerNode = content({ requestClose: () => {}, maxHeight: 420 });
         if (!React.isValidElement(pickerNode)) throw new Error('Workflow picker is missing');
-        const picker = await renderScreen(pickerNode);
+        const picker = await renderScreen(pickerNode, { wrapper: CurrentContextWrapper });
         await picker.pressByTestIdAsync('workflow-choice:builtin:plan-with-a-panel');
         const composer = hook.getCurrent().composer;
         if (composer === null) throw new Error('Selected workflow composer is missing');
@@ -400,7 +445,7 @@ describe('New workflow entry', () => {
         expect(screen.findByTestId('new-session-composer-input')?.props.value).toBe('Keep this brief');
         // No Home feature snapshot has advertised Workflow support in this fixture.
         expect(screen.findByTestId('workflow-run-inputs-run')?.props.disabled).toBe(true);
-        await act(async () => { getStorage().setState({ profileScope: { serverId: 'server-a', accountId: 'account-b' } }); });
+        await act(async () => { await home!.switchAccount('workflow', 'account-b'); });
         expect(hook.getCurrent().composer).toBeNull();
     });
 });

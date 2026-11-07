@@ -265,7 +265,9 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
 
     // This screen is presented as a transparent modal, so it owns its own ground, its own entrance
     // and its own dismissal (web included, owner 2026-10-18).
-    const isFloatingComposer = useNewSessionFloatingComposer();
+    const prefersFloatingComposer = useNewSessionFloatingComposer();
+    const [workflowSelected, setWorkflowSelected] = React.useState(false);
+    const isFloatingComposer = prefersFloatingComposer && !workflowSelected;
     const router = useRouter();
     const navigation = useNavigation();
     const entrance = useFloatingComposerEntrance(isFloatingComposer);
@@ -458,6 +460,7 @@ export function NewSessionSimplePanel(props: NewSessionSimplePanelProps): React.
                             panelProps={cardPanelProps}
                             layout="screen"
                             reservedHeight={composerReservedHeight}
+                            onWorkflowSelectionChange={setWorkflowSelected}
                         />
                         </View>
                     </Animated.View>

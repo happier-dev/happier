@@ -18,7 +18,7 @@ import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAcco
  * Run now anchors to its button; other entry points use the canonical modal.
  * Both presentations share the same composer and preserve the caller's draft.
  *
- * Closing (outside press, Escape, the modal's close) cancels only the unsubmitted command. The caller's draft, values and
+ * Closing (outside press or Escape) cancels only the unsubmitted command. The caller's draft, values and
  * pending Run id are untouched.
  */
 export type WorkflowRunComposerModalProps = React.ComponentProps<typeof WorkflowRunComposer>;
@@ -29,10 +29,10 @@ function WorkflowRunComposerModal(
         accountLifetime?: ServerAccountScopeLifetime | null;
     }>,
 ): React.ReactElement {
-    // The modal's own close control dismisses it (`onRequestClose`); the composer has no Cancel row.
+    // The modal owns dismissal (`onRequestClose`); the composer has no Cancel row.
     const { keyboardContext, accountLifetime, ...composerProps } = props;
     return <WorkflowAccountLifetimeProvider value={accountLifetime}><KeyboardShortcutContextBridge snapshot={keyboardContext}>
-        {/* The sheet's form keeps the sheet header's edge at every width (lab flWork `libP`). */}
+        {/* The identity lead and form share the card's edge at every width. */}
         <WorkflowRunComposer {...composerProps} autoFocusComposer={composerProps.autoFocusComposer ?? true}
             contentPaddingHorizontal={composerProps.contentPaddingHorizontal ?? COMPOSER_CONTENT_HORIZONTAL_INSET} />
     </KeyboardShortcutContextBridge></WorkflowAccountLifetimeProvider>;
@@ -74,11 +74,11 @@ export function useWorkflowRunComposerModal(params: Readonly<{
         props: modalProps,
         title: params.props?.workflowName ?? t('workflows.start.workflow'),
         testID: params.testID ?? 'workflow-run-inputs-modal',
-        chrome: createAnchoredSheetChrome({
+        chrome: { ...createAnchoredSheetChrome({
             title: params.props?.workflowName ?? t('workflows.start.workflow'),
             testID: params.testID ?? 'workflow-run-inputs-modal',
             ...(params.anchorRef?.current ? { anchor: { kind: 'view', ref: params.anchorRef } as const } : {}),
-        }),
+        }), header: 'none' },
         focusReturnRef: params.anchorRef,
         ...(params.props === null ? {} : { onRequestClose: cancelHostedIntent }),
     });

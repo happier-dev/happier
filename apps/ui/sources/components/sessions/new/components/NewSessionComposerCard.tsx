@@ -52,6 +52,8 @@ export function NewSessionComposerCard(input: Readonly<{
     controlPreset?: 'full' | 'compact';
     /** Creation forms reuse the canonical controls beside their own explicit Create action. */
     inputPresentation?: React.ComponentProps<typeof AgentInput>['inputPresentation'];
+    /** The screen host seats a selected workflow in its working surface. */
+    onWorkflowSelectionChange?: (selected: boolean) => void;
 }>): React.ReactElement {
     const props = input.panelProps;
     const embedded = input.layout === 'embedded';
@@ -125,6 +127,10 @@ export function NewSessionComposerCard(input: Readonly<{
     const connectionStatus = emptyStatus !== undefined && composerEmpty && !props.isCreating
         ? emptyStatus ?? undefined : props.connectionStatus;
     const workflowStart = useNewSessionWorkflowStart({ panelProps: props, prompt: props.promptStore, surfaceGroup: input.surfaceGroup });
+    const workflowSelected = workflowStart.composer !== null;
+    React.useLayoutEffect(() => {
+        input.onWorkflowSelectionChange?.(workflowSelected);
+    }, [input.onWorkflowSelectionChange, workflowSelected]);
     const { height: windowHeight } = useWindowDimensions();
     const availablePanelHeight = useComposerAvailablePanelHeight();
     const initialAvailablePanelHeight = React.useMemo(() => {
