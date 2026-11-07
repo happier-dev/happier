@@ -34,6 +34,9 @@ import { HomeAuthorityMismatchFailureDetailsV1Schema } from '../../ssh/homeAutho
 import { OpenProjectRefusalV1Schema } from '../../projects/openProjectV1.js';
 import { DeploymentDomainFailureDetailsV1Schema } from '../../deployments/deploymentDomainFailureV1.js';
 import { DeploymentFailureRecoveryV1Schema } from '../../deployments/deploymentFailureRecoveryV1.js';
+import { DeploymentBackupFailureResultV1Schema } from '../../deployments/deploymentBackupActionsV1.js';
+import { DeploymentRestoreFailureResultV1Schema } from '../../deployments/deploymentBackupRestoreV1.js';
+import { DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1, DEPLOYMENT_TEARDOWN_ACTION_ID_V1, isDeploymentBackupActionIdV1 } from '../../deployments/deploymentActionIdsV1.js';
 export { ActionOperationIdentifierV1Schema, ACTION_OPERATION_REQUEST_ID_MAX_LENGTH_V1 } from './identifierV1.js';
 export { ACTION_OPERATION_RPC_METHODS_V1, ACTION_OPERATION_RPC_METHODS_V2 } from './methodsV1.js';
 
@@ -90,6 +93,16 @@ export const ActionOperationReentryPolicyV1Schema = lazyZodSchema(() => z.custom
   (value) => typeof value === 'function',
   { message: 'Expected an Action operation re-entry policy' },
 ));
+
+/** The original admitted teardown may continue its unproved cleanup in place.
+ * Imported history without the admitted receipt correspondence cannot resume. */
+export function canResumeDeploymentTeardownOperationV1(snapshot: ActionOperationSnapshotV1): boolean {
+  return snapshot.actionId === DEPLOYMENT_TEARDOWN_ACTION_ID_V1 && snapshot.state === 'failed'
+    && snapshot.domainRef?.kind === 'deployment';
+}
+export const deploymentTeardownOperationReentryV1: ActionOperationReentryPolicyV1 = snapshot =>
+  canResumeDeploymentTeardownOperationV1(snapshot) ? 'reinvoke'
+    : snapshot.state === 'succeeded' || snapshot.state === 'failed' || snapshot.state === 'cancelled' ? 'replay' : 'refuse';
 
 export const ActionOperationStateV1Schema = lazyZodSchema(() => z.enum([
   'accepted', 'running', 'succeeded', 'failed', 'cancelled',
@@ -170,6 +183,18 @@ export const ManagedAgentIsolationFailureDetailsV1Schema = lazyZodSchema(() => z
   policy: MachineAgentIsolationPolicyV1Schema,
 })]));
 export type ManagedAgentIsolationFailureDetailsV1 = Readonly<z.infer<typeof ManagedAgentIsolationFailureDetailsV1Schema>>;
+/** Exact enrolled target needed by the existing Agent setup recovery. */
+export const ManagedAgentStartFailureDetailsV1Schema = lazyZodSchema(() => z.strictObject({
+  kind: z.literal('managedAgentStart'),
+  machineId: z.string().check(z.minLength(1)),
+  agentId: z.string().check(z.minLength(1)),
+}));
+export const ManagedMachineFailureDetailsV1Schema = lazyZodSchema(() => z.union([
+  ManagedControllerRequestFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema,
+  ManagedBootstrapFailureDetailsV1Schema, ManagedAgentIsolationFailureDetailsV1Schema,
+  ManagedAgentStartFailureDetailsV1Schema,
+]));
+export type ManagedMachineFailureDetailsV1 = Readonly<z.infer<typeof ManagedMachineFailureDetailsV1Schema>>;
 /** Pre-native Setup availability facts only; no Account, installation or native content. */
 export const MachineSetupTargetUnavailableFailureV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('target_unavailable'),
@@ -189,8 +214,8 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   effectAttempted: z.optional(z.boolean()),
   failureCause: z.optional(ActionFailureCauseV1Schema),
   details: z.optional(z.union([ProjectSetupConsentFailureDetailsV1Schema, ProjectScriptEffectChangedFailureDetailsV1Schema,
-    ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedControllerRequestFailureDetailsV1Schema,
-    MachineSetupFailureDetailsV1Schema, ManagedNativeFailureDetailsV1Schema, ManagedBootstrapFailureDetailsV1Schema, ManagedAgentIsolationFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,
+    ProjectWorkerNoAcceptanceFailureDetailsV1Schema, ApprovalStaleFailureDetailsSchema, ManagedMachineFailureDetailsV1Schema,
+    MachineSetupFailureDetailsV1Schema, HomeAuthorityMismatchFailureDetailsV1Schema,
     DeploymentTemplateInstantiationPartialV1Schema, OpenProjectRefusalV1Schema, DeploymentDomainFailureDetailsV1Schema, DeploymentFailureRecoveryV1Schema,
     DeploymentReceiptSettlementFailureDetailsV1Schema,
     DeploymentExecutionFailureDetailsV1Schema,
@@ -212,6 +237,8 @@ export const ActionOperationFailureV1Schema = lazyZodSchema(() => z.strictObject
   : failure.details.kind === 'managedControllerRequest'
   ? !failure.details.code || failure.details.code === failure.errorCode
   : failure.details.kind === 'managedNative'
+  ? true
+  : failure.details.kind === 'managedAgentStart'
   ? true
   : failure.details.kind === 'managedBootstrap'
   ? /^bootstrap_effect_[a-z_]+$/u.test(failure.errorCode)
@@ -468,8 +495,16 @@ export const ActionOperationSnapshotV1Schema = lazyZodSchema(() => z.strictObjec
       ? SessionSpawnNewActionResultV1Schema.safeParse(snapshot.result) : null;
     const spawnRefusal = spawn?.success && spawn.data.type === 'error'
       && snapshot.error?.errorCode === spawn.data.code;
+    const backupSettlement = snapshot.state === 'failed' || snapshot.state === 'cancelled';
+    const backup = backupSettlement && isDeploymentBackupActionIdV1(snapshot.actionId)
+      ? DeploymentBackupFailureResultV1Schema.safeParse(snapshot.result) : null;
+    const backupFailure = backup?.success
+      && backup.data.code === (snapshot.state === 'cancelled' ? 'cancelled' : snapshot.error?.errorCode);
+    const restore = backupSettlement && snapshot.actionId === DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1
+      ? DeploymentRestoreFailureResultV1Schema.safeParse(snapshot.result) : null;
     if ((!rebootRefusal?.success || rebootRefusal.data.kind === 'accepted')
-      && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial') && !projectOpenReceipt && !spawnRefusal) {
+      && (!adoptionContinuation?.success || adoptionContinuation.data.kind !== 'partial') && !projectOpenReceipt && !spawnRefusal
+      && !backupFailure && !restore?.success) {
       context.addIssue({ code: 'custom', path: ['result'], message: 'Results must match their operation settlement or typed continuation.' });
     }
   }
@@ -613,6 +648,7 @@ export function canAdvanceActionOperationSnapshotV1(current: ActionOperationSnap
   if (incoming.operationId !== current.operationId || incoming.actionId !== current.actionId
     || incoming.scope.accountId !== current.scope.accountId || incoming.scope.machineId !== current.scope.machineId
     || incoming.scope.sessionId !== current.scope.sessionId || incoming.revision <= current.revision) return false;
-  if (['succeeded', 'failed', 'cancelled'].includes(current.state) && incoming.state !== current.state) return false;
+  if (['succeeded', 'failed', 'cancelled'].includes(current.state) && incoming.state !== current.state
+    && !(canResumeDeploymentTeardownOperationV1(current) && incoming.state !== 'accepted')) return false;
   return !(current.state === 'running' && incoming.state === 'accepted');
 }

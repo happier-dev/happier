@@ -2,7 +2,12 @@ import { z } from 'zod/mini';
 import { lazyDefinition, lazyZodSchema } from '../lazyZodSchema.js';
 import { DeploymentIdentifierV1Schema as id, DeploymentRevisionV1Schema as revision } from './deploymentIdentifiersV1.js';
 import { DeploymentTextV1Schema as text } from './storedAppInputV1.js';
+import { DeploymentBackupDestinationBindingIdentityV1Schema, environmentSecretBindingIdentityV1 } from './storedAppInputV1.js';
+import { BackupDestinationContributionV1Schema } from '../plugins/contributions/backupDestinations.js';
+import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
 import type { DeploymentBackupActionIdV1 } from './deploymentActionIdsV1.js';
+import { DeploymentBackupHistoryResultV1Schema } from './deploymentBackupHistoryV1.js';
+export * from './deploymentBackupHistoryV1.js';
 
 /** Shared backup evidence and policy: deployment-protocol consumes this same closed wire owner. */
 export const DeploymentBackupSourceV1Schema = lazyZodSchema(() => z.discriminatedUnion('kind', [
@@ -27,6 +32,14 @@ export const DeploymentBackupSnapshotV1Schema = lazyZodSchema(() => z.strictObje
   time: z.iso.datetime({ offset: true }), paths: z.array(text), tags: z.array(text),
 }));
 export type DeploymentBackupSnapshotV1 = z.infer<typeof DeploymentBackupSnapshotV1Schema>;
+/** Closed nonsecret facts retained when native maintenance fails or is cancelled. */
+export const DeploymentBackupFailureResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ step: z.string(), code: z.string() }),
+  z.strictObject({ step: z.string(), code: z.string(),
+    removedSnapshotIds: z.array(DeploymentBackupSnapshotV1Schema.shape.snapshotId),
+    uncertainSnapshotIds: z.array(DeploymentBackupSnapshotV1Schema.shape.snapshotId) }),
+]));
+export type DeploymentBackupFailureResultV1 = z.infer<typeof DeploymentBackupFailureResultV1Schema>;
 export const DeploymentBackupManifestV1Schema = lazyZodSchema(() => z.strictObject({
   schemaVersion: z.literal(1), environmentId: id, sourceId: text, kind: z.enum(['dump', 'volume']),
   configRevision: revision, repositoryId: nativeDigest, snapshot: DeploymentBackupSnapshotV1Schema,
@@ -35,6 +48,32 @@ export const DeploymentBackupManifestV1Schema = lazyZodSchema(() => z.strictObje
   { message: 'A dump manifest requires the successful producer checksum.' })));
 export type DeploymentBackupManifestV1 = z.infer<typeof DeploymentBackupManifestV1Schema>;
 
+/** Nonsecret configured destination; credentials remain with the native host. */
+export const DeploymentBackupConfigurationV1Schema = lazyZodSchema(() => z.strictObject({
+  configRevision: revision, destinationRef: BackupDestinationContributionV1Schema.shape.actions.shape.open,
+  occurrenceId: text,
+  config: z.pipe(z.pipe(StrictJsonValueSchema,
+    z.transform((value: z.output<typeof StrictJsonValueSchema>): unknown => value)), z.record(z.string(), StrictJsonValueSchema)),
+  credentialBindings: z.array(DeploymentBackupDestinationBindingIdentityV1Schema).check(z.refine(bindings =>
+    new Set(bindings.map(environmentSecretBindingIdentityV1)).size === bindings.length,
+  { message: 'Backup binding identities must be unique.' })),
+  sources: z.array(DeploymentBackupSourceV1Schema).check(z.minLength(1), z.refine(sources =>
+    new Set(sources.map(source => source.sourceId)).size === sources.length,
+  { message: 'Backup source identities must be unique.' })),
+  ownership: z.strictObject({ environmentId: id, prefix: z.string() }), retention: DeploymentBackupRetentionV1Schema,
+}));
+export type DeploymentBackupConfigurationV1 = z.infer<typeof DeploymentBackupConfigurationV1Schema>;
+/** Original source/configuration/native target, retained without credential values. */
+export const DeploymentPreMigrationBackupV1Schema = lazyZodSchema(() => z.strictObject({
+  source: DeploymentBackupManifestV1Schema, sourceFormat: z.literal('postgresCustom'),
+  target: z.strictObject({ service: text, adapter: z.literal('postgres-v1'), database: text }),
+  configuration: DeploymentBackupConfigurationV1Schema,
+  repository: z.strictObject({ repository: text, s3: z.optional(z.strictObject({
+    region: z.optional(text), addressing: z.optional(z.enum(['auto', 'dns', 'path'])),
+  })) }),
+}));
+export type DeploymentPreMigrationBackupV1 = z.infer<typeof DeploymentPreMigrationBackupV1Schema>;
+
 /** Exact configured capture target; the installed host resolves configuration and credentials. */
 export const DeploymentBackupTargetV1Schema = lazyZodSchema(() => z.strictObject({
   serverId: id, environmentId: id, machineId: id, installationId: id, targetLinkId: id, deploymentId: id,
@@ -42,6 +81,8 @@ export const DeploymentBackupTargetV1Schema = lazyZodSchema(() => z.strictObject
 export type DeploymentBackupTargetV1 = z.infer<typeof DeploymentBackupTargetV1Schema>;
 const target = () => ({ ...DeploymentBackupTargetV1Schema.shape, expectedRevision: revision, configRevision: revision });
 export const DeploymentBackupInventoryInputV1Schema = lazyZodSchema(() => z.strictObject(target()));
+export const DeploymentBackupTestInputV1Schema = DeploymentBackupInventoryInputV1Schema;
+export const DeploymentBackupHistoryInputV1Schema = DeploymentBackupInventoryInputV1Schema;
 export const DeploymentBackupRunInputV1Schema = DeploymentBackupInventoryInputV1Schema;
 export const DeploymentBackupVerifyInputV1Schema = lazyZodSchema(() => z.strictObject({
   ...target(), backupOperationId: id, snapshotId: nativeDigest, level: z.enum(['manifestReadBack', 'repositoryCheck']),
@@ -51,9 +92,26 @@ export const DeploymentBackupPruneInputV1Schema = lazyZodSchema(() => z.strictOb
   ...target(), retention: DeploymentBackupRetentionV1Schema,
 }));
 export type DeploymentBackupInventoryInputV1 = z.infer<typeof DeploymentBackupInventoryInputV1Schema>;
+export type DeploymentBackupTestInputV1 = z.infer<typeof DeploymentBackupTestInputV1Schema>;
+export type DeploymentBackupHistoryInputV1 = z.infer<typeof DeploymentBackupHistoryInputV1Schema>;
 export type DeploymentBackupRunInputV1 = z.infer<typeof DeploymentBackupRunInputV1Schema>;
 export type DeploymentBackupVerifyInputV1 = z.infer<typeof DeploymentBackupVerifyInputV1Schema>;
 export type DeploymentBackupPruneInputV1 = z.infer<typeof DeploymentBackupPruneInputV1Schema>;
+
+/** Restic 0.19.1 scripting exit codes; native text and credentials never cross this boundary. */
+export const DeploymentBackupTestResultV1Schema = lazyZodSchema(() => z.union([
+  z.strictObject({ kind: z.literal('reachable'), repositoryId: nativeDigest }),
+  z.strictObject({ kind: z.literal('failed'), step: z.literal('repository'),
+    reason: z.enum(['repository_missing', 'native_failed']), nativeExitCode: z.number().check(z.int()),
+    remedy: z.literal('review_destination') }),
+  z.strictObject({ kind: z.literal('failed'), step: z.literal('repository'),
+    reason: z.literal('repository_locked'), nativeExitCode: z.literal(11), remedy: z.literal('retry_after_operation') }),
+  z.strictObject({ kind: z.literal('failed'), step: z.literal('repository'),
+    reason: z.literal('repository_password_incorrect'), nativeExitCode: z.literal(12), remedy: z.literal('review_credentials') }),
+  z.strictObject({ kind: z.literal('failed'), step: z.literal('repository'),
+    reason: z.enum(['cancelled', 'outcome_unknown']), remedy: z.literal('retry') }),
+]));
+export type DeploymentBackupTestResultV1 = z.infer<typeof DeploymentBackupTestResultV1Schema>;
 
 export const DeploymentBackupInventoryResultV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('inventory'), environmentId: id, configRevision: revision, repositoryId: nativeDigest,
@@ -68,6 +126,7 @@ export const DeploymentBackupInventoryResultV1Schema = lazyZodSchema(() => z.str
 }));
 export const DeploymentBackupRunResultV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('verified'), operationId: id, manifests: z.array(DeploymentBackupManifestV1Schema).check(z.minLength(1)),
+  restoreCaptures: z.optional(z.array(DeploymentPreMigrationBackupV1Schema)),
 }));
 export const DeploymentBackupVerifyResultV1Schema = lazyZodSchema(() => z.strictObject({
   kind: z.literal('verified'), operationId: id, backupOperationId: id, environmentId: id, configRevision: revision,
@@ -85,12 +144,16 @@ export type DeploymentBackupVerifyResultV1 = z.infer<typeof DeploymentBackupVeri
 export type DeploymentBackupPruneResultV1 = z.infer<typeof DeploymentBackupPruneResultV1Schema>;
 
 export const DeploymentBackupActionInputSchemasV1 = lazyDefinition(() => ({
+  'deployments.backups.history': DeploymentBackupHistoryInputV1Schema,
+  'deployments.backups.test': DeploymentBackupTestInputV1Schema,
   'deployments.backups.inventory': DeploymentBackupInventoryInputV1Schema,
   'deployments.backups.run': DeploymentBackupRunInputV1Schema,
   'deployments.backups.verify': DeploymentBackupVerifyInputV1Schema,
   'deployments.backups.prune': DeploymentBackupPruneInputV1Schema,
 }));
 export const DeploymentBackupActionResultSchemasV1 = lazyDefinition(() => ({
+  'deployments.backups.history': DeploymentBackupHistoryResultV1Schema,
+  'deployments.backups.test': DeploymentBackupTestResultV1Schema,
   'deployments.backups.inventory': DeploymentBackupInventoryResultV1Schema,
   'deployments.backups.run': DeploymentBackupRunResultV1Schema,
   'deployments.backups.verify': DeploymentBackupVerifyResultV1Schema,

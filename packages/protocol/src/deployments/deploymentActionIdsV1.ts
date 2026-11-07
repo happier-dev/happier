@@ -6,8 +6,18 @@ export const RETIRED_DEPLOYMENT_PUBLISH_ACTION_ID_V1 = 'deployments.publish' as 
 /** The reviewed observer setup consumes only its Link's admitted read scope. */
 export const PLATFORM_FAILURE_SETUP_ROLE = 'platform-failure.setup';
 
+export const DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1 = 'deployments.backups.test';
+export const DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1 = 'deployments.backups.history';
+export const DEPLOYMENT_BACKUP_INVENTORY_ACTION_ID_V1 = 'deployments.backups.inventory';
+export const DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1 = 'deployments.backups.run';
+export const DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1 = 'deployments.backups.verify';
+export const DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1 = 'deployments.backups.prune';
+export const DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1 = 'deployments.backups.restore';
 export const DEPLOYMENT_BACKUP_ACTION_IDS_V1 = [
-  'deployments.backups.inventory', 'deployments.backups.run', 'deployments.backups.verify', 'deployments.backups.prune',
+  DEPLOYMENT_BACKUP_TEST_ACTION_ID_V1,
+  DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1,
+  DEPLOYMENT_BACKUP_INVENTORY_ACTION_ID_V1, DEPLOYMENT_BACKUP_RUN_ACTION_ID_V1,
+  DEPLOYMENT_BACKUP_VERIFY_ACTION_ID_V1, DEPLOYMENT_BACKUP_PRUNE_ACTION_ID_V1,
 ] as const;
 export type DeploymentBackupActionIdV1 = typeof DEPLOYMENT_BACKUP_ACTION_IDS_V1[number];
 export function isDeploymentBackupActionIdV1(value: string): value is DeploymentBackupActionIdV1 {
@@ -15,10 +25,15 @@ export function isDeploymentBackupActionIdV1(value: string): value is Deployment
 }
 /** Inventory follows Environment read authority; executing verification retains deploy admission. */
 export function isDeploymentBackupInventoryActionIdV1(value: string): value is 'deployments.backups.inventory' {
-  return value === 'deployments.backups.inventory';
+  return value === DEPLOYMENT_BACKUP_INVENTORY_ACTION_ID_V1;
+}
+/** Repository inventory and recorded history follow the existing Environment read authority. */
+export function isDeploymentBackupReadActionIdV1(value: string): value is 'deployments.backups.inventory' | 'deployments.backups.history' {
+  return isDeploymentBackupInventoryActionIdV1(value) || value === DEPLOYMENT_BACKUP_HISTORY_ACTION_ID_V1;
 }
 
 export const DEPLOYMENT_DEPLOY_ACTION_ID_V1 = 'deployments.deploy';
+export const DEPLOYMENT_TEARDOWN_ACTION_ID_V1 = 'deployments.teardown';
 export const DEPLOYMENT_ENVIRONMENT_CREATE_ACTION_ID_V1 = 'deployments.environments.create';
 export const DEPLOYMENT_ENVIRONMENT_UPDATE_ACTION_ID_V1 = 'deployments.environments.update';
 export const DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1 = 'deployments.bindings.set';
@@ -31,9 +46,9 @@ export const DEPLOYMENT_ACTION_IDS_V1 = [
   'deployments.environments.controller.set',
   'deployments.targets.unlink', 'deployments.environments.delete',
   'deployments.promote',
-  'deployments.restart', 'deployments.backups.restore',
+  'deployments.restart', DEPLOYMENT_BACKUP_RESTORE_ACTION_ID_V1,
   ...DEPLOYMENT_BACKUP_ACTION_IDS_V1,
-  'deployments.teardown',
+  DEPLOYMENT_TEARDOWN_ACTION_ID_V1,
   'deployments.cancel',
   'deployments.environments.get', 'deployments.receipts.get', DEPLOYMENT_BINDINGS_SET_ACTION_ID_V1,
   'deployments.environments.list', 'deployments.receipts.list', DEPLOYMENT_RECEIPT_OBSERVE_ACTION_ID_V1,
@@ -129,4 +144,14 @@ export function isDeploymentChildRootActionIdV1(value: string, admission: Deploy
   value is 'deployments.deploy' | 'deployments.rollback' | 'deployments.promote' | 'deployments.teardown' | 'deployments.templates.instantiate' | 'deployments.environments.create' | DeploymentDomainChildActionIdV1;
 export function isDeploymentChildRootActionIdV1(value: string, admission?: DeploymentPreparationAdmissionV1): boolean {
   return deploymentChildEffectActionIdForRootV1(value, admission) !== undefined;
+}
+
+export function isDeploymentReadActionIdV1(value: string): value is
+  'deployments.health.current' | 'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read' {
+  return value === 'deployments.health.current' || isDeploymentNativeReadActionIdV1(value);
+}
+
+export function isDeploymentNativeReadActionIdV1(value: string): value is
+  'deployments.health.read' | 'deployments.drift.read' | 'deployments.logs.read' {
+  return value === 'deployments.health.read' || value === 'deployments.drift.read' || value === 'deployments.logs.read';
 }
