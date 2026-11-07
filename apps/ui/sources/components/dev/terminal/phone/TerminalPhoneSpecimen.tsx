@@ -1,24 +1,22 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { SessionTerminalMemberV1, SessionTerminalTabV1, SessionTerminalWorkspaceV1 } from '@happier-dev/protocol';
+import type { SessionTerminalMemberV1, SessionTerminalTabV1, SessionTerminalWorkspaceV1 } from '@happier-dev/protocol/terminal/workspace';
 
 import { SessionTerminalPageView } from '@/components/sessions/panes/terminal/SessionTerminalPage';
 import {
-    describeSessionTerminal,
-    describeSessionTerminalTab,
+    describeSessionTerminalTabs,
     type SessionTerminalDescribeContext,
     type SessionTerminalDescriptor,
 } from '@/components/sessions/terminal/presentation/describeSessionTerminal';
 import { reduceSessionTerminalWorkspace } from '@/components/sessions/terminal/sessionTerminalWorkspace';
 import type { TerminalSurfaceSummary } from '@/components/sessions/terminal/terminalSurfaceSummary';
-import { ChatHeaderView } from '@/components/sessions/transcript/ChatHeaderView';
+import { SessionPaneHeader } from '@/components/sessions/shell/view/SessionPaneHeader';
 import { EmbeddedTerminalPane } from '@/components/terminal/embedded/EmbeddedTerminalPane';
 import type { EmbeddedTerminalRendererHandle } from '@/components/terminal/embedded/embeddedTerminalRendererHandle';
 import type { EmbeddedTerminalPaneController, EmbeddedTerminalPaneStatus } from '@/components/terminal/embedded/types';
 import { randomUUID } from '@/platform/randomUUID';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
+import { writeTerminalArrowPadPlacement } from '@/components/terminal/embedded/keys/terminalArrowPadState';
 
 /**
  * Dev-only: the phone Terminal page (terminal lab P1, P1c, P1m, A1p, B2p, STp) drawn through the real
@@ -67,7 +65,7 @@ const leaf = (id: string) => ({ kind: 'leaf' as const, terminalId: id });
 const MEMBERS: Readonly<Record<string, SessionTerminalMemberV1>> = {
     claude: { id: 'claude', target: { kind: 'session_attach' } },
     zsh: { id: 'zsh', target: { kind: 'workspace_shell' } },
-    vite: { id: 'vite', target: { kind: 'workspace_shell', initialCommand: 'yarn workspace @happier-dev/ui dev' } },
+    vite: { id: 'vite', target: { kind: 'workspace_shell', launch: { kind: 'package_script', runTargetId: 'vite:dev' } } },
 };
 const single = (id: string): SessionTerminalTabV1 => ({ id, terminals: [MEMBERS[id]!], focusedTerminalId: id, root: leaf(id) });
 
@@ -86,9 +84,9 @@ function buildWorkspace(variant: Variant): SessionTerminalWorkspaceV1 {
 }
 
 const SUMMARIES: Readonly<Record<string, TerminalSurfaceSummary>> = {
-    claude: { title: null, bell: null, status: 'connected', error: null, url: null },
-    zsh: { title: 'zsh', bell: null, status: 'connected', error: null, url: null },
-    vite: { title: 'vite', bell: null, status: 'connected', error: null, url: 'http://localhost:5173/' },
+    claude: { title: null, bell: null, status: 'connected', error: null, failure: null, url: null },
+    zsh: { title: 'zsh', bell: null, status: 'connected', error: null, failure: null, url: null },
+    vite: { title: 'vite', bell: null, status: 'connected', error: null, failure: null, url: 'http://localhost:5173/' },
 };
 
 function buildContext(variant: Variant): SessionTerminalDescribeContext {
@@ -149,17 +147,15 @@ const styles = StyleSheet.create((theme) => ({
 export function TerminalPhoneSpecimen(props: Readonly<{ variant: string | null }>) {
     const variant: Variant = VARIANTS.find((item) => item === props.variant) ?? 'P1';
     const [workspace, setWorkspace] = React.useState(() => buildWorkspace(variant));
-    const placement = useLocalSetting('terminalArrowPadPlacement');
     React.useEffect(() => {
         setWorkspace(buildWorkspace(variant));
         // The pad's resting place is device-local; the specimen stages each variant's.
-        getStorage().getState().applyLocalSettings({ terminalArrowPadPlacement: { portrait: PLACEMENTS[variant], landscape: placement?.landscape ?? null } }, { source: 'ui' });
-        // eslint-disable-next-line react-hooks/exhaustive-deps -- stage once per variant
+        writeTerminalArrowPadPlacement('portrait', PLACEMENTS[variant]);
     }, [variant]);
     const context = React.useMemo(() => buildContext(variant), [variant]);
-    const tabs = React.useMemo(() => workspace.tabs.map((tab) => describeSessionTerminalTab(tab, tab.terminals.map((member) => (
-        describeSessionTerminal(member, SUMMARIES[member.id] ?? null, context)
-    )))), [context, workspace.tabs]);
+    const tabs = React.useMemo(() => describeSessionTerminalTabs(workspace.tabs,
+        workspace.tabs.flatMap((tab) => tab.terminals.map((member) => SUMMARIES[member.id] ?? null)), context),
+    [context, workspace.tabs]);
     const onAction = React.useCallback((actionId: string, input: Readonly<Record<string, unknown>>) => {
         setWorkspace((current) => {
             if (actionId === 'session.terminals.focus') return reduceSessionTerminalWorkspace(current, { type: 'focus', terminalId: String(input.terminalId) });
@@ -180,7 +176,7 @@ export function TerminalPhoneSpecimen(props: Readonly<{ variant: string | null }
     ), [offline]);
     return (
         <View style={styles.root}>
-            <ChatHeaderView title="Fix settings modal remount" subtitle="happier · MacBook Pro" onBackPress={NOOP} />
+            <SessionPaneHeader title="Fix settings modal remount" subtitle="happier · MacBook Pro" onBackPress={NOOP} />
             <SessionTerminalPageView
                 key={variant}
                 workspace={workspace}

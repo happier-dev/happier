@@ -7,9 +7,8 @@ import { hapticsLight } from '@/components/ui/theme/haptics';
 import { shadowLevelStyle } from '@/shadowElevation';
 import { Icon, ICON_SIZE, type IconName } from '@/components/ui/icons/Icon';
 import { useReducedMotionPreference } from '@/hooks/ui/useReducedMotionPreference';
-import { useLocalSetting } from '@/sync/domains/state/storage';
-import { getStorage } from '@/sync/domains/state/storageStore';
 import { t } from '@/text';
+import { useTerminalArrowPadPlacement, writeTerminalArrowPadPlacement } from './terminalArrowPadState';
 
 import {
     ARROW_PAD_METRICS as M,
@@ -60,11 +59,10 @@ export const TerminalArrowPad = React.memo(function TerminalArrowPad(props: Read
     const reducedMotion = useReducedMotionPreference();
     const window = useWindowDimensions();
     const orientation = window.width > window.height ? 'landscape' : 'portrait';
-    const stored = useLocalSetting('terminalArrowPadPlacement');
-    const placement = stored?.[orientation] ?? null;
+    const placement = useTerminalArrowPadPlacement(orientation);
     const savePlacement = React.useCallback((next: ArrowPadPlacement) => {
-        getStorage().getState().applyLocalSettings({ terminalArrowPadPlacement: { portrait: stored?.portrait ?? null, landscape: stored?.landscape ?? null, [orientation]: next } }, { source: 'ui' });
-    }, [orientation, stored]);
+        writeTerminalArrowPadPlacement(orientation, next);
+    }, [orientation]);
 
     const translateX = React.useRef(new Animated.Value(0)).current;
     const translateY = React.useRef(new Animated.Value(0)).current;

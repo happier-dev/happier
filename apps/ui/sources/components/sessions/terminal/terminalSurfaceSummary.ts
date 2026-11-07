@@ -1,6 +1,20 @@
 import * as React from 'react';
 
-import type { EmbeddedTerminalPaneStatus } from '@/components/terminal/embedded/types';
+import type { EmbeddedTerminalPaneController, EmbeddedTerminalPaneStatus } from '@/components/terminal/embedded/types';
+
+export type TerminalSurfaceFailure = 'machine-unreachable' | 'connection-lost' | 'failed' | null;
+
+const MACHINE_UNREACHABLE_ERROR = 'terminal_machine_unreachable';
+
+/** One classifier for the retained frame, strip, list and Jump surfaces. */
+export function projectTerminalSurfaceFailure(
+    controller: Pick<EmbeddedTerminalPaneController, 'status' | 'error' | 'connectionLost' | 'readOnly'>,
+): TerminalSurfaceFailure {
+    if (controller.status !== 'error') return null;
+    if (controller.error === MACHINE_UNREACHABLE_ERROR) return 'machine-unreachable';
+    if (controller.connectionLost || controller.readOnly) return 'connection-lost';
+    return 'failed';
+}
 
 /**
  * What a mounted terminal view last knew about its process, by terminal key: its own title (OSC),
@@ -16,6 +30,8 @@ export type TerminalSurfaceSummary = Readonly<{
     status: EmbeddedTerminalPaneStatus;
     /** The controller's error code while `status` is `error` (an unreachable machine is not a failed terminal). */
     error: string | null;
+    /** Canonical presentation classification shared by every terminal surface. */
+    failure: TerminalSurfaceFailure;
     url: string | null;
 }>;
 
@@ -29,7 +45,8 @@ function notify(): void {
 }
 
 function sameSummary(a: TerminalSurfaceSummary | undefined, b: TerminalSurfaceSummary): boolean {
-    return a !== undefined && a.title === b.title && a.bell === b.bell && a.status === b.status && a.error === b.error && a.url === b.url;
+    return a !== undefined && a.title === b.title && a.bell === b.bell && a.status === b.status
+        && a.error === b.error && a.failure === b.failure && a.url === b.url;
 }
 
 /** Called by the mounted leaf when its controller's facts change; notifies only on a real change. */
