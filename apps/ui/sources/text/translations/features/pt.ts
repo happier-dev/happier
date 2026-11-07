@@ -15275,6 +15275,7 @@ const widgetAddTranslations = { pt: {
         addWidgets: 'Adicionar widgets',
         addToHome: 'Adicionar ao Início',
         addToBoard: 'Adicionar ao quadro',
+        homeAskDraft: 'Coloque no meu Início algo que mostre ',
         addToCompanion: 'Adicionar ao acompanhante',
         editInputs: 'Editar entradas…',
         width: 'Largura',

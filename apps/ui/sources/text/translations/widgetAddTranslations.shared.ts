@@ -96,6 +96,8 @@ export type WidgetAddTranslation = Readonly<{
     saveFailed: string;
     homeTitle: string;
     homeHint: string;
+    /** The sentence Ask the agent drafts into a new Session from Home (open-ended, the person finishes it). */
+    homeAskDraft: string;
     addWidgets: string;
     addToHome: string;
     addToBoard: string;
@@ -233,6 +235,7 @@ export const widgetAddTranslationsEnglish = { en: {
         saveFailed: 'Couldn’t save. Try again.',
         homeTitle: 'Add to Home',
         homeHint: 'Only you see your Home · on every device',
+        homeAskDraft: 'Put something on my Home that shows ',
         addWidgets: 'Add widgets',
         addToHome: 'Add to Home',
         addToBoard: 'Add to the board',

@@ -15295,6 +15295,7 @@ const widgetAddTranslations = { pl: {
         addWidgets: 'Dodaj widżety',
         addToHome: 'Dodaj do strony głównej',
         addToBoard: 'Dodaj do tablicy',
+        homeAskDraft: 'Dodaj na moją stronę główną coś, co pokazuje ',
         addToCompanion: 'Dodaj do towarzysza',
         editInputs: 'Edytuj dane wejściowe…',
         width: 'Szerokość',

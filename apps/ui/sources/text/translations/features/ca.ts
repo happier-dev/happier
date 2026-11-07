@@ -15297,6 +15297,7 @@ const widgetAddTranslations = { ca: {
         addWidgets: 'Afegeix ginys',
         addToHome: 'Afegeix a l’inici',
         addToBoard: 'Afegeix al tauler',
+        homeAskDraft: 'Posa al meu inici alguna cosa que mostri ',
         addToCompanion: 'Afegeix a l’acompanyant',
         editInputs: 'Edita les entrades…',
         width: 'Amplada',

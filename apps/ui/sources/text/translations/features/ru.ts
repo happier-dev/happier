@@ -15307,6 +15307,7 @@ const widgetAddTranslations = { ru: {
         addWidgets: 'Добавить виджеты',
         addToHome: 'Добавить на главную',
         addToBoard: 'Добавить на доску',
+        homeAskDraft: 'Добавь на мою главную то, что показывает ',
         addToCompanion: 'Добавить в компаньон',
         editInputs: 'Изменить входные данные…',
         width: 'Ширина',

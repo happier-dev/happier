@@ -15254,6 +15254,7 @@ const widgetAddTranslations = { 'zh-Hant': {
         addWidgets: '新增小工具',
         addToHome: '新增到首頁',
         addToBoard: '新增到看板',
+        homeAskDraft: '在我的首頁放一個顯示',
         addToCompanion: '新增到夥伴',
         editInputs: '編輯輸入…',
         width: '寬度',

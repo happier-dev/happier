@@ -15276,6 +15276,7 @@ const widgetAddTranslations = { it: {
         addWidgets: 'Aggiungi widget',
         addToHome: 'Aggiungi alla Home',
         addToBoard: 'Aggiungi alla bacheca',
+        homeAskDraft: 'Metti nella mia Home qualcosa che mostri ',
         addToCompanion: 'Aggiungi al compagno',
         editInputs: 'Modifica input…',
         width: 'Larghezza',

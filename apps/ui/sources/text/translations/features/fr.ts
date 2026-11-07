@@ -15322,6 +15322,7 @@ const widgetAddTranslations = { fr: {
         addWidgets: 'Ajouter des widgets',
         addToHome: 'Ajouter à l’accueil',
         addToBoard: 'Ajouter au tableau',
+        homeAskDraft: 'Mets sur mon accueil quelque chose qui montre ',
         addToCompanion: 'Ajouter au compagnon',
         editInputs: 'Modifier les entrées…',
         width: 'Largeur',

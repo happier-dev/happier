@@ -15259,6 +15259,7 @@ const widgetAddTranslations = { ja: {
         addWidgets: 'ウィジェットを追加',
         addToHome: 'ホームに追加',
         addToBoard: 'ボードに追加',
+        homeAskDraft: 'ホームに次を表示するものを置いて：',
         addToCompanion: 'コンパニオンに追加',
         editInputs: '入力を編集…',
         width: '幅',

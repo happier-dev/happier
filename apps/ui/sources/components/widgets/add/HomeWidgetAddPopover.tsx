@@ -3,11 +3,17 @@ import type { View } from 'react-native';
 import type { WidgetInstanceV1, WidgetSizeV1, WidgetSurfaceRefV1 } from '@happier-dev/protocol/widgets';
 
 import { useHomeHubLayout } from '@/components/hub/layout/useHomeHubLayout';
+import { useNewSessionEntryRouter } from '@/components/sessions/new/navigation/newSessionEntry';
+import { buildNewSessionLaunchRouteParams } from '@/components/sessions/new/navigation/newSessionRouteParams';
+import { seedAndOpenNewSession } from '@/components/sessions/new/newSessionSeedComposer';
+import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
 import { useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { t } from '@/text';
+import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
+import { fireAndForget } from '@/utils/system/fireAndForget';
 
 import { WidgetAddSurface } from './WidgetAddSurface';
-import type { WidgetAddSection } from './widgetAddModel';
+import type { WidgetAddAsk, WidgetAddSection } from './widgetAddModel';
 import {
     buildAccountWidgetAddSections,
     useAccountWidgetAddSections,
@@ -27,6 +33,21 @@ const HOME_LABELS: AccountWidgetSurfaceLabels = {
  */
 export function buildHomeWidgetAddSections(input: Omit<AccountWidgetAddInput, 'labels'>): readonly WidgetAddSection[] {
     return buildAccountWidgetAddSections({ ...input, labels: HOME_LABELS });
+}
+
+/**
+ * Ask the agent for a Home widget (lab `widget-add` wsplit A4): Home has no Session of its own, so the
+ * request is drafted into a new Session through the one New Session seed owner and nothing is sent.
+ * The agent then adds it with the same `widgets.item.add` this surface uses.
+ */
+export function buildHomeWidgetAddAsk(input: Omit<Parameters<typeof seedAndOpenNewSession>[0], 'seed'>): WidgetAddAsk {
+    const draft = t('widgetAdd.homeAskDraft');
+    return {
+        title: t('widgetAdd.askTitle'),
+        draft,
+        note: t('widgetAdd.askNote'),
+        onPick: () => { seedAndOpenNewSession({ ...input, seed: { prompt: draft } }); },
+    };
 }
 
 /**
@@ -63,6 +84,15 @@ function OpenHomeWidgetAddPopover(props: React.ComponentProps<typeof HomeWidgetA
     const { addInstance: addToHome } = layout;
     const addInstance = React.useCallback((instance: WidgetInstanceV1, size?: WidgetSizeV1) => addToHome(instance, size, groupId), [addToHome, groupId]);
     const { sections, pendingSections } = useAccountWidgetAddSections({ scope, instances, addInstance, labels: HOME_LABELS, testID: props.testID });
+    const router = useNewSessionEntryRouter();
+    const ask = React.useMemo(() => {
+        const lifetime = account ? captureActiveServerAccountScopeLifetime() : null;
+        return lifetime ? buildHomeWidgetAddAsk({ scope: lifetime.scope, isCurrent: lifetime.isCurrent,
+            navigateToNewSession: ({ draftId }) => {
+                const result = runGuardedNavigation(() => router.push({ pathname: '/new', params: buildNewSessionLaunchRouteParams({ draftId }) } as never));
+                if (result !== true) fireAndForget(result, { tag: 'HomeWidgetAddPopover.ask' });
+            } }) : null;
+    }, [account, router]);
 
     return (
         <WidgetAddSurface
@@ -76,6 +106,7 @@ function OpenHomeWidgetAddPopover(props: React.ComponentProps<typeof HomeWidgetA
             addLabel={t('widgetAdd.addToHome')}
             sections={sections}
             pendingSections={pendingSections}
+            {...(ask ? { ask } : {})}
             {...(scope ? { serverId: scope.serverId } : {})}
             testID={props.testID}
         />

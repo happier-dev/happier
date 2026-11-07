@@ -15254,6 +15254,7 @@ const widgetAddTranslations = { 'zh-Hans': {
         addWidgets: '添加小组件',
         addToHome: '添加到首页',
         addToBoard: '添加到看板',
+        homeAskDraft: '在我的首页放一个显示',
         addToCompanion: '添加到伴侣',
         editInputs: '编辑输入…',
         width: '宽度',
