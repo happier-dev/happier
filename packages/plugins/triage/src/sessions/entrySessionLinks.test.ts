@@ -11,7 +11,7 @@ import { testkitEntryRef, testkitLocator } from '../corpus/testkit/observations.
 import { linkEntryToSession, unlinkEntryFromSession } from './entrySessionLinks.js';
 import { reconcileMergedSuccessor } from './reconcileMergedSuccessor.js';
 import { readTriageSessionLinksPageV1 } from './readEntrySessionLinks.js';
-import { TESTKIT_LINK_DISPLAY } from './testkit/entrySessionTestkit.test-support.js';
+import { TESTKIT_LINK_DISPLAY, createTestkitSourceSessionRelations } from './testkit/entrySessionTestkit.test-support.js';
 
 const NOW_MS = 1_760_000_900_000;
 
@@ -23,8 +23,8 @@ describe('current relationships after merge retargeting', () => {
         const successor = testkitEntryRef({ entryId: '42' });
         for (const entryRef of [a, b]) await linkEntryToSession({ collections, entryRef,
             display: TESTKIT_LINK_DISPLAY, sessionId: 'session-a', nowMs: NOW_MS });
-        await reconcileMergedSuccessor({ collections, entryRef: b, successorEntryRef: successor });
-        await reconcileMergedSuccessor({ collections, entryRef: a, successorEntryRef: successor });
+        await reconcileMergedSuccessor({ collections, sourceRelations: createTestkitSourceSessionRelations(collections), entryRef: b, successorEntryRef: successor });
+        await reconcileMergedSuccessor({ collections, sourceRelations: createTestkitSourceSessionRelations(collections), entryRef: a, successorEntryRef: successor });
         const page = await readTriageSessionLinksPageV1(collections.sessionLinks, { relation: { entryRef: successor } });
         expect(page.links).toHaveLength(1);
         expect(page.links[0]?.identityEntryRef).toEqual(b);
@@ -38,7 +38,7 @@ describe('current relationships after merge retargeting', () => {
         });
         const first = await link(original);
         expect(first.status).toBe('linked');
-        await reconcileMergedSuccessor({ collections, entryRef: original, successorEntryRef: successor });
+        await reconcileMergedSuccessor({ collections, sourceRelations: createTestkitSourceSessionRelations(collections), entryRef: original, successorEntryRef: successor });
         if (operation === 'link') {
             expect(await link(successor)).toEqual(first);
         } else {

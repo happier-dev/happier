@@ -68,12 +68,21 @@ export async function readTriageSessionLinksForEntriesV1(
 ): Promise<readonly CorpusSessionLinkRowV1[]> {
   if (entries.length === 0) return [];
   const tags = await Promise.all(entries.map(entry => deriveSessionLinkEntryTag(collection, entry, options)));
-  const prefixes = [...new Set(tags)].map(tag => [tag]);
+  return readTriageSessionLinksForPrefixesV1(collection, CORPUS_SESSION_LINKS_INDEX_ID.byEntry,
+    [...new Set(tags)].map(tag => [tag]), options);
+}
+
+async function readTriageSessionLinksForPrefixesV1(
+  collection: TriageSessionLinksReaderV1,
+  index: typeof CORPUS_SESSION_LINKS_INDEX_ID.byEntry | typeof CORPUS_SESSION_LINKS_INDEX_ID.bySession,
+  prefixes: string[][],
+  options?: PluginCancellationOptions,
+): Promise<readonly CorpusSessionLinkRowV1[]> {
   const links: CorpusSessionLinkRowV1[] = [];
   const seen = new Set<string>();
   let cursor: string | undefined;
   do {
-    const page = await collection.query({ index: CORPUS_SESSION_LINKS_INDEX_ID.byEntry, prefixes,
+    const page = await collection.query({ index, prefixes,
       order: 'asc', limit: MAX_TRIAGE_LINKED_SESSIONS_PAGE_SIZE_V1,
       ...(cursor === undefined ? {} : { cursor }),
     }, options);
@@ -83,4 +92,15 @@ export async function readTriageSessionLinksForEntriesV1(
     cursor = page.nextCursor;
   } while (cursor !== undefined);
   return links;
+}
+
+/** A Board's Session set uses the same Collection index in one set query. */
+export async function readTriageSessionLinksForSessionsV1(
+  collection: TriageSessionLinksReaderV1,
+  sessionIds: readonly string[],
+  options?: PluginCancellationOptions,
+): Promise<readonly CorpusSessionLinkRowV1[]> {
+  if (sessionIds.length === 0) return [];
+  return readTriageSessionLinksForPrefixesV1(collection, CORPUS_SESSION_LINKS_INDEX_ID.bySession,
+    [...new Set(sessionIds)].map(id => [id]), options);
 }

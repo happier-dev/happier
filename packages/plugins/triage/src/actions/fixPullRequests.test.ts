@@ -26,7 +26,6 @@ import { deriveConfiguredSourceInstanceTag } from '../corpus/identity/tags.js';
 import { CORPUS_SESSION_LINKS_COLLECTION_ID, CORPUS_SOURCE_INSTANCES_COLLECTION_ID, CORPUS_SOURCE_INSTANCE_LIFECYCLE, CORPUS_USER_MARKS_INDEX_ID } from '../corpus/collections/ids.js';
 import { linkEntryToSession } from '../sessions/entrySessionLinks.js';
 import { createTriageSourceSessionRelations } from '../sessions/sourceSessionRelations.js';
-import { createTriageRetainedSessionRelationsUpgrade } from '../sessions/retainedSessionRelationsUpgrade.js';
 import { createTriageReadFixPullRequestsActionHandler, createTriageSetFixPullRequestActionHandler, readTriageFixPullRequests, setTriageFixPullRequest } from './fixPullRequests.js';
 import { createTriageReobserveEntryActionHandler } from './reobserveEntry.js';
 import { TriageReobserveEntryInputV1Schema, TRIAGE_REOBSERVE_ENTRY_ACTION_LOCAL_ID_V1 } from './reobserveEntryProtocol.js';
@@ -84,8 +83,7 @@ describe('fix-PR public Action read', () => {
             nowMs: 1, display: { locator: fixture.detailInput.observation.locator, scopeLabel: 'Unrelated retained PR' } });
         const requests: unknown[] = [];
         // Targeted source dispatch and Account Collections are the real external boundaries.
-        const context = { surface: 'agent', signal: new AbortController().signal,
-            sessionRelationsUpgrade: createTriageRetainedSessionRelationsUpgrade(), services: {
+        const context = { surface: 'agent', signal: new AbortController().signal, services: {
             storage: { account: { collection: (definition: PluginAccountCollectionDefinition) => (
                 definition.id === CORPUS_SOURCE_INSTANCES_COLLECTION_ID ? collections.sourceInstances
                     : definition.id === CORPUS_SESSION_LINKS_COLLECTION_ID ? collections.sessionLinks : collections.userMarks

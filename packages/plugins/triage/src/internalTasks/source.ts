@@ -20,7 +20,7 @@ export type TaskList = Extract<PluginActionResultById['tasks.internal.list'], { 
 type TaskRead = Extract<PluginActionResultById['tasks.internal.read'], { status: 'applied' | 'refused' }>;
 type Task = TaskList['todos'][number];
 type TaskFields = PluginActionInputById['tasks.internal.edit']['fields'];
-type TaskReadContext = Pick<TriageDataActionContext, 'services' | 'signal'>;
+type TaskReadContext = Pick<TriageDataActionContext, 'signal'> & Readonly<{ services: Pick<TriageDataActionContext['services'], 'actions'> }>;
 const UNAVAILABLE = { class: 'transient', code: 'accountDataUnavailable' } as const;
 const INVALID_ADDRESS = { class: 'unsupportedContract', code: 'invalidTaskAddress' } as const;
 
@@ -194,9 +194,10 @@ export type InternalTaskBatchResultV1 = Readonly<{
 }>;
 
 /** One operation's authorized inventory serves every selected task and its links. */
-export async function getInternalTasks(inputs: readonly TriageGetInputV1[], context: TaskReadContext): Promise<readonly InternalTaskBatchResultV1[]> {
+export async function getInternalTasks(inputs: readonly TriageGetInputV1[], context: TaskReadContext,
+  admittedList?: TaskList | null): Promise<readonly InternalTaskBatchResultV1[]> {
   if (inputs.length === 0) return [];
-  const list = await readTasks(context);
+  const list = admittedList === undefined ? await readTasks(context) : admittedList;
   const byId = new Map(list?.todos.map(task => [taskKey(task.id, ownerOf(task, list)), task]));
   const unavailable = new Map(list?.unavailableTasks?.map(task => [taskKey(task.taskId, task.ownerAccountId), task]));
   const selected = inputs.map(input => list === null ? undefined
@@ -298,10 +299,11 @@ export async function linkInternalTaskSession(input: TriageSourceLinkSessionInpu
   return !isPluginActionApprovalRequestCreated(result) && (result.status === 'linked' || result.status === 'unlinked') ? { status: result.status } : { status: 'failed' };
 }
 
-export async function readInternalTaskSessionLinks(input: TriageSourceReadSessionLinksInputV1, context: TriageDataActionContext): Promise<TriageSourceReadSessionLinksResultV1> {
+export async function readInternalTaskSessionLinks(input: TriageSourceReadSessionLinksInputV1, context: TaskReadContext,
+  admittedList?: TaskList | null): Promise<TriageSourceReadSessionLinksResultV1> {
   if (!isInternalTaskConfiguredInstanceV1(input.instance) || (input.localRef !== undefined && !admitsRef(input.localRef))) return { kind: 'failed', failure: INVALID_ADDRESS };
   let list: Pick<TaskList, 'scope' | 'todos' | 'unavailableTasks'> | null;
-  if (input.localRef === undefined) list = await readTasks(context);
+  if (input.localRef === undefined) list = admittedList === undefined ? await readTasks(context) : admittedList;
   else {
     const read = await readTask(input.localRef, context);
     if (read?.status === 'refused') return { kind: 'failed', failure: { class: 'permission', code: read.reason } };

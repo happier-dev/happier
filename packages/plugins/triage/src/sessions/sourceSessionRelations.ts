@@ -20,9 +20,10 @@ import { createTriageConfigureSourceOfferV1 } from '../corpus/configuration/sour
 import { entryReferenceComponents, renderSourceQualifiedId, sameTriageEntryReference } from '../corpus/identity/components.js';
 import { TRIAGE_SOURCES_CONTRIBUTION_POINT_REF_V1 } from '../definition.js';
 import { linkEntryToSession, unlinkEntryFromSession, type TriageEntrySessionLinkDisplayV1 } from './entrySessionLinks.js';
-import { readTriageSessionLinksPageV1, readTriageSessionLinksForEntriesV1 } from './readEntrySessionLinks.js';
-import { INTERNAL_TASK_SOURCE_RECORD_V1 } from '../internalTasks/configuration.js';
+import { readTriageSessionLinksPageV1, readTriageSessionLinksForEntriesV1, readTriageSessionLinksForSessionsV1 } from './readEntrySessionLinks.js';
+import { INTERNAL_TASK_SOURCE_RECORD_V1, isInternalTaskConfiguredInstanceV1 } from '../internalTasks/configuration.js';
 import { isInternalTaskReferenceV1 } from '../internalTasks/identity.js';
+import { readInternalTaskSessionLinks, type TaskList } from '../internalTasks/source.js';
 
 export type TriageSourceSessionLinkV1 = Readonly<{
     entryRef: TriageEntryRefV1; sessionId: string; linkedAtMs: number; displayPath: string;
@@ -46,7 +47,7 @@ function sourceRelationKinds(source: TriageAdmittedSourceV1): readonly string[] 
     return source.descriptor.sessionRelations !== undefined || source.operations?.linkSession !== undefined || source.operations?.readSessionLinks !== undefined
         ? source.descriptor.sessionRelations?.kindIds ?? source.descriptor.kinds.map((kind) => kind.id) : [];
 }
-type RelationSelection = Readonly<{ entryRef?: TriageEntryRefV1; sourceInstanceId?: string; sessionId?: string; kindId?: string }>;
+type RelationSelection = Readonly<{ entryRef?: TriageEntryRefV1; sourceInstanceId?: string; sessionId?: string; sessionIds?: readonly string[]; kindId?: string }>;
 type RelationLaneIdentity = Pick<TriageSourceSessionLinksLaneV1, 'source' | 'sourceInstanceId' | 'displayLabel'>;
 type RelationScope =
     | Readonly<{ kind: 'ready'; row: CorpusSourceInstanceRowV1; source: TriageAdmittedSourceV1; lane: RelationLaneIdentity;
@@ -54,7 +55,7 @@ type RelationScope =
     | Readonly<{ kind: 'diagnostic'; lane: RelationLaneIdentity; health: TriageSourceSessionLinksLaneV1['health'] }>;
 
 function hasUnscopedSessionDemand(input: RelationSelection) {
-    return input.sessionId !== undefined && input.entryRef === undefined && input.sourceInstanceId === undefined;
+    return (input.sessionId !== undefined || input.sessionIds !== undefined) && input.entryRef === undefined && input.sourceInstanceId === undefined;
 }
 
 function hasNoSessionSourceScopes(input: RelationSelection, scopes: readonly RelationScope[], sources: ReadonlyMap<string, TriageAdmittedSourceV1>) {
@@ -82,12 +83,13 @@ function corpusKindsFor(input: RelationSelection, scopes: readonly RelationScope
 /** One kind-aware relation decision for starts, Actions and all linked readers.
  * Only a definitively non-owned kind reaches the corpus relationship owner. */
 export function createTriageSourceSessionRelations(
-    context: Pick<TriageDataActionContext, 'signal' | 'sessionRelationsUpgrade' | 'invocationId'> & Readonly<{
+    context: Pick<TriageDataActionContext, 'signal' | 'invocationId'> & Readonly<{
         services: Pick<TriageDataActionContext['services'], 'actions' | 'targetedContributions'>;
     }>,
     collections: Pick<CorpusCollectionsV1, 'sourceInstances' | 'sessionLinks'>,
     /** An exact row already resolved by the configured-source owner for this entry. */
     selected?: Readonly<{ entryRef: TriageEntryRefV1; record: CorpusRowV1<CorpusSourceInstanceRowV1> | null }>,
+    readTaskList?: () => Promise<TaskList | null>,
 ) {
     const options = { signal: context.signal };
     async function current() {
@@ -198,8 +200,6 @@ export function createTriageSourceSessionRelations(
         async write(input: TriageSessionRelationWriteV1): Promise<Readonly<{ status: 'linked' | 'unlinked' | 'conflict' }>
             | Readonly<{ status: 'failed'; failure: PluginError }>> {
             try {
-                // Built-in native records have no historical PR relationship to migrate.
-                if (!isBuiltinSelection(input)) await context.sessionRelationsUpgrade?.ensure(context, collections);
                 const { sources, configured } = await readView(input);
                 const source = sources.get(renderSourceQualifiedId(input.entryRef.source));
                 const owner = await ownership(input.entryRef);
@@ -241,23 +241,16 @@ export function createTriageSourceSessionRelations(
                 return failedRelationWrite('sessionLinksWriteFailed');
             }
         },
-        async read(input: Readonly<{ entryRef?: TriageEntryRefV1; sourceInstanceId?: string; sessionId?: string; kindId?: string;
+        async read(input: Readonly<{ entryRef?: TriageEntryRefV1; sourceInstanceId?: string; sessionId?: string; sessionIds?: readonly string[]; kindId?: string;
             paged?: boolean; cursor?: string;
             /** Detail preparation requires an authoritative page and preserves the original transport refusal. */
             readFailure?: 'throw' }>, corpusRead?: () => Promise<readonly CorpusSessionLinkRowV1[]>): Promise<TriageReadSourceSessionLinksResultV1> {
             const { sources, configured } = await readView(input);
+            const sessionIds = input.sessionIds === undefined ? undefined : new Set(input.sessionIds);
             const links: TriageSourceSessionLinkV1[] = [];
             const lanes: TriageSourceSessionLinksLaneV1[] = [];
             const corpusLanes: TriageSourceSessionLinksLaneV1[] = [];
             const scopes = await readScopes(input);
-            // The exact selected alert's corpus-owned relations do not depend
-            // on migrating unrelated retained PR links. Aggregate reads retain
-            // their census; selected source-owned PR reads still upgrade first.
-            if (!isBuiltinSelection(input) && (selected === undefined || input.entryRef === undefined
-                || scopes.some(scope => scope.kind === 'ready' && scope.roleKinds.some(kindId =>
-                    scope.source.descriptor.kinds.some(kind => kind.id === kindId && kind.workflowSubject === 'pullRequest'))))) {
-                await context.sessionRelationsUpgrade?.ensure(context, collections);
-            }
             const corpusKindsBySource = corpusKindsFor(input, scopes, sources);
             const noSourceScopes = hasNoSessionSourceScopes(input, scopes, sources);
             const instanceRevisions = new Map(configured.records.map((record) => [record.value.configured.instance.sourceInstanceId, record.revision]));
@@ -301,11 +294,14 @@ export function createTriageSourceSessionRelations(
                 }
                 try {
                     const entry = input.entryRef;
-                    const parsed = TriageSourceReadSessionLinksResultV1Schema.safeParse(await context.services.actions.executeAdmittedTargetedOperation(operation, {
+                    const sourceInput = {
                         v: 1, instance: row.configured,
                         ...(entry === undefined ? {} : { localRef: { kindId: entry.kindId, collisionScope: entry.collisionScope, entryId: entry.entryId } }),
                         ...(input.sessionId === undefined ? {} : { sessionId: input.sessionId }),
-                    }, options));
+                    } as const;
+                    const parsed = TriageSourceReadSessionLinksResultV1Schema.safeParse(readTaskList !== undefined && isInternalTaskConfiguredInstanceV1(row.configured)
+                        ? await readInternalTaskSessionLinks(sourceInput, context, await readTaskList())
+                        : await context.services.actions.executeAdmittedTargetedOperation(operation, sourceInput, options));
                     if (!parsed.success) {
                         lanes.push({ ...roleLane, health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksInvalidResult' } } });
                         continue;
@@ -322,9 +318,7 @@ export function createTriageSourceSessionRelations(
                         lanes.push({ ...roleLane, health: { kind: 'failed', failure: { class: 'unsupportedContract', code: 'sessionLinksInvalidResult' } } });
                         continue;
                     }
-                    const pullRequestKinds = roleKinds.filter(kindId => source.descriptor.kinds.some(kind => kind.id === kindId
-                        && kind.workflowSubject === 'pullRequest'));
-                    const nativeLinks = result.links.map(link => ({
+                    const nativeLinks = result.links.filter(link => sessionIds === undefined || sessionIds.has(link.sessionId)).map(link => ({
                         entryRef: { source: row.configured.instance.source, ...link.localRef },
                         sessionId: link.sessionId, sourceInstanceId: lane.sourceInstanceId,
                         sourceInstanceRevision: instanceRevisions.get(lane.sourceInstanceId),
@@ -332,29 +326,13 @@ export function createTriageSourceSessionRelations(
                         linkedAtMs: link.linkedAtMs, displayPath: link.displayPath,
                         ...(link.locator === undefined ? {} : { locator: link.locator }),
                     }));
-                    const migration = pullRequestKinds.length === 0 ? undefined : await context.sessionRelationsUpgrade?.reconcile({
-                        source: lane.source, kindIds: pullRequestKinds, sourceInstanceId: lane.sourceInstanceId,
-                        links: nativeLinks,
-                        entryRef: input.entryRef, sessionId: input.sessionId, collections, signal: context.signal,
-                    });
                     const unavailableRefs = new Map<string, TriageEntryRefV1>();
                     for (const ref of [
                         ...(result.kind === 'partial' ? result.unavailableRefs.map(localRef => ({ source: lane.source, ...localRef })) : []),
-                        ...(migration?.retained.map(link => link.entryRef) ?? []),
                     ]) unavailableRefs.set(JSON.stringify(entryReferenceComponents(ref)), ref);
-                    lanes.push({ ...roleLane, health: migration?.incomplete && migration.retained.length === 0
-                        ? { kind: 'failed', failure: { class: 'transient', code: 'sessionLinksMigrationIncomplete' } }
-                        : unavailableRefs.size > 0 ? { kind: 'partial', unavailableRefs: [...unavailableRefs.values()] }
+                    lanes.push({ ...roleLane, health: unavailableRefs.size > 0 ? { kind: 'partial', unavailableRefs: [...unavailableRefs.values()] }
                             : { kind: 'complete' } });
                     for (const link of nativeLinks) addLink(link);
-                    // Retained relationships stay readable while native proof is
-                    // missing; they do not claim a configured native authority.
-                    for (const link of migration?.retained ?? []) {
-                        if (nativeLinks.some(native => native.sessionId === link.sessionId
-                            && sameTriageEntryReference(native.entryRef, link.entryRef))) continue;
-                        addLink({ entryRef: link.entryRef, sessionId: link.sessionId,
-                            linkedAtMs: link.linkedAtMs, displayPath: link.displayPathAtLink });
-                    }
                 } catch (error) {
                     if (input.readFailure === 'throw') throw isPluginError(error) ? error
                         : new PluginError({ code: 'sessionLinksReadFailed', retryable: true });
@@ -384,6 +362,7 @@ export function createTriageSourceSessionRelations(
                         for (const link of page.links) {
                             if (input.entryRef !== undefined && !sameTriageEntryReference(input.entryRef, link.entryRef)) continue;
                             if (input.sessionId !== undefined && link.sessionId !== input.sessionId) continue;
+                            if (sessionIds !== undefined && !sessionIds.has(link.sessionId)) continue;
                             // Unknown retained identities are not proof of absence,
                             // even beside healthy configured sources. Keep them
                             // undisclosed without weakening a selected owner's scope.
@@ -464,8 +443,10 @@ export function createTriageSourceSessionRelations(
         },
     };
     return { ...relations,
+        readSessions(sessionIds: readonly string[]) {
+            return relations.read({ sessionIds }, () => readTriageSessionLinksForSessionsV1(collections.sessionLinks, sessionIds, options));
+        },
         async readEntries(entries: readonly Readonly<{ entryRef: TriageEntryRefV1; sourceInstanceId?: string }>[]) {
-            await context.sessionRelationsUpgrade?.ensure(context, collections);
             const { sources } = await readView();
             const taskInstanceId = INTERNAL_TASK_SOURCE_RECORD_V1.value.configured.instance.sourceInstanceId;
             const taskSelections = new Set(entries.filter(selection => isInternalTaskReferenceV1(selection.entryRef)

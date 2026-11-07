@@ -241,6 +241,10 @@ validation before claiming phone availability.
 
 Triage's [`administerConfiguredSourceInstance.ts`](../packages/plugins/triage/src/corpus/configuration/administerConfiguredSourceInstance.ts) owns configured-instance writes and the exact source-ownership comparison. [`readConfiguredSourceRows.ts`](../packages/plugins/triage/src/corpus/configuration/readConfiguredSourceRows.ts) supplies the shared active-row read and cursor handling. Discovery produces candidates, not automatic durable creation; mounted source Settings uses the administration Action rather than a direct Collection writer. The read ABI distinguishes complete from truncated results and refuses invalid caller authority at admission. An admitted finite read completes across source revocation; the next request admits independently. Open observations still close on revoke, and caller cancellation remains effective through response completion.
 
+In 0.3 development, the aggregate list catalog returns each source's existing opaque Collection row address. Selected refreshes carry that address back to the configured-row owner, which reads just that row and checks its stable source id and active lifecycle; built-in Tasks still resolves through its static source owner. Refreshing K selected connections therefore reads K configured rows rather than K copies of the catalog.
+
+The required row address increases the finite result's fixed framing, so the existing host-envelope-derived presentation/control allocation is 7,181 UTF-8 bytes rather than 7,184; retained configured-instance fields keep their 7,336-byte contract and identity/native bounds remain unchanged.
+
 Triage's built-in **Happier tasks** source is always part of that catalog and is
 the default create target, including when no external source is connected.
 Its immutable Account-data configuration lives in
@@ -927,12 +931,15 @@ additional existing task-list read and the same owner-qualified parent join as
 the list scan, with no per-child reads. A failed relation read or an unreadable
 task from that owner leaves child membership unknown, not confirmed empty.
 
-In 0.3 development, a Board Work Items batch reads the task list once for all
-demanded Happier tasks. The task source projects both observations and Session
-links from that admitted list, using the same child and link projection as scan
-and detail. Each operation reads again, so later task and link changes are
-visible without retaining an inventory between operations. External sources
-continue through their declared exact reads.
+In 0.3 development, a Board surface load reads the Task list once, sharing that
+admitted result across Session-set discovery, visible-item resolution and the
+built-in source roles. The task source projects observations, inverse children
+and Session links from that result. A refresh creates a new surface context and
+reads again, so later changes remain visible. An exact Task detail reads its
+address plus one shared list for inverse children; unavailable children leave
+membership unknown. Relations remain in encrypted Task content, with no
+server-visible relation metadata. External sources continue through their
+declared operations; Session-set discovery invokes each admitted source once.
 
 Explicit Account, Team and Group grants use the
 existing resource-access evaluator; Project/Home context may prefill a picker
@@ -1034,27 +1041,9 @@ source roles with registered read observers. A snapshot-only source role keeps
 its existing manual-refresh behavior; it gains neither a polling loop nor a
 substitute corpus relationship. Disposing the Resource retires those observers.
 
-The portable Account activation owns one lazy retained-PR upgrade pass, started
-by its first admitted relation read or write. It reads existing source ownership
-and native relationships, verifies an already-native link's exact identity,
-and conditionally retires only the exact retained corpus revision. It invokes no
-relationship write Action or approval from a read. Non-PR rows remain at their
-existing owner. Missing or uncertain native proof retains the original PR row
-with incomplete coverage. Later successful exact native proof feeds the same
-conditional contraction owner during scoped read reconciliation. Until that
-proof exists, later reads retain diagnostic coverage and the original row;
-they may also notice an explicit unlink's already-removed row. Ordinary explicit linking retains
-the source's existing Action authority. Retirement cancels and drains the pass.
-A failed or caller-cancelled initialization is retried only by the next admitted demand,
-using that demand's authority; an overlapping fresh demand waits for the cancelled
-pass to drain first. A successful pass stays memoized, and activation retirement
-never restarts it. Unavailable source authority retains explicit incomplete
-coverage. There is no background repair loop or operator migration command.
-The upgrade acquires one configured/admitted view; its first requested live read
-acquires a fresh view after that asynchronous pass. Subsequent invocations
-acquire one view and do not repeat the corpus census.
-Collection schema migrations remain pure row transforms and do not perform the
-cross-plugin transfer. The inspected 0.2 predecessor has no persisted PR-link
+PR kinds whose source declares native Session relations are read and written only
+through that source; no released build stored such links in the Triage Collection,
+so there is no upgrade pass. The inspected 0.2 predecessor has no persisted PR-link
 writer; its existing task `linkedSessions` records remain at their todo owner.
 
 The existing Channels `session-pull-request-binding-v1` Action accepts an
@@ -1283,6 +1272,10 @@ an accepted response alone never proves that the requested fields were applied.
 
 The client-target [`ui/mounted-v1`](../packages/plugins/triage/src/actions/mountedUiProtocol.ts) Action accepts finite semantic operations against a `mountId` from the current UI context. It opens/closes detail through the existing reducer and route settlement, controls the same detail Tabs and List/Board preference as the UI, applies a lens or saved view through the existing lens/view owners, sets bulk selection through the public Collection selection store, and refreshes/pages through the mounted window and continuation owners. `focusRow` requests the Collection's physical row focus without activation; `peekRow` expands that row's table peek without opening detail (`expanded: false` closes it). Repeating the same peek intent is idempotent. Both require a key in the current Collection. `retryRun` and `cancelRun` reach the mounted bulk controller's existing Try again and Stop operations, preserving its retained identities and completed outcomes. The local-state Collection APIs are unchanged.
 
+When saved views or pins cannot be read, the same mounted Action advertises
+`retryAccountData` in current UI context. It invokes only the failed Account-data
+hooks, as does the visible Retry, without rescanning provider entries.
+
 In the current development implementation, `setLens` also accepts optional
 `smartPolicy: { v: 1, precedence: ['attention', 'activity'] }` or the reversed
 precedence. Omission retains the mounted policy. The canonical Smart-policy
@@ -1487,6 +1480,14 @@ that parser; Triage imposes no competing generic-id or UTF-8-byte restriction.
 
 ## Refresh and provider settlement (0.3 development)
 
+Connected Account refusals are classified once by
+`materializeTriageSourceAuthorizationV1` in `triage-sources`. Source clients
+preserve its typed code and redacted Happier Request ID without sending provider
+HTTP. A temporarily unavailable purpose catalog is a transient failure, including
+when the host omits retryability or reports `retryable: false`; a genuine
+credential refusal remains an authentication failure. Temporary catalog failures
+therefore use the existing retry path rather than asking the person to reconnect.
+
 Manual Refresh and automatic view demand respect provider retry deadlines and
 the mounted store's active single flight. Neither adds a local minimum interval
 or aggregate failure backoff. Pages follow caller cancellation through response
@@ -1500,6 +1501,14 @@ source therefore cannot hide settled personal tasks or another source's rows.
 Coverage stays partial while a source is unfinished; a refused source keeps its
 typed unavailable state and source-specific notice beside the settled rows.
 Unspent provider continuations remain reachable through Load More.
+
+In 0.3 development source, the window store publishes changed row identities separately from membership,
+order and window metadata. Each mounted list plans display items for those
+changed rows before notifying keyed row readers. A title-only observation builds
+one display item and leaves the Collection structure and unrelated rows alone;
+membership, grouping and ordering changes still use the canonical list planner.
+Referenced blocker names remain shared structure because another task's hint
+displays them. The shell no longer rebuilds every display item to compare snapshots.
 
 A source with a native minimum page publishes `minimumScanPageSize` in its
 descriptor. The scan pass chooses the larger of the fair share and that

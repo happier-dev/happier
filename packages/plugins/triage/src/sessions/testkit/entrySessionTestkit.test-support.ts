@@ -17,6 +17,7 @@ import {
     testkitLocator,
 } from '../../corpus/testkit/observations.test-support.js';
 import type { TriageEntrySessionLinkDisplayV1 } from '../entrySessionLinks.js';
+import type { TriageEntrySessionDepsV1 } from '../entrySessionOrchestrator.js';
 import { createTriageSourceSessionRelations } from '../sourceSessionRelations.js';
 import type { CorpusCollectionsV1 } from '../../corpus/collections/bindCorpusCollections.js';
 import type { TriageSessionActionIdV1, TriageSessionActionInvokerV1 } from '../entrySessionOpen.js';
@@ -25,6 +26,17 @@ import type {
     TriageReviewWorkspacePreparationDepsV1,
 } from '../entrySessionWorkspace.js';
 import { TriageStartEntrySessionInputV1Schema } from '../../actions/entrySessionProtocol.js';
+import { createTriageReadSourceSessionLinksActionHandler } from '../../actions/sessionLinks.js';
+import { TriageReadSourceSessionLinksInputV1Schema } from '../../actions/sessionLinksProtocol.js';
+import type { TriageDataActionContext } from '../../actions/dataContext.js';
+import { administerConfiguredSourceInstance } from '../../corpus/configuration/administerConfiguredSourceInstance.js';
+
+/** The Action transport accepts built-ins and exact qualified Triage self-calls. */
+export function testkitTriageActionId(ref: unknown): string {
+    if (typeof ref === 'string') return ref;
+    return ref && typeof ref === 'object' && 'pluginId' in ref && ref.pluginId === 'happier.triage'
+        && 'localId' in ref && typeof ref.localId === 'string' ? ref.localId : '';
+}
 
 /** The host-admitted read-only fixture source; opaque operation handles stay at the RPC boundary. */
 export function testkitReadOnlySourceSnapshot() {
@@ -59,6 +71,41 @@ export function createTestkitSourceSessionRelations(
         actions: { executeAdmittedTargetedOperation: async () => { throw new Error('No source relation role was scripted'); } },
     } } as unknown as Parameters<typeof createTriageSourceSessionRelations>[0];
     return createTriageSourceSessionRelations(context, options.collections);
+}
+
+/** The same required callback production supplies, using the real relation owner. */
+export function createTestkitEntrySessionLinkWriter(
+    collections: TestkitRelationOwnerInput['collections'],
+): TriageEntrySessionDepsV1['linkSession'] {
+    const instance = testkitConfiguredInstance();
+    const draft = testkitSourceInstanceDraft();
+    // Starts carry the selected configured-instance identity. Populate that
+    // genuine persistence boundary through its lifecycle owner before linking.
+    let ready: ReturnType<typeof administerConfiguredSourceInstance> | undefined;
+    const relations = createTestkitSourceSessionRelations(collections);
+    return async (input) => {
+        await (ready ??= administerConfiguredSourceInstance({ collections, source: instance.instance.source,
+            declaredPurpose: instance.binding.purpose, request: { kind: 'create', draft }, nowMs: 1,
+            mintSourceInstanceId: () => instance.instance.sourceInstanceId }));
+        const result = await relations.write({ ...input, linked: true });
+        return { status: result.status === 'linked' ? 'linked' : 'failed' };
+    };
+}
+
+/** The real portable Action with only storage and admitted-registry transports supplied. */
+export async function readTestkitSourceSessionLinks(input: unknown, options: TestkitRelationOwnerInput) {
+    const context = { surface: 'ui', caller: { kind: 'plugin', pluginId: 'happier.triage' },
+        signal: options.signal ?? new AbortController().signal, services: {
+            storage: { account: { collection: (definition: { id: string }) => definition.id === 'session-links'
+                ? options.collections.sessionLinks : options.collections.sourceInstances } },
+            targetedContributions: { observeForSelf: () => ({
+                readCurrent: async () => ({ contributions: options.contributions ?? testkitReadOnlySourceSnapshot().contributions }),
+                dispose() {},
+            }) },
+            actions: { executeAdmittedTargetedOperation: async () => { throw new Error('No source relation role was scripted'); } },
+        },
+    } as unknown as TriageDataActionContext; // Host transport fixture; no domain logic is substituted.
+    return await createTriageReadSourceSessionLinksActionHandler()(TriageReadSourceSessionLinksInputV1Schema.parse(input), context);
 }
 
 /**
