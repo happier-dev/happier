@@ -7022,6 +7022,15 @@ No migration, alternate routing owner or wire epoch is added.
 
 ## SDK protocol evolution
 
+Unreleased 0.3 `workspace.tabs.open` adds the optional closed SCM `resource`
+input, reusing `PluginUiResourceIntentV1`. The Action envelope stays closed;
+resource addressing is mutually exclusive with href/file and placement controls.
+New readers retain existing href/file/empty-tab inputs. Older strict development
+readers reject the new input, so matching Protocol/UI readers reload together;
+no silently ignored input, persisted format or wire epoch is introduced. The
+inspected `../0.2` frontier at `7607f9dc568d462e61ce73583881e4ce6def549e`
+has no workspace Action family path or local changes in that path.
+
 Unreleased 0.3 Storage summaries add optional `docker` presentation facts on the
 existing summary and refresh Actions. The summary remains additive-open/drop:
 older readers drop the leaf and new readers accept its absence. Native candidate

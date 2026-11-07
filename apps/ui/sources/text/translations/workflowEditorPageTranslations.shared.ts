@@ -133,6 +133,8 @@ export const en = {
     },
     /** Workflow settings and Step options (U-9): group summaries and the block subject. */
     inspector: {
+        recentRuns: 'Recent runs',
+        noRunsYet: 'No runs yet.',
         stepOptions: 'Step options',
         whereMissing: 'No machine chosen',
         none: 'None',

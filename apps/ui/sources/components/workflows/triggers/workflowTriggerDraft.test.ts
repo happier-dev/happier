@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { AutomationTriggerIdSchema, WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { WorkflowTriggerAddRequestV1Schema, WorkflowTriggerUpdateRequestV1Schema, WorkflowTriggerSetV1Schema, type WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
+import { WorkflowDraftTriggerSnapshotV1Schema } from '@happier-dev/protocol/actions/workflowAuthoringAction';
 
 import {
     EMPTY_WORKFLOW_TRIGGER_DRAFT,
@@ -44,6 +46,29 @@ function recordingWriter(options: Readonly<{ failOn?: 'add' | 'update' | 'remove
 describe('workflow trigger draft', () => {
     const nightlyId = AutomationTriggerIdSchema.parse('nightly');
     const weeklyId = AutomationTriggerIdSchema.parse('weekly');
+    it('retains role and Team choices through the agent snapshot and writes them once on Save', async () => {
+        const workflow = '11111111-1111-4111-8111-111111111111';
+        const context = { roleOverrides: [{ roleId: 'reviewer', runsAs: { kind: 'background_run' as const, intent: 'task' as const } }], visibleTeamId: 'team-release' };
+        const draft = editWorkflowTriggerDraft(EMPTY_WORKFLOW_TRIGGER_DRAFT, { kind: 'setContext', context });
+        const snapshot = WorkflowDraftTriggerSnapshotV1Schema.parse(captureWorkflowTriggerSnapshot(null, draft,
+            (clientId, triggerId) => ({ clientId, triggerId })));
+        expect(snapshot).toMatchObject(context);
+        const restored = restoreWorkflowTriggerSnapshot(null, snapshot);
+        expect(restored.context).toEqual(context);
+        const existing = recordingWriter();
+        await saveWorkflowTriggerDraft({ workflow, project: PROJECT, set: triggerSet(7, []), draft: restored,
+            writer: { ...existing.writer, update: async request => existing.writer.update(WorkflowTriggerUpdateRequestV1Schema.parse(request)) } });
+        expect(existing.calls).toEqual([['update', { automationId: 'set-1', expectedRevision: 7, patch: context }]]);
+        const created = recordingWriter();
+        const withAdd = editWorkflowTriggerDraft(restored, { kind: 'add', clientId: 'nightly', trigger: { ...schedule('0 2 * * *'), enabled: false } });
+        await saveWorkflowTriggerDraft({ workflow, project: PROJECT, set: null, draft: withAdd,
+            writer: { ...created.writer, add: async request => created.writer.add(WorkflowTriggerAddRequestV1Schema.parse(request)) } });
+        expect(created.calls).toEqual([['add', { workflow, project: PROJECT, trigger: { ...schedule('0 2 * * *'), enabled: false }, ...context }]]);
+        const saved = { ...triggerSet(8, []), context: { executionTarget: { kind: 'detached_run' as const }, workspace: { directory: PROJECT.directory }, ...context } };
+        expect(restoreWorkflowTriggerSnapshot(saved, snapshot)).toEqual(EMPTY_WORKFLOW_TRIGGER_DRAFT);
+        expect(restoreWorkflowTriggerSnapshot(saved, { ...snapshot, roleOverrides: [] }).context).toEqual({ roleOverrides: [] });
+        expect(restoreWorkflowTriggerSnapshot(saved, { ...snapshot, visibleTeamId: null }).context).toEqual({ visibleTeamId: null });
+    });
     it('keeps implicit Runs on implicit when restoring an untouched unsaved trigger snapshot', () => {
         const snapshot = captureWorkflowTriggerSnapshot(null, EMPTY_WORKFLOW_TRIGGER_DRAFT,
             (clientId, triggerId) => ({ clientId, triggerId }));

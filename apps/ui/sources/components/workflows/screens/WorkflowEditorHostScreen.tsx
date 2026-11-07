@@ -218,6 +218,15 @@ const NO_WORKFLOW_INPUTS: WorkflowEditorDraft['inputs'] = [];
 /** One empty identity, so clearing highlights that are already clear does not re-render the editor. */
 const NO_HIGHLIGHTED_BLOCKS: readonly string[] = [];
 const identityDraft = <T,>(value: T): T => value;
+
+/** Read Roles beside the trigger controls without subscribing the editor host to step typing. */
+function WorkflowEditorTriggerSection(props: React.ComponentProps<typeof WorkflowTriggerSection> & Readonly<{
+    draftStore: WorkflowEditorDraftStore;
+}>) {
+    const { draftStore, ...section } = props;
+    const definition = useWorkflowEditorSelector(draftStore, identityDraft);
+    return <WorkflowTriggerSection {...section} definition={definition} />;
+}
 /** While the Run review is closed it keeps the draft it last showed. */
 const keepShownDraft = (): boolean => true;
 /** Equal content keeps the previous value (and identity). */
@@ -1100,6 +1109,9 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         includesUnsavedEdits: runRetained === null && testSource === null && (definitionDraftDirty || descriptionDraftDirty),
         machineId: (runRetained?.project ?? projectTarget)?.machineId ?? null,
         directory: (runRetained?.project ?? projectTarget)?.directory ?? null,
+        machineName: whereMachineName,
+        machineHomeDir: whereHomeDir,
+        executionTarget: runRetained !== null ? runRetained.input.executionTarget : { kind: executionTarget },
         serverId: activeAccountScope?.serverId ?? null,
         ...(ownedPlanOriginId && activeAccountScope ? { originSession: {
             serverId: activeAccountScope.serverId, sessionId: ownedPlanOriginId,
@@ -1131,7 +1143,7 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
         pending: planPending || runNow.isPending(pendingRunId ?? ''),
         reconciling: runNow.stateFor(pendingRunId ?? '') === 'reconciling',
         startProblem: runNow.refusal,
-    }), [activeAccountScope?.serverId, definitionDraftDirty, descriptionDraftDirty, description, dismissInputSheet, runReviewDraft, inputRawTextValues, inputValues, machineName, machines, pendingRunId, projectTarget, retainedDefinition, whereHomeDir, whereMachineName, runNow, runRetained, saved?.definitionId, startRun, planReview, ownedPlanOriginId, planOriginName, reportShown, planPending, retainedTest, testSource]);
+    }), [activeAccountScope?.serverId, definitionDraftDirty, descriptionDraftDirty, description, dismissInputSheet, executionTarget, runReviewDraft, inputRawTextValues, inputValues, machineName, machines, pendingRunId, projectTarget, retainedDefinition, whereHomeDir, whereMachineName, runNow, runRetained, saved?.definitionId, startRun, planReview, ownedPlanOriginId, planOriginName, reportShown, planPending, retainedTest, testSource]);
 
     const runComposer = useWorkflowRunComposerModal({ open: inputSheetOpen, props: inputModalProps,
         anchorRef: testSource === null && !retainedTest ? runNowAnchorRef : testRunAnchorRef });
@@ -2015,7 +2027,8 @@ function WorkflowEditorHostScreenReady(props: Readonly<{
                 runPending={testSourcePending || runNow.isPending(pendingRunId ?? '')}
                 {...(canManagePersonalTriggers ? { onSave: saveFromUi, triggersSummary: triggers.summary,
                 triggersSection: (
-                    <WorkflowTriggerSection
+                    <WorkflowEditorTriggerSection
+                        draftStore={bodyDraftStore}
                         accountLifetime={props.accountLifetime}
                         testIDPrefix="workflow-editor"
                         workflowDefinitionId={saved?.definitionId}

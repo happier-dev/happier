@@ -1,3 +1,4 @@
+import { setScreenSharingPrivacyActive } from '@/desktop/capture/useNativeRecordingActive';
 import * as React from 'react';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { createSessionFixture, renderScreen } from '@/dev/testkit';
@@ -10,11 +11,13 @@ import { installSessionActionRpcBoundary } from '@/dev/testkit/harness/sessionAc
 import { createPlainAccountEncryptionCurrentnessFixture } from '@/dev/testkit/fixtures/accountEncryptionCurrentness';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { createMachineFixture, createPlainMachineRowFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { PluginProjectionV2Schema } from '@happier-dev/protocol';
+import { observeMachinePresenceForTest } from '@/dev/testkit/harness/machinePresence';
+import { PluginProjectionV2Schema } from '@happier-dev/protocol/daemon/contributionRegistryProjection';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc';
 import type { SocketRpcRequestPayload } from '@happier-dev/protocol/socketRpc';
 import { createPlainSessionCurrentProjectionRecordFixture } from '@/dev/testkit/fixtures/sessionFixtures';
 import { createSessionReadBatchHttpBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { getVitestNodeBuiltin } from '@/dev/vitestNodeBuiltins';
 
 const machineRpc = vi.fn<(request: SocketRpcRequestPayload) => unknown>();
 // Home and machine transports enter through static imports; hoist the genuine
@@ -62,6 +65,7 @@ beforeEach(async () => {
     getStorage().setState({ profileScope: { serverId, accountId: 'account-a' }, settingsScope: { serverId, accountId: 'account-a' } });
 });
 afterEach(async () => {
+    setScreenSharingPrivacyActive(false);
     await standardCleanup();
     await (await import('@/sync/runtime/orchestration/connectionManager')).disconnectActiveServerConnection();
     (await import('../library/workflowLibraryReads')).resetWorkflowLibraryReadsForTests();
@@ -89,10 +93,147 @@ vi.mock('@/components/ui/popover', async (importOriginal) => {
 
 const { TriggerPopover } = await import('./TriggerPopover');
 const { WorkflowTriggerSection } = await import('./WorkflowTriggerSection');
-const { WorkflowDefinitionV1Schema } = await import('@happier-dev/protocol');
+const { WorkflowDefinitionV1Schema} = await import('@happier-dev/protocol/workflows/workflowV1');
 type ExistingTriggerSubmit = Extract<React.ComponentProps<typeof TriggerPopover>, { creatingSession?: false }>['onSubmit'];
 
 describe('Run a workflow trigger inputs', () => {
+    it.each([true, false])('reads back the armed Event filter, exact Environment, controller, profile and destination on guided review (page controller: %s)', async (pageController) => {
+        const { GuidedAutomationSetup } = await import('./GuidedAutomationSetup');
+        const { TriggerPluginEventRows } = await import('./TriggerPluginEventRows');
+        const { PromptAgentRows } = await import('./TriggerPopover');
+        const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
+        const machine = createMachineFixture({ id: 'controller-review', metadata: {
+            host: 'Controller studio', platform: 'linux', happyCliVersion: '0.3.0', happyHomeDir: '/home/controller',
+            homeDir: '/home/controller',
+        } });
+        const runner = createMachineFixture({ id: 'agent-runner' });
+        getStorage().setState({ machines: { [machine.id]: machine, [runner.id]: runner }, settingsVersion: 1 });
+        observeMachinePresenceForTest({ serverId, accountId: 'account-a' }, [machine.id]);
+        const screen = await renderScreen(<GuidedAutomationSetup anchorRef={React.createRef()} onRequestClose={vi.fn()}
+            subjectName="Production" initialProject={{ machineId: runner.id, directory: '/repo' }} starter="deploymentFailed"
+            {...(pageController ? { controllerMachineId: machine.id } : {})}
+            deploymentSourceName="Application checkout"
+            deploymentEnvironment={{ serverId, projectSourceId: 'source-checkout', environmentId: 'production-environment' }} />);
+        const value = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
+            eventRef: { pluginId: 'happier.machine.services', localId: 'deployment-failed' },
+            sourceInstanceId: 'source-failure', sourceContractVersion: 1,
+            sourceConfig: { v: 1, serverId, environmentId: 'production-environment', targetLinkId: 'runtime',
+                observingSince: 1, periodMs: 300000, credentialPrincipal: { kind: 'account', accountId: 'owner',
+                    purpose: { consumer: { pluginId: 'example.deploy', localId: 'selection' }, purpose: 'action-account' },
+                    target: { kind: 'account', account: { service: { pluginId: 'example.deploy', localId: 'account' }, accountId: 'provider-account' } } } },
+            displayLabel: 'Production failures', filter: { v: 1, all: [{ field: '/outcome', op: 'eq', value: 'failed' }] },
+            maximumObservationAgeMs: null,
+            observationTransport: { kind: 'checkpointedPull', watcherMaterializationRef: {
+                machineId: machine.id, pluginId: 'happier.machine.services', materializationId: 'services-review' } } });
+        if (value.kind !== 'pluginEvent' || !('sourceInstanceId' in value)) throw new Error('Expected configured Event');
+        // These are the public form emissions from the real source/Agent controls;
+        // the wizard, trigger builder, profile owner and rendered review stay real.
+        await act(async () => { screen.findByType(TriggerPluginEventRows).props.onChange({ kind: 'pluginEvent', value }); });
+        await screen.pressByTestIdAsync('guided-automation-next');
+        await screen.pressByTestIdAsync('guided-automation-next');
+        await screen.pressByTestIdAsync('guided-automation-then:apply');
+        await screen.pressByTestIdAsync('guided-automation-next');
+        await screen.pressByTestIdAsync('guided-automation-next');
+        const readBack = screen.findByTestId('guided-automation-read-back');
+        const text = screen.getTextContent();
+        expect(readBack).toBeTruthy();
+        for (const fact of ['workflows.triggers.kind.pluginEvent', '/outcome', 'failed', 'Application checkout', 'Production',
+            'Controller studio', 'machines.widgets.body.common.offline',
+            'workflows.triggers.guided.profile.applySafeName', '300000']) expect(text).toContain(fact);
+        for (const id of ['source-checkout', 'production-environment', 'controller-review', 'source-failure'])
+            expect(text).not.toContain(id);
+        expect(text).toContain('workflows.triggers.guided.tellInbox');
+        await act(async () => { screen.findByType(PromptAgentRows).props.onChange({ kind: 'sendPrompt', prompt: '',
+            selection: { agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } } }); });
+        expect(screen.getTextContent()).toContain('Application checkout');
+    });
+    it('edits and submits the same schedule through mounted agent commands and UI, retaining it after a failed save', async () => {
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+        const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+        const submit = vi.fn<ExistingTriggerSubmit>().mockRejectedValueOnce(new Error('Save unavailable')).mockResolvedValue(undefined);
+        const close = vi.fn();
+        const screen = await renderMountedCurrentUiContext(<TriggerPopover testID="coach-trigger" currentUiContextCommandScope="coach-trigger" anchorRef={React.createRef()}
+            onRequestClose={close} whenKinds={['schedule']} sessionId={null} showThen={false} initial={null}
+            workflowOptions={[]} onSubmit={submit} />);
+        const executor = createDefaultActionExecutor();
+        const commands = () => readCurrentUiContextActionReader({ surface: 'agent' })!.readCurrentUiContext()!.commands;
+        const invoke = async (suffix: string, input?: import('@happier-dev/protocol/plugins/ui').PluginUiJsonValueV1) => {
+            const command = commands().find(row => row.description?.includes(`coach-trigger.${suffix}`));
+            expect(command).toBeDefined();
+            await act(async () => {
+                expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], { commandId: command!.id,
+                    ...(input === undefined ? {} : { input }) }, { surface: 'agent' })).toMatchObject({ ok: true });
+            });
+        };
+        await invoke('schedule.repeat', { value: 'weekly' });
+        const day = commands().find(row => row.description?.includes('coach-trigger-day.select'));
+        expect(day).toBeDefined();
+        await act(async () => {
+            expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                { commandId: day!.id, input: { id: '5' } }, { surface: 'agent' })).toMatchObject({ ok: true });
+        });
+        await invoke('schedule.at', { value: '18:35' });
+        const clock = commands().find(row => row.description?.includes('coach-trigger.schedule.at'))!;
+        await act(async () => {
+            expect(await executor.execute(ACTION_ID_FAMILIES_V1.current_ui_context[1],
+                { commandId: clock.id, input: { value: '25:99' } }, { surface: 'agent' })).toMatchObject({ ok: false });
+        });
+        expect(screen.findAllByType(FieldValueItem).find(row => row.props.testID === 'coach-trigger-at')?.props.value).toBe('18:35');
+        await act(async () => screen.findAllByType(SegmentedChoiceItem).find(row => row.props.testIDPrefix === 'coach-trigger-repeat')!
+            .props.onChange('weekdays'));
+        await invoke('submit');
+        expect(submit.mock.calls[0]?.[1].trigger).toMatchObject({ kind: 'schedule', schedule: { scheduleExpr: '35 18 * * 1-5' } });
+        expect(submit.mock.calls[0]?.[2]).toMatchObject({ surface: 'agent' });
+        expect(close).not.toHaveBeenCalled();
+        await screen.pressByTestIdAsync('coach-trigger-submit');
+        expect(submit.mock.calls[1]?.[1].trigger).toEqual(submit.mock.calls[0]?.[1].trigger);
+        expect(submit.mock.calls[1]?.[2]).toMatchObject({ surface: 'ui' });
+        expect(close).toHaveBeenCalledOnce();
+    });
+    it.each(['expression', 'interval'] as const)('edits a retained %s schedule through its mounted control', async kind => {
+        const { renderMountedCurrentUiContext } = await import('@/dev/testkit/harness/mountedCurrentUiContext');
+        const { readCurrentUiContextActionReader } = await import('@/components/appShell/currentUiContext/currentUiContextActionRuntime');
+        const { createDefaultActionExecutor } = await import('@/sync/ops/actions/defaultActionExecutor');
+        const { ACTION_ID_FAMILIES_V1 } = await import('@happier-dev/protocol/actions/actionIds');
+        const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderMountedCurrentUiContext(<TriggerPopover testID="retained-schedule" currentUiContextCommandScope="retained-schedule" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule']} sessionId={null} showThen={false}
+            initial={{ enabled: true, then: { kind: 'sendPrompt', prompt: '' }, when: { kind: 'schedule', schedule: null,
+                expression: kind === 'expression' ? '0 8 1 * *' : '', timezone: 'UTC', ...(kind === 'interval' ? { everyMs: 3600000 } : {}) } }}
+            workflowOptions={[]} onSubmit={submit} />);
+        const command = readCurrentUiContextActionReader({ surface: 'agent' })!.readCurrentUiContext()!.commands
+            .find(row => row.description?.includes(`retained-schedule.schedule.${kind === 'expression' ? 'expression' : 'repeat'}`));
+        expect(command).toBeDefined();
+        await act(async () => {
+            expect(await createDefaultActionExecutor().execute(ACTION_ID_FAMILIES_V1.current_ui_context[1], {
+                commandId: command!.id, input: { value: kind === 'expression' ? '15 8 1 * *' : 'weekdays' },
+            }, { surface: 'agent' })).toMatchObject({ ok: true });
+        });
+        await screen.pressByTestIdAsync('retained-schedule-submit');
+        expect(submit.mock.calls[0]?.[1].trigger).toMatchObject({ kind: 'schedule', schedule: {
+            scheduleExpr: kind === 'expression' ? '15 8 1 * *' : '0 9 * * 1-5', everyMs: null,
+        } });
+    });
+    it.each(['add', 'edit'] as const)('discloses retained requester sign-in before shared trigger %s', async (operation) => {
+        const { createDefaultWhen } = await import('./sessionTriggerForm');
+        const access = { custodian: { accountId: 'machine-owner', displayName: 'Machine owner' },
+            role: 'use' as const, resourceMode: 'plain' as const, accessState: 'ready' as const };
+        const machine = createMachineFixture({ access });
+        getStorage().setState({ machines: { [machine.id]: machine } });
+        const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
+        const screen = await renderScreen(<TriggerPopover testID="shared-trigger" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule']} sessionId={null} machineId={machine.id} serverId={serverId}
+            showThen={false} initial={operation === 'add' ? null : {
+                when: createDefaultWhen('schedule'), enabled: true, then: { kind: 'runWorkflow', ref: 'workflow-1', inputs: {} },
+            }} workflowOptions={[]} onSubmit={submit} />);
+        expect(screen.getTextContent()).toContain('machineRequester.fullSignIn(machine=tester.local,retention=trigger)');
+        expect(screen.getTextContent()).toContain('machineRequester.osVisibility(owner=Machine owner,machine=tester.local)');
+        expect(submit).not.toHaveBeenCalled();
+    });
     it.each(['account', 'session', 'workflow'] as const)('keeps observation-only source setup scoped to %s enrollment', async (host) => {
         const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
         const value = AutomationTriggerDefinitionInputSchema.parse({ kind: 'pluginEvent', enabled: true,
@@ -130,9 +271,9 @@ describe('Run a workflow trigger inputs', () => {
             initial={{ when: createDefaultWhen('schedule'), enabled: true,
                 then: { kind: 'sendPrompt', prompt: 'Review overnight changes', selection: { agentTarget, connectedServices } } }}
             workflowOptions={[]} onSubmit={submit} />);
-        // Unresolved Machine facts explain the unavailable control; the Account
-        // prompt must still expose its authentication choice instead of hiding it.
-        expect(screen.findByTestId('account-prompt-agent-connectedServices-unavailable')).toBeTruthy();
+        // The shared form explains the unresolved Agent once (owner 2026-11-06),
+        // while retaining the draft's Agent and Connected Account selections.
+        expect(screen.findByTestId('account-prompt-agent-requires-agent')).toBeTruthy();
         expect(screen.findByTestId('account-prompt-submit')?.props.disabled).toBe(false);
         await screen.pressByTestIdAsync('account-prompt-submit');
         const target = submit.mock.calls[0]?.[1].target;
@@ -143,6 +284,30 @@ describe('Run a workflow trigger inputs', () => {
         expect(resolveWorkflowStepSelectionV1({ defaults: target.definition.defaults, purpose: 'authoring' }).selection.connectedServices)
             .toEqual(connectedServices);
     });
+    it('shows two When choices side by side and switches with one press', async () => {
+        const screen = await renderScreen(<TriggerPopover testID="when-choice" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule', 'pluginEvent']} sessionId={null}
+            initial={null} workflowOptions={[]} onSubmit={vi.fn<ExistingTriggerSubmit>(async () => {})} />);
+        // Both choices are on screen before anything is opened (no two-option dropdown).
+        expect(screen.findByTestId('when-choice-when:schedule')).not.toBeNull();
+        await screen.pressByTestIdAsync('when-choice-when:pluginEvent');
+        expect(screen.findByTestId('when-choice-configure-event')).not.toBeNull();
+    });
+
+    it('stops promising the saved occurrence when the schedule draft changes', async () => {
+        const screen = await renderScreen(<TriggerPopover testID="schedule-preview" anchorRef={React.createRef()}
+            onRequestClose={vi.fn()} whenKinds={['schedule', 'pluginEvent']} sessionId={null}
+            initial={{ when: { kind: 'schedule', expression: '0 9 * * *', timezone: null,
+                schedule: { repeat: 'daily', hour: 9, minute: 0, day: 1 } }, enabled: true,
+                then: { kind: 'notifyMe', title: '', message: 'Release reminder', channels: [] } }}
+            {...{ savedNextRunAt: Date.now() + 3_600_000 }}
+            workflowOptions={[]} onSubmit={vi.fn<ExistingTriggerSubmit>(async () => {})} />);
+        expect(screen.getTextContent()).toContain('workflows.triggers.popover.nextOccurrence');
+        await act(async () => screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '09:00' }).props.onChangeText('10:00'));
+        await act(async () => screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '10:00' }).props.onBlur());
+        expect(screen.getTextContent()).not.toContain('workflows.triggers.popover.nextOccurrence');
+    });
+
     it('pushes the event step in the same surface and returns without losing the parent draft', async () => {
         const screen = await renderScreen(<TriggerPopover testID="event-step" anchorRef={React.createRef()}
             onRequestClose={vi.fn()} whenKinds={['pluginEvent']} sessionId={null}
@@ -162,7 +327,7 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.then.message', value: 'Edited draft' })).toBeTruthy();
     });
     it('opens an exact saved Event row for editing its private source instead of leaving it informational', async () => {
-        const { WorkflowTriggerSetV1Schema } = await import('@happier-dev/protocol');
+        const { WorkflowTriggerSetV1Schema} = await import('@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1');
         const set = WorkflowTriggerSetV1Schema.parse({ automationId: 'event-set', revision: 7, enabled: true,
             health: 'available', triggers: [{ id: 'event-row', revision: 3, enabled: true,
                 createdAt: 1, updatedAt: 1, kind: 'pluginEvent', eventRef: { pluginId: 'acme.github', localId: 'issue-opened' },
@@ -177,6 +342,48 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findByTestId('event-workflow-trigger-popover-configure-event')).toBeTruthy();
         await act(async () => { screen.findByTestId('event-workflow-trigger:saved:event-row-switch')!.props.onValueChange(false); });
         expect(change).toHaveBeenCalledWith({ adds: [], updates: { 'event-row': { enabled: false } }, removes: [] });
+    });
+    it.each([false, true])('only offers Roles for used roles and preserves the editor on Back: used=%s', async (used) => {
+        const { createWorkflowDefinitionFixture } = await import('@/dev/testkit/fixtures/workflowRunFixtures');
+        const { PromptLibraryRowsListResponseV1Schema, sealPromptLibraryContentV1 } = await import('@happier-dev/protocol/prompts/library/promptLibraryRowsV1');
+        const { restoreServerAccountForTest } = await import('@/dev/testkit/harness/serverAccountConnectionHarness');
+        const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+        home.answer(serverId, '/v1/account/entity-rows/prompt-library', { body: PromptLibraryRowsListResponseV1Schema.parse({
+            status: 'listed', rows: [{ key: 'role-overrides', revision: 1, content: sealPromptLibraryContentV1({
+                record: { key: 'role-overrides', value: { v: 1, overrides: {} } }, mode: 'plain', material: null,
+            }) }],
+        }) });
+        const connection = await restoreServerAccountForTest({ serverUrl: getActiveServerSnapshot().serverUrl,
+            accountId: 'account-a', request: home.request,
+            credentials: { token: createAccountTokenForTests('account-a', { currentAccount: true }) } });
+        onTestFinished(() => connection.dispose());
+        const definition = createWorkflowDefinitionFixture({
+            defaults: used ? { engine: { role: 'portable_builder' } } : {},
+            roles: [{ roleId: 'portable_builder', name: 'Builder', instructions: 'Build carefully', runsAs: { kind: 'session' } }],
+            inputs: [{ name: 'release', valueType: 'string', required: false }],
+        });
+        const screen = await renderScreen(<WorkflowTriggerSection testIDPrefix="roles-workflow" set={null}
+            draft={{ adds: [], updates: {}, removes: [] }} onChangeDraft={vi.fn()} status="ready" onRetry={vi.fn()}
+            stepsUnsaved={false} whereTarget={null} whereSummary={null} inputs={definition.inputs} {...{ definition }} />);
+        await screen.pressByTestIdAsync('roles-workflow-triggers-add');
+        const roles = screen.findByTestId('roles-workflow-trigger-roles');
+        if (!used) {
+            expect(roles).toBeNull();
+            return;
+        }
+        expect(roles).not.toBeNull();
+        const mainText = screen.getTextContent();
+        expect(mainText.indexOf('workflows.triggers.editor.roles')).toBeLessThan(mainText.indexOf('release'));
+        await act(async () => { screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '09:00' })
+            .props.onChangeText('10:00'); });
+        await act(async () => { screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '10:00' })
+            .props.onBlur(); });
+        await screen.pressByTestIdAsync('roles-workflow-trigger-roles');
+        await vi.waitFor(() => expect(screen.findByTestId('roles-workflow-trigger-roles-role-portable_builder-target:background_run')).not.toBeNull());
+        expect(screen.findByTestId('roles-workflow-trigger-popover-submit')).toBeNull();
+        await screen.pressByTestIdAsync('roles-workflow-trigger-popover-back');
+        expect(screen.findByProps({ accessibilityLabel: 'workflows.triggers.popover.at', value: '10:00' })).toBeTruthy();
+        expect(screen.findByTestId('roles-workflow-trigger-input-release')).not.toBeNull();
     });
     it('turns off a newly authored Event row without discarding its configured source', async () => {
         const { AutomationTriggerDefinitionInputSchema } = await import('@happier-dev/protocol/automations/automationTriggerDefinition');
@@ -229,6 +436,11 @@ describe('Run a workflow trigger inputs', () => {
         expect(screen.findByTestId('event-trigger-test-result')?.props.children)
             .toBe(`workflows.triggers.activity.${result}`);
         expect(submit).not.toHaveBeenCalled();
+        if (result === 'matched') {
+            await screen.pressByTestIdAsync('event-trigger-submit');
+            expect(submit.mock.calls[0]?.[1]).toMatchObject({ trigger: value, target: { kind: 'inline' } });
+            expect(submit.mock.calls[0]?.[1]).not.toHaveProperty('observationOnly');
+        }
     });
     it.each(['actionRefused', 'changedDraft', 'changedAccount'] as const)(
         'does not publish a diagnostic for %s', async (change) => {
@@ -312,7 +524,7 @@ describe('Run a workflow trigger inputs', () => {
         expect(submit.mock.calls[0]?.[1].trigger).not.toHaveProperty('sourceSessionId');
     });
     it('keeps an example inline and validates its declared inputs before attaching the trigger', async () => {
-        const { WORKFLOW_STARTER_EXAMPLES_V1 } = await import('@happier-dev/protocol');
+        const { WORKFLOW_STARTER_EXAMPLES_V1} = await import('@happier-dev/protocol/workflows/builtins/examples');
         const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
         const screen = await renderScreen(<TriggerPopover testID="example-trigger" anchorRef={React.createRef()}
             onRequestClose={vi.fn()} whenKinds={['turnEnds']} sessionId="session-1" initial={null}
@@ -389,8 +601,10 @@ describe('Run a workflow trigger inputs', () => {
             input: [], result: { kind: 'text' } }] });
         const submit = vi.fn<ExistingTriggerSubmit>(async () => {});
         const ref = 'plugin:example.workflows/review';
-        const machine = createMachineFixture({ id: 'trigger-inputs-machine', activeAt: Date.now() });
+        const machine = createMachineFixture({ id: 'trigger-inputs-machine', activeAt: Date.now(), storageMode: 'plain',
+            access: createPlainMachineRowFixture({ id: 'trigger-inputs-machine', accountId: 'account-a' }).access });
         getStorage().setState({ machines: { [machine.id]: machine }, machineListByServerId: { [serverId]: [machine] } });
+        observeMachinePresenceForTest({ serverId, accountId: 'account-a' }, [machine.id]);
         home.answer(serverId, `/v1/machines/${machine.id}`, { body: {
             machine: createPlainMachineRowFixture({ id: machine.id, accountId: 'account-a' }),
         } });
@@ -408,7 +622,10 @@ describe('Run a workflow trigger inputs', () => {
             workflowOptions={[{ ref, title: 'Review' }]} onSubmit={submit} />);
         await waitForHomeGovernance(async () => {
             await act(async () => {});
-            expect(screen.findByTestId('json-trigger-input-payload')?.props.value).toBe('"Saved JSON string"');
+            expect(screen.findByTestId('json-trigger-input-payload')?.props.value, JSON.stringify({
+                methods: machineRpc.mock.calls.map(([request]) => request.method),
+                paths: home.requests.map(request => request.path),
+            })).toBe('"Saved JSON string"');
         });
         await act(async () => { screen.changeTextByTestId('json-trigger-input-payload', '{"unfinished":'); });
         expect(screen.findByTestId('json-trigger-input-payload')?.props.value).toBe('{"unfinished":');
@@ -423,20 +640,33 @@ describe('Run a workflow trigger inputs', () => {
 describe('a workflow trigger in its popover (07 S4)', () => {
     it.each(['runs-in', 'runs-in-session'] as const)('waits for %s intent before reading unopened prompt destinations', async (field) => {
         const { createDefaultWhen } = await import('./sessionTriggerForm');
+        const { AsyncLocalStorage } = getVitestNodeBuiltin<typeof import('node:async_hooks')>('node:async_hooks');
+        // Keep the real chooser and Sync running: async context attributes HTTP
+        // reads to this user intent without replacing any internal reader.
+        const intent = new AsyncLocalStorage<'chooser' | 'bootstrap'>();
+        onTestFinished(() => intent.disable());
+        const chooserSnapshots: unknown[] = [];
+        const bootstrapSnapshots: unknown[] = [];
+        const unattributedSnapshots: unknown[] = [];
         const session = createPlainSessionCurrentProjectionRecordFixture({ id: 'unopened-prompt', active: true, metadata: {
             flavor: 'claude', claudeSessionId: 'resume', claudeTranscriptPath: '/tmp/prompt.jsonl',
             machineId: 'machine-1', path: '/repo', host: 'host', name: 'Unopened prompt destination',
         } });
         const batch = createSessionReadBatchHttpBoundary(request => request.path === `/v2/sessions/${session.id}`
             ? Response.json({ session }) : undefined);
-        const served = await serveAccountHomes({ homes: [{ key: 'prompt', serverUrl: 'https://trigger-demand.test', accountId: 'prompt-account' }],
+        const served = await intent.run('bootstrap', () => serveAccountHomes({ homes: [{ key: 'prompt', serverUrl: 'https://trigger-demand.test', accountId: 'prompt-account' }],
             route: request => {
+                if (request.path === '/v2/sessions/read-batch') {
+                    const initiator = intent.getStore();
+                    (initiator === 'chooser' ? chooserSnapshots
+                        : initiator === 'bootstrap' ? bootstrapSnapshots : unattributedSnapshots).push(request.body);
+                }
                 if (request.path === '/v2/sessions') return Response.json({ sessions: [session], nextCursor: null, hasNext: false });
                 if (request.path === '/v2/sessions/archived' || request.path === '/v2/sessions/active') {
                     return Response.json({ sessions: [], nextCursor: null, hasNext: false });
                 }
                 return batch.handle(request);
-            } });
+            } }));
         onTestFinished(() => served.dispose());
         const promptServerId = served.homes.prompt!.id;
         getStorage().setState({ isDataReady: true, sessions: {}, sessionListRowsByServerId: {} });
@@ -452,17 +682,27 @@ describe('a workflow trigger in its popover (07 S4)', () => {
         expect(served.requests.slice(beforeMount).filter(request => request.path === '/v2/sessions/read-batch'
             || request.path === '/v2/sessions/archived')).toHaveLength(0);
         const menu = () => screen.findAllByType(DropdownMenu).find(node => node.props.testID === `demand-prompt-${field}`)!;
-        await act(async () => { menu().props.onOpenChange(true); });
-        await waitForHomeGovernance(() => {
-            const items = menu().props.items as readonly { id: string; disabled?: boolean }[];
-            expect(field === 'runs-in' ? items.find(item => item.id === 'session')?.disabled
-                : items.some(item => item.id === session.id)).toBe(field === 'runs-in' ? undefined : true);
+        await intent.run('chooser', async () => {
+            await act(async () => { menu().props.onOpenChange(true); });
+            await waitForHomeGovernance(() => {
+                const items = menu().props.items as readonly { id: string; disabled?: boolean }[];
+                expect(field === 'runs-in' ? items.find(item => item.id === 'session')?.disabled
+                    : items.some(item => item.id === session.id)).toBe(field === 'runs-in' ? undefined : true);
+            });
         });
         expect(served.requests.some(request => request.path === '/v2/sessions/archived')).toBe(true);
-        // The inventory already admitted these plain owner facts. Opening a
-        // destination chooser must not reacquire the same full Session.
-        expect(served.requests.some(request => request.path === '/v2/sessions/read-batch')).toBe(false);
+        // Current list rows omit documents. The demanded inventory admits its
+        // owner projection in one snapshot cohort; the chooser must reuse it,
+        // without a second detail read, turns/messages or opening a Session.
         expect(getStorage().getState().sessions[session.id]).toBeUndefined();
+        const snapshot = expect.objectContaining({ sessionIds: [session.id],
+            includeSnapshot: true, includeTurns: false, includeMessages: false });
+        expect(unattributedSnapshots).toEqual([]);
+        expect(chooserSnapshots).toEqual([snapshot]);
+        // Bootstrap is independent of opening this chooser. It may race the
+        // inventory, but has at most one snapshot-only cohort for this Home.
+        expect(bootstrapSnapshots.length).toBeLessThanOrEqual(1);
+        for (const request of bootstrapSnapshots) expect(request).toEqual(snapshot);
         await screen.unmount();
     });
     it('says a failed Session read on "A session…" and retries it in place until the Session is offered', async () => {
@@ -538,6 +778,20 @@ describe('a workflow trigger in its popover (07 S4)', () => {
         // Closed, nothing has read the Sessions: an unloaded Session is not a missing one.
         expect(stored()).toMatchObject({ title: 'workflows.conversation.savedSession' });
         expect(stored()?.disabled).not.toBe(true);
+        await act(async () => getStorage().setState({ sessions: { 'not-offered-destination': createSessionFixture({
+            id: 'not-offered-destination', serverId: storedServerId, metadata: {
+                ...createSessionFixture().metadata!, name: 'Private schedule', path: '/secret',
+            },
+        }) } }));
+        expect(stored()?.title).toBe('Private schedule');
+        await act(async () => {
+            getStorage().getState().applySettingsLocal({ sessionListHiddenTagIdsWhileRecording: { [storedServerId]: ['private'] } });
+            getStorage().getState().setSessionTagAssignmentsOptimistic(storedServerId, 'not-offered-destination', ['private']);
+            setScreenSharingPrivacyActive(true);
+        });
+        expect(stored()).toMatchObject({ title: 'workflows.conversation.savedSession' });
+        expect(stored()?.disabled).not.toBe(true);
+        await act(async () => { setScreenSharingPrivacyActive(false); getStorage().setState({ sessions: {} }); });
         await act(async () => { menu().props.onOpenChange(true); });
         await waitForHomeGovernance(() => expect(stored()).toMatchObject({ disabled: true,
             title: 'workflows.conversation.unavailableSession', subtitle: 'workflows.conversation.sessionNotHere' }));

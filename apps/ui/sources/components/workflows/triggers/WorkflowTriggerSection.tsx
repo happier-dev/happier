@@ -1,41 +1,49 @@
 import * as React from 'react';
 import { View } from 'react-native';
-import type { JsonValue, WorkflowTriggerSetV1 } from '@happier-dev/protocol';
+import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import type { WorkflowTriggerSetV1 } from '@happier-dev/protocol/workflows/triggers/workflowTriggerActionsV1';
 import type { WorkflowProjectTargetV1 } from '@happier-dev/protocol/workflows';
 import type { WorkflowInputDefinition } from '@happier-dev/protocol/workflows/workflowV1';
 
 import { Icon } from '@/components/ui/icons/Icon';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
-import { Item } from '@/components/ui/lists/Item';
 import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
-import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
+import { Item } from '@/components/ui/lists/Item';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import { formatWorkflowInputValue, parseWorkflowInputText } from '@/sync/domains/workflows/workflowInputText';
 import { t } from '@/text';
 import { Modal } from '@/modal';
-import { useAllMachines, useMachineListForServer } from '@/sync/domains/state/storage';
+import { useActiveMachineFacts, useMachineListForServer } from '@/sync/domains/state/storage';
 import { getMachineDisplayName } from '@/utils/sessions/machineUtils';
 import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 
-import { formatNextScheduledRun, formatScheduledRunQualifier, formatTriggerSummary, readNextScheduledRunRefreshAtMs } from './formatTriggerSummary';
-import { createDefaultThen, readScheduleWhen, readTriggerWhen, type TriggerFormValue, type TriggerWhenValue } from './sessionTriggerForm';
-import { TriggerPopover } from './TriggerPopover';
+import { formatScheduledRunQualifier, formatTriggerSummary, readNextScheduledRunRefreshAtMs } from './formatTriggerSummary';
+import { createDefaultThen, readScheduleWhen, readTriggerWhen, type ExecutableTriggerFormValue as TriggerFormValue, type TriggerWhenValue } from './sessionTriggerForm';
+import { FieldSelect, TriggerPopover } from './TriggerPopover';
 import { TriggerRunsOnRow } from './TriggerRunsOnRow';
 import { TriggerRow } from './TriggerRow';
+import type { TriggerRowProps } from './TriggerRow';
+import { useWorkflowSourcePeople } from '../useWorkflowSourcePeople';
+import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
+import { WorkflowTriggerRunHistory } from './WorkflowTriggerRunHistory';
 import { describeLegacyTriggerSet } from './sessionTriggerGroups';
+import { WorkflowRunRoles, workflowUsedRoleIds } from '../run/WorkflowRunRoles';
+import { useWorkflowRunVisibility } from '../run/useWorkflowRunVisibility';
 import {
     editWorkflowTriggerDraft,
     projectWorkflowTriggerRows,
     type WorkflowTriggerDraft,
     type WorkflowTriggerRowModel,
+    type WorkflowTriggerSetContextDraft,
 } from './workflowTriggerDraft';
 
 export type WorkflowTriggerSectionProps = Readonly<{
     accountLifetime?: ServerAccountScopeLifetime | null;
     testIDPrefix: string;
+    workflowDefinitionId?: string;
     /** This Account's trigger set on this workflow, as last read; `null` with none. */
     set: WorkflowTriggerSetV1 | null;
     draft: WorkflowTriggerDraft;
@@ -49,6 +57,7 @@ export type WorkflowTriggerSectionProps = Readonly<{
     whereSummary: string | null;
     /** The workflow's declared inputs, each "Same for all triggers" on the set (03 §5.3). */
     inputs: readonly WorkflowInputDefinition[];
+    definition?: React.ComponentProps<typeof WorkflowRunRoles>['definition'];
 }>;
 
 function rowWhen(row: WorkflowTriggerRowModel, set: WorkflowTriggerSetV1 | null, draft: WorkflowTriggerDraft): TriggerWhenValue | null {
@@ -63,18 +72,61 @@ function rowWhen(row: WorkflowTriggerRowModel, set: WorkflowTriggerSetV1 | null,
 }
 
 /** "Next run: {time}" for a saved, enabled schedule whose owner has computed its next occurrence. */
-function readNextRunAt(set: WorkflowTriggerSetV1 | null, row: WorkflowTriggerRowModel | null): number | null {
-    if (row === null || row.kind !== 'saved' || !row.enabled) return null;
-    const saved = set?.triggers.find((trigger) => trigger.id === row.triggerId);
-    return saved?.kind === 'schedule' ? saved.nextRunAt : null;
+function readNextRunAt(row: WorkflowTriggerRowModel | null): number | null {
+    if (row === null || row.kind !== 'saved' || !row.enabled || row.trigger.kind !== 'schedule') return null;
+    // The draft projection replaces an edited schedule with its proposed definition, which has no occurrence.
+    return 'nextRunAt' in row.trigger ? row.trigger.nextRunAt : null;
 }
 
-/** Only the open editor popover observes its occurrence's display deadline. */
-function WorkflowTriggerPopover(props: React.ComponentProps<typeof TriggerPopover> & Readonly<{ nextRunAt: number | null }>) {
-    const { nextRunAt, ...popover } = props;
-    const readNextRefresh = React.useCallback((nowMs: number) => readNextScheduledRunRefreshAtMs(nextRunAt, nowMs), [nextRunAt]);
-    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, nextRunAt !== null);
-    return <TriggerPopover {...popover} {...(nextRunAt === null ? {} : { subtitle: formatNextScheduledRun(nextRunAt, true, nowMs) })} />;
+/** The shared popover owns the saved occurrence display and hides it after schedule edits. */
+function WorkflowTriggerPopover(props: React.ComponentProps<typeof TriggerPopover> & Readonly<{
+    nextRunAt: number | null;
+    definition: WorkflowTriggerSectionProps['definition'];
+    sourceArtifactId?: string;
+    rolesTestID: string;
+    directory: string | null;
+    context: Pick<WorkflowTriggerSetContextDraft, 'roleOverrides' | 'visibleTeamId'>;
+    onChangeContext: (context: Pick<WorkflowTriggerSetContextDraft, 'roleOverrides' | 'visibleTeamId'>) => void;
+}>) {
+    const { nextRunAt, definition, sourceArtifactId, rolesTestID, directory, context, onChangeContext, ...popover } = props;
+    const [rolesOpen, setRolesOpen] = React.useState(false);
+    const roleIds = React.useMemo(() => definition ? workflowUsedRoleIds(definition) : [], [definition]);
+    const overrides = context.roleOverrides ?? [];
+    const visibility = useWorkflowRunVisibility(sourceArtifactId, {
+        selectedTeamId: context.visibleTeamId ?? undefined,
+        onChange: (visibleTeamId) => onChangeContext({ visibleTeamId }),
+    });
+    const selectedTeamId = visibility.resolution.ok ? visibility.resolution.visibleTeamId : null;
+    const selectedTeam = visibility.teams.find(team => team.id === selectedTeamId);
+    const visibilityDescription = selectedTeam
+        ? t('workflows.triggers.editor.visibleToDescription', { team: selectedTeam.name ?? selectedTeam.id })
+        : t('workflows.start.visibility.chooseTeam');
+    return <TriggerPopover {...popover} savedNextRunAt={nextRunAt}
+        pushedPage={rolesOpen && definition ? {
+            title: t('workflows.triggers.editor.roles'),
+            onBack: () => setRolesOpen(false),
+            content: <WorkflowRunRoles definition={definition} roleIds={roleIds} overrides={overrides}
+                onChange={(roleOverrides) => onChangeContext({ roleOverrides })} pending={false} prefix={rolesTestID}
+                serverId={popover.serverId} machineId={popover.machineId} directory={directory} />,
+        } : undefined}
+        afterRows={<>
+            {roleIds.length > 0 ? <Item testID={rolesTestID} title={t('workflows.triggers.editor.roles')}
+                subtitle={t('workflows.triggers.editor.sameForAllTriggers')}
+                detail={overrides.length > 0 ? t('workflows.triggers.editor.rolesChanged', { count: overrides.length })
+                    : t('workflows.start.rolesYour')}
+                onPress={() => setRolesOpen(true)} /> : null}
+            {visibility.status !== 'ready' ? <SurfaceFreshnessLine busy={visibility.status === 'loading'}
+                tone={visibility.status === 'failed' ? 'warning' : 'neutral'}
+                reason={visibility.status === 'failed' ? t('workflows.start.visibility.loadFailed') : t('common.loading')}
+                {...(visibility.status === 'failed' ? { action: { label: t('common.retry'), onPress: visibility.retry } } : {})} />
+                : visibility.teams.length === 0 ? null
+                    : visibility.teams.length === 1 && selectedTeam ? <Item title={t('workflows.triggers.editor.visibleTo')}
+                        subtitle={visibilityDescription} detail={selectedTeam.name ?? selectedTeam.id} mode="info" />
+                        : <FieldSelect testID={`${rolesTestID}-visible-to`} title={t('workflows.triggers.editor.visibleTo')}
+                            subtitle={visibilityDescription} items={visibility.teams.map(team => ({ id: team.id, title: team.name ?? team.id }))}
+                            selectedId={selectedTeamId} onSelect={visibility.onChange} />}
+            {popover.afterRows}
+        </>} />;
 }
 
 function LegacyWorkflowTriggerSummary(props: Readonly<{ legacy: NonNullable<ReturnType<typeof describeLegacyTriggerSet>> }>) {
@@ -93,14 +145,21 @@ function LegacyWorkflowTriggerSummary(props: Readonly<{ legacy: NonNullable<Retu
  * popover has no Then.
  */
 export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): React.ReactElement {
-    const activeMachines = useAllMachines();
+    const activeMachines = useActiveMachineFacts(props.accountLifetime === undefined);
     const addressedMachines = useMachineListForServer(props.accountLifetime?.scope.serverId ?? '', props.accountLifetime !== undefined);
     const machines = props.accountLifetime === undefined ? activeMachines : addressedMachines ?? [];
     const rows = React.useMemo(() => projectWorkflowTriggerRows(props.set, props.draft), [props.draft, props.set]);
+    const definitionIds = React.useMemo(() => props.workflowDefinitionId ? [props.workflowDefinitionId] : [], [props.workflowDefinitionId]);
+    const shared = useWorkflowDefinitionLibrary({ enabled: definitionIds.length > 0, definitionIds, accountLifetime: props.accountLifetime });
+    const sharedTriggers = shared.definitions.flatMap(definition => definition.triggers.flatMap(trigger =>
+        trigger.automationId && trigger.triggerId && trigger.automationId !== props.set?.automationId
+            ? [{ ...trigger, automationId: trigger.automationId, triggerId: trigger.triggerId }] : []));
     const [historyKey, setHistoryKey] = React.useState<string | null>(null);
     const toggleHistory = (key: string) => setHistoryKey(current => current === key ? null : key);
+    const sourcePeople = useWorkflowSourcePeople(rows.length > 0 ? [props.set?.sourceSavedBy] : [], props.accountLifetime);
     const [open, setOpen] = React.useState<Readonly<{ row: WorkflowTriggerRowModel | null; anchor: React.RefObject<View | null> }> | null>(null);
     const addAnchorRef = React.useRef<View>(null);
+    // Where triggers run is said once, in "Where it runs"; the purpose line names no host (FIN-DESIGN-REVIEW L3).
     const description = [
         t('workflows.triggers.editor.runsBy'),
         props.stepsUnsaved ? t('workflows.triggers.editor.saveToInclude') : t('workflows.triggers.editor.savedWorkflow'),
@@ -162,11 +221,15 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
     return (
         <ItemGroup title={t('workflows.triggers.editor.title')} description={description}>
             {readState}
-            {rows.length === 0 && props.status === 'ready' ? (
+            {rows.length === 0 && sharedTriggers.length === 0 && props.status === 'ready'
+                && (definitionIds.length === 0 || shared.status === 'loaded') ? (
                 <Item testID={`${props.testIDPrefix}-triggers-manual`} title={t('workflows.triggers.summary.manual')}
                     icon={<Icon name="play" />} mode="info" />
             ) : rows.map((item) => (
                 <WorkflowTriggerRowView
+                    sourceSavedBy={props.set?.sourceSavedBy} sourceSavedAt={props.set?.sourceSavedAt}
+                    sourceProfile={sourcePeople.profiles.get(props.set?.sourceSavedBy?.accountId ?? '')?.profile ?? null}
+                    viewerAccountId={sourcePeople.viewerAccountId}
                     key={item.key}
                     testID={`${props.testIDPrefix}-trigger:${item.key}`}
                     row={item}
@@ -187,6 +250,21 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     }}
                 />
             ))}
+            {sharedTriggers.map(trigger => {
+                const key = `${trigger.automationId}:${trigger.triggerId}`;
+                const title = formatTriggerSummary(trigger);
+                return <React.Fragment key={key}>
+                    <Item testID={`${props.testIDPrefix}-trigger:${key}`} title={title} mode="info"
+                        rightElement={<ToolbarButton testID={`${props.testIDPrefix}-trigger:${key}-history`}
+                            label={t('workflows.destination.history.title')} active={historyKey === key}
+                            onPress={() => toggleHistory(key)} />} />
+                    {historyKey === key ? <WorkflowTriggerRunHistory automationId={trigger.automationId}
+                        triggerId={trigger.triggerId} accountLifetime={props.accountLifetime} triggerName={title} /> : null}
+                </React.Fragment>;
+            })}
+            {shared.status === 'failed' ? <SurfaceFreshnessLine tone="warning"
+                reason={t('workflows.triggers.section.loadFailed')}
+                action={{ label: t('workflows.triggers.popover.tryAgain'), onPress: shared.retry }} /> : null}
             <View ref={addAnchorRef} collapsable={false}>
                 <Item
                     testID={`${props.testIDPrefix}-triggers-add`}
@@ -205,7 +283,17 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                     anchorRef={open.anchor}
                     onRequestClose={() => setOpen(null)}
                     {...(row?.kind === 'saved' ? { onHistory: () => { setHistoryKey(row.key); setOpen(null); } } : {})}
-                    nextRunAt={readNextRunAt(props.set, row)}
+                    nextRunAt={readNextRunAt(row)}
+                    definition={props.definition}
+                    sourceArtifactId={props.workflowDefinitionId}
+                    rolesTestID={`${props.testIDPrefix}-trigger-roles`}
+                    directory={runsOn?.directory ?? null}
+                    context={{
+                        roleOverrides: props.draft.context?.roleOverrides ?? props.set?.context?.roleOverrides,
+                        visibleTeamId: props.draft.context?.visibleTeamId === undefined
+                            ? props.set?.context?.visibleTeamId : props.draft.context.visibleTeamId,
+                    }}
+                    onChangeContext={(context) => change(editWorkflowTriggerDraft(props.draft, { kind: 'setContext', context }))}
                     whenKinds={['schedule', 'pluginEvent']}
                     sessionId={null}
                     showThen={false}
@@ -245,15 +333,6 @@ export function WorkflowTriggerSection(props: WorkflowTriggerSectionProps): Reac
                                     }}
                                 />
                             ))}
-                            {/* The set's roles are your roles (07 S4); the per-set overrides push S11's
-                                Roles rows once that editor lands here. */}
-                            <Item
-                                testID={`${props.testIDPrefix}-trigger-roles`}
-                                title={t('workflows.triggers.editor.roles')}
-                                subtitle={t('workflows.triggers.editor.sameForAllTriggers')}
-                                detail={t('workflows.start.rolesYour')}
-                                mode="info"
-                            />
                         </>
                     )}
                     onSubmit={async (value, write) => {
@@ -288,6 +367,10 @@ function createClientId(): string {
 
 const WorkflowTriggerRowView = React.memo(function WorkflowTriggerRowView(props: Readonly<{
     testID: string;
+    sourceSavedBy?: TriggerRowProps['sourceSavedBy'];
+    sourceSavedAt?: number;
+    sourceProfile?: TriggerRowProps['sourceProfile'];
+    viewerAccountId?: string | null;
     row: WorkflowTriggerRowModel;
     onOpen: (anchor: React.RefObject<View | null>) => void;
     onToggle: (enabled: boolean) => void;
@@ -302,6 +385,8 @@ const WorkflowTriggerRowView = React.memo(function WorkflowTriggerRowView(props:
         <View ref={anchorRef} collapsable={false}>
             <TriggerRow
                 testID={props.testID}
+                sourceSavedBy={props.sourceSavedBy} sourceSavedAt={props.sourceSavedAt}
+                sourceProfile={props.sourceProfile} viewerAccountId={props.viewerAccountId}
                 title={formatTriggerSummary(row.trigger)}
                 qualifier={row.kind === 'new' ? t('workflows.triggers.editor.newRow') : undefined}
                 glyph={row.trigger.kind === 'schedule' ? 'clock' : 'lightning'}

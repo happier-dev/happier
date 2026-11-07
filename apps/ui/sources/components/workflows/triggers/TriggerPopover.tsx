@@ -1,8 +1,10 @@
 import { useSessionRecordingVisibility } from '@/hooks/session/useSessionListRecordingPrivacy';
 import * as React from 'react';
+import { useCurrentUiContextLocalCommands } from '@/components/appShell/currentUiContext/CurrentUiContextCommands';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
 import type { JsonValue} from '@happier-dev/protocol/json/strictJsonValue';
+import type { ActionExecutorContext } from '@happier-dev/protocol/actions/executor/types';
 import type { TriggerTargetV1} from '@happier-dev/protocol/workflows/triggers/triggerTargetV1';
 import type { WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
 import { resolveEffectiveActionInputFields } from '@happier-dev/protocol/actions/actionInputHintsRuntime';
@@ -11,6 +13,8 @@ import type { PluginUiOpenAutomationEventRequestV1 } from '@happier-dev/protocol
 import type { PluginEventAutomationEditSeed } from '@/sync/domains/automations/pluginEventAutomationEditSeed';
 
 import { RoundButton, RoundButtonSizeScope } from '@/components/ui/buttons/RoundButton';
+import { ToolbarButton } from '@/components/ui/buttons/ToolbarButton';
+import { TextLinkButton } from '@/components/ui/buttons/TextLinkButton';
 import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { FieldTextInput } from '@/components/ui/forms/FieldTextInput';
 import { FieldValueItem } from '@/components/ui/forms/FieldValueItem';
@@ -23,7 +27,8 @@ import { SegmentedChoiceItem } from '@/components/ui/lists/SegmentedChoiceItem';
 import { FloatingOverlay } from '@/components/ui/overlays/FloatingOverlay';
 import { Popover } from '@/components/ui/popover';
 import { Text } from '@/components/ui/text/Text';
-import { formatWorkflowProblemMessage } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { resolveWorkflowProblemPresentation, type WorkflowProblemPresentation } from '@/components/workflows/presentation/workflowProblemPresentation';
+import { useSessionListRuntimeDeadlineNowMs } from '@/hooks/session/sessionListRuntimeClock';
 import { useActiveServerAccountScope, useSessionReferenceTarget } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
@@ -43,7 +48,7 @@ import { getSessionName } from '@/utils/sessions/sessionUtils';
 import { WorkflowRunInputs } from '@/components/workflows/run/WorkflowRunComposer';
 import { type WorkflowRunInputFieldState } from '@/sync/domains/workflows/workflowAuthoring';
 
-import { formatTriggerInterval, formatTriggerSummary, weekdayName } from './formatTriggerSummary';
+import { formatNextScheduledRunTime, readNextScheduledRunRefreshAtMs, formatTriggerInterval, formatTriggerSummary, weekdayName } from './formatTriggerSummary';
 import {
     NOTIFY_ME_ACTION_ID,
     TRIGGER_THEN_KINDS,
@@ -62,7 +67,8 @@ import {
     type TriggerThenValue,
     type TriggerWhenValue,
 } from './sessionTriggerForm';
-import { buildSimpleScheduleCron, formatClockTimeInput, parseClockTime, type SimpleScheduleRepeat } from './triggerSchedule';
+import { buildSimpleScheduleCron, formatClockTimeInput, SIMPLE_SCHEDULE_REPEATS as REPEATS, type SimpleScheduleRepeat } from './triggerSchedule';
+import { useTriggerScheduleCommands } from './useTriggerScheduleCommands';
 import { useNotifyMeChannelOptions, useTriggerWorkflowDefinition } from './useTriggerThenOptions';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
 import { SessionTriggerPullRequestPicker } from './SessionTriggerPullRequestPicker';
@@ -78,6 +84,8 @@ export type TriggerKindAvailability = Readonly<Partial<Record<SessionTriggerWhen
 export type TriggerWorkflowOption = WorkflowReferenceOption;
 
 type TriggerPopoverBaseProps = Readonly<{
+    /** Lends this editor's controls to the currently mounted page. */
+    currentUiContextCommandScope?: string;
     anchorRef: React.RefObject<View | null>;
     onRequestClose: () => void;
     testID: string;
@@ -103,7 +111,13 @@ type TriggerPopoverBaseProps = Readonly<{
     newTitle?: string;
     /** The line under the title (a saved trigger's next occurrence), when its owner knows it. */
     subtitle?: string;
-    /** Reviewed legacy edit: opening never writes; the disclosure stays above Done. */
+    /** A saved occurrence from the scheduler. Hidden as soon as this schedule draft differs. */
+    savedNextRunAt?: number | null;
+    /** A retained Automation that cannot be edited remains visible with its owner's refusal. */
+    submitRefusal?: string;
+    /** A pushed host editor shares this shell and preserves the trigger draft underneath it. */
+    pushedPage?: Readonly<{ title: string; onBack: () => void; content: React.ReactNode }>;
+    /** Reviewed legacy edit: opening never writes; the disclosure stays above the rows. */
     submitNotice?: string;
     /** Explicit consent uses Save rather than the usual Done; a new one that creates a Workflow says Create. */
     submitLabel?: string;
@@ -203,9 +217,9 @@ type TriggerPopoverWrite<Trigger> = Readonly<{
 
 export type TriggerPopoverProps = TriggerPopoverBaseProps & (
     | Readonly<{ creatingSession?: false;
-        onSubmit: (value: ExecutableTriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildTriggerDefinition>>) => Promise<void> }>
+        onSubmit: (value: ExecutableTriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildTriggerDefinition>>, context?: ActionExecutorContext) => Promise<void> }>
     | Readonly<{ creatingSession: true; sessionId: null;
-        onSubmit: (value: ExecutableTriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildInitialTriggerDefinition>>) => Promise<void> }>
+        onSubmit: (value: ExecutableTriggerFormValue, write: TriggerPopoverWrite<ReturnType<typeof buildInitialTriggerDefinition>>, context?: ActionExecutorContext) => Promise<void> }>
 );
 
 /** The popover is exactly as wide as its content, so no empty band sits beside the rows (lab T1). */
@@ -236,13 +250,12 @@ const styles = StyleSheet.create((theme) => ({
     deleteLabel: { color: theme.colors.state.danger.foreground },
     failure: {
         color: theme.colors.state.danger.foreground,
-        paddingHorizontal: theme.space.s16,
-        paddingBottom: theme.space.s8,
+        width: '100%',
     },
+    back: { paddingHorizontal: theme.space.s16, paddingTop: theme.space.s12 },
 }));
 
 
-const REPEATS: readonly SimpleScheduleRepeat[] = ['daily', 'weekdays', 'weekly'];
 const REPEAT_LABEL_KEYS = { daily: 'everyDay', weekdays: 'weekdays', weekly: 'weekly' } as const;
 
 // The form is narrow even on desktop. Its layout follows the window, not the list's page breakpoint.
@@ -276,6 +289,7 @@ function whenDescription(kind: TriggerWhenValue['kind'], sessionScoped: boolean)
 
 /** A field select row: the canonical `DropdownMenu` item trigger, opened from its own row. */
 export function FieldSelect(props: Readonly<{
+    currentUiContextCommandScope?: string;
     testID: string;
     title: string;
     subtitle?: string;
@@ -293,6 +307,20 @@ export function FieldSelect(props: Readonly<{
     invalid?: boolean;
 }>) {
     const [open, setOpen] = React.useState(false);
+    const scope = props.currentUiContextCommandScope;
+    const select = (id: string) => { if (!props.keepsOpen?.(id)) setOpen(false); props.onSelect(id); };
+    const commands = useCurrentUiContextLocalCommands(scope === undefined ? [] : [
+        { key: 'open', title: props.title, description: `${scope}.open`, invoke: () => setOpen(true) },
+        { key: 'close', title: t('common.close'), description: `${scope}.close`, invoke: () => setOpen(false) },
+        { key: 'select', title: props.title, description: JSON.stringify({ control: `${scope}.select`,
+            selectedId: props.selectedId, input: { id: 'option id' }, options: props.items.map(({ id, title, disabled }) => ({ id, title, disabled: disabled === true })) }),
+            invoke: input => {
+                if (!input || typeof input !== 'object' || Array.isArray(input) || typeof input.id !== 'string') return false;
+                const item = props.items.find(candidate => candidate.id === input.id);
+                if (!item || item.disabled) return false;
+                select(item.id);
+            } },
+    ], { foregroundOverlay: true, contextKey: scope });
     React.useEffect(() => {
         if (!props.onOpenChange) return;
         props.onOpenChange(open);
@@ -303,12 +331,12 @@ export function FieldSelect(props: Readonly<{
         <DropdownMenu
             testID={props.testID}
             open={open}
-            onOpenChange={setOpen}
+            onOpenChange={scope === undefined ? setOpen : next => { void commands.invoke(next ? 'open' : 'close'); }}
             items={props.items}
             selectedId={props.selectedId}
             {...(props.keepsOpen === undefined ? {} : { closeOnSelect: false })}
             {...(props.emptyLabel === undefined ? {} : { emptyLabel: props.emptyLabel })}
-            onSelect={(id) => { if (!props.keepsOpen?.(id)) setOpen(false); props.onSelect(id); }}
+            onSelect={scope === undefined ? select : id => { void commands.invoke('select', { id }); }}
             // A description wraps; a truncated consequence is no consequence.
             itemTrigger={{
                 title: props.title,
@@ -331,7 +359,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
     const Shell = props.shell ?? TriggerAnchoredPopoverShell;
     const scope = useActiveServerAccountScope();
     const originServerId = props.serverId ?? scope?.serverId;
-    const isNew = props.initial === null;
+    const isNew = props.initial === null && props.submitRefusal === undefined;
     const [when, setWhen] = React.useState<TriggerWhenValue>(() => props.initial?.when ?? props.initialWhen
         ?? createDefaultWhen(props.whenKinds[0] ?? 'turnEnds', props.pullRequestLinks));
     const triggerScope = props.creatingSession ? 'session' : props.scope ?? (props.sessionId !== null ? 'session' : 'account');
@@ -343,7 +371,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         ?? (props.initialActionTargets?.[0] ? readTriggerThen(props.initialActionTargets[0], { kind: 'detached_run' }) : createDefaultThen('sendPrompt')));
     const enabled = props.initial?.enabled ?? true;
     const [pending, setPending] = React.useState(false);
-    const [failure, setFailure] = React.useState<string | null>(null);
+    const [failure, setFailure] = React.useState<WorkflowProblemPresentation | null>(null);
     const [rawInputText, setRawInputText] = React.useState<Readonly<Record<string, string>>>({});
     const [examplesOpen, setExamplesOpen] = React.useState(false);
     const [eventEditing, setEventEditing] = React.useState(Boolean(props.initialEventSeed));
@@ -382,11 +410,12 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         needsTarget && then.kind === 'sendPrompt' && then.runsIn?.kind === 'session' ? then.runsIn.sessionId : '', originServerId,
     );
     const unavailableWhen = when.kind === 'runLifecycle' ? undefined : props.unavailableKinds?.[when.kind];
-    const complete = (props.manual || displayedTrigger !== null) && (!needsTarget || (target !== null && !promptDestination.deleted)) && unavailableWhen === undefined
+    const refused = props.submitRefusal !== undefined || failure?.code === 'legacy_conversion_unsupported';
+    const complete = !refused && props.pushedPage === undefined && (props.manual || displayedTrigger !== null) && (!needsTarget || (target !== null && !promptDestination.deleted)) && unavailableWhen === undefined
         && (observationOnly || props.hostComplete !== false) && (!needsTarget || then.kind !== 'runWorkflow'
             || (workflow.status === 'ready' && !inputFields.some((field) => field.blocking)))
         && (inlineDefinition === null || !inputFields.some((field) => field.blocking));
-    const title = isNew
+    const title = props.submitRefusal !== undefined ? props.newTitle ?? t('workflows.triggers.legacy.reviewRequired') : isNew
         ? props.newTitle ?? t('workflows.triggers.popover.newTrigger')
         : props.manual ? t('workflows.triggers.summary.manual')
             : displayedTrigger === null ? when.kind === 'pluginEvent'
@@ -397,13 +426,13 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         if (pending) return;
         setPending(true);
         setFailure(null);
-        operation()
+        return operation()
             .then(() => { if (close) props.onRequestClose(); })
-            .catch((error: unknown) => setFailure(`${t('workflows.triggers.section.saveFailed')} ${formatWorkflowProblemMessage(error)}`))
+            .catch((error: unknown) => setFailure(resolveWorkflowProblemPresentation(error)))
             .finally(() => setPending(false));
     }, [pending, props]);
 
-    const submit = () => {
+    const submit = (context?: ActionExecutorContext) => {
         if (!complete) return;
         const inputs = observationOnly ? {} : then.kind === 'runWorkflow' || inlineDefinition !== null ? buildSessionTriggerWorkflowInputs({ when,
             fields: inputFields, declarations: inlineDefinition?.inputs ?? workflow.definition?.inputs ?? [],
@@ -411,10 +440,28 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             : then.kind === 'kept' ? then.inputs : {};
         const submittedThen = then.kind === 'runWorkflow' || then.kind === 'kept' ? { ...then, inputs } : then;
         const value = { when, then: submittedThen, enabled };
-        run(() => props.creatingSession
-            ? props.onSubmit(value, { trigger: initialTrigger, target, inputs })
-            : props.onSubmit(value, { trigger, target, inputs, ...(observationOnly ? { observationOnly } : {}) }));
+        return run(() => props.creatingSession
+            ? props.onSubmit(value, { trigger: initialTrigger, target, inputs }, context)
+            : props.onSubmit(value, { trigger, target, inputs, ...(observationOnly ? { observationOnly } : {}) }, context));
     };
+    const savedWhen = props.initial?.when;
+    const scheduleUnchanged = when.kind === 'schedule' && savedWhen?.kind === 'schedule'
+        && when.expression === savedWhen.expression && when.timezone === savedWhen.timezone && when.everyMs === savedWhen.everyMs;
+    const nextRunAt = enabled && scheduleUnchanged ? props.savedNextRunAt ?? null : null;
+    const readNextRefresh = React.useCallback((nowMs: number) => readNextScheduledRunRefreshAtMs(nextRunAt, nowMs), [nextRunAt]);
+    const nowMs = useSessionListRuntimeDeadlineNowMs(readNextRefresh, nextRunAt !== null && props.pushedPage === undefined);
+    const subtitle = nextRunAt === null ? props.subtitle : t('workflows.triggers.popover.nextOccurrence', {
+        time: formatNextScheduledRunTime(nextRunAt, enabled, nowMs),
+    });
+    const failureMessage = props.submitRefusal ?? (failure === null ? null : failure.code === 'legacy_conversion_unsupported'
+        ? failure.message : `${t('workflows.triggers.section.saveFailed')} ${failure.message}`);
+    const commandScope = props.currentUiContextCommandScope;
+    const commands = useCurrentUiContextLocalCommands(commandScope === undefined ? [] : [{
+        key: 'submit', title: props.submitLabel ?? t('workflows.triggers.popover.done'),
+        description: JSON.stringify({ control: `${commandScope}.submit`, complete: Boolean(complete), pending }),
+        invoke: (_input, context) => { if (!complete || pending) return false; return submit(context); },
+    }], { foregroundOverlay: true, contextKey: commandScope });
+    const handleSubmit = commandScope === undefined ? () => submit() : () => { void commands.invoke('submit'); };
 
     const whenItems: DropdownMenuItem[] = props.whenKinds.map((kind) => {
         const reason = props.unavailableKinds?.[kind];
@@ -434,9 +481,9 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
         testID: `${props.testID}-then:${kind}`,
         title: t(`workflows.triggers.then.${kind}`),
     })), { id: 'example', testID: `${props.testID}-examples`, title: t('workflows.examples.title') }];
-    const completion = <RoundButton testID={`${props.testID}-submit`} size="small"
-        title={props.submitLabel ?? t('workflows.triggers.popover.done')}
-        disabled={!complete} loading={pending} onPress={submit} />;
+    const completion = <TextLinkButton testID={`${props.testID}-submit`}
+        label={pending ? t('common.loading') : props.submitLabel ?? t('workflows.triggers.popover.done')}
+        disabled={!complete || pending} onPress={handleSubmit} />;
 
     return (
         <Shell
@@ -444,16 +491,26 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             key={eventEditing ? 'event' : 'trigger'}
             open
             phonePresentation="sheet"
-            sheetHeaderAction={!isNew && !eventEditing ? completion : undefined}
-            sheetSubtitle={eventEditing ? undefined : unavailableWhen ?? props.subtitle}
-            accessibilityLabel={eventEditing ? t('workflows.triggers.popover.configureEvent') : title}
+            sheetHeaderAction={!isNew && !eventEditing && !props.pushedPage && failureMessage === null ? completion : undefined}
+            sheetSubtitle={eventEditing || props.pushedPage ? undefined : unavailableWhen ?? subtitle}
+            accessibilityLabel={props.pushedPage?.title ?? (eventEditing ? t('workflows.triggers.popover.configureEvent') : title)}
             anchorRef={props.anchorRef}
             maxWidthCap={TRIGGER_POPOVER_WIDTH}
             maxHeightCap={640}
             autoFocusOnOpen
             onRequestClose={props.onRequestClose}
         >
-            {({ maxHeight, placement, presentation }) => eventEditing && when.kind === 'pluginEvent' ? (
+            {({ maxHeight, placement, presentation }) => props.pushedPage ? (
+                <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme" arrow={placement ? { placement } : false}>
+                    <ListPresentationProvider value="page">
+                        <View style={styles.surface}>
+                            <View style={styles.back}><ToolbarButton testID={`${props.testID}-back`}
+                                label={t('common.back')} onPress={props.pushedPage.onBack} /></View>
+                            <ItemGroup title={props.pushedPage.title} surface="none">{props.pushedPage.content}</ItemGroup>
+                        </View>
+                    </ListPresentationProvider>
+                </FloatingOverlay>
+            ) : eventEditing && when.kind === 'pluginEvent' ? (
                 <TriggerPluginEventRows testID={props.testID} when={when} onChange={setWhen}
                     machineId={props.machineId ?? null} serverId={props.serverId ?? null} initialEventSeed={props.initialEventSeed}
                     initialEventEditSeed={props.initialEventEditSeed}
@@ -462,6 +519,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
             ) : (
                 // The floating theme surface every popover shares (DESIGN.md floating glass).
                 <FloatingOverlay maxHeight={maxHeight} scrollEnabled surfaceChrome="theme" arrow={placement ? { placement } : false} footer={<RoundButtonSizeScope size="small" presentation="uniform"><View style={styles.foot}>
+                            {failureMessage === null ? null : <Text testID={`${props.testID}-failure`} accessibilityLiveRegion="polite" style={styles.failure}>{failureMessage}</Text>}
+                            {!isNew && failureMessage !== null ? completion : null}
                             {isNew ? (
                                 <>
                                     <RoundButton size="small" display="inverted"
@@ -476,7 +535,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                             title={props.submitLabel ?? t('workflows.triggers.popover.addTrigger')}
                                             disabled={!complete}
                                             loading={pending}
-                                            onPress={submit}
+                                            onPress={handleSubmit}
                                         />
                                     </View>
                                 </>
@@ -507,7 +566,6 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                         </View></RoundButtonSizeScope>}>
                     <ListPresentationProvider value="page">
                     <View testID={props.testID} style={styles.surface}>
-                        {props.submitNotice ? <Item mode="info" title={props.submitNotice} titleLines={0} showChevron={false} /> : null}
                         {/* The popover is a configuration page (07 §3 Sections): its title is the
                             summary, its description the next occurrence, and Done is its one primary,
                             beside the title (lab T1). */}
@@ -517,9 +575,11 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                             surface="none"
                             title={presentation === 'sheet' ? undefined : title}
                             {...(unavailableWhen !== undefined ? { description: unavailableWhen }
-                                : props.subtitle === undefined ? {} : { description: props.subtitle })}
-                            {...(isNew || presentation === 'sheet' ? {} : { action: completion })}
+                                : subtitle === undefined ? {} : { description: subtitle })}
+                            {...(isNew || presentation === 'sheet' || failureMessage !== null ? {} : { action: completion })}
                         >
+                            {props.submitNotice ? <Item mode="info" title={props.submitNotice} titleLines={0} showChevron={false} /> : null}
+                            {props.submitRefusal === undefined ? <>
                             {props.manual || when.kind === 'runLifecycle' ? <Item mode="info" title={t('workflows.triggers.popover.when')}
                                 detail={when.kind === 'runLifecycle' ? formatTriggerSummary(when) : t('workflows.triggers.summary.manual')} showChevron={false} />
                                 // Two to four short choices stay visible side by side; longer lists keep the field select.
@@ -536,6 +596,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                 value={when.kind}
                                 onChange={(kind) => setWhen(createDefaultWhen(kind, props.pullRequestLinks))}
                             /> : <FieldSelect
+                                currentUiContextCommandScope={commandScope === undefined ? undefined : `${commandScope}-when`}
                                 testID={`${props.testID}-when`}
                                 title={t('workflows.triggers.popover.when')}
                                 {...(whenDescription(when.kind, sessionScoped) === undefined
@@ -547,7 +608,8 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                     if (kind !== undefined) setWhen(createDefaultWhen(kind, props.pullRequestLinks));
                                 }}
                             />}
-                            {!props.manual && when.kind === 'schedule' ? <ScheduleRows testID={props.testID} when={when} onChange={setWhen} /> : null}
+                            {!props.manual && when.kind === 'schedule' ? <ScheduleRows testID={props.testID}
+                                currentUiContextCommandScope={commandScope} when={when} onChange={setWhen} /> : null}
                             {!props.manual && when.kind === 'pluginEvent' ? <TriggerPluginEventRows
                                 testID={props.testID} when={when} onChange={setWhen} machineId={props.machineId ?? null}
                                 serverId={props.serverId ?? null} eventEdit={props.eventEdit} activityEvent={props.activityEvent} initialEventSeed={props.initialEventSeed}
@@ -629,13 +691,11 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
                                 </>
                             ) : null}
                             {props.afterRows ?? null}
+                            </> : null}
                         </ItemGroup>
                         {/* Placement rows already present this review; Session hosts supply only their Machine. */}
                         {!props.setRows && !observationOnly ? <WorkflowRequesterDisclosure machineId={props.machineId}
                             serverId={props.serverId} accountLifetime={props.accountLifetime} retention="trigger" /> : null}
-                        {failure === null ? null : (
-                            <Text testID={`${props.testID}-failure`} accessibilityLiveRegion="polite" style={styles.failure}>{failure}</Text>
-                        )}
 
                     </View>
                     </ListPresentationProvider>
@@ -647,6 +707,7 @@ export function TriggerPopover(props: TriggerPopoverProps): React.ReactElement {
 
 /** Repeat · Day · At, or the expression a schedule was written with when it is not a simple one. */
 export function ScheduleRows(props: Readonly<{
+    currentUiContextCommandScope?: string;
     testID: string;
     when: Extract<TriggerWhenValue, Readonly<{ kind: 'schedule' }>>;
     onChange: (next: TriggerWhenValue) => void;
@@ -655,6 +716,7 @@ export function ScheduleRows(props: Readonly<{
     const accessoryLayout = useTriggerFieldLayout();
     const schedule = when.schedule;
     const everyMs = when.everyMs;
+    const commands = useTriggerScheduleCommands(props);
     if (schedule === null && everyMs !== undefined) {
         // An interval ("Every hour") stays as it was saved and reads as itself; choosing a simple
         // repeat replaces it with that schedule (09:00 until the person picks a time).
@@ -667,8 +729,7 @@ export function ScheduleRows(props: Readonly<{
                 value="interval"
                 onChange={(repeat) => {
                     if (repeat === 'interval') return;
-                    const next = { repeat, hour: 9, minute: 0, day: 1 };
-                    props.onChange({ kind: 'schedule', schedule: next, expression: buildSimpleScheduleCron(next), timezone: when.timezone });
+                    commands.changeRepeat(repeat);
                 }}
                 options={[
                     { id: 'interval' as const, label: formatTriggerInterval(everyMs) },
@@ -687,7 +748,7 @@ export function ScheduleRows(props: Readonly<{
                 value={when.expression}
                 monospace
                 autoCapitalize="none"
-                onCommit={(expression) => props.onChange({ ...when, expression })}
+                onCommit={commands.commitExpression}
             />
         );
     }
@@ -700,11 +761,12 @@ export function ScheduleRows(props: Readonly<{
                 testIDPrefix={`${props.testID}-repeat`}
                 title={t('workflows.triggers.popover.repeat')}
                 value={schedule.repeat}
-                onChange={(repeat) => setSchedule({ ...schedule, repeat })}
+                onChange={commands.changeRepeat}
                 options={REPEATS.map((repeat) => ({ id: repeat, label: t(`workflows.triggers.popover.${REPEAT_LABEL_KEYS[repeat]}`) }))}
             />
             {schedule.repeat === 'weekly' ? (
                 <FieldSelect
+                    currentUiContextCommandScope={props.currentUiContextCommandScope === undefined ? undefined : `${props.currentUiContextCommandScope}-day`}
                     testID={`${props.testID}-day`}
                     title={t('workflows.triggers.popover.day')}
                     items={[1, 2, 3, 4, 5, 6, 0].map((day) => ({ id: String(day), title: weekdayName(day) }))}
@@ -719,12 +781,7 @@ export function ScheduleRows(props: Readonly<{
                 title={t('workflows.triggers.popover.at')}
                 {...(when.timezone ? { subtitle: when.timezone } : {})}
                 value={formatClockTimeInput(schedule)}
-                onCommit={(draft) => {
-                    const time = parseClockTime(draft);
-                    if (time === null) return formatClockTimeInput(schedule);
-                    setSchedule({ ...schedule, ...time });
-                    return undefined;
-                }}
+                onCommit={commands.commitTime}
             />
         </>
     );

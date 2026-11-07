@@ -18,7 +18,9 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 
-export function workflowUsedRoleIds(definition: WorkflowDefinitionV1): readonly string[] {
+type WorkflowRoleDefinition = Pick<WorkflowDefinitionV1, 'blocks' | 'defaults' | 'roles'>;
+
+export function workflowUsedRoleIds(definition: WorkflowRoleDefinition): readonly string[] {
     return [...new Set(walkWorkflowBlocks(definition.blocks).flatMap((block) => {
         if (block.kind !== 'step') return [];
         const engine = block.execution?.engine ?? definition.defaults.engine;
@@ -28,7 +30,7 @@ export function workflowUsedRoleIds(definition: WorkflowDefinitionV1): readonly 
 
 /** Mounted only in the open chip. All editable effective fields come from ORC's resolver. */
 export function WorkflowRunRoles(props: Readonly<{
-    definition: WorkflowDefinitionV1;
+    definition: WorkflowRoleDefinition;
     roleIds: readonly string[];
     overrides: readonly RoleOverrideV1[];
     onChange: (overrides: readonly RoleOverrideV1[]) => void;

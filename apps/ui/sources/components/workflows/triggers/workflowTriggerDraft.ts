@@ -6,8 +6,7 @@ import type { WorkflowTriggerAddRequestV1, WorkflowTriggerRemoveRequestV1, Workf
 
 import type { WorkflowTriggerWriteResult } from '@/sync/domains/workflows/workflowTriggerActions';
 import type { WorkflowDraftTriggerSnapshotV1 } from '@happier-dev/protocol/actions/workflowAuthoringAction';
-
-import type { TriggerSummarySource } from './formatTriggerSummary';
+import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 
 /**
  * A workflow's trigger edits while its editor is open (FIN 04 §5.4 "Save"; 07 S4): trigger edits are
@@ -20,11 +19,13 @@ export type WorkflowTriggerDraftUpdate = Readonly<{ trigger?: AutomationTriggerD
 
 /**
  * The trigger set's own context, the same for every trigger of this workflow (04 §5.4): its Runs on
- * machine and folder and its constant input values (03 §5.3 "Inputs").
+ * machine and folder, constant input values, Roles and run visibility.
  */
 export type WorkflowTriggerSetContextDraft = Readonly<{
     project?: WorkflowProjectTargetV1;
     inputs?: Readonly<Record<string, JsonValue>>;
+    roleOverrides?: readonly RoleOverrideV1[];
+    visibleTeamId?: string | null;
 }>;
 
 export type WorkflowTriggerDraft = Readonly<{
@@ -80,7 +81,11 @@ export function captureWorkflowTriggerSnapshot(
     }
     for (const add of draft.adds) rows.push({ identity: identify(add.clientId), trigger: add.trigger, enabled: add.trigger.enabled });
     // Before a set exists, Where remains the editor's default; history must not turn it into an override.
-    return { rows, project: draft.context?.project ?? set?.project ?? null, inputs: draft.context?.inputs ?? set?.context?.inputs ?? {} };
+    const roleOverrides = draft.context?.roleOverrides ?? set?.context?.roleOverrides;
+    const visibleTeamId = draft.context?.visibleTeamId === undefined ? set?.context?.visibleTeamId : draft.context.visibleTeamId;
+    return { rows, project: draft.context?.project ?? set?.project ?? null, inputs: draft.context?.inputs ?? set?.context?.inputs ?? {},
+        ...(roleOverrides === undefined ? {} : { roleOverrides: [...roleOverrides] }),
+        ...(visibleTeamId === undefined ? {} : { visibleTeamId }) };
 }
 
 /** Rebase a history snapshot onto the current saved set after any successful writes. */
@@ -106,9 +111,12 @@ export function restoreWorkflowTriggerSnapshot(set: WorkflowTriggerSetV1 | null,
         }
         if (Object.keys(update).length) updates[saved.id] = update;
     }
-    const context: { project?: WorkflowProjectTargetV1; inputs?: Readonly<Record<string, JsonValue>> } = {};
+    const context: { project?: WorkflowProjectTargetV1; inputs?: Readonly<Record<string, JsonValue>>;
+        roleOverrides?: readonly RoleOverrideV1[]; visibleTeamId?: string | null } = {};
     if (snapshot.project && !sameStrictJsonValue(snapshot.project, set?.project)) context.project = snapshot.project;
     if (!sameStrictJsonValue(snapshot.inputs, set?.context?.inputs ?? {})) context.inputs = snapshot.inputs;
+    if (!sameStrictJsonValue(snapshot.roleOverrides ?? [], set?.context?.roleOverrides ?? [])) context.roleOverrides = snapshot.roleOverrides ?? [];
+    if ((snapshot.visibleTeamId ?? null) !== (set?.context?.visibleTeamId ?? null)) context.visibleTeamId = snapshot.visibleTeamId ?? null;
     return { adds, updates, removes: (set?.triggers ?? []).filter((saved) => !retained.has(saved.id)).map((saved) => saved.id),
         ...(Object.keys(context).length ? { context } : {}) };
 }
@@ -171,8 +179,8 @@ export function editWorkflowTriggerDraft(draft: WorkflowTriggerDraft, edit: Work
  * Its row editor reads that exact envelope and uses the canonical Event setup flow to reconfigure it.
  */
 export type WorkflowTriggerRowModel =
-    | Readonly<{ kind: 'saved'; key: string; triggerId: AutomationTriggerId; trigger: TriggerSummarySource; schedule: WorkflowScheduleTrigger | null; enabled: boolean; changed: boolean }>
-    | Readonly<{ kind: 'new'; key: string; clientId: string; trigger: TriggerSummarySource; schedule: WorkflowScheduleTrigger | null; enabled: boolean }>;
+    | Readonly<{ kind: 'saved'; key: string; triggerId: AutomationTriggerId; trigger: ScheduleCarrier; schedule: WorkflowScheduleTrigger | null; enabled: boolean; changed: boolean }>
+    | Readonly<{ kind: 'new'; key: string; clientId: string; trigger: ScheduleCarrier; schedule: WorkflowScheduleTrigger | null; enabled: boolean }>;
 
 export type WorkflowScheduleTrigger = Extract<AutomationTriggerDefinition, Readonly<{ kind: 'schedule' }>>;
 
@@ -274,6 +282,8 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
                 patch: {
                     ...(context.project === undefined ? {} : { project: context.project }),
                     ...(context.inputs === undefined ? {} : { inputs: { ...context.inputs } }),
+                    ...(context.roleOverrides === undefined ? {} : { roleOverrides: [...context.roleOverrides] }),
+                    ...(context.visibleTeamId === undefined ? {} : { visibleTeamId: context.visibleTeamId }),
                 },
             })).set;
             const { context: _applied, ...rest } = remaining;
@@ -292,6 +302,8 @@ export async function saveWorkflowTriggerDraft(params: Readonly<{
                 project,
                 trigger: add.trigger,
                 ...(set === null && context?.inputs !== undefined ? { inputs: { ...context.inputs } } : {}),
+                ...(set === null && context?.roleOverrides !== undefined ? { roleOverrides: [...context.roleOverrides] } : {}),
+                ...(set === null && context?.visibleTeamId !== undefined ? { visibleTeamId: context.visibleTeamId } : {}),
             });
             set = result.set;
             params.onAcknowledged?.({ kind: 'add', ...add }, result.triggerId === undefined ? undefined : AutomationTriggerIdSchema.parse(result.triggerId), set);

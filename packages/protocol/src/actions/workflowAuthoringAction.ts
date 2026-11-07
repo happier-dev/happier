@@ -12,6 +12,7 @@ import { WorkflowRunIdV1Schema } from '../workflows/workflowIdsV1.js';
 import { WorkflowDecimalV1Schema } from '../workflows/workflowProgressV1.js';
 import { AutomationTriggerDefinitionInputSchema } from '../automations/automationTriggerDefinition.js';
 import { AutomationTriggerIdSchema } from '../automations/automationTriggerIdentity.js';
+import { AutomationStoredWorkflowDefinitionV2Schema } from '../automations/automationWorkflowRecipeV2.js';
 export {
   WORKFLOW_AUTHORING_ACTION_IDS,
   isWorkflowAuthoringActionId,
@@ -37,6 +38,8 @@ export const WorkflowDraftTriggerSnapshotV1Schema = lazyZodSchema(() => z.strict
       && rows.every(row => row.trigger === null || row.trigger.enabled === row.enabled);
   })),
   project: zMini.nullable(WorkflowProjectTargetV1Schema), inputs: z.record(z.string(), StrictJsonValueSchema),
+  roleOverrides: AutomationStoredWorkflowDefinitionV2Schema.shape.roleOverrides,
+  visibleTeamId: AutomationStoredWorkflowDefinitionV2Schema.shape.visibleTeamId,
 }));
 export const WorkflowDraftSettingsV1Schema = lazyZodSchema(() => z.strictObject({
   description: z.string(), projectTarget: zMini.nullable(WorkflowProjectTargetV1Schema),
