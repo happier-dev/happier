@@ -171,6 +171,36 @@ it('returns confirmed save and retry outcomes and restores only changed fields t
     await hook.unmount();
 });
 
+it('offers Retry when Undo restores a previously implicit default level', async () => {
+    await renderEnabledPreferencesSection('https://preferences-implicit-default.example');
+    let preferences = SessionAutoFollowPreferencesV1Schema.parse({ assigned: true, direct: false, team: false, group: false });
+    let fail = false;
+    setPreferencesFetch(async (_url, init) => {
+        if (init?.method === 'PUT') {
+            if (fail) return Response.json({}, { status: 503 });
+            preferences = SessionAutoFollowPreferencesV1Schema.parse(JSON.parse(String(init.body)));
+        }
+        return Response.json(preferences);
+    });
+    const screen = await renderSettingsView(<CoordinationSettingsView />);
+    await vi.waitFor(() => expect(isOn(screen, 'assigned')).toBe(true));
+    const level = () => screen.findAll(node => node.props.testID === 'settings-coordination-level-managerPolicy'
+        && typeof node.props.onSelect === 'function')[0]!;
+    act(() => level().props.onSelect('quiet'));
+    await vi.waitFor(() => expect(preferences.managerPolicy?.preset).toBe('quiet'));
+    await vi.waitFor(() => expect(readPresentationNotice()?.undo).toBeDefined());
+    fail = true;
+    await act(async () => { readPresentationNotice()?.undo?.run(); });
+    await vi.waitFor(() => expect(readPresentationNotice()?.severity).toBe('error'));
+    expect(screen.findByTestId('settings-coordination-levels-retry')).not.toBeNull();
+    fail = false;
+    await screen.pressByTestIdAsync('settings-coordination-levels-retry');
+    await vi.waitFor(() => expect(preferences.managerPolicy).toBeUndefined());
+    expect(level().props.selectedId).toBe('important');
+    expect(readPresentationNotice()?.severity).toBe('info');
+    await screen.unmount();
+});
+
 it('shares one page acquisition and save gate across creation levels and automatic Follow defaults', async () => {
     await renderEnabledPreferencesSection('https://preferences-whole-page.example');
     let preferences: SessionAutoFollowPreferencesV1 = { assigned: true, direct: false, team: false, group: false,

@@ -7078,7 +7078,7 @@ const enSettingsProviders = {
     machineTimeoutDescription: 'This machine did not answer while checking providers. Try again.',
     runCredentialRequiredTitle: 'Choose a credential for this Run',
     runCredentialRequiredDescription: 'This Run cannot inherit the Session’s direct credential. Select a Team credential for the Run.',
-    hostNotFoundDescription: "The address's host name can't be found. Check the Base URL.", hostNotFoundDescription: "The address's host name can't be found. Check the Base URL.", secretMissingDescription:
+    hostNotFoundDescription: "The address's host name can't be found. Check the Base URL.", secretMissingDescription:
       'Choose a Saved Secret before enabling this provider.',
     notEnabledOnMachineTitle: 'Not enabled on this machine',
     notEnabledOnMachineDescription:

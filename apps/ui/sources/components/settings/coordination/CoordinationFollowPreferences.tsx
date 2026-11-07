@@ -44,7 +44,7 @@ function DefaultLevelsGroup(props: Readonly<{
     popoverBoundaryRef: React.RefObject<ScrollView | null>;
 }>) {
     const { enabled, displayed, confirmed, failed, online, saving, error, save, retry } = props.preferences;
-    const failedField = LEVEL_FIELDS.find(field => failed?.patch[field] !== undefined);
+    const failedField = LEVEL_FIELDS.find(field => failed && Object.hasOwn(failed.patch, field));
     const sectionError = error && (!failed || failedField !== undefined);
     const [openField, setOpenField] = React.useState<CreationLevelField | null>(null);
     if (!enabled) return null;

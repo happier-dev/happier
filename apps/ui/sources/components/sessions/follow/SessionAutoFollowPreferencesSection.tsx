@@ -25,7 +25,7 @@ export function SessionAutoFollowPreferencesSection({ preferences }: Readonly<{
     preferences: ReturnType<typeof useSessionAutoFollowPreferences>;
 }>) {
     const { enabled, displayed, confirmed, failed, online, saving, error, save, retry } = preferences;
-    const failedField = FIELDS.find(field => failed?.patch[field] !== undefined);
+    const failedField = FIELDS.find(field => failed && Object.hasOwn(failed.patch, field));
     const sectionError = error && (!failed || failedField !== undefined);
     if (!enabled) return null;
     const levels = [
