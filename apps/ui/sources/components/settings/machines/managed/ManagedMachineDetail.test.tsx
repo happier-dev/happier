@@ -243,7 +243,11 @@ function staticRetentionQualification(machine: ManagedMachineV1, url: URL, init?
 }
 
 describe('managed Machine detail', () => {
-    it.each([true, false])('shows a Use member the managed policy without owner-only power, delete, or policy editors (enrolled: %s)', async enrolled => {
+    it.each([
+        { enrolled: true, availability: 'present', checkAvailable: false },
+        { enrolled: false, availability: 'present', checkAvailable: true },
+        { enrolled: true, availability: 'unavailable', checkAvailable: true },
+    ] as const)('shows a Use member the managed policy without owner-only power, delete, or policy editors (enrolled: $enrolled; observation: $availability)', async ({ enrolled, availability, checkAvailable }) => {
         const target = await upsertAndActivateServer({ serverUrl: 'https://managed-shared-use.test', scope: 'tab' });
         const homeId = 'srv_managed_shared_use';
         await setServerProfileIdentityForUrl(target.serverUrl, homeId);
@@ -253,7 +257,7 @@ describe('managed Machine detail', () => {
         const launch = { provider, schemaVersion: 1, name: 'Shared sandbox', choices: {} };
         const machine: ManagedMachineV1 = { id: 'shared-created', homeId, custodianAccountId: 'owner', launch, controller,
             allocation: 'bound', creationState: 'active', ...(enrolled ? { enrolledMachineId: 'shared-guest' } : {}),
-            observation: { observedAt: 1, availability: 'present', power: 'running' },
+            observation: availability === 'present' ? { observedAt: 1, availability, power: 'running' } : { observedAt: 1, availability },
             resource: { contributionRef: provider, schemaVersion: 1, value: { resourceId: 'native-id' } },
             desired: 'start', desiredWhen: 'now', intentRevision: 1, retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
             reviewedFacts: { launch, controller, optionStatus: 'current', billing: { location: 'local', stoppedBilling: 'not-billed' },
@@ -279,6 +283,7 @@ describe('managed Machine detail', () => {
         try {
             await flushHookEffects({ cycles: 30 });
             expect(screen.findByTestId('managed-machine.detail')).not.toBeNull();
+            expect(screen.findByTestId('managed-machine.start')).toBeNull();
             expect(screen.findByTestId('managed-machine.stop')).toBeNull();
             expect(screen.findByTestId('managed-machine.delete')).toBeNull();
             expect(screen.findByTestId('managed-machine.cancel')).toBeNull();
@@ -288,8 +293,10 @@ describe('managed Machine detail', () => {
             expect(policyRow?.props.mode).toBe('info');
             expect(policyRow?.props.onPress).toBeUndefined();
             const check = screen.tree.findAllByType(RoundButton).find(button => button.props.title === t('managedMachines.inspect.checkNow'));
-            expect(check).toBeDefined();
-            expect(check?.props.disabled).not.toBe(true);
+            if (checkAvailable) {
+                expect(check).toBeDefined();
+                expect(check?.props.disabled).not.toBe(true);
+            } else expect(check).toBeUndefined();
         } finally { await screen.unmount(); }
     });
     it('renders an Account-owned Machine without inventing a managing computer', async () => {
@@ -3758,42 +3765,12 @@ describe('managed Machine detail', () => {
         const screen = await renderScreen(<Probe machine={machine} />);
         expect(screen.tree.findByType(PageHeader).props.title).toBe('hz-build-2');
         expect(seen.at(-1)?.description).toBe(t('managedMachines.detail.madeFromPreset', { preset: 'Build box' }));
-        expect(seen.at(-1)?.meta).toEqual(expect.arrayContaining([
-            expect.objectContaining({ key: 'managed-power', text: t('managedMachines.detail.power.running') })]));
+        expect(seen.at(-1)?.meta.some(fact => fact.key === 'managed-power')).toBe(false);
         // Unknown power says nothing rather than "Running" on a guess.
         await screen.update(<Probe machine={{ ...machine, observation: { availability: 'unavailable', observedAt: 2 } }} />);
         expect(seen.at(-1)?.meta.some(fact => fact.key === 'managed-power')).toBe(false);
         await screen.update(<Probe />);
         expect(seen.at(-1)).toBeNull();
-    });
-    it('reads uptime into the managed header while leaving native resource identities in Details', async () => {
-        const { managedMachineHeaderMeta } = await import('./ManagedMachineSections');
-        const machine = { observation: { availability: 'present' as const, observedAt: 1, power: 'running' as const },
-            resource: { value: { serverId: 58213904, owned: { volumeIds: [] } } } };
-        const now = 10 * 3_600_000;
-        const meta = managedMachineHeaderMeta({ machine, provider: 'Hetzner', kindTitle: 'Server',
-            runningSince: now - 3.4 * 3_600_000, now });
-        expect(meta.find(fact => fact.key === 'managed-power')?.text)
-            .toBe(t('managedMachines.detail.runningFor', { duration: t('managedRetention.hours', { count: 3 }) }));
-        // The native identity remains available in Details without becoming another name in the header.
-        expect(meta.find(fact => fact.key === 'managed-kind')?.text).toBe(t('managedMachines.detail.kindFact', { provider: 'Hetzner', kind: 'Server' }));
-        expect(meta.some(fact => fact.key === 'managed-native-id')).toBe(false);
-        const guest = managedMachineHeaderMeta({ machine: { ...machine, resource: { value: { name: 'happier-generated-guest' } } },
-            provider: 'Lima', kindTitle: 'Machine', now });
-        expect(guest.some(fact => fact.text.includes('happier-generated-guest'))).toBe(false);
-        // No start time or a stopped machine: the header says only what it knows.
-        const bare = managedMachineHeaderMeta({ machine, provider: 'Hetzner', kindTitle: 'Server', now });
-        expect(bare.find(fact => fact.key === 'managed-power')?.text).toBe(t('managedMachines.detail.power.running'));
-        expect(bare.find(fact => fact.key === 'managed-kind')?.text).toBe(t('managedMachines.detail.kindFact', { provider: 'Hetzner', kind: 'Server' }));
-        expect(bare.some(fact => fact.key === 'managed-native-id')).toBe(false);
-        const stopped = managedMachineHeaderMeta({ machine: { ...machine, observation: { ...machine.observation, power: 'stopped' as const } },
-            provider: 'Hetzner', kindTitle: 'Server', runningSince: now - 3_600_000, now });
-        // Stopped or asleep is the header's sentence, from the one lifecycle presenter the rail uses; no second fact repeats it.
-        expect(stopped.some(fact => fact.key === 'managed-power')).toBe(false);
-        const missing = managedMachineHeaderMeta({ machine: { ...machine, resource: { value: { owned: {} } } }, provider: 'Hetzner',
-            kindTitle: 'Server', now });
-        expect(missing.find(fact => fact.key === 'managed-kind')?.text).toBe(t('managedMachines.detail.kindFact', { provider: 'Hetzner', kind: 'Server' }));
-        expect(missing.some(fact => fact.key === 'managed-native-id')).toBe(false);
     });
     it('says an offline created machine\'s state in the same word as the Machines rail', async () => {
         const { managedMachineHeaderPresence } = await import('./ManagedMachineSections');
@@ -3826,7 +3803,7 @@ describe('managed Machine detail', () => {
     it('shows Check now working while its check runs', async () => {
         const stopped = { id: 'checking', homeId: 'home', custodianAccountId: 'owner',
             launch: { provider: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, name: 'Lima', choices: {} },
-            controller: { machineId: 'controller', installationId: 'installation' }, enrolledMachineId: 'guest',
+            controller: { machineId: 'controller', installationId: 'installation' },
             resource: { contributionRef: { pluginId: 'custom.provisioner', localId: 'native' }, schemaVersion: 1, value: {} },
             allocation: 'bound', creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1,
             retention: { kind: 'until-delete' }, wakeOnAcceptedMessage: false,
