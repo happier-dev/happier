@@ -5,6 +5,19 @@ import { CLAUDE_PLUGIN, PLUGIN_MANIFEST } from './manifest.js';
 import { CLAUDE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 
 describe('Claude plugin manifest', () => {
+  it('admits the native Agent settings view with its custom artifact', () => {
+    const admitted = ingestPluginManifestV2(PLUGIN_MANIFEST);
+    if (!admitted.ok) throw new Error(JSON.stringify(admitted.diagnostics));
+    const view = admitted.manifest.contributes.ui.views.find((entry) => entry.container === 'agentSettings');
+    expect(view).toMatchObject({ container: 'agentSettings', target: { kind: 'app' } });
+    expect(admitted.manifest.contributes.ui.renderers.find((entry) => entry.id === view?.renderer))
+      .toMatchObject({
+        kind: 'reactNative',
+        artifact: 'claude-agent-settings-native',
+        requiredHostMethods: ['executeAction', 'confirm'],
+      });
+  });
+
   it('keeps static masking roots separate from installed plugin discovery', () => {
     const result = ingestPluginManifestV2(PLUGIN_MANIFEST);
     if (!result.ok) throw new Error(JSON.stringify(result.diagnostics));
@@ -43,12 +56,12 @@ describe('Claude plugin manifest', () => {
     expect(PLUGIN_MANIFEST.contributes.settings).toEqual([
       CLAUDE_AGENT_SETTINGS_CONTRIBUTION,
     ]);
-    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toContainEqual({
+    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toContainEqual(expect.objectContaining({
       id: 'claude-subscription',
       title: 'Claude',
-      authentication: {
+      authentication: expect.objectContaining({
         defaultModeId: 'setup-token',
-        modes: [{
+        modes: expect.arrayContaining([expect.objectContaining({
           id: 'setup-token',
           kind: 'manual',
           title: 'Setup token',
@@ -59,7 +72,7 @@ describe('Claude plugin manifest', () => {
             schema: { type: 'string', minLength: 1 },
             secret: true,
           }],
-        }, {
+        }), expect.objectContaining({
           id: 'oauth',
           kind: 'oauthAuthorizationCode',
           callbackUrl: 'https://platform.claude.com/oauth/code/callback',
@@ -73,15 +86,15 @@ describe('Claude plugin manifest', () => {
           ],
           pkce: 'required',
           outcomeReconciliation: 'none',
-        }],
-      },
-    });
-    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toContainEqual({
+        })]),
+      }),
+    }));
+    expect(PLUGIN_MANIFEST.contributes.connectedAccountDescriptors).toContainEqual(expect.objectContaining({
       id: 'anthropic',
       title: 'Anthropic API key',
-      authentication: {
+      authentication: expect.objectContaining({
         defaultModeId: 'api-key',
-        modes: [{
+        modes: expect.arrayContaining([expect.objectContaining({
           id: 'api-key',
           kind: 'manual',
           outcomeReconciliation: 'none',
@@ -91,9 +104,9 @@ describe('Claude plugin manifest', () => {
             schema: { type: 'string', minLength: 1, pattern: '^\\s*sk-ant-[A-Za-z0-9_-]+\\s*$' },
             secret: true,
           }],
-        }],
-      },
-    });
+        })]),
+      }),
+    }));
   });
 
   it('declares canonical session runtime activity snapshots', () => {

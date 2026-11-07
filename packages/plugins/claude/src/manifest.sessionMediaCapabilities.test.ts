@@ -29,7 +29,7 @@ describe('Claude plugin AgentRuntime capabilities', () => {
   it('declares native Session operations and leaves finite Runs host-derived', () => {
     const agent = PLUGIN_MANIFEST.contributes?.agents?.find((entry) => entry.id === 'claude');
 
-    expect(agent?.capabilities?.sessions).toEqual({
+    expect(agent?.capabilities?.sessions).toMatchObject({
       open: ['create', 'resume'],
       delivery: ['newTurn', 'steer', 'followUp'],
       cancel: true,

@@ -1,4 +1,7 @@
+import { CLAUDE_SESSION_RETENTION_SETTING_ID } from '@happier-dev/protocol/agents/claude/session-retention';
+import { applyClaudeAccountSettings } from './agent/settings/applyAccountSettings.js';
 import { CLAUDE_ACCOUNT_USAGE_PROVIDER_ID } from './agent/auth/services/usage/identity.js';
+import { CLAUDE_ACCOUNT_USAGE_PLAN_METADATA } from './connectedAccounts/planLabels.js';
 import { projectAgentCapabilitiesV2FromDefinition } from '@happier-dev/plugin-sdk/agents';
 import { definePlugin } from '@happier-dev/plugin-sdk';
 import type { PluginInvocationContext } from '@happier-dev/plugin-sdk';
@@ -7,7 +10,7 @@ import {
   HAPPIER_CONNECTED_SERVICE_MATERIALIZED_ENV_KEYS_JSON_ENV,
   HAPPIER_CONNECTED_SERVICE_SELECTIONS_JSON_ENV,
 } from '@happier-dev/plugin-sdk/connected-accounts';
-import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/plugin-sdk/first-party/connected-accounts';
+import { CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1 } from '@happier-dev/protocol/agents/claude/connected-account-materialization';
 import type { HookHandler } from '@happier-dev/plugin-sdk/hooks';
 import { CLAUDE_SUBSCRIPTION_OAUTH_PROFILE } from './connectedAccounts/claudeSubscriptionProfile.js';
 import { claudeSubscriptionAccountAuthentication } from './connectedAccounts/account.js';
@@ -46,13 +49,14 @@ import { claudeExternalSessionsContribution } from './agent/surfaces/sessions/ex
 import { claudeExternalSessionHooksContribution } from './agent/surfaces/sessions/external/hooks.js';
 import { claudeExternalSessionObservationContribution } from './agent/surfaces/sessions/external/observation.js';
 import { claudeExternalSessionTakeoverContribution } from './agent/surfaces/sessions/external/takeover.js';
-import { CLAUDE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
+import { readClaudeSettingSourcesV2 } from '@happier-dev/protocol/agents/claude/predecessor-message-meta';
+import { CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS, CLAUDE_AGENT_SETTINGS_CONTRIBUTION } from './agentSettings/definition.js';
 import { anthropicConnectedAccountRuntime, ANTHROPIC_API_KEY_INPUT_SCHEMA } from './connectedAccounts/anthropicRuntime.js';
 import {
   claudeSubscriptionConnectedAccountRuntime,
   CLAUDE_NATIVE_IMPORT_MODE_ID,
 } from './connectedAccounts/claudeSubscriptionNativeRuntime.js';
-import { CLAUDE_UI_TRANSLATION_BUNDLES } from './ui/translations.js';
+
 import { ANTHROPIC_PROVIDER_CONTRIBUTION } from './provider/contribution.js';
 
 const resolveClaudeDaemonSpawnPrerequisitesHook: HookHandler = (event, context) =>
@@ -118,7 +122,6 @@ export const CLAUDE_PLUGIN = definePlugin({
   version: '0.0.0',
   displayName: 'Claude',
   description: 'Claude Code coding agent.',
-  engines: { happier: '^0.0.0' }, runtime: { apiVersion: 1 },
   entrypoints: { daemon: './.happier-plugin/daemon.js' },
   hostAccess: {
     required: [
@@ -220,6 +223,7 @@ export const CLAUDE_PLUGIN = definePlugin({
         billingUrl: 'https://claude.ai/settings/billing',
         recoveryCredits: { supported: true },
         usageIdentity: { providerId: CLAUDE_ACCOUNT_USAGE_PROVIDER_ID, requiredContext: 'organization' },
+        metadata: CLAUDE_ACCOUNT_USAGE_PLAN_METADATA,
         authentication: {
           account: { artifactId: 'connected-account-authentication', exportName: 'activate' },
           defaultModeId: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1
@@ -228,6 +232,11 @@ export const CLAUDE_PLUGIN = definePlugin({
             id: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.setupToken.authenticationModeId,
             kind: 'manual',
             title: 'Setup token',
+            setup: {
+              url: 'https://code.claude.com/docs/en/cli-reference',
+              checklist: ['Run claude setup-token in a terminal and complete the Claude subscription sign-in.', 'Paste the generated token here.'],
+              createKeyTitle: 'Read Claude setup-token instructions',
+            },
             outcomeReconciliation: 'none',
             fields: [{
               id: 'token',
@@ -239,6 +248,7 @@ export const CLAUDE_PLUGIN = definePlugin({
             id: CLAUDE_SUBSCRIPTION_MATERIALIZATION_CONTRACT_V1.oauth.authenticationModeId,
             kind: 'oauthAuthorizationCode',
             browserReachability: 'unreachable',
+            title: 'Sign in with Claude',
             callbackUrl: CLAUDE_SUBSCRIPTION_OAUTH_PROFILE.callbackUrl,
             scopes: [...CLAUDE_CODE_RECOMMENDED_OAUTH_SCOPES],
             pkce: 'required',
@@ -246,6 +256,12 @@ export const CLAUDE_PLUGIN = definePlugin({
           }, {
             id: CLAUDE_NATIVE_IMPORT_MODE_ID,
             kind: 'manual',
+            setup: {
+              url: 'https://code.claude.com/docs/en/cli-reference',
+              checklist: ['On the computer you will import from, run claude auth login and sign in with your Claude subscription.', 'Choose that computer in Happier to import its saved Claude Code login.'],
+              createKeyTitle: 'Read Claude Code login instructions',
+            },
+            credentialOrigin: 'native_import',
             title: 'Import native login',
             outcomeReconciliation: 'none',
             fields: [{
@@ -269,7 +285,16 @@ export const CLAUDE_PLUGIN = definePlugin({
           modes: [{
             id: 'api-key',
             kind: 'manual',
+            setup: {
+              url: 'https://platform.claude.com/settings/keys',
+              checklist: [{ key: 'connectedServicesSettings.keyCreateAnthropic', fallback: 'Create an API key in the Anthropic Console, then paste it here.' }],
+              createKeyTitle: { key: 'connectedServicesSettings.keyCreateAnthropic', fallback: 'Create an API key in the Anthropic Console, then paste it here.' },
+              billingNote: { key: 'connectedServicesSettings.keyBillingAnthropic', fallback: 'API usage is billed separately from a Claude subscription.' },
+              shapeHint: { key: 'connectedServicesSettings.keyShapeAnthropic', fallback: 'This looks like an Anthropic API key.' },
+            },
+            credentialOrigin: 'authentication',
             outcomeReconciliation: 'none',
+            accountDirectSave: true,
             fields: [{
               id: 'token',
               title: 'Anthropic API key',
@@ -284,6 +309,7 @@ export const CLAUDE_PLUGIN = definePlugin({
   },
   agents: {
     claude: {
+      accountSettings: { settingLocalIds: [CLAUDE_SESSION_RETENTION_SETTING_ID], apply: applyClaudeAccountSettings },
       declaration: {
         title: 'Claude',
         runtime: { kind: 'custom' },
@@ -406,14 +432,15 @@ export const CLAUDE_PLUGIN = definePlugin({
           required: { streaming: true, toolRoundTrips: true },
           credentialSupport: {
             supportsNoAuth: true,
+            supportsAdditionalCredentials: true,
+            requiredApiKeyTransports: [
+              { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] } },
+              { protocol: 'anthropic', destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] } },
+            ],
             apiKeyTransports: [
               {
                 protocol: 'anthropic',
-                destination: { kind: 'httpHeader', names: ['authorization'], formats: ['bearer'] },
-              },
-              {
-                protocol: 'anthropic',
-                destination: { kind: 'httpHeader', names: ['x-api-key'], formats: ['raw'] },
+                destination: { kind: 'httpHeader', names: 'anyValidated', formats: ['raw', 'bearer'] },
               },
             ],
           },
@@ -449,6 +476,9 @@ export const CLAUDE_PLUGIN = definePlugin({
       },
       factory: createClaudeAgentRuntime,
       preflightSessionControls: {
+        resolveNativeCatalogSettingSources: ({ pluginSettings }) => readClaudeSettingSourcesV2(
+          CLAUDE_REMOTE_AGENT_SETTINGS_DEFAULTS, pluginSettings.account ?? {},
+        ),
         catalogs: CLAUDE_PREFLIGHT_CATALOGS,
         resolveNativePluginSkillRoots: resolveClaudeNativePluginSkillRoots,
         async resolveNativeSkillDirectories({ pluginSettings, runtimeDescriptorV1 }: Parameters<NonNullable<AgentPreflightSessionControlsContributionV1['resolveNativeSkillDirectories']>>[0]) {
@@ -556,22 +586,14 @@ export const CLAUDE_PLUGIN = definePlugin({
     'resolve-prerequisites': {
       declaration: {
         on: 'agent.resolvePrerequisites',
-        hookApiVersion: 1,
-        category: 'decision',
-        scope: 'agent',
         filters: { agentId: 'claude' },
-        executionKind: 'decide',
       },
       handler: resolveClaudeDaemonSpawnPrerequisitesHook,
     },
     'augment-spawn-env': {
       declaration: {
         on: 'agent.spawnEnv.augment',
-        hookApiVersion: 1,
-        category: 'augmentation',
-        scope: 'daemon',
         filters: { agentId: 'claude' },
-        executionKind: 'augment',
       },
       handler: augmentClaudeDaemonSpawnEnvHook,
     },
@@ -659,7 +681,31 @@ export const CLAUDE_PLUGIN = definePlugin({
     },
   },
   ui: {
-    translations: CLAUDE_UI_TRANSLATION_BUNDLES,
+    translations: [
+      { locale: "en", resourceId: "i18n-en" },
+      { locale: "de", resourceId: "i18n-de" },
+      { locale: "ru", resourceId: "i18n-ru" },
+      { locale: "pl", resourceId: "i18n-pl" },
+      { locale: "es", resourceId: "i18n-es" },
+      { locale: "fr", resourceId: "i18n-fr" },
+      { locale: "it", resourceId: "i18n-it" },
+      { locale: "pt", resourceId: "i18n-pt" },
+      { locale: "ca", resourceId: "i18n-ca" },
+      { locale: "zh-Hans", resourceId: "i18n-zh-hans" },
+      { locale: "zh-Hant", resourceId: "i18n-zh-hant" },
+      { locale: "ja", resourceId: "i18n-ja" },
+    ],
+    views: [{
+      id: 'agent-settings-view',
+      container: 'agentSettings',
+      target: { kind: 'app' },
+      renderer: 'agent-settings-renderer',
+    }],
+    renderers: [{
+      id: 'agent-settings-renderer',
+      kind: 'reactNative', artifact: 'claude-agent-settings-native',
+      requiredHostMethods: ['executeAction', 'confirm'],
+    }],
     surfaces: [{
       id: 'subagent-launch',
       placement: 'sessionSubagentLaunch',
@@ -709,6 +755,20 @@ export const CLAUDE_PLUGIN = definePlugin({
         },
       },
     }],
+  },
+  resources: {
+    "i18n-en": { kind: 'asset', path: "assets/i18n/en.json", contentType: 'application/json' },
+    "i18n-de": { kind: 'asset', path: "assets/i18n/de.json", contentType: 'application/json' },
+    "i18n-ru": { kind: 'asset', path: "assets/i18n/ru.json", contentType: 'application/json' },
+    "i18n-pl": { kind: 'asset', path: "assets/i18n/pl.json", contentType: 'application/json' },
+    "i18n-es": { kind: 'asset', path: "assets/i18n/es.json", contentType: 'application/json' },
+    "i18n-fr": { kind: 'asset', path: "assets/i18n/fr.json", contentType: 'application/json' },
+    "i18n-it": { kind: 'asset', path: "assets/i18n/it.json", contentType: 'application/json' },
+    "i18n-pt": { kind: 'asset', path: "assets/i18n/pt.json", contentType: 'application/json' },
+    "i18n-ca": { kind: 'asset', path: "assets/i18n/ca.json", contentType: 'application/json' },
+    "i18n-zh-hans": { kind: 'asset', path: "assets/i18n/zh-Hans.json", contentType: 'application/json' },
+    "i18n-zh-hant": { kind: 'asset', path: "assets/i18n/zh-Hant.json", contentType: 'application/json' },
+    "i18n-ja": { kind: 'asset', path: "assets/i18n/ja.json", contentType: 'application/json' },
   },
   settings: {
     [CLAUDE_AGENT_SETTINGS_CONTRIBUTION_ID]: CLAUDE_AGENT_SETTINGS_DECLARATION,
