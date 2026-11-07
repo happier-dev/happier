@@ -1946,7 +1946,9 @@ warning. Shutdown cancels retry waits and prevents late coordinator creation.
 Late activation assigns the same coordinator, schedules current-source refresh and
 starts the same quota loop as successful startup. Connectivity pause/resume reads
 the current loop handle, so a loop created after machine connection still follows
-connectivity changes.
+connectivity changes. Session credential hot-apply warnings include the Session,
+service, available profile/group/generation, mapped failure code and sanitized
+underlying error summary.
 
 An explicit quota refresh records a request, then the daemon quota coordinator
 publishes its outcome through the existing Provider Account Usage owner.

@@ -278,6 +278,34 @@ type ConnectedServiceGroupRuntimeMetadata = Readonly<{
   fallbackProfileId: string;
   generation: number;
 }>;
+function buildHotApplyFailure(input: Readonly<{
+  error: unknown;
+  sessionId: string;
+  serviceIds: Iterable<ConnectedServiceId>;
+  normalizedBindings: ConnectedServiceBindingsV1;
+  groupMetadataByServiceId?: ReadonlyMap<ConnectedServiceId, ConnectedServiceGroupRuntimeMetadata>;
+}>) {
+  const applyErrorCode = readConnectedServiceAuthGenerationApplyFailure(input.error)?.errorCode ?? 'hot_apply_failed';
+  const errorCode = isRetryableConnectedServiceCredentialApplyFailure(applyErrorCode) ? applyErrorCode : 'hot_apply_failed';
+  const underlyingError = summarizeConnectedServiceSwitchApplyError(input.error);
+  for (const serviceId of input.serviceIds) {
+    const binding = input.normalizedBindings.bindingsByServiceId[serviceId];
+    const group = input.groupMetadataByServiceId?.get(serviceId);
+    logger.warn('[ConnectedServices] Session credential hot application failed', {
+      sessionId: input.sessionId,
+      serviceId,
+      ...(binding?.source === 'connected' ? {
+        profileId: binding.profileId,
+        ...('groupId' in binding ? { groupId: binding.groupId } : {}),
+      } : {}),
+      ...(group ? { groupId: group.groupId, generation: group.generation, profileId: group.activeProfileId } : {}),
+      errorCode,
+      underlyingError,
+    });
+  }
+  return { ok: false as const, errorCode, underlyingError };
+}
+
 type ConnectedServiceAccountSwitchMode = 'hot_apply' | 'restart_resume' | 'spawn_next_turn';
 export type SessionConnectedServiceRuntimeAuthSelectionMaterializerMode = 'apply' | 'preflight';
 
@@ -1789,14 +1817,11 @@ async function rematerializeUnchangedConnectedServiceBinding(input: Readonly<{
           ...(runtimeAuthSelectionsByServiceId ? { runtimeAuthSelectionsByServiceId } : {}),
         });
       } catch (error) {
-        const applyErrorCode = readConnectedServiceAuthGenerationApplyFailure(error)?.errorCode ?? 'hot_apply_failed';
-        const errorCode = isRetryableConnectedServiceCredentialApplyFailure(applyErrorCode) ? applyErrorCode : 'hot_apply_failed';
-        logger.warn('[ConnectedServices] Session credential hot application failed', { errorCode });
-        hotApplyResult = {
-          ok: false,
-          errorCode,
-          underlyingError: summarizeConnectedServiceSwitchApplyError(error),
-        };
+        hotApplyResult = buildHotApplyFailure({
+          error, sessionId: input.request.sessionId, serviceIds: [serviceId],
+          normalizedBindings: input.normalizedBindings,
+          groupMetadataByServiceId: input.groupMetadataByServiceId,
+        });
       }
       if (!hotApplyResult.ok) {
         input.tracked.spawnOptions = previousSpawnOptions;
@@ -2336,14 +2361,11 @@ export async function switchSessionConnectedServiceAuth(
               ...(runtimeAuthSelectionsByServiceId.size === 0 ? {} : { runtimeAuthSelectionsByServiceId }),
             });
           } catch (error) {
-            const applyErrorCode = readConnectedServiceAuthGenerationApplyFailure(error)?.errorCode ?? 'hot_apply_failed';
-            const errorCode = isRetryableConnectedServiceCredentialApplyFailure(applyErrorCode) ? applyErrorCode : 'hot_apply_failed';
-            logger.warn('[ConnectedServices] Session credential hot application failed', { errorCode });
-            hotApplyResult = {
-              ok: false,
-              errorCode,
-              underlyingError: summarizeConnectedServiceSwitchApplyError(error),
-            };
+            hotApplyResult = buildHotApplyFailure({
+              error, sessionId: input.request.sessionId, serviceIds: changedServiceIds,
+              normalizedBindings: normalized.normalized,
+              groupMetadataByServiceId: normalized.groupMetadataByServiceId,
+            });
           }
           if (!hotApplyResult.ok) {
             const partialState = readHotApplyFailurePartialState(hotApplyResult.serviceResultsByServiceId);
