@@ -201,7 +201,7 @@ function assertNotAborted(signal: AbortSignal | undefined): void {
     }
 }
 
-function mergeAbortSignals(signals: readonly (AbortSignal | undefined)[]): Readonly<{
+export function mergeAbortSignals(signals: readonly (AbortSignal | undefined)[]): Readonly<{
     signal: AbortSignal | undefined;
     dispose(): void;
 }> {
@@ -426,7 +426,7 @@ async function delay(ms: number, signal: AbortSignal | undefined): Promise<void>
     });
 }
 
-async function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
+export async function raceWithAbort<T>(operation: Promise<T>, signal: AbortSignal | undefined): Promise<T> {
     // An already-cancelled caller still observes the started operation's settlement.
     if (signal?.aborted) void operation.catch(() => undefined);
     assertNotAborted(signal);

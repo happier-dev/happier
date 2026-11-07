@@ -1,5 +1,6 @@
 export * from './contracts.js';
 export * from './service.js';
+export { createConnectedAccountHttpPurposeHost, hasExactPluginHttpCredentialScope } from './connectedAccountPurpose.js';
 export { createFetchPluginHttpRuntime } from './fetchTransport.js';
 export { readBoundedPluginHttpResponseBody } from './responseBody.js';
 export { acceptsRecipientOperationResponseContentType, projectRecipientOperationResponseBody } from './recipientOperationResponse.js';
