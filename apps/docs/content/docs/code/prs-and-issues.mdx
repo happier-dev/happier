@@ -17,6 +17,12 @@ To load entries and use source actions, you need a reachable machine running
 the Happier daemon, the relevant source plugin, and a configured source instance
 with a usable credential.
 
+Until a source is connected, the page opens on a first run: one tile per
+installed source, each opening that source's own settings page. The Tasks view
+has its own first run while it has no task and no tracker connected. Your
+personal task list is already there, so it offers **New task**, beside a tile
+for each source that brings tasks.
+
 ## Where entries come from
 
 Sources are contributed by plugins rather than built in, through a contribution
@@ -56,6 +62,24 @@ Only the native service choice syncs with the source configuration. Happier
 obtains the token when needed on the executing machine and does not save or sync
 that token as a Connected Account. Switching execution to another machine
 requires a usable GitHub CLI login there too.
+
+## Sentry and PostHog issue alerts in development
+
+The 0.3 development integration adds watched issue changes from an existing
+configured Sentry or PostHog source. Event setup lets you choose how often to
+check; the stated default is **300 seconds (five minutes)**. Provider rate
+limits can delay a check. An off or unconsumed source performs no checks.
+
+Issue changes reuse one Inbox item per source and issue. An initially resolved
+issue does not create a recovery item, and an incomplete scan does not mark a
+missing issue resolved. Native last-seen time is evidence rather than a promise
+of when status changed. A change Event keeps the time it was first observed;
+retrying does not make it newer. Inbox is the default; automatic investigation
+requires an explicit configured Triage investigate Action and actual Event
+admission. A filtered or age-skipped Event can update the notice but does not
+start an investigation. The retained Inbox Investigate
+and Environment-mapping journeys are still under integration, not stable-release
+availability claims.
 
 ## What an entry is
 

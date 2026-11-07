@@ -117,6 +117,20 @@ Use this when:
 - you want to test someone else's branch in isolation
 - you want to keep your current worktree clean while opening an external PR/MR
 
+## Where GitHub links open
+
+In unreleased 0.3 development source, **Settings → Files & source control → Open
+GitHub links** offers **In Happier** (the default) and **On GitHub** when an in-app
+contributor is available. The Account preference applies to supported pull
+requests, issues, CI runs, Dependabot alerts and code-scanning alerts.
+Secret-scanning alert links and other unsupported links open on GitHub, as do
+links without an available in-app destination. If a destination opens but its
+renderer is unavailable, it offers an explicit **On GitHub** action. Opening a
+link does not link the resource to a Session.
+
+**Open new pull requests in** is a separate setting for the creation form's
+sidebar or Details pane placement.
+
 ## Comparison evidence in development
 
 In unreleased 0.3 development source, GitHub comparison retrieval records the

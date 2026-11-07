@@ -60,6 +60,42 @@ These schemas confer no publication or filesystem authority. Provider Actions
 and the host's current account, approval and opaque-destination admission remain
 authoritative; an indeterminate write is not permission to replay it.
 
+The development CI run projection carries optional `updatedAtMs` separately
+from `completedAtMs`. GitHub maps `updated_at` without inventing completion.
+For a completed run without an explicit end, shared CI duration presentation
+uses `startedAtMs` → `updatedAtMs`, matching
+[GitHub CLI's Run.Duration](https://github.com/cli/cli/blob/aee884dbcf96be3e4ea1e03ff1f33ae0b1f1aa9e/pkg/cmd/run/shared/shared.go#L121-L130).
+Missing or reversed endpoints leave the duration unknown; unfinished runs do
+not use update time. Jobs and steps retain native `completedAtMs` semantics.
+This is a closed, unpublished V1 read projection; existing rows without the
+optional fact remain valid, not a new mutation or capability authority.
+
+Native steps may declare `timestampPrecision: 'second'` when their endpoints
+have whole-second precision. Log attribution then covers both boundary seconds
+in full, without changing the recorded start/completion facts or step duration.
+Absent precision retains exact-millisecond intervals. Overlapping windows keep
+all candidate step IDs; group markers describe nested output, not step identity.
+GitHub emits this fact for whole-second step timestamps and preserves fractional
+timestamps without widening. Tied timestamps alone cannot reconstruct the exact
+step identities available in GitHub's separate per-step ZIP entries.
+
+The 0.3 development CI read inputs and deployment approve/reject inputs accept
+`credentialRef?: QualifiedConnectedAccountRef | null`, using the exact reference
+from `@happier-dev/plugin-sdk/connected-accounts`. Omission or null preserves the
+incumbent selection path, including native login. An explicit reference selects a configured Account;
+it supplies no credential authority. Provider Actions declare the `credentialRef`
+path through `connectedAccountPurposeBindings` and consume the host's admitted
+binding. They must not replace a failed explicit selection with ambient login.
+Other mutation and download inputs are unchanged.
+
+The development CI `approveForkRun` operand includes the reviewed `headSha`,
+`contributor` and `sourceRepository` alongside the exact run target. Take those
+facts from the admitted run's `headSha` and `forkApproval`, without inventing
+missing provenance. GitHub declares them as input fields for the host's single
+confirmation and rechecks them against a fresh native run before approving.
+Changed facts require another read and deliberate review, never an automatic
+approval replay.
+
 For a source plugin, import declarations from `/v1` and validate its manifest
 declaration with the testing entry point:
 
@@ -98,6 +134,22 @@ In 0.3 development source, a source reading the current authenticated Account's
 data uses the generic input with the explicit Account-data binding. It needs no
 Connected Account or native login. The source remains responsible for the
 current Account's admitted data access on every invocation.
+
+## Text search in scan (0.3 development source)
+
+The existing scan input accepts an optional `query` on initial and continued
+pages. A source can narrow its native read with that text; it keeps reporting
+its actual partial, moving or finished coverage. The aggregate still applies
+the shared text matcher and fold, so a source without native search may return
+its ordinary bounded page. A continuation belongs to the query that produced
+it and must not resume a different query.
+
+This is the unpublished V1 author-contract direct cut, separate from package
+SemVer. The scan input and its nested envelopes remain closed; omitted queries
+retain ordinary scan behavior. Older strict source implementations can refuse
+the new input through existing typed lane failures. No persisted format or
+predecessor rollback adapter is introduced. See
+[search ownership](../../docs/triage-sources.md#universal-search-03-development-source).
 
 ## Optional pull-request status (development preview)
 
@@ -144,6 +196,17 @@ entry details. See [source presentation and merge ownership](../../docs/triage-s
 for the provider-owned Action boundary.
 
 ## Optional task writes (0.3 development source)
+
+An optional `initialStatusId` in the create input selects an id from the place's
+`taskCapabilities.initialStatuses` catalog of `{ id, label, state, isDefault? }`.
+Optional `isDefault: true` identifies the entry used when `initialStatusId` is
+omitted; without a marker the default is unknown to the caller. Omission
+retains the source's default. A source advertises this catalog only when its
+create handler applies the requested status in the same creation; invalid or
+unsupported choices are refused before writing. No post-create transition runs.
+The [public author example](../../apps/docs/content/docs/plugins/ui/index.mdx#initial-task-status-development)
+shows the declaration. This additive unpublished V1 input remains closed and
+requires matching development source, independently of package SemVer.
 
 Sources may mark a kind as a task and bind optional `create`, `edit` and
 `transition` roles to their ordinary named Actions. The same `/v1` entry exports
