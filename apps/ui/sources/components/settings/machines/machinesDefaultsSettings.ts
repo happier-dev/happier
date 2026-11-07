@@ -19,6 +19,12 @@ export const MACHINES_DEFAULTS_SETTINGS = defineSettingsPage({
                 unknown: { storage: categoryBinding('unknown') },
             },
         },
+        reminders: {
+            titleKey: 'managedRetention.deletionRemindersTitle',
+            settings: {
+                deletionReminderLeadTime: {},
+            },
+        },
         creation: {
             titleKey: 'managedMachines.creation.sectionTitle',
             settings: {

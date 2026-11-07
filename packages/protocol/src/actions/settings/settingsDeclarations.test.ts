@@ -1,12 +1,198 @@
-import { describe, expect, it } from 'vitest';
-import { accountSettingsParse } from '../../account/settings/accountSettings.js';
+import { describe, expect, it, vi } from 'vitest';
+import { accountSettingsParse, ACCOUNT_SETTING_ARTIFACTS, isAccountSettingsReadOnlySourceKeyV1 } from '../../account/settings/accountSettings.js';
 import { isApprovalRequiredByActionsSettings } from '../actionApprovalPolicy.js';
 import { getActionSpec } from '../actionSpecs.js';
 import { requiresPresentUserExecutionAuthorityForActionInputV1 } from '../decisionAuthority.js';
+import { listUiFeatureToggleDefinitions } from './featurePreferenceMutations.js';
 import { BUILT_IN_SETTINGS_DECLARATIONS_V1, readBuiltInSettingDeclarationV1,
   parseBuiltInAccountSettingValueV1, readBuiltInAccountSettingValueV1,
   buildBuiltInAccountSettingMutationV1, readPortablePlatformAccountSettingBindingV1,
   readBuiltInSettingsOperationPolicyV1, resolveBuiltInAccountSettingResetValueV1 } from './settingsDeclarations.js';
+
+it('exposes deletion reminder lead time to the existing Settings Actions with one shared default', () => {
+  const declaration = readBuiltInSettingDeclarationV1('machines.defaults.deletionReminderLeadTime');
+  expect(declaration).toMatchObject({ storage: {
+    scope: 'account', key: 'managedMachineDeletionReminderLeadTimeMs', access: 'read_write',
+  } });
+  if (!declaration) throw new Error('Deletion reminder preference is not declared');
+  const settings = accountSettingsParse({});
+  expect(readBuiltInAccountSettingValueV1(declaration, settings)).toBe(172_800_000);
+  expect(buildBuiltInAccountSettingMutationV1(declaration, settings, 604_800_000))
+    .toEqual({ managedMachineDeletionReminderLeadTimeMs: 604_800_000 });
+  expect(resolveBuiltInAccountSettingResetValueV1(declaration)).toEqual({ success: true, value: 172_800_000 });
+});
+
+it('declares every Account feature control before Settings projects its page', () => {
+  for (const { featureId, isExperimental } of listUiFeatureToggleDefinitions()) {
+    expect(readBuiltInSettingDeclarationV1(`features.${featureId}`), featureId).toMatchObject({
+      sectionId: isExperimental ? 'features.experiments' : 'features.optionalFeatures',
+      sectionTitleKey: isExperimental ? 'settingsFeatures.experiments' : 'settingsFeatures.localTogglesTitle',
+      storage: { scope: 'account', owner: 'featureToggle', options: [featureId], access: 'read_write' },
+    });
+  }
+});
+
+it('offers only the canonical Dictation recognition language to Settings Actions', () => {
+  expect(readBuiltInSettingDeclarationV1('voiceDictation.language')?.storage?.options).toEqual(['dictation.language']);
+  expect(readBuiltInSettingDeclarationV1('voiceDictation.sttLanguage')).toBeNull();
+  expect(readBuiltInSettingDeclarationV1('voiceConversations.sttLanguage')).not.toBeNull();
+});
+
+it('declares capture preferences at their native or local device owner', () => {
+  for (const [anchor, owner] of [
+    ['desktop.captureShortcut', 'captureShortcut'], ['desktop.instantWindowShortcut', 'instantWindowShortcut'],
+    ['desktop.recordingShortcut', 'recordingShortcut'], ['desktop.captureFolder', 'libraryFolder'],
+  ]) expect(readBuiltInSettingDeclarationV1(anchor)).toMatchObject({ pageId: 'desktop', storage: {
+    scope: 'local', kind: 'localOwner', owner: 'desktopCapturePreferenceBinding', options: [owner], access: 'read_write',
+  } });
+  expect(readBuiltInSettingDeclarationV1('desktop.captureSound')).toMatchObject({ storage: { scope: 'local', key: 'screenCaptureSound' } });
+  expect(readBuiltInSettingDeclarationV1('desktop.captureIncludeWindowText')).toMatchObject({ storage: { scope: 'local', key: 'screenCaptureIncludeWindowText' } });
+});
+
+describe('Workflows setting alias', () => {
+  it('resolves the released Automations setting to the same declaration and preference writer', () => {
+    const workflow = readBuiltInSettingDeclarationV1('features.workflows');
+    const alias = readBuiltInSettingDeclarationV1('features.automations');
+    expect(workflow).not.toBeNull();
+    expect(alias).toBe(workflow);
+    expect(buildBuiltInAccountSettingMutationV1(alias!, { featureToggles: { automations: false } }, true))
+      .toEqual({ featureToggles: { automations: true } });
+  });
+});
+
+describe('producer-owned Home process facts', () => {
+  it('omits internal registry facts from portable discovery while retaining real Home settings', () => {
+    const offeredKeys = BUILT_IN_SETTINGS_DECLARATIONS_V1
+      .filter(declaration => declaration.storage?.scope === 'home' && declaration.storage.kind === 'homeSettings')
+      .map(declaration => declaration.storage?.key);
+    for (const key of [
+      'HAPPIER_PERSONAL_HOME_RELOCATION_OPERATION_ID', 'HAPPIER_SERVER_STARTUP_RECEIPT_PATH',
+      'HAPPIER_SERVER_STARTUP_RECEIPT_NONCE', 'HAPPIER_UPDATER_FORWARD_RECOVERY_CAPABILITY',
+      'HAPPIER_RELEASE_SOURCE_SHA', 'HAPPIER_SERVER_FLAVOR',
+    ]) expect(offeredKeys).not.toContain(key);
+    expect(offeredKeys).toContain('PORT');
+    expect(offeredKeys).toContain('SERVER_ROLE');
+  });
+});
+
+describe('deliberate atmosphere picture selection', () => {
+  it('retains stored siblings that the owning mutation schema already accepts', () => {
+    const declaration = readBuiltInSettingDeclarationV1('externalSessions.keepFollowingAfterRestart')!;
+    const current = { v: 1, keepPassivelyFollowingAfterRestart: false, autoLinkSourcePolicies: [], futureNested: { revision: 2 } };
+    expect(buildBuiltInAccountSettingMutationV1(declaration, { externalSessionsSettingsV1: current }, true))
+      .toEqual({ externalSessionsSettingsV1: { ...current, keepPassivelyFollowingAfterRestart: true } });
+  });
+
+  it('applies a field intent to an absent stored owner through its canonical defaults', () => {
+    const declaration = readBuiltInSettingDeclarationV1('appearance.atmosphereShowOn')!;
+    expect(buildBuiltInAccountSettingMutationV1(declaration, {}, ['home']))
+      .toEqual({ homeAtmosphere: { ...accountSettingsParse({}).homeAtmosphere, showOn: ['home'] } });
+  });
+
+  it('opens retained compound fields before strictly admitting the new field intent', () => {
+    const declaration = readBuiltInSettingDeclarationV1('appearance.atmosphereShowOn')!;
+    const current = accountSettingsParse({}).homeAtmosphere;
+    const stored = { homeAtmosphere: { ...current, planet: { ...current.planet, digits: false, nextRelease: true }, nextRelease: true } };
+    expect(buildBuiltInAccountSettingMutationV1(declaration, stored, ['home']))
+      .toEqual({ homeAtmosphere: { ...current, planet: { ...current.planet, digits: false }, showOn: ['home'] } });
+    expect(buildBuiltInAccountSettingMutationV1(declaration, stored, ['home', 'unsupported-place'])).toBeNull();
+  });
+
+  it('starts the shared window on picture selection and preserves it on presentation-only edits', () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    vi.setSystemTime(1_800_000_000_000);
+    try {
+      const declaration = readBuiltInSettingDeclarationV1('appearance.atmospherePictureRef')!;
+      const baseline = accountSettingsParse({});
+      const mutation = buildBuiltInAccountSettingMutationV1(declaration, baseline, { kind: 'builtin', id: 'calm-sea' });
+      expect(mutation?.homeAtmosphere).toMatchObject({ picture: { ref: { kind: 'builtin', id: 'calm-sea' }, selectedAtMs: Date.now() } });
+      const changed = accountSettingsParse({ ...baseline, ...mutation });
+      const layout = readBuiltInSettingDeclarationV1('appearance.atmospherePictureLayout')!;
+      expect(buildBuiltInAccountSettingMutationV1(layout, changed, 'wallpaper')?.homeAtmosphere)
+        .toMatchObject({ picture: { ...changed.homeAtmosphere.picture, layout: 'wallpaper' } });
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('Collection deletion approval presentation', () => {
+  it.each(['sessionWork', 'workflow', 'discussion'] as const)('reviews the %s saved-space consequence through settings.invoke', entityKind => {
+    const anchor = `${entityKind === 'sessionWork' ? 'session' : entityKind}.list.spaces`;
+    const spec = getActionSpec('settings.invoke');
+    const input = { anchor, input: { kind: 'collection_space', entityKind, mutation: { op: 'delete', spaceId: 'saved' } } };
+    expect(spec.safetyForInput?.(input)).toBe('danger');
+    expect(isApprovalRequiredByActionsSettings('settings.invoke', accountSettingsParse({}).actionsSettingsV1,
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }, undefined, undefined, input)).toBe(true);
+    const reset = { anchor, input: { kind: 'collection_space', entityKind, mutation: { op: 'resetDefault' } } };
+    expect(spec.safetyForInput?.(reset)).toBe('safe');
+    expect(isApprovalRequiredByActionsSettings('settings.invoke', accountSettingsParse({}).actionsSettingsV1,
+      { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } }, undefined, undefined, reset)).toBe(false);
+  });
+});
+
+describe('restored session-list indicator preferences (owner amendment 2026-11-01)', () => {
+  it('keeps the 0.2 Account choices effective and settable from Appearance → Sessions', () => {
+    const defaults = accountSettingsParse({});
+    expect(defaults.sessionListNarrowWorkingIndicatorStyle).toBe('spinner');
+    expect(defaults.sessionListWorkingStatusAnimatedTextEnabled).toBe(true);
+    const stored = accountSettingsParse({ sessionListWorkingStatusAnimatedTextEnabled: false,
+      sessionListNarrowWorkingIndicatorStyle: 'pulse', sessionListStatusWords: true });
+    expect(stored.sessionListNarrowWorkingIndicatorStyle).toBe('pulse');
+    expect(stored.sessionListWorkingStatusAnimatedTextEnabled).toBe(false);
+    for (const [anchor, key, value] of [
+      ['appearance.sessionListWorkingIndicator', 'sessionListNarrowWorkingIndicatorStyle', 'pulse'],
+      ['appearance.sessionListWorkingStatusAnimatedText', 'sessionListWorkingStatusAnimatedTextEnabled', false],
+    ] as const) {
+      expect(isAccountSettingsReadOnlySourceKeyV1(key)).toBe(false);
+      const declaration = readBuiltInSettingDeclarationV1(anchor);
+      expect(declaration).toMatchObject({ pageId: 'appearance', sectionId: 'appearance.sessions', agentSafety: 'safe',
+        storage: { scope: 'account', key, access: 'read_write' } });
+      expect(buildBuiltInAccountSettingMutationV1(declaration!, stored, value)).not.toBeNull();
+    }
+  });
+});
+
+describe('status words Settings declaration', () => {
+  it('owns one opt-in Account boolean for every host work column', () => {
+    const anchor = 'session.list.statusWords';
+    expect(BUILT_IN_SETTINGS_DECLARATIONS_V1.filter(value => value.anchor === anchor)).toHaveLength(1);
+    const declaration = readBuiltInSettingDeclarationV1(anchor);
+    expect(declaration).toMatchObject({ pageId: 'session', sectionId: 'session.rowDetails',
+      sectionTitleKey: 'settingsSession.rootGroups.rowDetails.title', agentSafety: 'safe',
+      sensitive: false,
+      storage: { scope: 'account', key: 'sessionListStatusWords', access: 'read_write' } });
+    if (!declaration) throw new Error('Status words setting unavailable');
+    const baseline = accountSettingsParse({});
+    expect(readBuiltInAccountSettingValueV1(declaration, baseline)).toBe(false);
+    expect(buildBuiltInAccountSettingMutationV1(declaration, baseline, true)).toEqual({ sessionListStatusWords: true });
+    expect(readBuiltInAccountSettingValueV1(declaration, accountSettingsParse({ sessionListStatusWords: true }))).toBe(true);
+    expect(readBuiltInAccountSettingValueV1(declaration, accountSettingsParse({ sessionListStatusWords: 'true' }))).toBe(false);
+    expect(buildBuiltInAccountSettingMutationV1(declaration, baseline, 'true')).toBeNull();
+    expect(resolveBuiltInAccountSettingResetValueV1(declaration)).toEqual({ success: true, value: false });
+  });
+});
+
+describe('attention placement Settings declaration', () => {
+  it('belongs to Session list without changing its anchor or Account value contract', () => {
+    const anchor = 'session.list.attentionPlacement';
+    expect(BUILT_IN_SETTINGS_DECLARATIONS_V1.filter(value => value.anchor === anchor)).toHaveLength(1);
+    const declaration = readBuiltInSettingDeclarationV1(anchor);
+    expect(declaration).toMatchObject({ pageId: 'session', sectionId: 'session.listOrganization',
+      sectionTitleKey: 'settingsSession.rootGroups.listOrganization.title', agentSafety: 'safe',
+      sensitive: false,
+      storage: { scope: 'account', key: 'sessionListAttentionPlacementV1', access: 'read_write',
+        allowedValues: ['both', 'top', 'inPlace'] } });
+    if (!declaration) throw new Error('Attention placement setting unavailable');
+    const baseline = accountSettingsParse({});
+    expect(readBuiltInAccountSettingValueV1(declaration, baseline)).toBe('both');
+    for (const value of ['both', 'top', 'inPlace']) {
+      const mutation = buildBuiltInAccountSettingMutationV1(declaration, baseline, value);
+      expect(mutation).toEqual({ sessionListAttentionPlacementV1: value });
+      expect(readBuiltInAccountSettingValueV1(declaration, accountSettingsParse({ ...baseline, ...mutation }))).toBe(value);
+    }
+    expect(buildBuiltInAccountSettingMutationV1(declaration, baseline, 'working')).toBeNull();
+    expect(resolveBuiltInAccountSettingResetValueV1(declaration)).toEqual({ success: true, value: 'both' });
+  });
+});
 
 describe('background-work attention Settings declaration', () => {
   it('reads, writes and resets the preference through its portable account owner', () => {
@@ -36,6 +222,22 @@ describe('portable built-in Settings declarations', () => {
       owner: 'sessionListDisclosureBinding', access: 'read_write' });
   });
 
+  it('edits suggestion fields through the Account policy while preserving privacy and source choices', () => {
+    const declaration = readBuiltInSettingDeclarationV1('sourceControl.aiSuggestionsEnabled');
+    expect(declaration).not.toBeNull();
+    if (!declaration) return;
+    const settings = accountSettingsParse({ filesEditorAiSuggestionsV1: {
+      connectionId: 'pc_local', modelId: 'base', excludedGlobs: ['private/**'], disabledLanguageIds: ['markdown'],
+    } });
+    const mutation = buildBuiltInAccountSettingMutationV1(declaration, settings, true);
+    expect(accountSettingsParse({ ...settings, ...mutation }).filesEditorAiSuggestionsV1)
+      .toEqual({ ...settings.filesEditorAiSuggestionsV1, enabled: true });
+    expect(buildBuiltInAccountSettingMutationV1(declaration, settings, 'true')).toBeNull();
+    const model = readBuiltInSettingDeclarationV1('sourceControl.aiSuggestionsModel');
+    expect(model).not.toBeNull();
+    if (model) expect(buildBuiltInAccountSettingMutationV1(model, settings, 'another'))
+      .toEqual({ filesEditorAiSuggestionsV1: { ...settings.filesEditorAiSuggestionsV1, modelId: 'another' } });
+  });
   it.each([
     ['toolRendering.collapsedOverrides', 'toolViewDetailLevelByToolName', 'compact'],
     ['toolRendering.expandedOverrides', 'toolViewExpandedDetailLevelByToolName', 'summary'],
@@ -258,25 +460,6 @@ describe('portable built-in Settings declarations', () => {
   });
 });
 
-describe('status words Settings declaration', () => {
-  it('owns one opt-in Account boolean for every host work column', () => {
-    const anchor = 'session.list.statusWords';
-    expect(BUILT_IN_SETTINGS_DECLARATIONS_V1.filter(value => value.anchor === anchor)).toHaveLength(1);
-    const declaration = readBuiltInSettingDeclarationV1(anchor);
-    expect(declaration).toMatchObject({ pageId: 'session', sectionId: 'session.rowDetails',
-      sectionTitleKey: 'settingsSession.rootGroups.rowDetails.title', agentSafety: 'safe',
-      sensitive: false,
-      storage: { scope: 'account', key: 'sessionListStatusWords', access: 'read_write' } });
-    if (!declaration) throw new Error('Status words setting unavailable');
-    const baseline = accountSettingsParse({});
-    expect(readBuiltInAccountSettingValueV1(declaration, baseline)).toBe(false);
-    expect(buildBuiltInAccountSettingMutationV1(declaration, baseline, true)).toEqual({ sessionListStatusWords: true });
-    expect(readBuiltInAccountSettingValueV1(declaration, accountSettingsParse({ sessionListStatusWords: true }))).toBe(true);
-    expect(readBuiltInAccountSettingValueV1(declaration, accountSettingsParse({ sessionListStatusWords: 'true' }))).toBe(false);
-    expect(buildBuiltInAccountSettingMutationV1(declaration, baseline, 'true')).toBeNull();
-    expect(resolveBuiltInAccountSettingResetValueV1(declaration)).toEqual({ success: true, value: false });
-  });
-});
 
 it('exposes the Session window Bot rail as one device-local switch', () => {
     expect(readBuiltInSettingDeclarationV1('desktop.windowBotRail')).toMatchObject({ pageId: 'desktop', sectionId: 'desktop.windows',

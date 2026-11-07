@@ -1419,6 +1419,7 @@ const ACCOUNT_SETTING_CANDIDATES = {
     }),
     machineAdministrationSelectionsV1: accountCatalogDefinition(z._default(MachineAdministrationSelectionsV1Schema, DEFAULT_MACHINE_ADMINISTRATION_SELECTIONS_V1), DEFAULT_MACHINE_ADMINISTRATION_SELECTIONS_V1, { semanticDomain: 'machine administration selections', classification: 'preference', maximumSerializedValueBytes: 64 * 1024 }),
     machineRetentionDefaultsV1: accountCatalogDefinition(MachineRetentionDefaultsV1Schema, DEFAULT_MACHINE_RETENTION_DEFAULTS_V1, { semanticDomain: 'managed machine category defaults', classification: 'preference', maximumSerializedValueBytes: ACCOUNT_SETTINGS_MAX_DOCUMENT_BYTES }),
+    managedMachineDeletionReminderLeadTimeMs: accountPreference(z.number().check(z.int(), z.nonnegative()), 2 * 24 * 60 * 60 * 1_000, 'managed machine deletion reminder lead time'),
     managedMachineCreationEnabled: accountCatalogDefinition(z._default(z.boolean(), true), true, { semanticDomain: 'managed machine acquisition', classification: 'policy', maximumSerializedValueBytes: 5 }),
     workspaceFileViewerPreferencesV1: accountCatalogDefinition(z._default(z.catch(WorkspaceFileViewerPreferencesV1Schema, DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1), DEFAULT_WORKSPACE_FILE_VIEWER_PREFERENCES_V1, { semanticDomain: 'workspace file viewing', classification: 'preference', maximumSerializedValueBytes: WORKSPACE_FILE_VIEWER_PREFERENCES_V1_MAX_ENCODED_BYTES }),
 } as const;

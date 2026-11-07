@@ -3,7 +3,7 @@ import { act } from 'react-test-renderer';
 import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
 import { ExternalActionRequestEnvelopeV1Schema } from '@happier-dev/protocol/actions/externalActionApi';
 import type { MachineProvisionersListResultV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
-import { installApprovalCommonModuleMocks } from '@/components/approvals/approvalsTestHelpers';
+import { installSettingsViewCommonModuleMocks } from '../../settingsViewTestHelpers';
 import { serveActionHomes } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
 import { getServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -16,7 +16,10 @@ import { resolveServerProfileScopeIdForIdentifier } from '@/sync/domains/server/
 import { getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 
-installApprovalCommonModuleMocks({ text: async () => vi.importActual<typeof import('@/text')>('@/text') });
+installSettingsViewCommonModuleMocks({ storage: 'real', text: async () => vi.importActual<typeof import('@/text')>('@/text') });
+// Match the sibling Defaults harness: import the real Sync graph during collection,
+// before any Account journey's deadline starts. The Home harness also uses this bridge.
+await loadSyncSingletonForTests();
 const { resetScopedHomeActionExecutorsForTests } = await import('@/sync/ops/actions/scopedHomeActionExecutor');
 beforeEach(() => { resetScopedHomeActionExecutorsForTests(); });
 afterEach(() => standardCleanup());
@@ -68,7 +71,54 @@ describe('Machine Defaults declarations and controller-local availability', () =
         expect(commits - initialCommits).toBe(1);
     });
 
-    it.each(['creation', 'retention'] as const)('honors the Account settings.set policy when changing %s', async (operation) => {
+    it('persists the deletion reminder lead time through the Account Settings Action, including a custom duration', async () => {
+        const { storage } = await import('@/sync/domains/state/storage');
+        const previous = storage.getState();
+        const features = createRootLayoutFeaturesResponse();
+        const home = await serveActionHomes({ homes: [
+            { key: 'reminders', serverUrl: 'https://defaults-reminders.test', accountId: 'owner',
+                settings: { managedMachineCreationEnabled: false }, currentAccount: true },
+        ], route: request => request.path === '/v1/features' || request.path === '/v1/features/authenticated'
+            ? Response.json(features) : undefined });
+        onTestFinished(async () => {
+            storage.setState({ settings: previous.settings, settingsScope: previous.settingsScope,
+                profileScope: previous.profileScope, machineListByServerId: previous.machineListByServerId });
+            await home.dispose();
+        });
+        await loadSyncSingletonForTests();
+        const { Modal } = await import('@/modal');
+        // The native text-entry sheet is a platform boundary; admission and Settings persistence stay real.
+        const prompt = vi.spyOn(Modal, 'prompt').mockResolvedValue('90 min');
+        onTestFinished(() => prompt.mockRestore());
+        const { MachineDefaultsView } = await import('./MachineDefaultsView');
+        const screen = await renderScreen(<MachineDefaultsView />);
+        onTestFinished(() => screen.unmount());
+        const control = () => screen.findAll(node => node.props.testID === 'settings.machineDefaults.deletionReminderLeadTime.select'
+            && typeof node.props.onCustom === 'function')[0]!;
+        await vi.waitFor(() => {
+            expect(control()).toBeTruthy();
+            expect(control().props.disabled).toBe(false);
+        });
+        expect(control().props.selectedId).toBe('172800000');
+        await act(async () => control().props.onSelect('86400000'));
+        await vi.waitFor(() => expect(storage.getState().settings.managedMachineDeletionReminderLeadTimeMs).toBe(86400000));
+        expect(control().props.selectedId).toBe('86400000');
+        await act(async () => control().props.onSelect('0'));
+        await vi.waitFor(() => expect(storage.getState().settings.managedMachineDeletionReminderLeadTimeMs).toBe(0));
+        expect(control().props.selectedId).toBe('0');
+        await act(async () => control().props.onCustom());
+        await vi.waitFor(() => expect(storage.getState().settings.managedMachineDeletionReminderLeadTimeMs).toBe(5400000));
+        const { TokenStorage } = await import('@/auth/storage/tokenStorage');
+        const credentials = await TokenStorage.getCredentialsForServerUrl(home.homes.reminders!.serverUrl);
+        const response = await home.fetch(`${home.homes.reminders!.serverUrl}/v2/account/settings`, {
+            headers: { Authorization: `Bearer ${credentials!.token}` },
+        });
+        expect(await response.json()).toMatchObject({ content: { t: 'plain', v: {
+            managedMachineDeletionReminderLeadTimeMs: 5400000, managedMachineCreationEnabled: false,
+        } } });
+    });
+
+    it.each(['creation', 'retention', 'reminder'] as const)('honors the Account settings.set policy when changing %s', async (operation) => {
         const { storage } = await import('@/sync/domains/state/storage');
         const { ActionsSettingsV1Schema } = await import('@happier-dev/protocol/actions/actionSettings');
         const previous = storage.getState();
@@ -106,6 +156,10 @@ describe('Machine Defaults declarations and controller-local availability', () =
         await act(async () => {
             if (operation === 'creation') {
                 screen.findByTestId('settings.machineDefaults.creationEnabled.switch')!.props.onValueChange(false);
+            } else if (operation === 'reminder') {
+                const control = screen.findAll(node => node.props.testID === 'settings.machineDefaults.deletionReminderLeadTime.select'
+                    && typeof node.props.onCustom === 'function')[0]!;
+                control.props.onSelect('86400000');
             } else {
                 screen.pressByTestId('settings.machineDefaults.local.header');
             }
@@ -117,6 +171,7 @@ describe('Machine Defaults declarations and controller-local availability', () =
         }
         expect(storage.getState().settings.managedMachineCreationEnabled).toBe(true);
         expect(storage.getState().settings.machineRetentionDefaultsV1).toEqual({ v: 1 });
+        expect(storage.getState().settings.managedMachineDeletionReminderLeadTimeMs).toBe(172800000);
         await vi.waitFor(() => expect(alert).toHaveBeenCalled());
         const buttons = alert.mock.calls.at(-1)![2];
         const openSettings = buttons?.find(button => button.style !== 'cancel');
@@ -162,6 +217,11 @@ describe('Machine Defaults declarations and controller-local availability', () =
         const focusedHome = resolveServerProfileScopeIdForIdentifier(home.homes.build!.id);
         const otherHome = resolveServerProfileScopeIdForIdentifier(home.homes.other!.id);
         expect(getActiveServerSnapshot().serverId).toBe(focusedHome);
+        const { clearPluginAccountAvailabilityProjection, replacePluginAccountAvailabilityProjection } = await import('@/sync/domains/plugins/availability/projection');
+        onTestFinished(clearPluginAccountAvailabilityProjection);
+        // This fixture has no Account offers; a missing Account answer is an availability failure.
+        replacePluginAccountAvailabilityProjection({ scope: { serverId: focusedHome, accountId: 'owner' },
+            snapshot: { availabilityCursor: 1, inventoryComplete: false, intentReads: [], materializations: [], snapshots: [] } });
         storage.setState({ machineListByServerId: {
             [focusedHome]: [createMachineFixture({ id: 'local-controller', installationId: 'local-installation', activeAt: Date.now() }), createMachineFixture({ id: 'cloud-controller', installationId: 'cloud-installation', activeAt: Date.now() }), createMachineFixture({ id: 'guest-without-installation' }),
         // Installed availability is controller-local and remains separate from Defaults declarations.

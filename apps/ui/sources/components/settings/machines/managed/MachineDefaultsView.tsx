@@ -18,6 +18,9 @@ import {
 } from '@/components/settings/shell/SettingRow';
 import { APPEARANCE_SETTINGS } from '@/components/settings/appearance/appearanceSettings';
 import { MachineSummaryAppearanceSection } from '@/components/machines/summary/MachineSummaryAppearanceSection';
+import { formatMachineDuration } from '@/components/machines/durationWords';
+import { PolicyValueSelect } from '@/components/machines/policy/PolicyValueSelect';
+import { parsePolicyDuration } from '@/components/machines/policy/policyDuration';
 import { SettingsPageHeader } from '@/components/settings/shell/SettingsPageHeader';
 import { useSettingActionFeedback } from '@/components/settings/shell/useSettingActionFeedback';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
@@ -32,6 +35,7 @@ import { useSetting } from '@/sync/domains/state/storage';
 import { BUNDLED_MACHINE_PROVISIONER_DECLARATIONS } from '@/agents/registry/generatedBundledPluginEntries';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { t } from '@/text';
+import { Modal } from '@/modal';
 import { useDeviceType } from '@/utils/platform/responsive';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
@@ -87,6 +91,7 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
   const defaults = useSetting(
     'machineRetentionDefaultsV1',
   );
+  const reminderLeadTimeMs = useSetting('managedMachineDeletionReminderLeadTimeMs');
   const categories = React.useMemo(
     () =>
       readMachineRetentionDefaultsModel({
@@ -172,6 +177,39 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
           ),
         )}
       </ItemGroup>
+      <SettingSection section={MACHINES_DEFAULTS_SETTINGS.sectionRefs.reminders}>
+        <SettingRow
+          testID="settings.machineDefaults.deletionReminderLeadTime"
+          setting={MACHINES_DEFAULTS_SETTINGS.settings.deletionReminderLeadTime}
+          accessoryLayout="adaptive"
+          rightElement={<PolicyValueSelect
+            testID="settings.machineDefaults.deletionReminderLeadTime.select"
+            label={t('managedRetention.deletionReminderLeadTime')}
+            value={describeReminderLeadTime(reminderLeadTimeMs)}
+            choices={DELETION_REMINDER_PRESETS_MS.map(value => ({ id: String(value), title: describeReminderLeadTime(value) }))}
+            selectedId={DELETION_REMINDER_PRESETS_MS.includes(reminderLeadTimeMs) ? String(reminderLeadTimeMs) : null}
+            disabled={disabled}
+            onSelect={id => {
+              const value = DELETION_REMINDER_PRESETS_MS.find(candidate => String(candidate) === id);
+              if (value !== undefined) fireAndForget(writeSetting(MACHINES_DEFAULTS_SETTINGS.settings.deletionReminderLeadTime, value),
+                { tag: 'MachineDefaultsView.reminder' });
+            }}
+            onCustom={() => fireAndForget((async () => {
+              const title = t('managedRetention.deletionReminderLeadTime');
+              const raw = await Modal.prompt(title, t('managedRetention.deletionReminderCustomBody'), {
+                defaultValue: `${reminderLeadTimeMs} ms`, confirmText: t('common.save'),
+              });
+              if (raw === null) return;
+              const value = parsePolicyDuration(raw, { unit: 'ms', minimum: 0 });
+              if (value === null) {
+                Modal.alert(title, t('managedRetention.deletionReminderCustomInvalid'));
+                return;
+              }
+              await writeSetting(MACHINES_DEFAULTS_SETTINGS.settings.deletionReminderLeadTime, value);
+            })(), { tag: 'MachineDefaultsView.reminder.custom' })}
+          />}
+        />
+      </SettingSection>
       {/* A rare, consequential switch: after the policies people tune (lab m-defaults). */}
       <ItemGroup title={t('managedMachines.creation.sectionTitle')}>
         <SettingRow
@@ -197,6 +235,13 @@ export const MachineDefaultsView = React.memo(function MachineDefaultsView() {
     </ItemList>
   );
 });
+
+const DELETION_REMINDER_PRESETS_MS: readonly number[] = [0, 3_600_000, 86_400_000, 172_800_000, 604_800_000];
+
+function describeReminderLeadTime(ms: number): string {
+  if (ms === 0) return t('managedRetention.deletionReminderAtDeletion');
+  return ms % 60_000 === 0 ? formatMachineDuration(ms) : t('machineGuard.tools.milliseconds', { milliseconds: ms });
+}
 
 const CategoryPushRow = React.memo(function CategoryPushRow(
   // `showDivider` comes from the group (its last row draws none).

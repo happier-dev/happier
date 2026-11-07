@@ -5,9 +5,7 @@ import { readManagedMachineDeletionAttention } from '@/activity/attention/manage
 import { useManagedMachineInventory } from '@/components/settings/machines/managed/useManagedMachineInventory';
 import { retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { resolveInboxItemPageRoute } from '@/components/inbox/inboxItemFocus';
-
-// Owner ruling 2026-10-31 Q2: the default reminder precedes the provider deadline by two days.
-export const MANAGED_MACHINE_DELETION_LEAD_TIME_MS = 2 * 24 * 60 * 60 * 1_000;
+import { useSetting } from '@/sync/domains/state/storage';
 
 type DeletionFacts = Pick<Parameters<typeof resolveProviderDeletionReminderV1>[0], 'observation' | 'retentionCapabilities'>;
 export type ManagedMachineDeletionEntry = DeletionFacts & Readonly<{
@@ -39,9 +37,10 @@ export function useManagedMachineDeletionSource(serverIds: readonly string[]): r
 export function useManagedMachineDeletionAttention(serverId: string | null) {
     const serverIds = React.useMemo(() => serverId ? [serverId] : [], [serverId]);
     const entries = useManagedMachineDeletionSource(serverIds);
+    const leadTimeMs = useSetting('managedMachineDeletionReminderLeadTimeMs');
     return React.useMemo(() => entries.flatMap(entry => {
         const reminder = readManagedMachineDeletionAttention({ ...entry,
-            leadTimeMs: MANAGED_MACHINE_DELETION_LEAD_TIME_MS, nowMs: Date.now() });
+            leadTimeMs, nowMs: Date.now() });
         return reminder ? [{ ...entry, reminder }] : [];
-    }), [entries]);
+    }), [entries, leadTimeMs]);
 }

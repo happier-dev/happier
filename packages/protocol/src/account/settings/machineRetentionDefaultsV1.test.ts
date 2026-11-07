@@ -1,13 +1,31 @@
 import { describe, expect, it } from 'vitest';
 import * as owner from './accountSettings.js';
 import { applyAccountSettingMutationV1 } from './accountSettingMutationV1.js';
-import { isMachineRetentionPolicySupportedV1, isRedundantManagedWakeIntentV1, resolveMachineRetentionNativeIntentV1, resolveMachineRetentionPolicyV1 as resolve, supportedMachineRetentionEffectsV1 } from '../../machines/managed/resolveMachineRetentionPolicyV1.js';
+import { isMachineRetentionPolicySupportedV1, isRedundantManagedWakeIntentV1, resolveMachineRetentionNativeIntentV1, resolveMachineWakeNativeIntentV1, resolveMachineRetentionPolicyV1 as resolve, resolveManagedMachineWakeStateV1, supportedMachineRetentionEffectsV1 } from '../../machines/managed/resolveMachineRetentionPolicyV1.js';
 import { MACHINE_RETENTION_CATEGORIES_V1, MachineRetentionPolicyV1Schema, updateMachineRetentionCategoryPreferenceV1 } from './machineRetentionDefaultsV1.js';
+import { ManagedMachineV1Schema } from '../../machines/managed/managedMachineV1.js';
 
 const unused = { kind: 'unused', afterMs: 3_600_000, effect: 'stop' } as const;
 const keep = { kind: 'until-delete' } as const;
 
 describe('managed machine category preference through Account settings', () => {
+  it('defaults deletion reminders to two days and admits a deliberate nonnegative lead time', () => {
+    expect(owner.accountSettingsParse({}).managedMachineDeletionReminderLeadTimeMs).toBe(172_800_000);
+    const edited = applyAccountSettingMutationV1({ unrelated: 'preserved' }, { operations: [
+      { op: 'set', key: 'managedMachineDeletionReminderLeadTimeMs', value: 604_800_000 },
+    ] });
+    expect(edited).toEqual({ status: 'applied', raw: {
+      unrelated: 'preserved', managedMachineDeletionReminderLeadTimeMs: 604_800_000,
+    } });
+    for (const value of [-1, 1.5, '2 days']) {
+      expect(applyAccountSettingMutationV1({}, { operations: [
+        { op: 'set', key: 'managedMachineDeletionReminderLeadTimeMs', value },
+      ] })).toMatchObject({ status: 'invalid' });
+    }
+    expect(applyAccountSettingMutationV1({}, { operations: [
+      { op: 'set', key: 'managedMachineDeletionReminderLeadTimeMs', value: 0 },
+    ] })).toMatchObject({ status: 'applied' });
+  });
   it('defaults creation on and admits only boolean acquisition preferences', () => {
     expect(owner.accountSettingsParse({}).managedMachineCreationEnabled).toBe(true);
     expect(owner.accountSettingsParse({ managedMachineCreationEnabled: false }).managedMachineCreationEnabled).toBe(false);
@@ -37,7 +55,7 @@ describe('managed machine category preference through Account settings', () => {
   });
 
   it('refuses absolute deadlines in every reusable category without narrowing one-off policies', () => {
-    const policy = { retention: { kind: 'deadline', at: 4_000, effect: 'stop', interrupts: true },
+    const policy = { retention: { kind: 'deadline', at: 4_000, effect: 'stop' },
       wakeOnAcceptedMessage: true } as const;
     expect(MachineRetentionPolicyV1Schema.parse(policy)).toEqual(policy);
     for (const category of MACHINE_RETENTION_CATEGORIES_V1) {
@@ -58,27 +76,53 @@ describe('managed machine category preference through Account settings', () => {
     for (const providerId of ['one', 'other']) {
       const billing = { location: 'cloud', stoppedBilling: 'not-billed', providerId } as const;
       expect(resolve({ billing }))
-        .toMatchObject({ category: 'running-only', retention: unused, wakeOnAcceptedMessage: true, source: 'default' });
+        .toEqual({ category: 'running-only', retention: unused, wakeOnAcceptedMessage: true });
     }
     expect(resolve({ billing: { location: 'unknown', stoppedBilling: 'not-billed' } }))
       .toMatchObject({ category: 'unknown', retention: keep, wakeOnAcceptedMessage: false });
     expect(resolve({ billing: { location: 'cloud', stoppedBilling: 'billed' } }))
-      .toMatchObject({ category: 'stopped-billed', retention: keep, wakeOnAcceptedMessage: false });
+      .toMatchObject({ category: 'stopped-billed', retention: keep, wakeOnAcceptedMessage: true });
     const params = { billing: { location: 'local' as const, stoppedBilling: 'billed' as const },
       categoryPreferences: { v: 1 as const, local: { retention: keep, wakeOnAcceptedMessage: false } },
       presetOverride: { retention: unused, wakeOnAcceptedMessage: true },
       machineOverride: { retention: keep, wakeOnAcceptedMessage: true } };
     const snapshot = resolve(params);
-    expect(snapshot).toMatchObject({ category: 'local', source: 'machine', retention: keep, wakeOnAcceptedMessage: true });
-    expect(resolve({ ...params, machineOverride: undefined })).toMatchObject({ source: 'preset', retention: unused });
+    expect(snapshot).toMatchObject({ category: 'local', retention: keep, wakeOnAcceptedMessage: true });
+    expect(resolve({ ...params, machineOverride: undefined })).toMatchObject({ retention: unused, wakeOnAcceptedMessage: true });
     expect(resolve({ ...params, machineOverride: undefined, presetOverride: undefined }))
-      .toMatchObject({ source: 'category', retention: keep, wakeOnAcceptedMessage: false });
+      .toMatchObject({ retention: keep, wakeOnAcceptedMessage: false });
     params.machineOverride.wakeOnAcceptedMessage = false;
     expect(snapshot.wakeOnAcceptedMessage).toBe(true);
     expect(resolve({ billing: params.billing, categoryPreferences: params.categoryPreferences,
       presetOverride: { retention: unused }, machineOverride: { wakeOnAcceptedMessage: false } }))
-      .toMatchObject({ retention: unused, wakeOnAcceptedMessage: false,
-        retentionSource: 'preset', wakeSource: 'machine' });
+      .toMatchObject({ retention: unused, wakeOnAcceptedMessage: false });
+  });
+
+  it('defaults cloud accepted-input wake on independently of stopped billing and preserves the per-Machine opt-out', () => {
+    for (const stoppedBilling of ['not-billed', 'billed', 'unknown'] as const) {
+      const billing = { location: 'cloud', stoppedBilling } as const;
+      expect(resolve({ billing }).wakeOnAcceptedMessage).toBe(true);
+      expect(resolve({ billing, machineOverride: { wakeOnAcceptedMessage: false } }).wakeOnAcceptedMessage).toBe(false);
+    }
+  });
+
+  it('keeps explicit wake available when accepted-input auto-wake is off without misclassifying running compute', () => {
+    const provider = { pluginId: 'fixture.cloud', localId: 'vm' };
+    const machine = ManagedMachineV1Schema.parse({ id: 'managed', homeId: 'home', custodianAccountId: 'owner',
+      enrolledMachineId: 'guest', launch: { provider, schemaVersion: 1, name: 'Cloud', choices: {} },
+      allocation: 'bound', resource: { contributionRef: provider, schemaVersion: 1, value: { id: 'native' } },
+      creationState: 'active', desired: 'stop', desiredWhen: 'now', intentRevision: 1, retention: keep,
+      wakeOnAcceptedMessage: false, observation: { observedAt: 1, availability: 'present', power: 'stopped', storage: 'retained' } });
+    expect(resolveManagedMachineWakeStateV1(machine, 'guest')).toBe('asleep');
+    expect(resolveManagedMachineWakeStateV1({ ...machine,
+      observation: { ...machine.observation!, power: 'running' } }, 'guest')).toBeNull();
+    expect(resolveManagedMachineWakeStateV1({ ...machine,
+      observation: { ...machine.observation!, storage: 'lost' } }, 'guest')).toBeNull();
+    for (const power of ['stopped', 'suspended'] as const) {
+      expect(resolveManagedMachineWakeStateV1({ ...machine,
+        submittedNativeEffect: { intent: 'resume', requestId: 'same-wake', intentRevision: 1 },
+        observation: { ...machine.observation!, power } }, 'guest')).toBe('starting');
+    }
   });
 
   it('qualifies finite no-keep capabilities once and never promises wake after destruction', () => {
@@ -139,10 +183,14 @@ describe('managed machine category preference through Account settings', () => {
     // A provider with a single wake verb always offers it.
     expect(isRedundantManagedWakeIntentV1('start', 'suspended', ['start', 'stop'])).toBe(false);
     expect(isRedundantManagedWakeIntentV1('resume', 'stopped', ['resume', 'suspend'])).toBe(false);
+    expect(resolveMachineWakeNativeIntentV1('stopped', ['resume'])).toBe('resume');
+    expect(resolveMachineWakeNativeIntentV1('stopped', both)).toBe('start');
+    expect(resolveMachineWakeNativeIntentV1('suspended', both)).toBe('resume');
+    expect(resolveMachineWakeNativeIntentV1('stopped', ['stop', 'delete'])).toBeNull();
   });
 
   it('does not silently change an explicitly selected deadline Stop into Delete', () => {
-    const retention = { kind: 'deadline', at: 4_000, effect: 'stop', interrupts: true } as const;
+    const retention = { kind: 'deadline', at: 4_000, effect: 'stop' } as const;
     expect(resolve({ billing: { location: 'local', stoppedBilling: 'unknown' },
       machineOverride: { retention }, nativeCapabilities: { supportedIntents: ['delete'] } }).retention)
       .toEqual(retention);
