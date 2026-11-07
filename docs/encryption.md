@@ -495,8 +495,9 @@ In 0.3 development, a Saved Secret grant means "Give them the value": recipients
 can see, copy and use it without the owner's Machine. Only the owner can rename,
 rotate, delete or manage access and disclosure history. Reveal and Copy use the
 resource owner's qualified grant admission for the present user and exact
-revision; their activity and Agent/MCP results contain metadata only. Team and
-Group grants exclude guests. Removing a grant stops the next material read, but
+revision; their activity and Agent/MCP results contain metadata only.
+Team grants exclude guests; a direct or explicit Group grant admits them.
+Removing a grant stops the next material read, but
 cannot recall a disclosed copy; invalidate that copy with the credential's
 provider. "Let them use it" describes brokered Team credentials instead.
 

@@ -1,14 +1,13 @@
 import { type ManagedResourceDependencyV1, type ManagedResourceDispositionV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 import { formatSharedSavedSecretRefV1, SHARED_SAVED_SECRET_REF_V1_PREFIX } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
 import { isSessionEncryptionModeAllowedByStoragePolicy } from '@happier-dev/protocol/encryption/storagePolicyDecisions';
-import { TeamRoleV1Schema } from '@happier-dev/protocol/teams';
+import { isTeamPrincipalRoleV1, TeamRoleV1Schema } from '@happier-dev/protocol/teams';
 import { parseEncryptedDataKeyEnvelopeV1 } from '@happier-dev/protocol/crypto/encryptedDataKeyEnvelopeV1';
 import { SavedSecretCatalogEntryV1Schema, type SavedSecretCatalogEntryV1, type SavedSecretCatalogCorruptEntryV1, type SavedSecretCatalogResultV1, type SavedSecretResourceEnvelopeCensusRecipientV1 } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
 import { canShareSavedSecretResourceContentV1, describeSavedSecretResourceContentV1, SavedSecretResourceStoredContentV1Schema, type SavedSecretResourceStoredContentV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceContentV1';
 import { type AccountSettingsStoredContentEnvelope } from '@happier-dev/protocol/account/settings/accountSettingsStoredContentEnvelope';
 import { acceptsManagedResourceDispositions, readManagedResourceDependenciesInTx } from '@/app/machines/managed/managedRead';
 import { deleteObsoleteSavedSecretInstallationGrantsInTx } from '@/app/deployments/environmentSecretGrantRepository';
-import { isTeamPrincipalRoleV1 } from "@happier-dev/protocol/teams";
 import { SavedSecretReferenceCensusV1Schema, SavedSecretPromoteReferenceCensusV1Schema, SavedSecretCatalogMutationsV1Schema, SavedSecretPersonalPromotionsV1Schema,
     type SavedSecretReferenceCensusV1, type SavedSecretPromoteReferenceCensusV1, type SavedSecretCatalogMutationsV1,
     type SavedSecretCatalogRevisionsV1, type SavedSecretPersonalPromotionsV1 } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
@@ -178,8 +177,12 @@ const ACTIVE_SAVED_SECRET_TEAM_GRANT_WHERE = { team: { archivedAt: null } } as c
 const ACTIVE_SAVED_SECRET_GROUP_GRANT_WHERE = {
     teamGroup: { archivedAt: null, team: { archivedAt: null } },
 } as const;
+// Explicit Group grants admit guests; only Team-wide grants require a principal role.
+const ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE = {
+    status: "active", account: { status: "active" },
+} as const;
 const ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE = {
-    status: "active", role: { not: "guest" }, account: { status: "active" },
+    ...ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE, role: { not: "guest" },
 } as const;
 
 /** Rows this Account can currently reach through any one of its four grant arms. */
@@ -208,7 +211,7 @@ function authorizedSavedSecretRowWhere(accountId: string): Prisma.SavedSecretRes
                                 some: {
                                     teamMembership: {
                                         accountId,
-                                        ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
+                                        ...ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE,
                                     },
                                 },
                             },
@@ -258,7 +261,7 @@ function authorizedSavedSecretRowSelect(accountId: string) {
                         name: true,
                         team: { select: { id: true, name: true } },
                         memberships: {
-                            where: { teamMembership: { accountId, ...ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE } },
+                            where: { teamMembership: { accountId, ...ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE } },
                             select: { teamMembership: { select: { accountId: true } } },
                         },
                     },
@@ -497,7 +500,7 @@ async function listAuthorizedAccountIdsForResourceInTx(
                     teamGroup: {
                         select: {
                             memberships: {
-                                where: { teamMembership: ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE },
+                                where: { teamMembership: ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE },
                                 select: { teamMembership: { select: { accountId: true } } },
                             },
                         },
@@ -542,7 +545,7 @@ async function resolveSavedSecretAudienceAccountIdsInTx(
             where: {
                 teamGroupId: { in: [...input.groupIds] },
                 group: { archivedAt: null, team: { archivedAt: null } },
-                teamMembership: ACTIVE_SAVED_SECRET_PRINCIPAL_MEMBERSHIP_WHERE,
+                teamMembership: ACTIVE_SAVED_SECRET_MEMBERSHIP_WHERE,
             },
             select: { teamMembership: { select: { accountId: true } } },
         }),

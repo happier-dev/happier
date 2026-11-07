@@ -1,11 +1,15 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 
+import { SavedSecretResourceMaterialsResponseV1Schema } from "@happier-dev/protocol";
+import { registerSavedSecretResourceRoutes } from "@/app/api/routes/account/registerSavedSecretResourceRoutes";
+import { createAuthenticatedTestApp } from "@/app/api/testkit/sqliteFastify";
 import { db } from "@/storage/db";
 import { inTx } from "@/storage/inTx";
-import { createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
+import { createAccountTokenForTests, createLightSqliteHarness, type LightSqliteHarness } from "@/testkit/lightSqliteHarness";
 
 import {
     createSavedSecretResourceInTx,
+    listSavedSecretResourceEnvelopeCensusInTx,
     listSavedSecretResourceMaterialsForAccountInTx,
     setSavedSecretResourceGrantsInTx,
 } from "./savedSecretResourceService";
@@ -16,7 +20,7 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
     beforeAll(async () => {
         harness = await createLightSqliteHarness({
             tempDirPrefix: "happier-saved-secret-audience-",
-            initAuth: false,
+            initAuth: true,
             initEncrypt: true,
         });
     }, 120_000);
@@ -156,7 +160,9 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
         await expect(db.savedSecretTeamGrant.count()).resolves.toBe(0);
     });
 
-    it("excludes Guests from Team and Group grants while admitting a Group member", async () => {
+    // Coordination 2026-11-07 17:04Z: an explicit Group grant admits guests; a Team grant does not.
+    it("admits Guests through explicit Group grants but not Team grants, and admits members through both", async () => {
+        harness.resetEnv({ HAPPIER_FEATURE_TEAMS__ENABLED: "1" });
         const owner = await db.account.create({ data: { encryptionMode: "plain" }, select: { id: true } });
         const guest = await db.account.create({ data: { encryptionMode: "plain" }, select: { id: true } });
         const team = await db.team.create({ data: { name: "Guest audience" }, select: { id: true } });
@@ -196,24 +202,108 @@ describe("Saved Secret resource audience lifecycle (SQLite integration)", () => 
             groupGrants: [group.id],
         }));
         expect(created).toMatchObject({ ok: true });
-        await expect(inTx((tx) => listSavedSecretResourceMaterialsForAccountInTx(tx, guest.id)))
-            .resolves.toHaveLength(0);
-        // Exact material reads bypass the catalog predicate, so exercise their shared selector too.
-        await expect(inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, guest.id, undefined, ["resource_guest_scope"])))
-            .resolves.toEqual([]);
-        await expect(inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, member.id, undefined, ["resource_guest_scope"])))
-            .resolves.toHaveLength(1);
+        const app = createAuthenticatedTestApp({ authentication: "real" });
+        registerSavedSecretResourceRoutes(app);
+        const guestToken = await createAccountTokenForTests(guest.id, { kind: "account", authority: "present_user" });
+        const readGuestMaterial = async (expectedRevision: number) => app.inject({
+            method: "GET",
+            url: `/v1/account/saved-secrets/resources/materials?resourceId=resource_guest_scope&expectedRevision=${expectedRevision}`,
+            headers: { authorization: `Bearer ${guestToken}` },
+        });
+        try {
+            const groupMaterial = await readGuestMaterial(1);
+            expect(groupMaterial.statusCode).toBe(200);
+            expect(SavedSecretResourceMaterialsResponseV1Schema.parse(groupMaterial.json()).resources)
+                .toMatchObject([{ storedContent: { t: "plain", v: { value: "value" } } }]);
+            // Listing also exercises the audience predicate that exact material reads bypass.
+            await expect(inTx((tx) => listSavedSecretResourceMaterialsForAccountInTx(tx, guest.id)))
+                .resolves.toMatchObject([{ storedContent: { t: "plain", v: { value: "value" } } }]);
+            await expect(inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, member.id, undefined, ["resource_guest_scope"])))
+                .resolves.toHaveLength(1);
+            await expect(db.accountChange.findMany({
+                where: { entityId: "resource_guest_scope", kind: "savedSecretResource", accountId: guest.id },
+                select: { accountId: true },
+            })).resolves.toEqual([{ accountId: guest.id }]);
 
-        const groupRemoved = await inTx((tx) => setSavedSecretResourceGrantsInTx(tx, {
-            accountId: owner.id,
-            resourceId: "resource_guest_scope",
-            expectedRevision: 1,
-            accountGrants: [],
-            teamGrants: [team.id],
-            groupGrants: [],
-        }));
-        expect(groupRemoved).toMatchObject({ ok: true });
-        await expect(inTx((tx) => listSavedSecretResourceMaterialsForAccountInTx(tx, guest.id)))
-            .resolves.toEqual([]);
+            await db.accountChange.deleteMany({ where: { accountId: guest.id } });
+
+            const groupRemoved = await inTx((tx) => setSavedSecretResourceGrantsInTx(tx, {
+                accountId: owner.id,
+                resourceId: "resource_guest_scope",
+                expectedRevision: 1,
+                accountGrants: [],
+                teamGrants: [team.id],
+                groupGrants: [],
+            }));
+            expect(groupRemoved).toMatchObject({ ok: true });
+            const teamMaterial = await readGuestMaterial(2);
+            expect(teamMaterial.statusCode).toBe(404);
+            expect(teamMaterial.json()).toEqual({ error: "resource_not_found" });
+            await expect(inTx((tx) => listSavedSecretResourceMaterialsForAccountInTx(tx, guest.id)))
+                .resolves.toEqual([]);
+            await expect(inTx(tx => listSavedSecretResourceMaterialsForAccountInTx(tx, member.id, undefined, ["resource_guest_scope"])))
+                .resolves.toMatchObject([{ storedContent: { t: "plain", v: { value: "value" } } }]);
+            await expect(db.accountChange.findMany({
+                where: { entityId: "resource_guest_scope", kind: "savedSecretResource", accountId: guest.id },
+                select: { accountId: true },
+            })).resolves.toEqual([{ accountId: guest.id }]);
+
+            await db.userRelationship.create({
+                data: { fromUserId: owner.id, toUserId: guest.id, status: "friend" },
+            });
+            expect(await inTx(tx => setSavedSecretResourceGrantsInTx(tx, {
+                accountId: owner.id,
+                resourceId: "resource_guest_scope",
+                expectedRevision: 2,
+                accountGrants: [guest.id],
+                teamGrants: [team.id],
+                groupGrants: [],
+            }))).toMatchObject({ ok: true });
+            const directMaterial = await readGuestMaterial(3);
+            expect(directMaterial.statusCode).toBe(200);
+            expect(SavedSecretResourceMaterialsResponseV1Schema.parse(directMaterial.json()).resources)
+                .toMatchObject([{ storedContent: { t: "plain", v: { value: "value" } } }]);
+        } finally {
+            await app.close();
+        }
+    });
+
+    it("includes explicit Group guests in the envelope census but excludes Team-only guests and inactive members", async () => {
+        const owner = await db.account.create({ data: { encryptionMode: "e2ee" } });
+        const guest = await db.account.create({ data: { encryptionMode: "e2ee" } });
+        const member = await db.account.create({ data: { encryptionMode: "e2ee" } });
+        const team = await db.team.create({ data: { name: "Envelope audience" } });
+        const memberships = await Promise.all([
+            db.teamMembership.create({ data: { teamId: team.id, accountId: guest.id, role: "guest" } }),
+            db.teamMembership.create({ data: { teamId: team.id, accountId: member.id, role: "member" } }),
+        ]);
+        const group = await db.teamGroup.create({ data: { teamId: team.id, name: "Explicit audience", nameKey: "explicit-audience" } });
+        await db.teamGroupMembership.createMany({ data: memberships.map(membership => ({
+            teamId: team.id, teamGroupId: group.id, teamMembershipId: membership.id,
+        })) });
+        // The census reads persisted audience metadata, not ciphertext or key material.
+        for (const arm of ["team", "group"] as const) {
+            await db.savedSecretResource.create({ data: {
+                id: `resource_census_${arm}`, ownerAccountId: owner.id, displayName: "Envelope census",
+                kind: "token", encryptionMode: "e2ee", storedContent: "{}",
+                ...(arm === "team"
+                    ? { teamGrants: { create: { teamId: team.id, createdByAccountId: owner.id } } }
+                    : { groupGrants: { create: { teamGroupId: group.id, createdByAccountId: owner.id } } }),
+            } });
+        }
+        async function recipientIds(arm: "team" | "group") {
+            const census = await inTx(tx => listSavedSecretResourceEnvelopeCensusInTx(tx, {
+                accountId: owner.id, resourceId: `resource_census_${arm}`, limit: 20,
+            }));
+            expect(census.ok).toBe(true);
+            return census.ok ? census.value.recipients.map(recipient => recipient.account.accountId).sort() : [];
+        }
+        await expect(recipientIds("team")).resolves.toEqual([owner.id, member.id].sort());
+        await expect(recipientIds("group")).resolves.toEqual([owner.id, guest.id, member.id].sort());
+        await db.teamMembership.update({ where: { id: memberships[0].id }, data: { status: "suspended" } });
+        await expect(recipientIds("group")).resolves.toEqual([owner.id, member.id].sort());
+        await db.teamMembership.update({ where: { id: memberships[0].id }, data: { status: "active" } });
+        await db.account.update({ where: { id: guest.id }, data: { status: "suspended" } });
+        await expect(recipientIds("group")).resolves.toEqual([owner.id, member.id].sort());
     });
 });
