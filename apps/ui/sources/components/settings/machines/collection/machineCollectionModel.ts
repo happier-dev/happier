@@ -1,5 +1,5 @@
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
-import { describeMachinePresenceLine, projectMachineManagedPresence, type MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
+import { describeMachineRuntimePresence, projectMachineManagedPresence, type MachineManagedPresence } from '@/utils/sessions/machinePresenceLine';
 import { describeMachineLockedReason, formatMachineDisplayNameParts, getMachineDisplayName, isMachineDisplayHydrating, resolveMachineDisplayNameParts } from '@/utils/sessions/machineDisplayNames';
 import { formatOSPlatform } from '@/utils/sessions/sessionUtils';
 import { buildMachineOwnershipGroups, describeMachineSharedOwnership, describeMachineSharedGroupTitle } from '@/sync/domains/machines/machineOwnershipGroups';
@@ -37,9 +37,9 @@ type MachineCollectionRowPresentation = Readonly<{
     serverId: string;
     /** The existing activity owner backs each row's independently subscribed presence. */
     presenceSource?: Readonly<{
-        machine: Parameters<typeof describeMachinePresenceLine>[0];
+        machine: Parameters<typeof describeMachineRuntimePresence>[0];
         managedPresence: MachineManagedPresence | null;
-        scope?: Parameters<typeof describeMachinePresenceLine>[3];
+        scope?: Parameters<typeof describeMachineRuntimePresence>[3];
     }>;
     /** The name the user gave the machine, else its host; told apart when two share it. */
     title: string;
@@ -115,7 +115,10 @@ export type MachineCollection = Readonly<{
     presetSections: readonly MachinePresetCollectionSection[];
 }>;
 
-/** Long rails fold offline rows within each ownership/Home section; short rails keep them inline. */
+/**
+ * Long rails fold offline rows within each ownership/Home section; short rails keep them inline. A row whose name
+ * is still being read already knows its presence, so its reserved slot sits in its final group and never moves.
+ */
 export function partitionMachineCollectionRailRows(rows: readonly MachineCollectionRow[], foldOffline: boolean): Readonly<{
     inline: readonly MachineCollectionRow[];
     offline: readonly MachineCollectionRow[];
@@ -124,7 +127,7 @@ export function partitionMachineCollectionRailRows(rows: readonly MachineCollect
     const inline: MachineCollectionRow[] = [];
     const offline: MachineCollectionRow[] = [];
     for (const row of rows) {
-        (!row.hydrating && row.status === 'offline' ? offline : inline).push(row);
+        (row.status === 'offline' ? offline : inline).push(row);
     }
     if (offline.length === 0) return { inline: rows, offline: [] };
     return { inline, offline };
@@ -202,7 +205,7 @@ export function buildMachineCollection(input: Readonly<{
                 const name = getMachineDisplayName(machine) ?? machine.id;
                 const managedMachine = managedByMachineId.get(machine.id);
                 const managedPresence = projectMachineManagedPresence(machine, managedMachine);
-                const presence = describeMachinePresenceLine(machine, nowMs, managedPresence, group.accountScope);
+                const presence = describeMachineRuntimePresence(machine, nowMs, managedPresence, group.accountScope);
                 // A daemon publication must not become part of this presentation row's equality.
                 // Retain only the facts this leaf renders, linked to the existing activity owner.
                 const presenceMachine = {
@@ -210,6 +213,7 @@ export function buildMachineCollection(input: Readonly<{
                     ...readMachineActivity(machine),
                     revokedAt: machine.revokedAt,
                     presenceProtocolVersion: machine.presenceProtocolVersion,
+                    managedInputRuntime: machine.managedInputRuntime,
                     ...('presence' in machine && machine.presence === null ? { presence: null } : {}),
                 };
                 linkMachineActivity(machine, presenceMachine);
@@ -220,7 +224,7 @@ export function buildMachineCollection(input: Readonly<{
                         : { kind: 'machine' as const, machineId: machine.id }),
                     serverId: group.serverId,
                     presenceSource: { machine: presenceMachine, managedPresence, scope: group.accountScope },
-                    ...(managedPresence?.offline ? { presenceWord: managedPresence.offline.word } : {}),
+                    ...(presence.showStatus ? { presenceWord: presence.label } : {}),
                     ...(isMachineDisplayHydrating(machine) ? { hydrating: true as const } : {}),
                     title: formatMachineDisplayNameParts(titleParts),
                     titleParts,

@@ -1,13 +1,15 @@
 import React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { renderScreen, standardCleanup } from '@/dev/testkit';
+import { installBrowserClipboardBoundary, renderScreen, standardCleanup } from '@/dev/testkit';
 import { lightTheme } from '@/theme';
 import { ComposerBannerCollapseProvider, useComposerBannerCollapse } from '@/components/sessions/composerBanners/ComposerBannerCollapseProvider';
 
 const repositoryMocks = vi.hoisted(() => ({ resolve: vi.fn(async () => undefined) }));
-const clipboardMocks = vi.hoisted(() => ({ copy: vi.fn(async () => true) }));
+const clipboardMocks = vi.hoisted(() => ({ copy: vi.fn(async (_text: string) => true) }));
+vi.mock('react-native', async () => (await import('@/dev/testkit/mocks/reactNative')).createReactNativeWebMock());
+beforeEach(() => installBrowserClipboardBoundary(async text => { await clipboardMocks.copy(text); }));
 
 function flattenStyle(style: unknown): Record<string, unknown> {
     if (Array.isArray(style)) return Object.assign({}, ...style.map((entry) => flattenStyle(entry)));
@@ -18,7 +20,7 @@ vi.mock('@/sync/ops/sessionDrafts/sessionDraftRepository', async (importOriginal
     ...(await importOriginal<typeof import('@/sync/ops/sessionDrafts/sessionDraftRepository')>()),
     resolveSessionDraftConflict: repositoryMocks.resolve,
 }));
-vi.mock('@/utils/ui/clipboard', () => ({ setClipboardStringSafe: clipboardMocks.copy }));
+vi.mock('expo-clipboard', () => ({ setStringAsync: clipboardMocks.copy }));
 vi.mock('@/text', () => ({ t: (key: string) => key }));
 vi.mock('react-native-unistyles', async () => {
     const { createUnistylesMock } = await import('@/dev/testkit/mocks/unistyles');
@@ -116,8 +118,10 @@ describe('SessionDraftConflictResolution', () => {
             return React.createElement('ConflictState', {
                 testID: 'conflict-state',
                 collapsed: presentation.collapsed,
+                hasBadge: presentation.statusBadge !== null,
                 expanded: presentation.statusBadge?.accessibilityState?.expanded,
-                onClick: () => presentation.statusBadge?.onPress?.(),
+                onClick: presentation.hide,
+                onBadgePress: () => presentation.statusBadge?.onPress?.(),
                 onDoubleClick: otherBanner.toggle,
             });
         }
@@ -127,13 +131,23 @@ describe('SessionDraftConflictResolution', () => {
         );
         const state = () => screen.findByTestId('conflict-state');
         expect(state()?.props.collapsed).toBe(false);
+        // The expanded conflict speaks alone; its badge appears only once it is hidden.
+        expect(state()?.props.hasBadge).toBe(false);
 
         act(() => state()?.props.onDoubleClick());
         expect(state()?.props.collapsed).toBe(false);
 
         act(() => state()?.props.onClick());
         expect(state()?.props.collapsed).toBe(true);
+        expect(state()?.props.hasBadge).toBe(true);
         expect(state()?.props.expanded).toBe(false);
+
+        act(() => state()?.props.onBadgePress());
+        expect(state()?.props.collapsed).toBe(false);
+        expect(state()?.props.hasBadge).toBe(false);
+
+        act(() => state()?.props.onClick());
+        expect(state()?.props.collapsed).toBe(true);
 
         conflict = {
             fields: [{ ...first.fields[0], synced: 'new synced value' }],

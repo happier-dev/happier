@@ -3,7 +3,8 @@ import * as React from 'react';
 import { createReactNavigationNativeMock } from '@/dev/testkit/mocks/reactNavigation';
 import { act } from 'react-test-renderer';
 import { beforeEach, afterEach, describe, expect, it, vi } from 'vitest';
-import { DaemonContributionRegistryProjectionDescribeResponseSchema, SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol';
+import { DaemonContributionRegistryProjectionDescribeResponseSchema} from '@happier-dev/protocol/daemon/contributionRegistryProjection';
+import { SESSION_RUNNER_RUNTIME_METADATA_KEY } from '@happier-dev/protocol/sessions/control/sessionRunnerRuntimeV1';
 import { RPC_METHODS, SESSION_RPC_METHODS } from '@happier-dev/protocol/rpc';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
 import { RpcError, RPC_ERROR_CODES } from '@happier-dev/protocol/rpcErrors';
@@ -161,8 +162,8 @@ vi.mock('@/components/sessions/panes/useRegisterSessionPaneDriver', () => ({
 vi.mock('@/components/sessions/panes/url/useSessionPaneUrlSync', () => ({
   useSessionPaneUrlSync: () => {},
 }));
-vi.mock('@/components/sessions/transcript/ChatHeaderView', () => ({
-  ChatHeaderView: () => null,
+vi.mock('@/components/sessions/shell/view/SessionPaneHeader', () => ({
+  SessionPaneHeader: () => null,
 }));
 vi.mock('@/components/sessions/transcript/ChatList', () => ({
   ChatList: (props: any) => {
@@ -368,6 +369,19 @@ describe('SessionView (control switch timeout)', () => {
       throw new Error(`Expected WarningActionBanner props for ${testID}`);
     }
     return props;
+  }
+
+  function findStatusBadge(key: string) {
+    return getAgentInputProps().statusBadges?.find((item: { key?: string }) => item.key === key);
+  }
+
+  function getBannerHideAction(testID: string) {
+    const action = getWarningActionBannerPropsByTestId(testID).secondaryActions
+      ?.find((candidate: { testID?: string }) => candidate.testID === `${testID}-hide`);
+    if (!action) {
+      throw new Error(`Expected a Hide action on ${testID}`);
+    }
+    return action;
   }
 
   function getUsageLimitStatusBadge() {
@@ -618,15 +632,12 @@ describe('SessionView (control switch timeout)', () => {
 
     const screen = await renderSessionView();
 
+    // One message per state: the expanded banner speaks alone and carries its own Hide.
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
-    const expandedBadge = getUsageLimitStatusBadge();
-    expect(expandedBadge).toEqual(expect.objectContaining({
-      testID: 'session-usageLimit-status-badge',
-      onPress: expect.any(Function),
-    }));
+    expect(findStatusBadge('usage-limit-recovery')).toBeUndefined();
 
     await act(async () => {
-      expandedBadge.onPress();
+      getBannerHideAction('session-usageLimit-recovery').onPress();
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
 
@@ -634,6 +645,7 @@ describe('SessionView (control switch timeout)', () => {
     const collapsedBadge = getUsageLimitStatusBadge();
     expect(collapsedBadge).toEqual(expect.objectContaining({
       testID: 'session-usageLimit-status-badge',
+      accessibilityState: { expanded: false },
       onPress: expect.any(Function),
     }));
 
@@ -643,11 +655,12 @@ describe('SessionView (control switch timeout)', () => {
     await flushHookEffects({ cycles: 1, turns: 1 });
 
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
+    expect(findStatusBadge('usage-limit-recovery')).toBeUndefined();
 
     await screen.unmount();
   });
 
-  it('shows stale runner banner and badge, collapses through the badge, and clears after successful restart', async () => {
+  it('shows the stale runner banner or its badge, one at a time, and clears after successful restart', async () => {
     resetSession({
       active: true,
       metadata: buildStaleRunnerMetadata(),
@@ -661,6 +674,14 @@ describe('SessionView (control switch timeout)', () => {
     const screen = await renderSessionView();
 
     expect(screen.findByTestId('session-staleRunner-version')).toBeTruthy();
+    expect(findStatusBadge('stale-session-runner')).toBeUndefined();
+
+    await act(async () => {
+      getBannerHideAction('session-staleRunner-version').onPress();
+    });
+    await flushHookEffects({ cycles: 1, turns: 1 });
+
+    expect(screen.findByTestId('session-staleRunner-version')).toBeNull();
     expect(getStaleRunnerStatusBadge()).toEqual(expect.objectContaining({
       key: 'stale-session-runner',
       testID: 'session-staleRunner-status-badge',
@@ -671,13 +692,7 @@ describe('SessionView (control switch timeout)', () => {
       getStaleRunnerStatusBadge().onPress();
     });
     await flushHookEffects({ cycles: 1, turns: 1 });
-
-    expect(screen.findByTestId('session-staleRunner-version')).toBeNull();
-
-    await act(async () => {
-      getStaleRunnerStatusBadge().onPress();
-    });
-    await flushHookEffects({ cycles: 1, turns: 1 });
+    expect(findStatusBadge('stale-session-runner')).toBeUndefined();
 
     const staleRunnerBanner = getWarningActionBannerPropsByTestId('session-staleRunner-version');
     await act(async () => {
@@ -803,6 +818,13 @@ describe('SessionView (control switch timeout)', () => {
     });
 
     const screen = await renderSessionView();
+    // Badges stand in for collapsed banners only.
+    for (const bannerTestID of ['session-usageLimit-recovery', 'session-staleRunner-version']) {
+      await act(async () => {
+        getBannerHideAction(bannerTestID).onPress();
+      });
+      await flushHookEffects({ cycles: 1, turns: 1 });
+    }
     const badgeKeys = getAgentInputProps().statusBadges?.map((badge: { key: string }) => badge.key);
 
     expect(badgeKeys).toEqual(expect.arrayContaining(['usage-limit-recovery', 'stale-session-runner']));
@@ -844,10 +866,6 @@ describe('SessionView (control switch timeout)', () => {
       } }));
     }
     expect(getWarningActionBannerProps().actionTestID).toBe('session-usageLimit-recovery-enable');
-    expect(getAgentInputProps().statusBadges).toContainEqual(expect.objectContaining({
-      key: 'usage-limit-recovery',
-      label: 'session.usageLimitRecovery.status.ready',
-    }));
 
     await act(async () => {
       await getWarningActionBannerProps().onActionPress();
@@ -861,10 +879,6 @@ describe('SessionView (control switch timeout)', () => {
     }));
     expect(modalAlertSpy).toHaveBeenCalledWith('common.error', 'errors.operationFailed', undefined);
     expect(getWarningActionBannerProps().actionTestID).toBe('session-usageLimit-recovery-enable');
-    expect(getAgentInputProps().statusBadges).toContainEqual(expect.objectContaining({
-      key: 'usage-limit-recovery',
-      label: 'session.usageLimitRecovery.status.ready',
-    }));
 
     await screen.unmount();
   });
@@ -929,10 +943,6 @@ describe('SessionView (control switch timeout)', () => {
     const screen = await renderSessionView();
 
     expect(getWarningActionBannerProps().actionTestID).toBe('session-usageLimit-recovery-enable');
-    expect(getAgentInputProps().statusBadges).toContainEqual(expect.objectContaining({
-      key: 'usage-limit-recovery',
-      label: 'session.usageLimitRecovery.status.ready',
-    }));
 
     await screen.unmount();
   });

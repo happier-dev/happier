@@ -5,7 +5,7 @@ import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/ma
 import type { ManagedMachinePresetV1 } from '@happier-dev/protocol/machines/managed/managedMachinePresetV1';
 import { t } from '@/text';
 import { createMachineFixture } from '@/dev/testkit/fixtures/machineFixtures';
-import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed, withdrawMachinePresenceForScope } from '@/sync/domains/machines/reachability/machineReachability';
+import { captureMachinePresenceObservation, clearMachineRequestReachabilityForTest, recordMachineRequestFailed } from '@/sync/domains/machines/reachability/machineReachability';
 
 import type { ActiveSelectionMachineGroup } from '../hooks/useActiveSelectionMachineGroups';
 import {
@@ -79,39 +79,25 @@ describe('machine collection rail partition', () => {
         expect(collection.count).toBe(1);
         expect(machineCollectionHref(created!.rows[0]!)).toBe('/settings/machines/joined?serverId=a');
     });
-    it('keeps an unread arrival slot inline even when its presence is offline', () => {
-        captureMachinePresenceObservation({ serverId: 'a', accountId: 'collection-account' })(['known', 'arrival']);
-        const rows = buildMachineCollection({ groups: [group('a', [machine('known'),
-            machine('arrival', { metadata: null, availability: undefined })])], groupedByHome: false }).sections[0]!.rows;
-        const partition = partitionMachineCollectionRailRows(rows, true);
-        expect(partition.inline.map(row => row.machineId)).toEqual(['arrival']);
-        expect(partition.offline.map(row => row.machineId)).toEqual(['known']);
-    });
-    it('keeps withdrawn unknown machines out of the offline fold and restores only observed machines', () => {
-        const nowMs = Date.now();
-        const scope = { serverId: 'a', accountId: 'collection-account' };
-        const machines = [machine('studio', { active: true, activeAt: nowMs }), machine('sleeping')];
-        withdrawMachinePresenceForScope(scope);
-        captureMachinePresenceObservation(scope)(['sleeping']);
-        const rows = buildMachineCollection({ groups: [group('a', machines)], groupedByHome: false, nowMs }).sections[0]!.rows;
-        const partition = partitionMachineCollectionRailRows(rows, true);
-        expect(partition.inline.map(row => row.machineId)).toEqual(['studio']);
-        expect(partition.inline[0]).toMatchObject({ online: false, status: 'unknown', presence: '' });
-        expect(partition.offline.map(row => row.machineId)).toEqual(['sleeping']);
-        captureMachinePresenceObservation(scope)(['studio']);
-        const restored = buildMachineCollection({ groups: [group('a', machines)], groupedByHome: false, nowMs }).sections[0]!.rows;
-        expect(restored.find(row => row.machineId === 'studio')).toMatchObject({ online: true, status: 'online' });
-    });
-    it('lands every row in its final group before presence resolves: offline records fold as Offline, live ones stay up top', () => {
+    it('reserves an unread arrival slot in the group its presence already decides, so it does not move once its name is read', () => {
         const nowMs = 1_000_000_000;
-        const scope = { serverId: 'a', accountId: 'collection-account' };
+        const rows = buildMachineCollection({ groups: [group('a', [machine('known'),
+            machine('arrival', { metadata: null, availability: undefined }),
+            machine('live-arrival', { metadata: null, availability: undefined, active: true, activeAt: nowMs })])],
+            groupedByHome: false, nowMs }).sections[0]!.rows;
+        expect(rows.find(row => row.machineId === 'arrival')?.hydrating).toBe(true);
+        const partition = partitionMachineCollectionRailRows(rows, true);
+        expect(partition.inline.map(row => row.machineId)).toEqual(['live-arrival']);
+        expect(partition.offline.map(row => row.machineId).sort()).toEqual(['arrival', 'known']);
+    });
+    it('lands every row in its final group before the Account scope resolves: offline records fold as Offline, live ones stay up top', () => {
+        const nowMs = 1_000_000_000;
         const machines = [
             machine('alpha-offline', { active: true, activeAt: 1 }),
             machine('beta-live', { active: true, activeAt: nowMs }),
             machine('gamma-offline'),
         ];
-        withdrawMachinePresenceForScope(scope);
-        const rows = buildMachineCollection({ groups: [group('a', machines)], groupedByHome: false, nowMs }).sections[0]!.rows;
+        const rows = buildMachineCollection({ groups: [group('a', machines, { accountScope: null })], groupedByHome: false, nowMs }).sections[0]!.rows;
         expect(rows.map(row => row.machineId)).toEqual(['beta-live', 'alpha-offline', 'gamma-offline']);
         expect(rows.map(row => row.status)).toEqual(['unknown', 'offline', 'offline']);
         expect(rows.some(row => row.presence === t('common.unknown'))).toBe(false);
@@ -119,7 +105,6 @@ describe('machine collection rail partition', () => {
         expect(partition.inline.map(row => row.machineId)).toEqual(['beta-live']);
         expect(partition.offline.map(row => row.machineId)).toEqual(['alpha-offline', 'gamma-offline']);
 
-        captureMachinePresenceObservation(scope)(machines.map(candidate => candidate.id));
         const resolved = buildMachineCollection({ groups: [group('a', machines)], groupedByHome: false, nowMs }).sections[0]!.rows;
         expect(resolved.map(row => [row.machineId, row.status])).toEqual([
             ['beta-live', 'online'], ['alpha-offline', 'offline'], ['gamma-offline', 'offline'],

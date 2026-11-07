@@ -35,8 +35,8 @@ import { useNewSessionPanelPropsForCreationProfile } from '@/components/sessions
 import { useResolveNewSessionOrdinaryEntryRoute } from '@/components/sessions/new/navigation/newSessionOrdinaryEntryRoute';
 import { isNewSessionDraftLaunchOperationInCustody } from '@/components/sessions/new/modules/newSessionDraftLaunchCustody';
 import { NewSessionDraftComposerActions } from '@/components/sessions/drafts/NewSessionDraftComposerActions';
-import { AppShellActionOutputSchemas } from '@happier-dev/protocol/actions/appShellActionFamily';
 import { useMountedActionExecution } from '@/components/approvals/useMountedActionExecution';
+import { deleteNewSessionDraft } from '@/components/sessions/drafts/deleteNewSessionDraft';
 import { buildSessionDraftSyncStatusBadge } from '@/components/sessions/drafts/sessionDraftStatusPresentation';
 import {
     SessionDraftConflictResolution,
@@ -402,10 +402,9 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
     }, [draftIdentity.draftId]);
     const deleteDraft = React.useCallback(async () => {
         if (!draftScope || launchInCustody) return;
-        const outcome = await draftAction.execute('session.draft.delete', { draftId: draftIdentity.draftId });
-        if (!outcome.ok || !draftAction.isCurrent()) return;
-        const deleted = AppShellActionOutputSchemas['session.draft.delete'].safeParse(outcome.result);
-        if (!deleted.success || deleted.data.status !== 'deleted') return;
+        const deleted = await deleteNewSessionDraft({ execute: draftAction.execute, draftId: draftIdentity.draftId,
+            isCurrent: draftAction.isCurrent });
+        if (!deleted) return;
         clearOrdinaryNewSessionDraftIdExact(draftScope, draftIdentity.draftId);
         if (committedDraftIdRef.current === draftIdentity.draftId) {
             openDraft(resolveOrdinaryEntry({ forceFresh: true }));
@@ -439,12 +438,13 @@ function NewSessionScreenReady(props: NewSessionScreenProps & Readonly<{
                     scope={draftScope}
                     address={draftAddress}
                     conflict={exactDraft.conflict}
+                    onHide={draftConflictBanner.hide}
                 />
             </ComposerAuxiliaryFrame>
         ) : authoringOrigin ? (
             <ProjectSetupDraftHeader origin={authoringOrigin} />
         ) : null
-    ), [authoringOrigin, draftAddress, draftConflictBanner.collapsed, draftScope, exactDraft?.conflict, exactDraft?.materialized]);
+    ), [authoringOrigin, draftAddress, draftConflictBanner.collapsed, draftConflictBanner.hide, draftScope, exactDraft?.conflict, exactDraft?.materialized]);
     // A seeded Project draft says where it will author and that nothing starts before Send (lab `s-setup` ENTRY).
     const composerBottomContent = React.useMemo(
         () => (authoringOrigin ? <ProjectSetupDraftFootnote origin={authoringOrigin} /> : null),

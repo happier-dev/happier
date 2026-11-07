@@ -7,7 +7,7 @@ import { Popover } from '@/components/ui/popover';
 import { useViewportClass } from '@/utils/platform/useViewportClass';
 
 import { useUnistyles } from 'react-native-unistyles';
-import type { ProjectWorkerActionOutputV1 } from '@happier-dev/protocol';
+import type { ProjectWorkerActionOutputV1 } from '@happier-dev/protocol/actions/specs/projectWorkers';
 
 import { openActionOperationDetail } from '@/components/inbox/actionOperations/openActionOperationDetail';
 import { useProjectCommandOutputOpener } from '@/components/inbox/actionOperations/projectCommandOutputHost';
@@ -374,8 +374,10 @@ export function MachineProjectWorkSection(
   const state = policy.state;
   const value = state.kind === 'ready' ? state.value.policy : null;
   // An unreachable Machine keeps its last-known policy, says so once, and takes no edits it can't receive.
+  // Whether it takes new work is not a fact while it is offline, so its Accept new work switch is not shown.
   const machineScope = React.useMemo(() => ({ serverId: props.serverId, machineId: props.machineId }), [props.serverId, props.machineId]);
-  const unreachable = useCheckoutReachability(machineScope).unreachable;
+  const reachability = useCheckoutReachability(machineScope);
+  const unreachable = reachability.unreachable;
   const disabled = !value || policy.busy || unreachable;
   const notice = describeObservedWorkerSettingNotice(policy.notice);
   // One Run at most field: inline on wide screens, inside the phone sheet on a phone (lab MACHINEp).
@@ -417,7 +419,10 @@ export function MachineProjectWorkSection(
         title={t('projectWorkers.workSection')}
         description={t('projectWorkers.workSectionDetail')}
       >
-        <CheckoutReachabilityLine scope={machineScope} testID={`${testID}.reachability`} />
+        {/* The Machine page already says its Machine is offline; standing alone, the section says it once itself. */}
+        {reachability.announced ? null : (
+          <CheckoutReachabilityLine scope={machineScope} testID={`${testID}.reachability`} />
+        )}
         {notice ? (
           <AttentionBanner
             testID={`${testID}.notice`}
@@ -455,7 +460,7 @@ export function MachineProjectWorkSection(
           />
         ) : (
           <>
-            <Item
+            {unreachable ? null : <Item
               testID={`${testID}.accepting`}
               title={t('projectWorkers.accepting')}
               subtitle={
@@ -478,7 +483,7 @@ export function MachineProjectWorkSection(
                   }}
                 />
               }
-            />
+            />}
             {compact ? (
               // Phone (lab MACHINEp): the row shows its value and opens the same field in a sheet.
               <View ref={capacityAnchor} collapsable={false}>
@@ -511,27 +516,19 @@ export function MachineProjectWorkSection(
         )}
       </ItemGroup>
 
-      <ItemGroup
-        title={t('projectWorkers.runningHere')}
-      >
-        {running.length === 0 ? (
-          <SurfaceStateCard
-            testID={`${testID}.running.empty`}
-            size="line"
-            kind="empty"
-            title={t('projectWorkers.nothingRunning')}
-          />
-        ) : (
-          running.map((operation) => (
+      {/* Present only once something runs here (MPG-8, lab s-workers MACHINE): an empty "Running here" is noise. */}
+      {running.length > 0 ? (
+        <ItemGroup title={t('projectWorkers.runningHere')}>
+          {running.map((operation) => (
             <RunningHereRow
               machineName={props.machineName}
               key={operation.snapshot.operationId}
               operation={operation}
               testID={`${testID}.running:${operation.snapshot.operationId}`}
             />
-          ))
-        )}
-      </ItemGroup>
+          ))}
+        </ItemGroup>
+      ) : null}
 
       <ItemGroup
         title={t('projectWorkers.freshCopies')}

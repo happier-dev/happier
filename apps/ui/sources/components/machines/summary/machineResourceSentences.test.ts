@@ -5,6 +5,7 @@ import {
     describeFleetDescription,
     describeFleetTitle,
     describeMachineAttentionWord,
+    describeMachineReasonPhrase,
     describeMachineSentence,
     describeMachinesRailTooltip,
     resolveMachineReasonAction,
@@ -39,35 +40,26 @@ describe('machine sentences (MPG-28)', () => {
         expect(describeFleetTitle({ subjects: [], reportingCount: 0 })).toBeNull();
     });
 
-    it('says who needs a look and how many of the others online are calm', () => {
+    it('never repeats the title or the Needs-you list: the sentence says only how the others online are', () => {
+        // The Needs-you rows beneath name each machine and its reason; the sentence does not name them again.
         expect(describeFleetDescription({ subjects: fleet, reportingCount: 3, onlineCount: 6, nowMs: NOW }))
-            .toBe('edge-1 is short on memory and nl2’s /data is nearly full. The other 4 online are calm.');
-    });
-
-    it('never repeats the title or the Needs-you list: one machine that needs a look adds only the calm others, several are named', () => {
+            .toBe('The other 4 online are calm.');
         const one = [fleet[1]!];
         expect(describeFleetTitle({ subjects: one, reportingCount: 3 })).toBe('edge-1 is short on memory');
         expect(describeFleetDescription({ subjects: one, reportingCount: 3, onlineCount: 6, nowMs: NOW }))
             .toBe('The other 5 online are calm.');
-        // The Needs-you list carries the detail ("Swapping for 6 min."); with nothing else to say the page keeps its own line.
+        // With nothing else to say the page keeps its own line.
         expect(describeFleetDescription({ subjects: one, reportingCount: 1, onlineCount: 1, nowMs: NOW })).toBeNull();
-        expect(describeFleetTitle({ subjects: [fleet[2]!], reportingCount: 1 })).toBe('All calm');
-        expect(describeFleetDescription({ subjects: [fleet[2]!], reportingCount: 1, onlineCount: 3, nowMs: NOW })).toBe('Every machine online is calm.');
-        // One machine online: "every machine" would be a crowd.
-        expect(describeFleetDescription({ subjects: [fleet[2]!], reportingCount: 1, onlineCount: 1, nowMs: NOW })).toBe('The one online is calm.');
-        expect(describeFleetTitle({ subjects: fleet, reportingCount: 3 })).toBe('2 machines need a look');
-    });
-
-    it('says a shared reason once instead of listing machines the Needs-you list already names', () => {
         const four = ['a', 'b', 'c', 'd'].map(name => ({ name, attention: { level: 'needs_you' as const, reasons: [memory] } }));
         expect(describeFleetDescription({ subjects: four, reportingCount: 4, onlineCount: 11, nowMs: NOW }))
-            .toBe('Short on memory on 4 machines. The other 7 online are calm.');
-        // Two, or reasons that differ, are still named.
-        expect(describeFleetDescription({ subjects: four.slice(0, 2), reportingCount: 2, onlineCount: 2, nowMs: NOW }))
-            .toBe('a is short on memory and b is short on memory.');
+            .toBe('The other 7 online are calm.');
+        expect(describeFleetDescription({ subjects: four.slice(0, 2), reportingCount: 2, onlineCount: 2, nowMs: NOW })).toBeNull();
         const mixed = [...four.slice(0, 2), { name: 'e', attention: { level: 'look' as const, reasons: [disk] } }];
-        expect(describeFleetDescription({ subjects: mixed, reportingCount: 3, onlineCount: 3, nowMs: NOW }))
-            .toBe('a is short on memory, b is short on memory and 1 more.');
+        expect(describeFleetDescription({ subjects: mixed, reportingCount: 3, onlineCount: 3, nowMs: NOW })).toBeNull();
+        expect(describeFleetTitle({ subjects: [fleet[2]!], reportingCount: 1 })).toBe('All calm');
+        expect(describeFleetDescription({ subjects: [fleet[2]!], reportingCount: 1, onlineCount: 3, nowMs: NOW })).toBe('Nothing on the 3 machines online needs you.');
+        // One machine online: "every machine" would be a crowd.
+        expect(describeFleetDescription({ subjects: [fleet[2]!], reportingCount: 1, onlineCount: 1, nowMs: NOW })).toBe('Nothing on the one machine online needs you.');
     });
 
     it('names the machine and reason in the rail tooltip, or counts several that need you', () => {
@@ -81,8 +73,16 @@ describe('machine sentences (MPG-28)', () => {
             .toEqual({ lead: 'Short on memory.', rest: 'Swapping for 6 min. 2 sessions working.', tone: 'needs_you' });
         expect(describeMachineSentence({ attention: calm, working: 3, nowMs: NOW }))
             .toEqual({ lead: 'Calm.', rest: '3 sessions working.', tone: 'calm' });
+        expect(describeMachineSentence({ attention: calm, working: 1, nowMs: NOW })?.rest).toBe('1 session working.');
         expect(describeMachineSentence({ attention: null, working: 0, nowMs: NOW })).toBeNull();
         expect(describeMachineAttentionWord(disk)).toBe('/data nearly full');
+    });
+
+    it('names an unnamed root disk in plain words, never a bare slash', () => {
+        const root: MachineResourceReasonV1 = { ...disk, volumeLabel: '/' };
+        expect(describeMachineAttentionWord(root)).toBe('System disk nearly full');
+        expect(describeMachineReasonPhrase('nl2', root)).toBe('nl2’s system disk is nearly full');
+        expect(describeMachineReasonPhrase('nl2', disk)).toBe('nl2’s /data is nearly full');
     });
 
     it('replaces held attention and working counts with presence when offline', () => {

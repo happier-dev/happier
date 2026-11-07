@@ -92,6 +92,8 @@ afterEach(async () => {
 async function setup(
   options: Readonly<{
     holdPolicyRead?: boolean;
+    /** The Machine page above already says the Machine is offline. */
+    announced?: boolean;
     deferMachineDiscovery?: boolean;
     presenceBeforeDiscovery?: boolean;
     waive?: readonly string[];
@@ -188,13 +190,19 @@ async function setup(
   );
   const { MachineProjectWorkSection } =
     await import('./MachineProjectWorkSection');
-  const screen = await renderScreen(
+  const { CheckoutReachabilityScope } = await import('@/components/workspaces/reachability/checkoutReachability');
+  const section = (
     <MachineProjectWorkSection
       testID="work"
       serverId={fixture.home.id}
       machineId="m1"
       machineName="hz-build-1"
-    />,
+    />
+  );
+  const screen = await renderScreen(
+    options.announced
+      ? <CheckoutReachabilityScope scope={{ serverId: fixture.home.id, machineId: 'm1' }}>{section}</CheckoutReachabilityScope>
+      : section,
   );
   if (!options.holdPolicyRead && !options.deferMachineDiscovery && !options.presenceBeforeDiscovery)
     await vi.waitFor(() =>
@@ -368,13 +376,31 @@ describe('Machine › Work from your projects through the Machine policy Actions
     const { recordMachineRequestFailed, clearMachineRequestReachabilityForTest } =
       await import('@/sync/domains/machines/reachability/machineReachability');
     try {
-      expect(screen.getTextContent()).not.toContain('projects.checkouts.notAnswering');
+      expect(screen.getTextContent()).not.toContain('settingsOverview.machineUnreachableFromHome');
       const scope = storage.getState().profileScope;
       if (!scope || scope.serverId !== fixture!.home.id) throw new Error('expected_current_machine_account_scope');
       await act(async () => recordMachineRequestFailed({ ...scope, machineId: 'm1' }));
-      expect(screen.getTextContent()).toContain('projects.checkouts.notAnswering');
-      expect(screen.findAllByTestId('work.accepting')[0]?.props.disabled).toBe(true);
+      expect(screen.getTextContent()).toContain('settingsOverview.machineUnreachableFromHome');
+      // Whether it takes new work cannot be true or false while it is offline: no Accept new work switch.
+      expect(screen.findAllByTestId('work.accepting')).toHaveLength(0);
+      expect(screen.findAllByTestId('work.accepting.switch')).toHaveLength(0);
       expect(screen.findAllByTestId('work.capacity.field')[0]?.props.editable).toBe(false);
+      expect(sent).toHaveLength(0);
+    } finally {
+      clearMachineRequestReachabilityForTest();
+    }
+  });
+
+  it('leaves an offline Machine to the page that already says so, and still takes no edits', async () => {
+    const { screen, sent } = await setup({ announced: true });
+    const { recordMachineRequestFailed, clearMachineRequestReachabilityForTest } =
+      await import('@/sync/domains/machines/reachability/machineReachability');
+    try {
+      const scope = storage.getState().profileScope;
+      if (!scope || scope.serverId !== fixture!.home.id) throw new Error('expected_current_machine_account_scope');
+      await act(async () => recordMachineRequestFailed({ ...scope, machineId: 'm1' }));
+      expect(screen.findAllByTestId('work.accepting')).toHaveLength(0);
+      expect(screen.getTextContent()).not.toContain('settingsOverview.machineUnreachableFromHome');
       expect(sent).toHaveLength(0);
     } finally {
       clearMachineRequestReachabilityForTest();

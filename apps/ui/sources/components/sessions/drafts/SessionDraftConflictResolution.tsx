@@ -1,7 +1,8 @@
 import * as React from 'react';
 import { View } from 'react-native';
 import { StyleSheet } from 'react-native-unistyles';
-import type { SessionDraftAddressV2, StrictJsonValue } from '@happier-dev/protocol';
+import type { SessionDraftAddressV2} from '@happier-dev/protocol/drafts/sessionDraftsV2';
+import type { JsonValue  as StrictJsonValue} from '@happier-dev/protocol/json/strictJsonValue';
 
 import { Typography } from '@/constants/Typography';
 import { Modal } from '@/modal';
@@ -13,12 +14,12 @@ import {
 } from '@/sync/ops/sessionDrafts/sessionDraftRepository';
 import { t } from '@/text';
 import { Text } from '@/components/ui/text/Text';
-import { setClipboardStringSafe } from '@/utils/ui/clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { WarningActionBanner } from '@/components/sessions/shell/view/WarningActionBanner';
 import { Icon } from '@/components/ui/icons/Icon';
 import type { AgentInputStatusBadge } from '@/components/sessions/agentInput/agentInputContracts';
 import { useComposerBannerCollapse } from '@/components/sessions/composerBanners/ComposerBannerCollapseProvider';
-import { buildComposerBannerBadgeAccessibility } from '@/components/sessions/composerBanners/composerBannerCollapse';
+import { buildCollapsedComposerBannerBadge, buildComposerBannerHideAction } from '@/components/sessions/composerBanners/composerBannerCollapse';
 
 const stylesheet = StyleSheet.create((theme) => ({
     container: { gap: theme.space.s8 },
@@ -41,6 +42,8 @@ function presentConflictValue(value: StrictJsonValue | null): string {
 export function useSessionDraftConflictComposerBanner(conflict: SessionDraftConflict | null): Readonly<{
     collapsed: boolean;
     statusBadge: AgentInputStatusBadge | null;
+    /** The expanded conflict's own Hide; the same toggle the collapsed badge uses to bring it back. */
+    hide: () => void;
 }> {
     const collapse = useComposerBannerCollapse('draftConflict', { persistence: 'ephemeral' });
     const signature = React.useMemo(() => conflict ? JSON.stringify(conflict.fields) : null, [conflict]);
@@ -52,33 +55,34 @@ export function useSessionDraftConflictComposerBanner(conflict: SessionDraftConf
         if (collapse.collapsed) collapse.toggle();
     }, [collapse, signature]);
 
-    const statusBadge = React.useMemo<AgentInputStatusBadge | null>(() => conflict ? ({
-        key: 'draft-conflict',
-        label: t('sessionDrafts.conflict.title'),
-        testID: 'session-draft-conflict-status-badge',
-        tone: 'warning',
-        emphasis: 'prominent',
-        ...buildComposerBannerBadgeAccessibility({
-            statusLabel: t('sessionDrafts.conflict.title'),
-            collapsed: collapse.collapsed,
-            expandHint: t('session.composerBanners.showBannerAction'),
-            collapseHint: t('session.composerBanners.hideBannerAction'),
-        }),
-        icon: (tint: string) => <Icon name="warning" size={14} color={tint} />,
-        onPress: collapse.toggle,
+    const statusBadge = React.useMemo<AgentInputStatusBadge | null>(() => conflict ? buildCollapsedComposerBannerBadge({
+        collapsed: collapse.collapsed,
+        statusLabel: t('sessionDrafts.conflict.title'),
+        expandHint: t('session.composerBanners.showBannerAction'),
+        badge: {
+            key: 'draft-conflict',
+            label: t('sessionDrafts.conflict.title'),
+            testID: 'session-draft-conflict-status-badge',
+            tone: 'warning',
+            emphasis: 'prominent',
+            icon: (tint: string) => <Icon name="warning" size={14} color={tint} />,
+            onPress: collapse.toggle,
+        },
     }) : null, [collapse.collapsed, collapse.toggle, conflict]);
 
-    return { collapsed: collapse.collapsed, statusBadge };
+    return { collapsed: collapse.collapsed, statusBadge, hide: collapse.toggle };
 }
 
 const SessionDraftConflictFieldView = React.memo(function SessionDraftConflictFieldView(props: Readonly<{
     scope: ServerAccountScope;
     address: SessionDraftAddressV2;
     field: SessionDraftConflictField;
+    onHide?: () => void;
 }>) {
     const [pendingAction, setPendingAction] = React.useState<'useSynced' | 'keepDevice' | null>(null);
     const [copied, setCopied] = React.useState(false);
     const mine = presentConflictValue(props.field.mine);
+    const writeClipboard = useClipboardWrite(props.scope);
     const synced = presentConflictValue(props.field.synced);
 
     const resolve = React.useCallback(async (action: 'useSynced' | 'keepDevice') => {
@@ -99,10 +103,10 @@ const SessionDraftConflictFieldView = React.memo(function SessionDraftConflictFi
     }, [pendingAction, props.address, props.field.fieldId, props.scope]);
 
     const copyMine = React.useCallback(async () => {
-        const didCopy = await setClipboardStringSafe(mine);
+        const didCopy = await writeClipboard(mine);
         setCopied(didCopy);
         if (!didCopy) Modal.alert(t('common.error'), t('sessionDrafts.conflict.copyFailed'));
-    }, [mine]);
+    }, [mine, writeClipboard]);
 
     return (
         <WarningActionBanner
@@ -128,7 +132,11 @@ const SessionDraftConflictFieldView = React.memo(function SessionDraftConflictFi
             actionBusy={pendingAction === 'useSynced'}
             disabled={pendingAction !== null}
             onActionPress={() => resolve('useSynced')}
-            secondaryActions={[{
+            secondaryActions={[...(props.onHide ? [buildComposerBannerHideAction({
+                bannerTestID: `session-draft-conflict:${props.field.fieldId}`,
+                accessibilityLabel: t('session.composerBanners.hideBannerAction'),
+                onPress: props.onHide,
+            })] : []), {
                 key: 'keep-device',
                 testID: `session-draft-conflict-action:${props.field.fieldId}:keep-device`,
                 label: t('sessionDrafts.conflict.keepDevice'),
@@ -151,12 +159,14 @@ export function SessionDraftConflictResolution(props: Readonly<{
     scope: ServerAccountScope;
     address: SessionDraftAddressV2;
     conflict: SessionDraftConflict;
+    /** Present where the conflict is a collapsible composer banner; its collapsed badge brings it back. */
+    onHide?: () => void;
 }>): React.ReactNode {
     if (props.conflict.fields.length === 0) return null;
     return (
         <View style={stylesheet.container}>
             {props.conflict.fields.map((field) => (
-                <SessionDraftConflictFieldView key={field.fieldId} scope={props.scope} address={props.address} field={field} />
+                <SessionDraftConflictFieldView key={field.fieldId} scope={props.scope} address={props.address} field={field} onHide={props.onHide} />
             ))}
         </View>
     );

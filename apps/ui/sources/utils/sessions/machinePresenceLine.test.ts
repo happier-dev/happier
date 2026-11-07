@@ -18,6 +18,16 @@ import { ManagedMachineV1Schema } from '@happier-dev/protocol/machines/managed/m
 afterEach(() => clearMachineRequestReachabilityForTest());
 
 describe('describeMachinePresenceLine', () => {
+  it.each(['asleep', 'starting'] as const)('presents native state %s independently of wake eligibility and custody', state => {
+    const machine = { id: 'shared-guest', active: false, activeAt: 0,
+      managedInputRuntime: { nativeReady: false, wakeState: null, state } };
+    const scope = { serverId: 'home', accountId: 'member' };
+    expect(describeMachinePresenceLine(machine, undefined, null, scope)).toMatchObject({
+      online: false, status: 'offline', label: state === 'asleep' ? 't:managedPower.asleep' : 't:managedWake.starting',
+    });
+    expect(describeMachinePresenceLine({ ...machine, active: true, activeAt: Date.now(), managedInputRuntime: { nativeReady: true, wakeState: null, state: null } }, undefined, null, scope))
+      .toMatchObject({ online: true, status: 'online', label: 't:settingsOverview.machineOnline' });
+  });
   it('keeps negotiated live presence online after several beats without a per-beat push', () => {
     const at = Date.now();
     const machine = { id: 'live', active: true, activeAt: at,
@@ -26,7 +36,7 @@ describe('describeMachinePresenceLine', () => {
       { serverId: 'home', accountId: 'presence-account' }).online).toBe(true);
   });
   const scope = { serverId: 'home', accountId: 'presence-account' };
-  it('presents native running without a connected daemon as starting and only daemon presence as Online', () => {
+  it('presents native Running with a stale desired Start as Offline until the guest is reachable', () => {
     const managed = ManagedMachineV1Schema.parse({ id: 'native', homeId: scope.serverId, custodianAccountId: scope.accountId,
       enrolledMachineId: 'guest', launch: { provider: { pluginId: 'custom.native', localId: 'vm' }, schemaVersion: 1,
         name: 'Build box', choices: {} }, allocation: 'bound', creationState: 'active',
@@ -36,7 +46,7 @@ describe('describeMachinePresenceLine', () => {
     const machine = { id: 'guest', active: false, activeAt: Date.now(), presenceProtocolVersion: 1 as const };
     const presentation = projectMachineManagedPresence(machine, managed);
     expect(describeMachinePresenceLine(machine, undefined, presentation, scope))
-      .toMatchObject({ online: false, status: 'offline', label: 't:managedWake.starting' });
+      .toMatchObject({ online: false, status: 'offline', label: 't:settingsOverview.machineOffline' });
     expect(describeMachinePresenceLine({ ...machine, active: true }, undefined, presentation, scope))
       .toMatchObject({ online: true, status: 'online', label: 't:settingsOverview.machineOnline' });
   });
@@ -48,11 +58,12 @@ describe('describeMachinePresenceLine', () => {
     activeAt: now - 60 * 60 * 1_000,
   };
 
-  it('retains unknown after transport withdrawal until this exact Account observes the Machine again', () => {
+  it('never reads "Unknown": a live record without its Account scope is quiet, an offline record says Offline', () => {
+    // Before the Account scope is known a live record cannot be admitted, so it reads quiet in place.
+    expect(describeMachinePresenceLine(fresh, now, null, null)).toMatchObject({ online: false, status: 'unknown', label: '' });
+    expect(describeMachinePresenceLine(stale, now, null, null)).toMatchObject({ online: false, status: 'offline', label: 't:settingsOverview.machineOffline' });
+    // A socket withdrawal keeps the last-known verdicts.
     withdrawMachinePresenceForScope(scope);
-    expect(describeMachinePresenceLine(fresh, now, null, scope)).toMatchObject({ online: false, status: 'unknown', label: 't:common.unknown' });
-    captureMachinePresenceObservation({ ...scope, accountId: 'another-account' })([fresh.id]);
-    expect(describeMachinePresenceLine(fresh, now, null, scope).label).toBe('t:common.unknown');
     captureMachinePresenceObservation(scope)([fresh.id]);
     expect(describeMachinePresenceLine(fresh, now, null, scope)).toMatchObject({ online: true, status: 'online' });
     expect(describeMachinePresenceLine(stale, now, null, scope)).toMatchObject({ online: false, status: 'offline' });

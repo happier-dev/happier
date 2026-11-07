@@ -7,6 +7,7 @@ import {
 } from '@happier-dev/protocol/machines/resources/machineResourceSummaryV1';
 
 import type { MachinePageTabParams } from '@/components/machines/page/machinePageTabQuery';
+import { machineDiskName } from '@/components/machines/storage/storageViewModel';
 import { t } from '@/text';
 import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 
@@ -48,9 +49,9 @@ export function describeMachineAttentionWord(reason: MachineResourceReasonV1): s
         case 'memory_pressure':
             return reason.pressure === 'critical' ? t('machineAttention.words.memoryCritical') : t('machineAttention.words.memoryElevated');
         case 'disk_nearly_full':
-            return t('machineAttention.words.diskNearlyFull', { volume: reason.volumeLabel });
+            return t('machineAttention.words.diskNearlyFull', { volume: machineDiskName({ label: reason.volumeLabel }) });
         case 'disk_full':
-            return t('machineAttention.words.diskFull', { volume: reason.volumeLabel });
+            return t('machineAttention.words.diskFull', { volume: machineDiskName({ label: reason.volumeLabel }) });
         case 'limit_reached':
             return t('machineAttention.words.limitReached', { limit: t(LIMIT_NOUN_KEYS[reason.limit]) });
         case 'guard_out_of_steps':
@@ -66,9 +67,9 @@ export function describeMachineReasonPhrase(name: string, reason: MachineResourc
                 ? t('machineAttention.phrases.memoryCritical', { machine: name })
                 : t('machineAttention.phrases.memoryElevated', { machine: name });
         case 'disk_nearly_full':
-            return t('machineAttention.phrases.diskNearlyFull', { machine: name, volume: reason.volumeLabel });
+            return t('machineAttention.phrases.diskNearlyFull', { machine: name, volume: machineDiskName({ label: reason.volumeLabel }, 'sentence') });
         case 'disk_full':
-            return t('machineAttention.phrases.diskFull', { machine: name, volume: reason.volumeLabel });
+            return t('machineAttention.phrases.diskFull', { machine: name, volume: machineDiskName({ label: reason.volumeLabel }, 'sentence') });
         case 'limit_reached':
             return t('machineAttention.phrases.limitReached', { machine: name, limit: t(LIMIT_NOUN_KEYS[reason.limit]) });
         case 'guard_out_of_steps':
@@ -143,32 +144,17 @@ export function describeFleetTitle(input: Readonly<{ subjects: readonly MachineA
 }
 
 /**
- * The sentence under the fleet title: for one machine only how the others are (the list names it), else each machine that needs a look by its reason
- * (two at most, then a count; one reason shared by several is said once), then how many of the others online are calm.
+ * The sentence under the fleet title: only how the others online are. The title counts or names the machines
+ * that need a look and the Needs-you rows beneath name each with its reason, so the sentence never names them again.
  */
 export function describeFleetDescription(input: Readonly<{ subjects: readonly MachineAttentionSubject[]; reportingCount: number; onlineCount: number; nowMs: number }>): string | null {
     if (input.reportingCount === 0) return null;
     const attention = selectAttentionSubjects(input.subjects);
     const calmOnline = Math.max(0, input.onlineCount - attention.length);
-    if (attention.length === 0) return calmOnline > 0 ? t('machineAttention.fleet.allOnlineCalm', { count: calmOnline }) : null;
-    // One machine is named by the title and its detail (how long, how bad) by the Needs-you list beneath: the sentence
-    // adds only what neither says, how the others are.
-    if (attention.length === 1) return calmOnline > 0 ? t('machineAttention.fleet.otherOnlineCalm', { count: calmOnline }) : null;
-    // Machines that share one reason are said once ("Short on memory on 4 machines."): the Needs-you list beneath names them.
-    if (attention.length > 2) {
-        const words = new Set(attention.map(subject => describeMachineAttentionWord(selectHeadlineReason(subject.attention)!)));
-        if (words.size === 1) {
-            const same = t('machineAttention.fleet.sameReason', { word: [...words][0]!, count: attention.length });
-            return calmOnline > 0 ? t('machineAttention.sentences', { first: same, second: t('machineAttention.fleet.otherOnlineCalm', { count: calmOnline }) }) : same;
-        }
-    }
-    const phrases = attention.slice(0, 2).map(subject => describeMachineReasonPhrase(subject.name, selectHeadlineReason(subject.attention)!));
-    const named = phrases.length === 1
-        ? t('machineAttention.fleet.sentenceOne', { phrase: phrases[0]! })
-        : attention.length === 2
-            ? t('machineAttention.fleet.sentenceTwo', { first: phrases[0]!, second: phrases[1]! })
-            : t('machineAttention.fleet.sentenceMore', { first: phrases[0]!, second: phrases[1]!, count: attention.length - 2 });
-    return calmOnline > 0 ? t('machineAttention.sentences', { first: named, second: t('machineAttention.fleet.otherOnlineCalm', { count: calmOnline }) }) : named;
+    if (calmOnline === 0) return null;
+    return attention.length === 0
+        ? t('machineAttention.fleet.allOnlineCalm', { count: calmOnline })
+        : t('machineAttention.fleet.otherOnlineCalm', { count: calmOnline });
 }
 
 /** What the guard did, as one line ("Guard freed 410 MB on edge-1"). */

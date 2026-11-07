@@ -2526,15 +2526,10 @@ describe('SessionView (direct sessions)', () => {
     };
 
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
-    const agentInput = findAgentInput(screen);
-    const usageStatusBadge = agentInput.props.statusBadges.find((badge: { key?: string }) =>
-      badge.key === 'usage-limit-recovery');
 
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
-    expect(usageStatusBadge).toEqual(expect.objectContaining({
-      testID: 'session-usageLimit-status-badge',
-      tone: 'warning',
-    }));
+    // The expanded banner speaks alone; its badge stands in only once it is hidden.
+    expect(findUsageLimitStatusBadge(screen)).toBeUndefined();
 
     await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-remember'));
 
@@ -2560,14 +2555,18 @@ describe('SessionView (direct sessions)', () => {
     })));
   });
 
-  it('renders stale-runner composer notice and badge from canonical daemon status', async () => {
+  it('renders the stale-runner composer notice, or its badge once hidden, from canonical daemon status', async () => {
     installStaleSessionRunnerStatus();
 
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
-    const staleRunnerBadge = findStaleRunnerStatusBadge(screen);
 
     expect(screen.findByTestId('session-staleRunner-version')).toBeTruthy();
-    expect(staleRunnerBadge).toEqual(expect.objectContaining({
+    expect(findStaleRunnerStatusBadge(screen)).toBeUndefined();
+
+    await pressTestInstanceAsync(screen.findByTestId('session-staleRunner-version-hide'));
+
+    expect(screen.findByTestId('session-staleRunner-version')).toBeNull();
+    expect(findStaleRunnerStatusBadge(screen)).toEqual(expect.objectContaining({
       testID: 'session-staleRunner-status-badge',
       tone: 'warning',
     }));
@@ -2593,10 +2592,7 @@ describe('SessionView (direct sessions)', () => {
     expect(restartAction?.props.disabled).toBe(true);
     expect(restartAction?.props.accessibilityState).toEqual(expect.objectContaining({ disabled: true }));
     await pressTestInstanceAsync(restartAction);
-    expect(findStaleRunnerStatusBadge(screen)).toEqual(expect.objectContaining({
-      testID: 'session-staleRunner-status-badge',
-      tone: 'warning',
-    }));
+    expect(screen.findByTestId('session-staleRunner-version')).toBeTruthy();
     expect(restartStaleSessionRunnerSpy).not.toHaveBeenCalled();
   });
 
@@ -2763,23 +2759,22 @@ describe('SessionView (direct sessions)', () => {
     expect(findStaleRunnerStatusBadge(screen)).toBeUndefined();
   });
 
-  it('lets the stale-runner status badge hide and show the composer notice', async () => {
+  it('lets the stale-runner notice hide itself and its status badge show it again', async () => {
     installStaleSessionRunnerStatus();
 
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
-    const staleRunnerBadge = findStaleRunnerStatusBadge(screen);
 
     expect(screen.findByTestId('session-staleRunner-version')).toBeTruthy();
+    expect(findStaleRunnerStatusBadge(screen)).toBeUndefined();
 
-    await act(async () => {
-      staleRunnerBadge.onPress();
-    });
+    await pressTestInstanceAsync(screen.findByTestId('session-staleRunner-version-hide'));
     expect(screen.findByTestId('session-staleRunner-version')).toBeNull();
 
     await act(async () => {
-      staleRunnerBadge.onPress();
+      findStaleRunnerStatusBadge(screen).onPress();
     });
     expect(screen.findByTestId('session-staleRunner-version')).toBeTruthy();
+    expect(findStaleRunnerStatusBadge(screen)).toBeUndefined();
   });
 
   it('invokes the daemon-owned stale-runner restart operation with expected runner identity', async () => {
@@ -3069,6 +3064,7 @@ describe('SessionView (direct sessions)', () => {
 
     expect(restartStaleSessionRunnerSpy).toHaveBeenCalledTimes(1);
     expect(screen.findByTestId('session-staleRunner-version')).toBeTruthy();
+    await pressTestInstanceAsync(screen.findByTestId('session-staleRunner-version-hide'));
     expect(findStaleRunnerStatusBadge(screen)).toEqual(expect.objectContaining({
       label: 'session.staleRunner.status.failed',
     }));
@@ -3100,14 +3096,14 @@ describe('SessionView (direct sessions)', () => {
 
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
 
-    expect(findUsageLimitStatusBadge(screen)).toEqual(expect.objectContaining({
-      key: 'usage-limit-recovery',
-      testID: 'session-usageLimit-status-badge',
-    }));
+    // Hiding one banner leaves its own badge and never touches the other banner.
+    await pressTestInstanceAsync(screen.findByTestId('session-staleRunner-version-hide'));
     expect(findStaleRunnerStatusBadge(screen)).toEqual(expect.objectContaining({
       key: 'stale-session-runner',
       testID: 'session-staleRunner-status-badge',
     }));
+    expect(findUsageLimitStatusBadge(screen)).toBeUndefined();
+    expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
 
     await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-remember'));
 
@@ -3141,16 +3137,9 @@ describe('SessionView (direct sessions)', () => {
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
 
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
-    const expandedBadge = findUsageLimitStatusBadge(screen);
-    expect(expandedBadge).toEqual(expect.objectContaining({
-      testID: 'session-usageLimit-status-badge',
-      onPress: expect.any(Function),
-    }));
-    expect(expandedBadge.renderPopover).toBeUndefined();
+    expect(findUsageLimitStatusBadge(screen)).toBeUndefined();
 
-    await act(async () => {
-      expandedBadge.onPress();
-    });
+    await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-hide'));
     await settleDirectSessionView();
 
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeNull();
@@ -3159,6 +3148,7 @@ describe('SessionView (direct sessions)', () => {
       testID: 'session-usageLimit-status-badge',
       onPress: expect.any(Function),
     }));
+    expect(collapsedBadge.renderPopover).toBeUndefined();
 
     await act(async () => {
       collapsedBadge.onPress();
@@ -3192,10 +3182,7 @@ describe('SessionView (direct sessions)', () => {
     };
 
     const screen = await renderSessionViewAndSettle({ routeServerId: 'server-route-1' });
-    const badge = findUsageLimitStatusBadge(screen);
-    await act(async () => {
-      badge.onPress();
-    });
+    await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-hide'));
     await settleDirectSessionView();
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeNull();
 
@@ -3453,10 +3440,12 @@ describe('SessionView (direct sessions)', () => {
     }));
     expect(resumeSessionSpy).not.toHaveBeenCalled();
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
-    expect(findUsageLimitStatusBadge(screen)).toEqual(expect.objectContaining({ label: statusLabel }));
     if (status === 'ready') expect(screen.findByTestId('session-usageLimit-recovery-resumeNow')).toBeTruthy();
     if (status === 'cancelled' || status === 'not_found') expect(modalAlertSpy).toHaveBeenCalled();
     expect(syncSubmitMessageSpy).not.toHaveBeenCalled();
+    // The status badge stands in for the banner once it is hidden.
+    await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-hide'));
+    expect(findUsageLimitStatusBadge(screen)).toEqual(expect.objectContaining({ label: statusLabel }));
   });
 
   it('does not offer a resume-now action for an active reset-elapsed issue when no interrupted work remains', async () => {
@@ -3538,6 +3527,7 @@ describe('SessionView (direct sessions)', () => {
     }));
     expect(sessionUsageLimitCheckNowSpy).not.toHaveBeenCalled();
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
+    await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-hide'));
     expect(findUsageLimitStatusBadge(screen)).toEqual(expect.objectContaining({ label: 'session.usageLimitRecovery.status.waiting' }));
   });
 
@@ -3589,6 +3579,8 @@ describe('SessionView (direct sessions)', () => {
       serverId: 'server-route-1',
     }));
     expect(sessionUsageLimitCheckNowSpy).not.toHaveBeenCalled();
+    // Hidden, the banner leaves its status badge carrying the in-flight progress.
+    await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-hide'));
     expect(findUsageLimitStatusBadge(screen)).toEqual(expect.objectContaining({
       label: 'session.usageLimitRecovery.status.checking',
     }));
@@ -4326,6 +4318,8 @@ describe('SessionView (direct sessions)', () => {
     expect(modalAlertSpy).toHaveBeenCalled();
     expect(screen.findByTestId('session-usageLimit-recovery')).toBeTruthy();
     expect(screen.findByTestId('session-usageLimit-recovery-consumeResetCredit')?.props.disabled).not.toBe(true);
+    await pressTestInstanceAsync(screen.findByTestId('session-usageLimit-recovery-hide'));
+    expect(findUsageLimitStatusBadge(screen)?.label).toBeDefined();
     expect(findUsageLimitStatusBadge(screen)?.label).not.toBe('session.usageLimitRecovery.status.checking');
   });
 
