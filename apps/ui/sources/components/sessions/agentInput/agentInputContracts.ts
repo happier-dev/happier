@@ -128,6 +128,8 @@ type AgentInputAttachmentRowItemBase = Readonly<{
     error?: string;
     errorCode?: string;
     availability?: AgentInputAttachmentRowAvailability;
+    /** Why the item cannot be read or used right now; said in its accessible name and tooltip, never as an alarm. */
+    availabilityReason?: string;
 }>;
 
 /**
@@ -465,6 +467,8 @@ function createComposerAttachmentFallbackBadge(input: Readonly<{
         attachmentId: input.attachment.instanceId,
         label: input.attachment.presentation.label,
         availability: input.attachment.availability.status,
+        ...(input.attachment.availability.status !== 'ready' && input.attachment.availability.reason
+            ? { availabilityReason: input.attachment.availability.reason } : {}),
         ...(input.onPress === undefined ? {} : { onPress: input.onPress }),
         ...(input.renderPreviewPopover === undefined ? {} : { renderPreviewPopover: input.renderPreviewPopover }),
         ...(input.onRemove === undefined ? {} : { onRemove: input.onRemove }),

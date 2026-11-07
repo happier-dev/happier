@@ -1,23 +1,26 @@
 import * as React from 'react';
 import { BUILTIN_WORKFLOW_CATALOG_V1 } from '@happier-dev/protocol/workflows/builtins/catalog';
 import { workflowInputTitle, type WorkflowDefinitionV1 } from '@happier-dev/protocol/workflows/workflowV1';
-import type { WorkflowRunStartRequestV1 } from '@happier-dev/protocol/workflows/actionsV1';
 import { SelectionList, type SelectionListDynamicSectionResolveResult, type SelectionListStep } from '@/components/ui/selectionList';
 import { SelectionListSectionFailure } from '@/components/ui/selectionList/selectionListSectionFailure';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { ScrollView, View } from 'react-native';
-import { StyleSheet } from 'react-native-unistyles';
+import { StyleSheet, useUnistyles } from 'react-native-unistyles';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import { workflowBlockReferenceLabel } from '@/sync/domains/workflows/workflowBlockLabel';
 import { t, tLoose } from '@/text';
 import { getWorkflowDefinition } from '@/sync/domains/workflows/workflowDefinitionActions';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useWorkflowDefinitionLibrary } from '../library/workflowLibraryReads';
-import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle } from '../presentation/workflowProblemPresentation';
+import { useWorkflowDefinitionLibrary, type WorkflowLibraryDefinition } from '../library/workflowLibraryReads';
+import { formatWorkflowDefinitionContentUnavailableReason, formatWorkflowDefinitionLibraryTitle, resolveWorkflowProblemPresentation } from '../presentation/workflowProblemPresentation';
 import { listWorkflowPersonInputs, resolveWorkflowBuiltinInputPresentation } from '../presentation/workflowBuiltinInputPresentation';
+import { WorkflowPurposeGlyph } from '../presentation/WorkflowPurposeGlyph';
+import { formatTriggerSetSummary } from '../triggers/formatTriggerSummary';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import type { WorkflowStartSource } from './workflowStartDetailsModel';
 
 /**
  * Two panes (lab T4-R): the list, and beside it what the highlighted pattern does and asks for. The Run…
@@ -76,18 +79,47 @@ export type WorkflowStartSelection = Readonly<{
     name: string;
     description: string;
     definition: WorkflowDefinitionV1;
-    source: WorkflowRunStartRequestV1['source'];
+    source: WorkflowStartSource;
 }>;
+export type WorkflowStartReference = Readonly<{ source: WorkflowStartSource; name: string }>;
 
-/** Only mounted while the Workflow chip is open; FIN owns the Account library and exact reads. */
-export function WorkflowStartPicker(props: Readonly<{
-    onSelect: (selection: WorkflowStartSelection) => void;
+type SavedWorkflowHeader = Extract<WorkflowLibraryDefinition, { contentStatus: 'available' }>;
+type ReadSavedSelection = (header: SavedWorkflowHeader) => Promise<WorkflowStartSelection>;
+
+/** Mounted only by the highlighted row's detail pane; listing and filtering never open bodies. */
+function SavedWorkflowStartPreview(props: Readonly<{ header: SavedWorkflowHeader; readSelection: ReadSavedSelection }>) {
+    const [selection, setSelection] = React.useState<WorkflowStartSelection | null>(null);
+    const [failure, setFailure] = React.useState<string | null>(null);
+    React.useEffect(() => {
+        let active = true;
+        void props.readSelection(props.header).then(value => {
+            if (active) setSelection(value);
+        }, error => {
+            if (active) setFailure(resolveWorkflowProblemPresentation(error).message);
+        });
+        return () => { active = false; };
+    }, [props.header, props.readSelection]);
+    if (selection) return <WorkflowStartPreview selection={selection} />;
+    return <View style={styles.preview}><Text style={styles.previewBody} accessibilityRole={failure ? 'alert' : undefined}>
+        {failure ?? t('common.loading')}
+    </Text></View>;
+}
+
+type WorkflowStartPickerProps = Readonly<{
     onRequestClose: () => void;
     maxHeight: number;
+    currentUiContextCommandScope?: string;
     /** Opened inside a Session: built-ins that run in their origin Session become startable. */
     hasOriginSession?: boolean;
     accountLifetime?: ServerAccountScopeLifetime | null;
-}>): React.ReactElement {
+}> & (
+    | Readonly<{ onSelect: (selection: WorkflowStartSelection) => void; onSelectReference?: never }>
+    | Readonly<{ onSelect?: never; onSelectReference: (reference: WorkflowStartReference) => void }>
+);
+
+/** Only mounted while the Workflow chip is open; FIN owns the Account library and exact reads. */
+export function WorkflowStartPicker(props: WorkflowStartPickerProps): React.ReactElement {
+    const { theme } = useUnistyles();
     const accountLifetime = useWorkflowAccountLifetime(props.accountLifetime);
     const library = useWorkflowDefinitionLibrary({ accountLifetime });
     // "Load more" belongs under rows the person has seen, never under the first page's skeletons.
@@ -98,10 +130,41 @@ export function WorkflowStartPicker(props: Readonly<{
     libraryRef.current = library;
     const shownFailureRef = React.useRef<typeof library.failure>(null);
     const libraryPhase = library.definitions.length > 0 ? 'rows' : library.status;
-    const savedSelections = React.useRef(new Map<string, Readonly<{
-        selection: WorkflowStartSelection;
-        lifetime: NonNullable<ReturnType<typeof captureActiveServerAccountScopeLifetime>>;
-    }>>());
+    const [selectionFailure, setSelectionFailure] = React.useState<string | null>(null);
+    // One mounted picker's highlighted/chosen read, shared when a click follows a pending preview.
+    const savedRead = React.useRef<Readonly<{
+        key: string;
+        lifetime: ServerAccountScopeLifetime;
+        controller: AbortController;
+        promise: Promise<WorkflowStartSelection>;
+    }> | null>(null);
+    const readController = React.useRef<AbortController | null>(null);
+    const mounted = React.useRef(true);
+    React.useEffect(() => {
+        mounted.current = true;
+        return () => { mounted.current = false; readController.current?.abort(); };
+    }, []);
+    const readSavedSelection = React.useCallback<ReadSavedSelection>((header) => {
+        const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
+        if (lifetime === null || !lifetime.isCurrent()) return Promise.reject(new Error('workflow_account_retired'));
+        const key = JSON.stringify([header.definitionId, header.revision]);
+        if (savedRead.current?.key === key && savedRead.current.lifetime === lifetime) return savedRead.current.promise;
+        // A later hover must not cancel the definition the person has already chosen.
+        // All reads still retire together when this picker unmounts.
+        if (readController.current === null || readController.current.signal.aborted) readController.current = new AbortController();
+        const controller = readController.current;
+        const promise = getWorkflowDefinition({ definitionId: header.definitionId, signal: controller.signal, accountLifetime: lifetime })
+            .then((result): WorkflowStartSelection => ({
+                id: result.definitionId, name: result.metadata.title, description: result.metadata.description ?? '',
+                definition: result.definition,
+                source: { kind: 'saved', definitionId: result.definitionId, revision: result.revision },
+            }));
+        savedRead.current = { key, lifetime, controller, promise };
+        void promise.catch(() => {
+            if (savedRead.current?.promise === promise) savedRead.current = null;
+        });
+        return promise;
+    }, [accountLifetime]);
     const builtinSelections = React.useMemo(() => BUILTIN_WORKFLOW_CATALOG_V1.map((entry): WorkflowStartSelection => ({
         id: entry.id, name: tLoose(entry.titleKey), description: tLoose(entry.descriptionKey),
         definition: entry.definition, source: { kind: 'catalog', workflow: entry.id },
@@ -122,11 +185,13 @@ export function WorkflowStartPicker(props: Readonly<{
         sections: [
             { kind: 'static', id: 'builtins', title: t('workflows.start.builtin'), options: builtinSelections.map((entry) => {
             // What it does helps choose; what it asks for is shown once it is chosen.
+            const builtin = BUILTIN_WORKFLOW_CATALOG_V1.find((candidate) => candidate.id === entry.id);
             const needsSession = props.hasOriginSession !== true
-                && BUILTIN_WORKFLOW_CATALOG_V1.find((candidate) => candidate.id === entry.id)?.requiresOriginSession === true;
+                && builtin?.requiresOriginSession === true;
             return {
                 // An unavailable pattern says why in place of what it does; the reason is the line that matters here.
                 id: entry.id, label: entry.name,
+                icon: builtin ? <WorkflowPurposeGlyph purpose={builtin.purpose} size={ICON_SIZE.md} color={theme.colors.text.secondary} /> : undefined,
                 subtitle: needsSession ? t('workflows.start.needsSession') : entry.description || asks(entry.definition, entry.id),
                 testID: `workflow-choice:${entry.id}`,
                 detailContent: () => <WorkflowStartPreview selection={entry} />,
@@ -153,51 +218,79 @@ export function WorkflowStartPicker(props: Readonly<{
                     }
                     if (current.definitions.length === 0 && current.status !== 'loaded') return untilAborted(signal);
                     if (current.definitions.length === 0) return { options: [], emptyHint: t('workflows.destination.libraryEmpty') };
-                    // Hydrate only the matching loaded page, through FIN's exact read. No second catalog/cache.
-                    const rows = await Promise.all(library.definitions.filter((entry) =>
+                    // Header pages own list identity and search; only the preview/choice demands a body.
+                    const rows = current.definitions.filter((entry) =>
                         formatWorkflowDefinitionLibraryTitle(entry).toLocaleLowerCase().includes(query.toLocaleLowerCase()),
-                    ).map(async (header) => {
+                    ).map((header) => {
                         if (header.contentStatus === 'unavailable') return {
-                            option: { id: header.definitionId, label: formatWorkflowDefinitionLibraryTitle(header),
-                                subtitle: formatWorkflowDefinitionContentUnavailableReason(header.contentUnavailableReason), disabled: true },
-                            selection: null,
+                            id: header.definitionId, label: formatWorkflowDefinitionLibraryTitle(header),
+                            icon: <Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
+                            subtitle: formatWorkflowDefinitionContentUnavailableReason(header.contentUnavailableReason), disabled: true,
                         };
-                        const result = await getWorkflowDefinition({ definitionId: header.definitionId, signal, accountLifetime: lifetime });
-                        const selection = {
-                            id: result.definitionId, name: result.metadata.title, description: result.metadata.description ?? '',
-                            definition: result.definition,
-                            source: { kind: 'saved', definitionId: result.definitionId, revision: result.revision },
-                        } satisfies WorkflowStartSelection;
-                        return { option: { id: selection.id, label: selection.name, subtitle: selection.description || asks(selection.definition),
-                            detailContent: () => <WorkflowStartPreview selection={selection} /> }, selection };
-                    }));
+                        return { id: header.definitionId, label: formatWorkflowDefinitionLibraryTitle(header),
+                            icon: <Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
+                            subtitle: [t('workflows.examples.stepCount', { count: header.stepCount }),
+                                header.triggerSummaryErrorCode === undefined ? formatTriggerSetSummary(header.triggers) : t('common.unavailable')].join(' · '),
+                            detailContent: () => <SavedWorkflowStartPreview key={JSON.stringify([header.definitionId, header.revision])}
+                                header={header} readSelection={readSavedSelection} /> };
+                    });
                     if (signal.aborted || !lifetime.isCurrent()) return { options: [] };
                     setLibraryShown(true);
-                    savedSelections.current = new Map(rows.flatMap((entry) => entry.selection === null ? []
-                        : [[entry.selection.id, { selection: entry.selection, lifetime }] as const]));
-                    return { options: rows.map((entry) => entry.option) };
+                    return { options: rows };
                 },
             },
             { kind: 'static', id: 'plugins', title: t('workflows.plugins.fromPlugins'), options: pluginSelections.map((entry) => ({
                 id: entry.id, label: entry.name, subtitle: entry.description || asks(entry.definition, entry.id), testID: `workflow-choice:${entry.id}`,
+                icon: <Icon name="tree-structure" size={ICON_SIZE.md} color={theme.colors.text.secondary} />,
                 detailContent: () => <WorkflowStartPreview selection={entry} />,
             })) },
         ],
-    }), [accountLifetime, asks, builtinSelections, library.definitions, libraryPhase, pluginSelections, props.hasOriginSession]);
+    }), [accountLifetime, asks, builtinSelections, library.definitions, libraryPhase, pluginSelections, props.hasOriginSession, readSavedSelection, theme.colors.text.secondary]);
     return <View>
         {/* A fixed viewport: the library landing never moves the popover or its search field (lab T4-R). */}
         <SelectionList rootStep={rootStep} maxHeight={props.maxHeight} heightBehavior="fixedToMaxHeight" autoFocusInputOnWeb
+            currentUiContextCommandScope={props.currentUiContextCommandScope}
             detailPane={PICKER_DETAIL_PANE}
-            onSelect={(id) => {
-                const saved = savedSelections.current.get(id);
-                const selection = builtinSelections.find((entry) => entry.id === id)
-                    ?? pluginSelections.find((entry) => entry.id === id)
-                    ?? (saved?.lifetime.isCurrent() && library.definitions.some((entry) => entry.definitionId === id && entry.contentStatus === 'available')
-                        ? saved.selection : undefined);
+            onSelect={async (id) => {
+                setSelectionFailure(null);
+                let selection = builtinSelections.find((entry) => entry.id === id)
+                    ?? pluginSelections.find((entry) => entry.id === id);
+                const header = selection ? undefined : libraryRef.current.definitions.find((entry): entry is SavedWorkflowHeader =>
+                    entry.definitionId === id && entry.contentStatus === 'available');
+                if (props.onSelectReference !== undefined) {
+                    let reference: WorkflowStartReference;
+                    if (selection) reference = { source: selection.source, name: selection.name };
+                    else if (header) {
+                        const lifetime = accountLifetime === undefined ? captureActiveServerAccountScopeLifetime() : accountLifetime;
+                        if (lifetime === null || !lifetime.isCurrent()) return;
+                        reference = { name: formatWorkflowDefinitionLibraryTitle(header),
+                            source: { kind: 'saved', definitionId: header.definitionId, revision: header.revision } };
+                    } else return;
+                    props.onSelectReference(reference);
+                    props.onRequestClose();
+                    return;
+                }
+                if (!selection) {
+                    if (!header) return;
+                    const pending = readSavedSelection(header);
+                    const request = savedRead.current;
+                    try {
+                        selection = await pending;
+                    } catch (error) {
+                        if (mounted.current && request?.lifetime.isCurrent() && !request.controller.signal.aborted) {
+                            setSelectionFailure(resolveWorkflowProblemPresentation(error).message);
+                        }
+                        return;
+                    }
+                    if (!mounted.current || !request?.lifetime.isCurrent()
+                        || request.controller.signal.aborted || !libraryRef.current.definitions.some(entry =>
+                            entry.definitionId === id && entry.contentStatus === 'available')) return;
+                }
                 if (!selection) return;
                 props.onSelect(selection);
                 props.onRequestClose();
             }} onRequestClose={props.onRequestClose} />
+        {selectionFailure ? <Text accessibilityRole="alert" style={styles.previewBody}>{selectionFailure}</Text> : null}
         {library.hasMore && libraryShown ? <RoundButton size="small" display="inverted" title={t('workflows.destination.loadMoreWorkflows')}
             loading={library.loadingMore} onPress={library.loadMore} /> : null}
     </View>;

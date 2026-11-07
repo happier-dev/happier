@@ -3965,6 +3965,18 @@ restrictions, partial results and query budgets; their retained RPC methods are
 transport aliases. Opening or retrying a browser does not grant UI authority to
 the agent that opened it.
 
+Filename queries capture the existing machine-RPC execution budget in their
+admitted input before approval. The native scan starts that allowance when its
+effect runs and can return partial results; a competing reply timer does not
+discard those results. Caller cancellation still applies.
+
+Authenticated Session browser continuation after a mounted command returns is
+currently unsupported: the existing child carrier accepts Workflow children
+and retires parent custody on command settlement. The UI refuses an unsupported
+Session or signed-origin carrier with `admission_unavailable` instead of
+borrowing an ambient Account RPC. Extending that continuation requires an
+explicit child-wire and browser-lifetime contract change.
+
 Create-directory, rename, delete and copy reuse the filesystem-policy and
 mutation owners; destructive effects retain configurable dangerous-Action
 approval. Rename admits the present user's UI request directly, while Agent,
@@ -7434,13 +7446,13 @@ Machine access and the original requester's origin.
 Browser `snapshot` and `semanticSnapshot` retain masked text and structure on
 password-bearing pages while omitting screenshot media. The capture owner is
 described in the [Browser automation matrix](./browser-automation-verb-matrix.md).
-No focused credential target is exposed unless the intended input is focused and
-verifiable. Focus it through the existing Browser input Action, then observe
-again. A unique input `queryElements` result also
-publishes `focusedCredentialTarget` when that exact field is focused and can be
-verified. These paths share the isolated-world producer and the same tab, frame,
+Snapshots expose a credential target only for the focused, verifiable input.
+In 0.3 development, a unique input `queryElements` result also publishes
+`focusedCredentialTarget` for the queried field without moving or requiring focus,
+so an agent can form the exact-target confidential Ask. Its `focusId` identifies
+the field that must be focused at delivery. These paths share the isolated-world producer and the same tab, frame,
 document, origin, locator and backend-node proof used again before confidential
-delivery. Unsupported field identity produces no fill target; raw typing is not a
+delivery, which still requires the exact field to be focused. Unsupported field identity produces no fill target; raw typing is not a
 confidential fallback.
 
 The managed Browser producer qualifies only its actual live headless view as
@@ -7998,13 +8010,14 @@ invocation alive. In `--json` mode, an `actions_invoke` envelope carrying
 stdout remains the final Action result. A decision from another surface closes
 the pending prompt through the invocation's existing cancellation signal.
 
-In 0.3 development, a standalone CLI approval whose live invocation owns the
-operands publishes an Account RPC origin before creating its approval Artifact.
+In 0.3 development, a standalone CLI or saved-profile MCP approval whose live
+invocation owns the operands publishes an Account RPC origin before creating its approval Artifact.
 Another present-user client in that Account sends only the exact Artifact and
 Home identifiers and its decision. The server authenticates that decision; the
 original invocation validates the captured approval subject before its existing
 decision and execution owners resume. Ordinary Artifact writes cannot supply
-consent, and private operands stay in the original invocation. The origin closes
+consent, and private operands stay in the original invocation, retaining its
+Machine, Session and automation attribution. The origin closes
 with that invocation; an unavailable origin returns a typed refusal.
 
 Retained local Account authentication hosts keep their existing live approval
@@ -8719,6 +8732,11 @@ is separate from danger and egress classification; it is waivable per Action, wh
 human control routes carry verified RPC authority and request cancellation to the
 existing Browser/Computer owner; omitted authority defaults to automation.
 Browser focus shares navigation's input controller and confidentiality drain.
+In 0.3 development, page-level Browser control commands (navigation, history,
+reload, stop, viewport and target changes) do not require a locator observation:
+an intervening page change cannot invalidate their operands. The input owner still
+enforces human control, confidentiality, settled effects and fresh observation after
+hand back. DOM and coordinate automation retain their observation requirement.
 Already-cancelled Browser commands, including controller transitions, return a
 known no-effect failure before reaching control or CDP effects.
 

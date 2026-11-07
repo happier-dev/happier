@@ -240,11 +240,12 @@ export function createWorkflowDefinitionActions(params: Readonly<{
       return WorkflowDefinitionImportResultV1Schema.parse(parsed.ok
         ? { ...parsed, classification: 'unsaved_definition' } : parsed);
     },
-    exportDocument: async (raw: z.infer<typeof WorkflowDefinitionExportRequestV1Schema>) => {
+    exportDocument: async (raw: z.infer<typeof WorkflowDefinitionExportRequestV1Schema>, context?: WorkflowIngressContextV1) => {
       const input = WorkflowDefinitionExportRequestV1Schema.parse(raw);
-      const saved = await read(input);
-      const document = { kind: 'happier.workflow' as const, version: 1 as const, definition: saved.definition };
-      return { definitionId: saved.definitionId, revision: saved.revision, metadata: saved.metadata,
+      const saved = 'draft' in input ? null : await read(input);
+      const definition = 'draft' in input ? normalize(input.draft, context) : saved!.definition;
+      const document = { kind: 'happier.workflow' as const, version: 1 as const, definition };
+      return { ...(saved === null ? {} : { definitionId: saved.definitionId, revision: saved.revision, metadata: saved.metadata }),
         document, json: serializeWorkflowDocumentJsonV1(document) };
     },
     list: async ({ limit, cursor: inputCursor, workflow, definitionId }: Readonly<{ cursor?: string; limit?: number; workflow?: string; definitionId?: string }>): Promise<WorkflowDefinitionListResultV1> => {

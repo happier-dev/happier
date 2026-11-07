@@ -735,6 +735,8 @@ interface AgentInputProps {
         onSelectionChangePersist: (selection: TextInputState['selection'], textLength: number) => void;
     }>;
     structuredInputMentions?: readonly ComposerStructuredInputMention[];
+    /** Availability already decided by the document's owner; the composer only draws it. */
+    referenceStates?: ReadonlyMap<string, NonNullable<ComposerEditorReference['state']>>;
     onStructuredInputMentionsChange?: (mentions: readonly ComposerStructuredInputMention[]) => void;
     maxPanelHeight?: number;
     /**
@@ -3296,7 +3298,8 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                         { tag: 'AgentInput.openFileReference' });
                 } : undefined;
                 return { ...reference, binding, label, accessibilityLabel: readableMarker,
-                    ...(parsed ? {} : { state: 'unavailable' }),
+                    ...(parsed ? props.referenceStates?.has(reference.ref) ? { state: props.referenceStates.get(reference.ref) } : {}
+                        : { state: 'unavailable' }),
                     ...(onOpen ? { onOpen } : {}),
                     readableMarker };
             }
@@ -3322,7 +3325,7 @@ export const AgentInput = React.memo(React.forwardRef<MultiTextInputHandle, Agen
                 ...(attachment.onPress ? { onOpen: () => attachment.onPress?.({ focusReturnRef: inputRef }) } : {}),
             };
         });
-    }, [attachmentRowItems, props.sessionAddress, props.composerFileScope, props.composerReferenceHost, structuredInputMentions,
+    }, [attachmentRowItems, props.sessionAddress, props.composerFileScope, props.composerReferenceHost, props.referenceStates, structuredInputMentions,
         composerDropScope, referenceRouter, openReferenceFile, canOpenReferenceFile]);
     React.useEffect(() => {
         if (attachmentRowItems.length === 0) {

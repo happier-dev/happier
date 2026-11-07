@@ -10,6 +10,10 @@ import {
 } from './workflowInterchange';
 import { createWorkflowEditorDraft, type WorkflowEditorDraft } from './workflowEditorDraft';
 import { setWorkflowDefaultField } from '@happier-dev/protocol/workflows/workflowDefinitionEditV1';
+import { createWorkflowDefinitionActions } from '@happier-dev/protocol/actions/executor/workflowDefinitions';
+import { createWorkflowActionExecutor } from '@happier-dev/protocol/actions/executor/workflowAccountActions';
+import { createActionExecutor } from '@happier-dev/protocol/actions/actionExecutor';
+import { buildWorkflowDefinitionCandidate } from './workflowAuthoring';
 
 const CLAUDE_AGENT_TARGET = {
   kind: 'agent' as const,
@@ -251,6 +255,20 @@ describe('importWorkflowDocument', () => {
 });
 
 describe('exportWorkflowDocument', () => {
+  it('exports the mounted unsaved draft through the agent Action with exactly the UI JSON', async () => {
+    const unexpected = (): never => { throw new Error('draft export must not access persistence'); };
+    const definitions = createWorkflowDefinitionActions({ encodeListCursor: unexpected, assertDefinitionWriteAllowed: unexpected,
+      artifactStore: { read: unexpected, list: unexpected, create: unexpected, update: unexpected, delete: unexpected } });
+    const workflowAction = createWorkflowActionExecutor({ isWorkflowFeatureEnabled: () => true, definitions,
+      runs: { execute: unexpected } });
+    const executor = createActionExecutor({ workflowAction });
+    const draft = draftWith([step('unsaved-analysis'), step('unsaved-review')]);
+    const expected = exportWorkflowDocument({ draft });
+    expect(expected.ok).toBe(true);
+    if (!expected.ok) throw new Error('invalid UI draft fixture');
+    await expect(executor.execute('workflow.definition.export', { draft: buildWorkflowDefinitionCandidate(draft) }, { surface: 'agent' }))
+      .resolves.toMatchObject({ ok: true, result: { json: expected.json, document: expected.document } });
+  });
   it('refuses an invalid draft and names the first blocking issue', () => {
     const result = exportWorkflowDocument({
       draft: draftWith([

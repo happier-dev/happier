@@ -15,11 +15,12 @@ import type { TranslationKeyNoParams } from '@/text';
 
 import {
   buildWorkflowEditorDraftFromDefinition,
+  buildWorkflowDefinitionCandidate,
   firstBlockingWorkflowIssue,
   validateWorkflowEditorDraft,
 } from './workflowAuthoring';
 import type { WorkflowEditorDraft } from './workflowEditorDraft';
-import { WorkflowDefinitionImportResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
+import { WorkflowDefinitionExportResultV1Schema, WorkflowDefinitionImportResultV1Schema } from '@happier-dev/protocol/workflows/actionsV1';
 import { callWorkflowAction } from './callWorkflowAction';
 
 /**
@@ -124,6 +125,13 @@ export async function importWorkflowDocumentViaAction(params: Omit<WorkflowImpor
   const parsed = await callWorkflowAction({ actionId: 'workflow.definition.import', input: { json: params.source },
     parseResult: (value) => WorkflowDefinitionImportResultV1Schema.parse(value) });
   return projectImportedWorkflowDocument(params, parsed);
+}
+
+/** Export the mounted draft through the same validated Action as saved definitions and agents. */
+export async function exportWorkflowDocumentViaAction(params: Readonly<{ draft: WorkflowEditorDraft }>) {
+  return callWorkflowAction({ actionId: 'workflow.definition.export',
+    input: { draft: buildWorkflowDefinitionCandidate(params.draft) },
+    parseResult: value => WorkflowDefinitionExportResultV1Schema.parse(value) });
 }
 
 function projectImportedWorkflowDocument(params: WorkflowImportParams, parsed: WorkflowDocumentParseResultV1): WorkflowImportResult {

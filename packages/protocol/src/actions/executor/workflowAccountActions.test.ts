@@ -4,7 +4,8 @@ import { createWorkflowActionExecutor, normalizeWorkflowActionThrownError, type 
 import { createWorkflowDefinitionActions, type WorkflowDefinitionArtifactOperations } from './workflowDefinitions.js';
 import { createWorkflowAccountRunActionOwner } from './workflowRunActions.js';
 import { parseWorkflowDocumentJsonIngressV1 } from '../../workflows/workflowDocumentV1.js';
-import { WorkflowActionFailureV1Schema } from '../../workflows/workflowProgressV1.js';
+import { WorkflowActionFailureV1Schema, WorkflowOperationErrorCodeV1Schema } from '../../workflows/workflowProgressV1.js';
+import { bindAgentExistingExecutionRunAuthority, resolveWorkflowActionContext } from './callerContext.js';
 
 const definitionId = '11111111-1111-4111-8111-111111111111';
 const definition = { version: 1 as const, inputs: [], defaults: {}, blocks: [{ kind: 'wait' as const, id: 'wait',
@@ -40,6 +41,28 @@ function executor(invalidStoredHeader = false, readFailure?: unknown,
 }
 
 describe('workflow Action refusal classification', () => {
+  it('consumes nullable RPC absence while preserving causal authority refusals and ceilings', () => {
+    const context = { surface: 'agent' as const, callerPermissionMode: 'yolo' };
+    expect(resolveWorkflowActionContext({ ...context, causalPermissionAuthority: null }))
+      .toEqual(resolveWorkflowActionContext(context));
+    for (const causalPermissionAuthority of [undefined, {
+      kind: 'admittedSessionInputV1', admittedPermissionCeiling: 'invalid-mode',
+    }]) {
+      expect(resolveWorkflowActionContext({ ...context, causalPermissionAuthority }))
+        .toMatchObject({ ok: false, error: { errorCode: 'causal_permission_authority_invalid' } });
+    }
+    const authority = { kind: 'admittedSessionInputV1' as const, admittedPermissionCeiling: 'read-only' as const };
+    expect(resolveWorkflowActionContext({ ...context, causalPermissionAuthority: authority }))
+      .toMatchObject({ ok: true, context: { callerPermissionMode: 'read-only', causalPermissionAuthority: authority } });
+    expect(bindAgentExistingExecutionRunAuthority({ ...context, causalPermissionAuthority: null }, undefined))
+      .toMatchObject({ ok: false, error: { errorCode: 'causal_permission_authority_invalid' } });
+  });
+
+  it('preserves renewed approval required by the Run owner through the strict Workflow failure consumer', () => {
+    const result = normalizeWorkflowActionThrownError(Object.assign(new Error('approval_required'), { code: 'approval_required' }));
+    expect(WorkflowActionFailureV1Schema.parse(result)).toEqual({ ok: false, errorCode: 'approval_required', error: 'approval_required' });
+    expect(WorkflowOperationErrorCodeV1Schema.parse(result.errorCode)).toBe('approval_required');
+  });
   it('preserves a wait transport failure cause through the strict Workflow failure consumer', async () => {
     const actions = executor(false, Object.assign(new Error('connection lost'), { code: 'ECONNRESET' }));
     const failureCause = { phase: 'workflow.run.wait', errorClass: 'Error', errorCode: 'ECONNRESET', httpStatus: null };
@@ -173,6 +196,17 @@ describe('workflow Action refusal classification', () => {
     await expect(createActionExecutor({ workflowAction: executor(true) } as unknown as ActionExecutorDeps)
       .execute('workflow.definition.export', { definitionId }, { surface: 'mcp' }))
       .resolves.toMatchObject({ ok: false, errorCode: 'content_unavailable' });
+  });
+  it('exports an unsaved mounted draft through the same Action codec without reading or saving an Artifact', async () => {
+    const actions = createActionExecutor({ workflowAction: executor(false, new Error('must_not_read_saved_content')) } as unknown as ActionExecutorDeps);
+    const draft = { ...definition, blocks: [{ ...definition.blocks[0]!, document: { text: 'Unsaved changes', references: [], attachments: [] } }] };
+    const result = await actions.execute('workflow.definition.export', { draft }, { surface: 'agent' });
+    expect(result).toMatchObject({ ok: true, result: { document: { kind: 'happier.workflow', version: 1, definition: draft } } });
+    if (!result.ok || !result.result || typeof result.result !== 'object' || !('json' in result.result)) throw new Error('missing_export');
+    expect(parseWorkflowDocumentJsonIngressV1(String(result.result.json))).toEqual({ ok: true,
+      document: { kind: 'happier.workflow', version: 1, definition: draft } });
+    await expect(actions.execute('workflow.definition.export', { draft: { ...draft, blocks: [draft.blocks[0], draft.blocks[0]] } }, { surface: 'agent' }))
+      .resolves.toMatchObject({ ok: false, errorCode: 'invalid_input' });
   });
   it.each([
     ['missing Session snapshot', Object.assign(new Error('Session snapshot unavailable'), { name: 'SessionSnapshotReadError', errorCode: 'not_found', httpStatus: 404 }), 'target_unavailable'],

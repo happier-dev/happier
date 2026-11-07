@@ -19,6 +19,10 @@ export const useRouter = () => router;
 export function usePathname() {
     return React.useSyncExternalStore(listener => { subscribers.add(listener); return () => subscribers.delete(listener); }, () => location.pathname);
 }
+export function useSegments() {
+    const pathname = usePathname();
+    return React.useMemo(() => pathname.split('/').filter(Boolean), [pathname]);
+}
 const emptyParams = {};
 export const useGlobalSearchParams = () => emptyParams;
 export const useLocalSearchParams = useGlobalSearchParams;

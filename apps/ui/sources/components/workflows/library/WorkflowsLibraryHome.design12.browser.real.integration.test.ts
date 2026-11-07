@@ -4,6 +4,7 @@ import path from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { resolveChromiumExecutable } from '@/dev/testkit/render/measureWebLayout';
 import { buildWorkspaceHistoryBrowser } from '@/dev/testkit/render/buildWorkspaceHistoryBrowser.mjs';
+import { workflowRouteStartupBrowserOptions } from '@/dev/testkit/render/workflowRouteStartupBrowserOptions';
 import { createWorkspaceBrowserServer } from '@/dev/testkit/render/workspaceBrowserServer';
 import { appendBrowserDiagnostics, collectBrowserDiagnostics } from '../../../../../../packages/tests/src/testkit/uiE2e/browserDiagnostics';
 
@@ -11,7 +12,9 @@ let script: string;
 let origin: string;
 const server = createWorkspaceBrowserServer(() => script);
 beforeAll(async () => {
-    script = await buildWorkspaceHistoryBrowser({ entryFile: 'sources/dev/testkit/render/workflowLibraryBrowserApp.tsx', boundaryFiles: {
+    script = await buildWorkspaceHistoryBrowser({ entryFile: 'sources/dev/testkit/render/workflowLibraryBrowserApp.tsx',
+        // The editor graph includes unselected CLI acquisition. Reuse its existing Node IO boundaries.
+        boundaryModules: workflowRouteStartupBrowserOptions.boundaryModules, boundaryFiles: {
         // This journey exercises the real dialog/focus/portal owner, unlike the guard fixture.
         'sources/modal/index.ts': 'sources/modal/index.ts',
     } });
@@ -21,7 +24,7 @@ beforeAll(async () => {
     origin = `http://127.0.0.1:${address.port}`;
 }, 600_000);
 afterAll(async () => { if (server.listening) await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())); });
-type Harness = { libraryHttpTrace: string[]; libraryHarness: { mount(phone: boolean, theme: 'light' | 'dark', singleDefinition?: boolean, surface?: 'library' | 'artifacts'): Promise<void>; settleDeletion(success: boolean): void; deletionPending(): boolean; switchAccount(): Promise<void>; reactivateRuntime(): void } };
+type Harness = { libraryHttpTrace: string[]; libraryHarness: { mount(phone: boolean, theme: 'light' | 'dark', singleDefinition?: boolean, surface?: 'library' | 'artifacts', shell?: 'home' | 'destination', columnVisible?: boolean): Promise<void>; settleDeletion(success: boolean): void; deletionPending(): boolean; switchAccount(): Promise<void>; reactivateRuntime(): void } };
 
 async function settleDeletion(page: Page, success: boolean) {
     // UI busy precedes transport admission; acknowledge only the real delayed DELETE request.
@@ -125,23 +128,39 @@ describe('real workspace workflow library row actions (DESIGN12)', () => {
             await expect.poll(() => creation.evaluate(node => node.contains(document.activeElement))).toBe(true);
         } finally { await browser.close(); }
     }, 180_000);
-    it('focuses the library creation action after deleting the last visible workflow', async () => {
+    it.each([390, 1440])('focuses the library creation action after deleting the last visible workflow at %i px', async width => {
         const browser = await chromium.launch({ executablePath: resolveChromiumExecutable() });
+        let diagnostics = () => '';
         try {
-            const page = await browser.newPage({ viewport: { width: 390, height: 844 } });
+            const page = await browser.newPage({ viewport: { width, height: 844 } });
+            diagnostics = collectBrowserDiagnostics({ page });
             await page.goto(`${origin}/workflows`);
             await page.addScriptTag({ url: `${origin}/bundle.js` });
-            await page.evaluate(() => (window as unknown as Harness).libraryHarness.mount(true, 'light', true));
+            await page.evaluate(width => (window as unknown as Harness).libraryHarness.mount(width === 390, 'light', true, 'library', 'destination', false), width);
             const row = page.getByTestId('workflows-home:row:10000000-0000-4000-8000-000000000001');
-            await row.waitFor();
+            await row.waitFor().catch(async error => {
+                console.log('Library focus browser state', await page.evaluate(() => ({
+                    text: document.body.innerText, trace: (window as unknown as Harness).libraryHttpTrace,
+                })));
+                throw error;
+            });
             await page.getByRole('button', { name: 'Workflow options', exact: true }).click();
             await page.getByRole('menuitem', { name: 'Delete', exact: true }).click();
-            await page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true }).click();
+            await expect.poll(async () => {
+                const confirm = page.getByRole('dialog').getByRole('button', { name: 'Delete', exact: true });
+                if (await confirm.count()) await confirm.click();
+                return page.evaluate(() => (window as unknown as Harness).libraryHarness.deletionPending());
+            }).toBe(true);
             await expect.poll(() => row.getAttribute('aria-busy')).toBe('true');
             await settleDeletion(page, true);
             await expect.poll(() => row.count()).toBe(0);
+            const captureDir = path.resolve('../../.happier/qa/fin-parity-fix');
+            await mkdir(captureDir, { recursive: true });
+            await page.getByTestId('workflows-column').first().screenshot({ path: path.join(captureDir, `deletion-focus-${width}-${Date.now()}.png`) });
+            console.log('last workflow deletion focus', { width, focus: await page.evaluate(() => document.activeElement?.getAttribute('data-testid')) });
             await expect.poll(() => page.getByTestId('workflows-home:new').evaluate(node => node.contains(document.activeElement))).toBe(true);
-        } finally { await browser.close(); }
+        } catch (error) { throw appendBrowserDiagnostics(error, diagnostics()); }
+        finally { await browser.close(); }
     }, 180_000);
     it('keeps Needs you on the phone row\'s own line, beside its one overflow column', async () => {
         const browser = await chromium.launch({ executablePath: resolveChromiumExecutable() });

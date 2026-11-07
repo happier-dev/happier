@@ -20,7 +20,7 @@ import { ModalProvider } from '@/modal';
 import { InjectedAuthProvider } from '@/auth/context/AuthContext';
 import { TokenStorage } from '@/auth/storage/tokenStorage';
 import { UniversalSearchRuntimeProvider } from '@/components/appShell/search/UniversalSearchRuntimeContext';
-import { storage } from '@/sync/domains/state/storage';
+import { storage, useActiveServerAccountScope } from '@/sync/domains/state/storage';
 import { upsertAndActivateServer, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
 import { getAppliedActiveServerSnapshot, publishAppliedActiveServerSnapshot, publishAppliedActiveServerRuntimeAvailability } from '@/sync/runtime/orchestration/appliedActiveServerRuntime';
 import { primeServerFeaturesSnapshot } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -34,6 +34,16 @@ import { WorkspaceBrowserPresentation } from './WorkspaceBrowserPresentation';
 
 const catalog = resolveCompactAppDestinations({ pages: [], builtins: { workflows: true, friends: false, inbox: false, externalSessions: false } });
 const search = { open: () => {}, buildCommands: () => [] };
+const libraryCredentials = {
+    'account-a': { token: 'header.eyJzdWIiOiJhY2NvdW50LWEifQ==.signature' },
+    'account-b': { token: 'header.eyJzdWIiOiJhY2NvdW50LWIifQ==.signature' },
+};
+function LibraryAuthBoundary({ children }: React.PropsWithChildren) {
+    const scope = useActiveServerAccountScope();
+    return <InjectedAuthProvider credentials={libraryCredentials[scope?.accountId === 'account-b' ? 'account-b' : 'account-a']}>
+        {children}
+    </InjectedAuthProvider>;
+}
 installWorkspaceBrowserHistory();
 /** `destination`: the real `/workflows` index, with the shell's Workflows column beside it on a wide window. */
 let libraryShell: 'home' | 'destination' = 'home';
@@ -44,9 +54,9 @@ function LibraryJourney() {
     return <AppPaneProvider>{definitionId === undefined ? libraryShell === 'destination' ? <WorkflowsDestinationIndex /> : <WorkflowsLibraryHome /> :
         <WorkflowEditorHostScreen source={{ kind: 'saved', definitionId }} />}</AppPaneProvider>;
 }
-async function mount(phone: boolean, theme: 'light' | 'dark', singleDefinition = false, surface: 'library' | 'artifacts' = 'library', shell: 'home' | 'destination' = 'home') {
+async function mount(phone: boolean, theme: 'light' | 'dark', singleDefinition = false, surface: 'library' | 'artifacts' = 'library', shell: 'home' | 'destination' = 'home', columnVisible = true) {
     libraryShell = shell;
-    const withColumn = shell === 'destination' && !phone && surface === 'library';
+    const withColumn = shell === 'destination' && columnVisible && !phone && surface === 'library';
     if (singleDefinition) configureSingleLibraryDefinition();
     const transport = createWorkflowActionHttpTransport({ fixtureResponse: readLibraryFixtureResponse, accountId: getLibraryFixtureAccountId });
     const httpTrace: string[] = [];
@@ -60,15 +70,17 @@ async function mount(phone: boolean, theme: 'light' | 'dark', singleDefinition =
     UnistylesRuntime.setTheme(theme);
     const home = await upsertAndActivateServer({ serverUrl: 'http://library-browser.test', name: 'Library browser' });
     publishAppliedActiveServerSnapshot(getActiveServerSnapshot());
-    await TokenStorage.setCredentialsForServerUrl('http://library-browser.test', { serverId: home.id }, { token: 'header.eyJzdWIiOiJhY2NvdW50LWEifQ==.signature' });
+    const credentials = libraryCredentials['account-a'];
+    await TokenStorage.setCredentialsForServerUrl('http://library-browser.test', { serverId: home.id }, credentials);
     primeServerFeaturesSnapshot({ serverId: home.id, snapshot: { status: 'ready', features: createRootLayoutFeaturesResponse() } });
     storage.setState({ profileScope: { serverId: home.id, accountId: 'account-a' }, isDataReady: true, isSessionDraftsReady: true,
+        settingsScope: { serverId: home.id, accountId: 'account-a' }, settingsVersion: 1,
         settings: { ...settingsDefaults, experiments: true, featureToggles: { automations: true } },
         ...(surface === 'artifacts' ? { localSettings: { ...storage.getState().localSettings, artifactsBrowserViewV1: { presentation: 'list' as const } } } : {}),
         workflowRunListWindows: {}, workflowRunsById: {} });
     installUrlMirror();
     createRoot(document.getElementById('root')!).render(<WorkspaceBrowserPresentation><SafeAreaProvider initialMetrics={{ frame: { x: 0, y: 0, width: innerWidth, height: innerHeight }, insets: { top: 0, right: 0, bottom: 0, left: 0 } }}>
-        <InjectedAuthProvider credentials={null}><UniversalSearchRuntimeProvider value={search}>
+        <LibraryAuthBoundary><UniversalSearchRuntimeProvider value={search}>
             <ModalProvider><WorkspaceProvider enabled={!phone} phone={phone} catalog={catalog}>{navigation => {
                 const group = navigation.state.groups[navigation.state.focusedGroupId];
                 const tab = navigation.state.tabs[group.activeTabId];
@@ -87,14 +99,14 @@ async function mount(phone: boolean, theme: 'light' | 'dark', singleDefinition =
                         }</DestinationInstanceHost>
                 </AppShellMaterialFrame></AppShellColumnContext.Provider>;
             }}</WorkspaceProvider></ModalProvider>
-        </UniversalSearchRuntimeProvider></InjectedAuthProvider>
+        </UniversalSearchRuntimeProvider></LibraryAuthBoundary>
     </SafeAreaProvider></WorkspaceBrowserPresentation>);
 }
 async function switchAccount() {
     switchLibraryAccount();
     const scope = storage.getState().profileScope;
     if (!scope) throw new Error('Library Account scope unavailable');
-    await TokenStorage.setCredentialsForServerUrl('http://library-browser.test', { serverId: scope.serverId }, { token: 'header.eyJzdWIiOiJhY2NvdW50LWIifQ==.signature' });
+    await TokenStorage.setCredentialsForServerUrl('http://library-browser.test', { serverId: scope.serverId }, libraryCredentials['account-b']);
     storage.getState().activateProfileScope({ serverId: scope.serverId, accountId: 'account-b' });
 }
 function reactivateRuntime() {
