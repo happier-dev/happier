@@ -1,4 +1,10 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { artifactKindListResponse, artifactReadResponse } from '@/testkit/http/artifactHome';
+import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { definePlugin } from '@happier-dev/plugin-sdk';
+import { createAuthoredAdmittedPluginRuntimeFixture } from '@/plugins/testkit/admittedRuntime';
+import { pluginReloadController } from '@/plugins/runtime/reload/singleton';
+import { readCurrentContributionRegistry } from '@/agent/catalog/snapshot';
+import { resolveExecutablePluginRuntimeRegistry } from '@/plugins/runtime/resolveExecutablePluginRuntimeRegistry';
 import * as persistence from '@/persistence';
 import { createSessionRecordFixture } from '@/testkit/backends/sessionFixtures';
 import { RPC_METHODS } from '@happier-dev/protocol/rpc/methods';
@@ -8,6 +14,7 @@ import { resolveWorkflowAcceptedStepSelectionV1 } from '@happier-dev/protocol/wo
 import { LaunchProfileV2Schema } from '@happier-dev/protocol/profiles/v2/schema';
 import { logger } from '@/ui/logger';
 import fs from 'node:fs/promises';
+import { statSync } from 'node:fs';
 import { SpawnDaemonSessionRequestSchema } from '@/rpc/handlers/spawnSessionOptionsContract';
 import { createSpawnConnectedServicesTeamResourceCatalogResolver } from '@/session/services/spawnConnectedServicesDefaults';
 import { createAccountServerActionDeps } from '@/api/accountServerActionDeps';
@@ -23,23 +30,37 @@ import { buildCommittedLaunchMetadata } from '@/agent/runtime/createSessionMetad
 import { verifyRequesterSessionCredentialBinding } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import { SessionCreationCorrespondenceV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationCorrespondenceV1';
 import { createPlainSessionOwnerMetadataEnvelopeV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
+import { AccountEncryptionCurrentnessUnavailableError } from '@/api/client/accountEncryptionCurrentness';
+import { readSessionCreationTerminalSpawnErrorDetail } from '@/api/session/sessionCreationTerminalSpawnErrorDetail';
+import { buildSessionCreationTerminalSpawnErrorResult } from '@/daemon/sessions/onHappySessionWebhook';
 import { resolveWorkflowSessionConversation, createWorkflowInvocationRecoveryObserver } from './invocationRecoveryObserver';
 import { projectWorkflowConversationRoleSelection } from '@/session/actions/workflowMaterializationHost';
 import { createCliActionExecutorHarness } from '@/session/actions/createCliActionExecutorHarness';
+import { createCliActionDeps } from '@/session/actions/createCliActionDeps';
+import { prepareSessionCreationTarget } from '@/session/creation/prepareSessionCreationTarget';
+import { resolveTerminalRequestFromSpawnOptions } from '@/terminal/runtime/terminalConfig';
+import { SessionSpawnNewInputV2Schema } from '@happier-dev/protocol/sessions/creation/sessionSpawnNewInputV2';
+import { deriveSessionCreationTagV1, SessionCreationKeyV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationIdentityV1';
+import { SessionCreationTargetPreparationRequestV1Schema } from '@happier-dev/protocol/sessions/creation/sessionCreationTargetPreparationV1';
 import { ActionsSettingsV1Schema } from '@happier-dev/protocol/actions/actionSettings';
+import { AccountEncryptionModeResponseSchema } from '@happier-dev/protocol/account/encryptionMode';
 import { ApprovalRequestV2Schema, type ApprovalRequestV2 } from '@happier-dev/protocol/approvals/approvalRequestV1';
 import { decideApprovalRequestTransition } from '@happier-dev/protocol/approvals/approvalRequestTransition';
 import { createDiscussionActionDeps } from '@/discussions/discussionActionDeps';
 import { createWorkflowCoordinator } from './coordinator';
+import { buildWorkflowActionContext } from './daemonRuntime';
 import { createInMemoryWorkflowCoordinatorStore } from './workflowCoordinator.testkit';
 import type { WorkflowActionExecutor } from './coordinator';
 import { createCoordinatorWorkspaceResolver, verifyWorkflowWorkspaceCurrentness } from './resolveWorkflowWorkspace';
 import { deriveWorkflowSessionInputLocalIdV2 } from '@happier-dev/protocol/sessions/messages/sessionInputAdmission';
 import { readSessionRolesV1, snapshotSessionRolesAtSpawnV1 } from '@happier-dev/protocol/prompts/roles/sessionRolesSnapshot';
+import { createSessionActiveModelSelection } from '@happier-dev/protocol/providers/selection/v2';
 import { resolveRolesSnapshotV1 } from '@happier-dev/protocol/prompts/roles/resolveRoleSelectionV1';
-import { accountSettingsParse } from '@happier-dev/protocol';
+import { accountSettingsParse, FeaturesResponseSchema } from '@happier-dev/protocol';
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { resetActiveAccountSettingsSnapshotForTests, setActiveAccountSettingsSnapshot } from '@/settings/accountSettings/activeAccountSettingsSnapshot';
+import { DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1 } from '@happier-dev/protocol/account/settings/sessionAgentSpawnPolicyV1';
+import { resetServerFeaturesClientForTests } from '@/features/serverFeaturesClient';
 
 const spawnedSessionBirthMetadata = new Map<string, ReturnType<typeof buildCommittedLaunchMetadata>>();
 
@@ -51,8 +72,10 @@ function installWorkflowRoleAccount(credentials: Readonly<{ token: string; encry
 }
 
 const readiness = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn(), request: vi.fn(), callMachineRpc: vi.fn() }));
-vi.mock('axios', () => ({ default: { get: readiness.get, post: readiness.post, request: readiness.request,
-  isAxiosError: () => false, isCancel: () => false } }));
+vi.mock('axios', async importOriginal => {
+  const actual = await importOriginal<typeof import('axios')>();
+  return { ...actual, default: { ...actual.default, get: readiness.get, post: readiness.post, request: readiness.request } };
+});
 vi.mock('@/session/transport/rpc/machineRpc', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/session/transport/rpc/machineRpc')>();
   return { ...actual, callMachineRpc: readiness.callMachineRpc, callExactMachineRpc: readiness.callMachineRpc };
@@ -72,8 +95,15 @@ import {
   createProductionWorkflowConversationOwner,
   createProductionWorkflowSessionStepExecutor,
   createWorkflowSessionStepExecutor,
+  renderWorkflowSessionStepInput,
   type WorkflowSessionStartup,
 } from './sessionStepExecutor';
+
+it('reuses a frozen full workflow prompt without duplicating role or result instructions', () => {
+  const frozen = 'Original role\n\nAuthored work\n\n<happier_forge_evidence v="1">external comment</happier_forge_evidence>\n\nOriginal result contract';
+  expect(renderWorkflowSessionStepInput({ input: { text: 'Reconstructed literal projection', renderedText: frozen },
+    roleInstructions: 'A later role projection', result: { kind: 'json', schema: { type: 'object' } } })).toBe(frozen);
+});
 
 
 vi.mock('node:fs', async (importOriginal) => {
@@ -92,6 +122,7 @@ function installSessionCreationTransport() {
   // Only filesystem readiness, Home HTTP and exact-machine process transport
   // are replaced. Target preparation, creator, nonce settlement and schemas run.
   vi.spyOn(fs, 'access').mockResolvedValue(undefined);
+  vi.spyOn(fs, 'stat').mockResolvedValue(statSync(process.cwd()));
   vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ id: 'account-1' }), { status: 200 })));
   const launches: ReturnType<typeof SpawnDaemonSessionRequestSchema.parse>[] = [];
   let readySessionId = 'new-session';
@@ -142,17 +173,30 @@ describe('workflow Session step executor', () => {
     await expect(conversations.prepare({ runId: 'run-1', invocation: { logicalInvocationRecordId: 'inv-1' }, execution } as never))
       .rejects.toMatchObject({ code: 'workflow_conversation_unavailable', details: { reason: 'capabilitySelection' } });
   });
-  it.each(['allowedTools', 'unlistedTools'] as const)('rejects a conflicting %s recipe for an explicit retained Session', async (field) => {
+  it.each(['allowedTools', 'unlistedTools', 'approvalProfileId'] as const)('rejects a conflicting %s recipe for an explicit retained Session', async (field) => {
     const conversations = createProductionWorkflowConversationOwner({ machineId: 'machine-1',
       createFreshConversation: async () => { throw new Error('must not create'); },
       resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
       resolveExistingSessionConversation: async () => ({ sessionId: 'retained', machineId: 'machine-1', directory: '/repo',
-        runtimeSelection: { allowedTools: ['mcp__wilson-brief__*'], unlistedTools: 'deny' } }),
+        runtimeSelection: { allowedTools: ['mcp__wilson-brief__*'], unlistedTools: 'deny', approvalProfileId: 'profile:old' } }),
     });
     await expect(conversations.prepare({ runId: 'run-1', invocation: { logicalInvocationRecordId: 'inv-1' }, execution: {
       conversation: { kind: 'existing_session', sessionId: 'retained', machineId: 'machine-1' },
-      [field]: field === 'allowedTools' ? ['Read'] : 'ask',
+      [field]: field === 'allowedTools' ? ['Read'] : field === 'approvalProfileId' ? 'profile:new' : 'ask',
     } } as never)).rejects.toMatchObject({ code: 'workflow_conversation_unavailable', details: { reason: field } });
+  });
+
+  it.each(['profile:same', null] as const)('reuses a Session with the same approval reference %s without changing it', async approvalProfileId => {
+    const retained = { sessionId: 'retained', machineId: 'machine-1', directory: '/repo',
+      runtimeSelection: approvalProfileId === null ? {} : { approvalProfileId } };
+    const conversations = createProductionWorkflowConversationOwner({ machineId: 'machine-1',
+      createFreshConversation: async () => { throw new Error('must not create'); },
+      resolveSharedRunConversation: async () => null, resolveProducerConversation: async () => null,
+      resolveExistingSessionConversation: async () => retained,
+    });
+    await expect(conversations.prepare({ runId: 'run-1', invocation: { logicalInvocationRecordId: 'inv-1' }, execution: {
+      conversation: { kind: 'existing_session', sessionId: 'retained', machineId: 'machine-1' }, approvalProfileId,
+    } } as never)).resolves.toMatchObject({ kind: 'workflow_session_conversation', existing: retained });
   });
 
   const reuseSelection = WorkflowSessionAuthoringSelectionSchema.parse({
@@ -297,6 +341,7 @@ describe('workflow Session step executor', () => {
   });
   afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals(); resetActiveAccountSettingsSnapshotForTests(); });
   beforeEach(() => {
+    resetServerFeaturesClientForTests();
     spawnedSessionBirthMetadata.clear();
     // HTTP and machine process launch are the external readiness boundaries;
     // authorization, resume normalization and conversation ownership stay real.
@@ -379,7 +424,7 @@ describe('workflow Session step executor', () => {
     expect(launches).toHaveLength(1);
   });
 
-  it.each([false, true])('snapshots the complete lead Role set through Workflow leaf birth (selected=%s)', async selected => {
+  it.each([{ selected: false, miswired: false }, { selected: true, miswired: false }, { selected: false, miswired: true }])('snapshots the complete lead Role set through Workflow leaf birth (selected=%s)', async ({ selected, miswired }) => {
     const launches = installSessionCreationTransport();
     const credentials = { token: 'token', encryption: null };
     const roles = resolveRolesSnapshotV1({ defaultEngine: { agentTargetKey: 'agent:happier.agent.claude/claude' } });
@@ -400,7 +445,8 @@ describe('workflow Session step executor', () => {
       if (url.includes('/v1/artifacts')) {
         roleCatalogReads++;
         expect(new URL(url).searchParams.get('kinds')).toBe(JSON.stringify(['role.v1']));
-        return { status: 200, data: { items: [], hasUnclassified: false } };
+        const data = artifactKindListResponse([]);
+        return { status: 200, data: miswired ? { items: data.items, hasUnclassified: data.hasUnclassified } : data };
       }
       return read(url);
     });
@@ -414,7 +460,7 @@ describe('workflow Session step executor', () => {
       resolveFrozenRole: params => params.role,
     });
     try {
-      await expect(execute({ runId: 'workflow-run', invocationRecordId: 'leaf-invocation',
+      const executing = execute({ runId: 'workflow-run', invocationRecordId: 'leaf-invocation',
         step: { kind: 'step', id: 'leaf', inputMode: 'none', document: { text: '', references: [], attachments: [] },
           input: [], result: { kind: 'text' } },
         invocation: { kind: 'happier.workflow-progress.v1', blockKind: 'step', invocationPath: { blockId: 'leaf', scope: [] },
@@ -427,7 +473,13 @@ describe('workflow Session step executor', () => {
         workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
         beforeInputAdmission: async () => {}, onInputAccepted: async () => { throw new Error('No input'); },
         onSessionReady: async () => {},
-      })).resolves.toEqual({ kind: 'completed', result: '' });
+      });
+      if (miswired) {
+        await expect(executing).rejects.toMatchObject({ code: 'artifact_content_unavailable' });
+        expect(launches).toEqual([]);
+        return;
+      }
+      await expect(executing).resolves.toEqual({ kind: 'completed', result: '' });
       expect(launches).toHaveLength(1);
       const snapshot = readSessionRolesV1(spawnedSessionBirthMetadata.get('new-session'));
       expect(snapshot?.inheritedFrom).toBe('workflow-lead');
@@ -438,6 +490,126 @@ describe('workflow Session step executor', () => {
       expect(roleCatalogReads).toBe(1);
       for (let index = 0; index < 5; index++) expect(snapshot?.sessionRoles[`plugin:external.roles/role-${index}`]).toMatchObject(roles[`plugin:external.roles/role-${index}`]!);
     } finally { resetActiveAccountSettingsSnapshotForTests(); }
+  });
+
+  it.each([
+    { name: 'unreviewable detach', approvalProfileId: null, review: 'unavailable' },
+    { name: 'unreviewable change', approvalProfileId: 'builtin:full-trust', review: 'unavailable' },
+    { name: 'reviewed detach', approvalProfileId: null, review: 'approve' },
+    { name: 'reviewed change', approvalProfileId: 'builtin:full-trust', review: 'approve' },
+    { name: 'same selection', approvalProfileId: 'builtin:full-trust', review: 'none' },
+    { name: 'omitted selection', approvalProfileId: undefined, review: 'none' },
+    { name: 'direct human selection', approvalProfileId: 'builtin:full-trust', review: 'none', human: true },
+  ] as const)('admits native Workflow Session profile selection: $name', async testCase => {
+    const { approvalProfileId, review } = testCase;
+    const launches = installSessionCreationTransport();
+    const artifacts = new Map<string, { id: string } & Record<string, unknown>>();
+    let publish!: (artifactId: string) => void;
+    const published = new Promise<string>(resolve => { publish = resolve; });
+    const originalRead = readiness.get.getMockImplementation()!;
+    const originalWrite = readiness.post.getMockImplementation()!;
+    // Home's real versioned Artifact transport is the review boundary. The
+    // production startup factory owns routing, storage codecs and live waiting.
+    readiness.get.mockImplementation(async (url: string) => {
+      if (url.endsWith('/v1/account/encryption')) return { status: 200,
+        data: AccountEncryptionModeResponseSchema.parse({ mode: 'plain', updatedAt: 1 }) };
+      if (url.includes('/v1/artifacts/')) {
+        const id = url.split('/').at(-1)!;
+        return { status: artifacts.has(id) ? 200 : 404, data: artifacts.get(id) };
+      }
+      return originalRead(url);
+    });
+    readiness.post.mockImplementation(async (url: string, body: Record<string, unknown>) => {
+      if (url.endsWith('/v1/artifacts/read')) return artifactReadResponse(body, id => artifacts.get(id) ?? null);
+      if (url.endsWith('/v1/artifacts')) {
+        const id = String(body.id);
+        artifacts.set(id, { ...body, id, ownerAccountId: 'account-1', access: 'owner', encryptionMode: 'plain',
+          headerVersion: 1, bodyVersion: 1, seq: 1, createdAt: 1, updatedAt: 1 });
+        publish(id);
+        return { status: 200, data: { id, headerVersion: 1, bodyVersion: 1 } };
+      }
+      if (url.includes('/v1/artifacts/')) {
+        const id = url.split('/').at(-1)!;
+        const current = artifacts.get(id);
+        if (!current) return { status: 404, data: { error: 'artifact_not_found' } };
+        if (body.expectedHeaderVersion !== current.headerVersion || body.expectedBodyVersion !== current.bodyVersion) {
+          return { status: 200, data: { success: false, error: 'version-mismatch' } };
+        }
+        const headerVersion = Number(current.headerVersion) + (body.header === undefined ? 0 : 1);
+        const bodyVersion = Number(current.bodyVersion) + (body.body === undefined ? 0 : 1);
+        artifacts.set(id, { ...current, ...(body.header === undefined ? {} : { header: body.header }),
+          ...(body.body === undefined ? {} : { body: body.body }), headerVersion, bodyVersion });
+        return { status: 200, data: { success: true, headerVersion, bodyVersion } };
+      }
+      return originalWrite(url, body);
+    });
+    const features = FeaturesResponseSchema.parse({ features: {}, capabilities: {
+      serverIdentity: { serverIdentityId: 'server-1' },
+      encryption: { storagePolicy: 'optional', allowAccountOptOut: true, defaultAccountMode: 'plain' },
+    } });
+    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => new Response(JSON.stringify(
+      String(url).includes('/features') ? features : { id: 'account-1' }), { status: 200 })));
+    const credentials = { token: `header.${Buffer.from(JSON.stringify({ sub: 'account-1' })).toString('base64url')}.signature`, encryption: null };
+    const settings = accountSettingsParse({ actionsSettingsV1: { v: 1,
+      approvalWaivedSurfaces: { 'session.spawn_new': ['agent'] } } });
+    setActiveAccountSettingsSnapshot({ scopeKey: resolveAccountSettingsScopeKey(credentials), source: 'network', settings,
+      rawSettings: {}, settingsVersion: 1, settingsSecretsReadKeys: [], loadedAtMs: Date.now(),
+      promptLibraryCatalog: { status: 'ready', rows: [], tombstones: [], diagnostics: [] } });
+    const machineId = 'machine-1';
+    const operations = createHostActionOperationRuntime({ machineId, resolveAccountId: async () => 'account-1' });
+    const { executor, deps: actionDeps } = createCliActionExecutorHarness({ credentials, token: credentials.token, sessionId: 'origin-session',
+      serverId: 'server-1', serverIdentityId: 'server-1', serverHttpBaseUrl: resolveServerHttpBaseUrl(), mode: 'plain', ctx: null });
+    const action: WorkflowActionExecutor = { executor, buildContext: async execution => ({ ...buildWorkflowActionContext(execution),
+      ...(review === 'unavailable' ? { interactivePresentation: 'unavailable' as const } : {}),
+      sessionAgentSpawnPolicyV1: DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
+      agentStartContext: { caller: { kind: 'originless', runId: execution.runId, runDepth: 0 },
+        baseline: { machineId, directory: '/repo' }, roles: {}, ledSubtreeSessionIds: [],
+        callerPermissionCeiling: 'default', workDepthLimit: 4 },
+    }), observeRun: async () => { throw new Error('Session creation must not start an Execution Run'); } };
+    const create = createProductionFreshWorkflowSessionConversation({ credentials, serverId: 'server-1', machineId,
+      workDepth: 0, originRunId: 'run-profile', machineAdmissionTransport: vi.fn(), action,
+      sessionStartup: input => runObservedWorkflowSessionStartup(input, {
+        serverId: 'server-1', machineId, observeExecution: operations.observeExecution, rpcContext: {},
+        transport: () => ({ spawn: (request, options) => readiness.callMachineRpc({ method: RPC_METHODS.SPAWN_HAPPY_SESSION, request, ...options }),
+          resolveSpawnSessionByNonce: async () => ({ status: 'not_found' }) }),
+        observeOperation: (target, options) => operations.handlers.getV2({ operationId: target.operationId,
+          ...(options.waitForTerminal ? { waitForTerminal: true } : {}), ...(options.includeSetupReview ? { includeSetupReview: true } : {}) }),
+        cancelOperation: async target => operations.runner.cancel({ accountId: 'account-1', machineId }, target.operationId),
+        cleanupOnFailure: async () => {},
+      }) });
+    const pending = create({ creationKey: `workflow:profile:${testCase.name}`,
+      startupAuthorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },
+      origin: { kind: 'direct', actionPolicy: { surface: 'agent', authority: 'account_automation',
+        approvalProfileId: review === 'none' && !('human' in testCase) ? 'builtin:full-trust' : 'builtin:apply-safe' },
+        ...('human' in testCase ? { authenticatedStarterV1: { requestRef: 'person-request',
+          requester: { serverId: 'server-1', accountId: 'account-1' } } } : {}),
+        actionRequestAttributionV1: { requestRef: 'person-request', requester: { serverId: 'server-1', accountId: 'account-1' },
+          persona: { serverId: 'server-1', sessionId: 'origin-session' }, origin: null } },
+      selection: { ...(approvalProfileId === undefined ? {} : { approvalProfileId }), connectedServices: null,
+        agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } } },
+      workspace: { machineId, directory: '/repo', checkoutRootPath: '/repo' },
+    });
+    if (review === 'unavailable') {
+      await expect(pending).rejects.toMatchObject({ code: 'action_interactive_review_required' });
+      expect(launches).toHaveLength(0);
+      return;
+    }
+    if (review === 'approve') {
+      const first = await Promise.race([published, pending]);
+      expect(first, JSON.stringify(first)).toEqual(expect.any(String));
+      if (typeof first !== 'string') throw new Error('Startup escaped review');
+      const request = await actionDeps.approvalsGet!({ artifactId: first, serverId: 'server-1' });
+      expect(request).toMatchObject({ status: 'open', approval: { flow: 'blocking' } });
+      expect(launches).toHaveLength(0);
+      const decision = await executor.execute('approval.request.decide', { artifactId: first, decision: 'approve' }, {
+        surface: 'ui', authority: 'present_user', serverId: 'server-1', serverIdentityId: 'server-1', runtimeAccountId: 'account-1',
+      });
+      expect(decision, JSON.stringify(decision)).toMatchObject({ ok: true });
+    }
+    await expect(pending).resolves.toMatchObject({ sessionId: 'new-session' });
+    expect(launches).toHaveLength(1);
+    expect(launches[0]?.approvalProfileId).toBe(approvalProfileId === undefined ? 'builtin:full-trust' : approvalProfileId);
+    expect(artifacts.size).toBe(review === 'approve' ? 1 : 0);
   });
 
   it.each([false, true])('creates Workflow birth correspondence accepted by requester custody (miswired=%s)', async miswired => {
@@ -492,7 +664,29 @@ describe('workflow Session step executor', () => {
     }
   });
 
-  it.each([false, true])('retains cold startup custody before a direct spawn refusal (miswired=%s)', async miswired => {
+  it('retains a startup refusal before operation admission when requester cleanup fails', async () => {
+    const refusal = Object.assign(new Error('Requester identity unavailable'), { code: 'broker_unavailable' });
+    const operations = createHostActionOperationRuntime({ machineId: 'machine-1',
+      // Account identity is supplied by the authenticated Home boundary.
+      resolveAccountId: async () => { throw refusal; } });
+    await expect(runObservedWorkflowSessionStartup({ creationKey: 'workflow:before-admission',
+      request: { credentials: { token: 'token', encryption: null }, directory: '/repo', machineId: 'machine-1' },
+    }, { serverId: 'server-1', machineId: 'machine-1', observeExecution: operations.observeExecution, rpcContext: {},
+      transport: () => { throw new Error('Refused startup must not launch'); },
+      observeOperation: async () => { throw new Error('No operation admitted'); },
+      cancelOperation: async () => { throw new Error('No operation admitted'); },
+      cleanupOnFailure: async () => { throw new Error('Cleanup failed after requester refusal'); },
+    })).rejects.toBe(refusal);
+  });
+
+  it.each([
+    { miswired: false, code: 'DAEMON_RPC_UNAVAILABLE', cleanupFails: false },
+    { miswired: true, code: 'DAEMON_RPC_UNAVAILABLE', cleanupFails: false },
+    { miswired: false, code: 'broker_unavailable', cleanupFails: false },
+    { miswired: false, code: 'CHILD_EXITED_BEFORE_WEBHOOK', cleanupFails: false },
+    { miswired: false, code: 'currentness_unavailable', cleanupFails: false },
+    { miswired: false, code: 'broker_unavailable', cleanupFails: true },
+  ])('retains cold startup custody and original $code refusal (miswired=$miswired, cleanupFails=$cleanupFails)', async ({ miswired, code, cleanupFails }) => {
     installSessionCreationTransport();
     const scope = { accountId: 'account-1', machineId: 'machine-1' };
     const operations = createHostActionOperationRuntime({ machineId: scope.machineId, resolveAccountId: async () => scope.accountId,
@@ -505,7 +699,19 @@ describe('workflow Session step executor', () => {
       // including when the boundary immediately refuses startup.
       observedBeforeLaunch = observations.some(operation => operation.operationId === 'original-refusal' && operation.state === 'running');
       launches++;
-      return { type: 'error', errorCode: 'DAEMON_RPC_UNAVAILABLE', errorMessage: 'Requester Session custody unavailable' };
+      if (code === 'currentness_unavailable') {
+        const detail = readSessionCreationTerminalSpawnErrorDetail(new AccountEncryptionCurrentnessUnavailableError(
+          undefined, undefined, { cause: Object.assign(new Error('Request timed out'), { code: 'ECONNABORTED' }) },
+        ));
+        if (!detail) throw new Error('Expected currentness refusal');
+        return buildSessionCreationTerminalSpawnErrorResult(detail);
+      }
+      return { type: 'error', errorCode: code === 'DAEMON_RPC_UNAVAILABLE' ? code : 'SPAWN_FAILED',
+        errorMessage: 'Requester Session custody unavailable',
+        ...(code === 'DAEMON_RPC_UNAVAILABLE' ? {} : { errorDetail: { kind: 'launch_error' as const, code,
+          message: 'Native startup refused', ...(code === 'CHILD_EXITED_BEFORE_WEBHOOK'
+            ? { childExit: { code: 1, signal: null } } : {}) } }),
+      };
     }, stopSession: async () => { throw new Error('No runner admitted for retirement'); } },
       awaitAgentSessionOpen: async () => { throw new Error('No runner admitted'); } });
     const startup = runObservedWorkflowSessionStartup({ creationKey: 'workflow:refusal',
@@ -519,16 +725,101 @@ describe('workflow Session step executor', () => {
         operationId: miswired ? 'foreign-operation' : target.operationId,
         ...(options.waitForTerminal ? { waitForTerminal: true } : {}),
       }),
-      cancelOperation: async target => operations.runner.cancel(scope, target.operationId), cleanupOnFailure: async () => {},
+      cancelOperation: async target => operations.runner.cancel(scope, target.operationId), cleanupOnFailure: async () => {
+        if (cleanupFails) throw new Error('Cleanup failed after native refusal');
+      },
     });
     await expect(startup).rejects.toMatchObject(miswired
-      ? { message: 'workflow_invocation_fact_conflict' } : { code: 'DAEMON_RPC_UNAVAILABLE' });
+      ? { message: 'workflow_invocation_fact_conflict' }
+      : { code, ...(code === 'currentness_unavailable' ? { message: expect.stringContaining('timeout') } : {}) });
     expect(launches).toBe(miswired ? 0 : 1);
     expect(observedBeforeLaunch).toBe(!miswired);
     if (miswired) expect(observations).toEqual([]);
     else expect(observations.at(-1)).toMatchObject({ operationId: 'original-refusal', state: 'failed',
-      error: { errorCode: 'DAEMON_RPC_UNAVAILABLE' } });
+      error: { errorCode: code, ...(code === 'currentness_unavailable' ? { error: expect.stringContaining('timeout') } : {}) } });
     expect(operations.store.list(scope).items[0]).toMatchObject({ operationId: 'original-refusal', state: 'failed' });
+  });
+
+  it.each(['fresh', 'same_key', 'retained'] as const)('waits for original Session spawn completion before offering first Workflow input (%s)', async recovery => {
+    installSessionCreationTransport();
+    const scope = { accountId: 'account-1', machineId: 'machine-1' };
+    const operations = createHostActionOperationRuntime({ machineId: scope.machineId, resolveAccountId: async () => scope.accountId,
+      generateOperationId: () => 'lazy-start', supportsCoreCancellation: () => true });
+    const tracked: TrackedSession = { pid: 101, startedBy: 'daemon', happySessionId: 'lazy-session',
+      agentRuntimeDaemonServiceAuthorityFilePath: '/private/authority.json' };
+    let releaseLaunch!: () => void;
+    const launchReady = new Promise<void>(resolve => { releaseLaunch = resolve; });
+    let launches = 0;
+    let accepted!: () => void;
+    const acceptedResponse = new Promise<void>(resolve => { accepted = resolve; });
+    const handler = createMachineSessionSpawnRpcHandler({ handlers: { spawnSession: async options => {
+      launches++;
+      spawnedSessionBirthMetadata.set('lazy-session', buildCommittedLaunchMetadata({ options, directory: '/repo', accountSettings: {} }));
+      await launchReady;
+      return { type: 'success', sessionId: 'lazy-session', sessionCreationOutcome: {
+        disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] },
+      } };
+    }, stopSession: async () => { throw new Error('No refused runner'); } },
+      awaitAgentSessionOpen: input => awaitTrackedRunnerAgentSessionOpen({ getTrackedSessions: () => [tracked], ...input }) });
+    const startup: WorkflowSessionStartup = input => runObservedWorkflowSessionStartup(input, {
+      serverId: 'server-1', machineId: scope.machineId, observeExecution: async request => {
+        const response = await operations.observeExecution(request);
+        accepted();
+        return response;
+      }, rpcContext: {},
+      transport: operation => ({ spawn: (request, options) => handler(request, { ...options, localActionContext: operation }),
+        resolveSpawnSessionByNonce: async () => { throw new Error('No replacement launch'); } }),
+      observeOperation: (target, options) => operations.handlers.getV2({ operationId: target.operationId,
+        ...(options.waitForTerminal ? { waitForTerminal: true } : {}),
+        ...(options.includeSetupReview ? { includeSetupReview: true } : {}) }, options.signal ? { signal: options.signal } : undefined),
+      cancelOperation: async target => operations.runner.cancel(scope, target.operationId), cleanupOnFailure: async () => {},
+    });
+    const create = createProductionFreshWorkflowSessionConversation({ credentials: { token: 'token', encryption: null },
+      serverId: 'server-1', machineId: scope.machineId, workDepth: 0, originRunId: 'lazy-run',
+      machineAdmissionTransport: async () => { throw new Error('Conversation creation does not enqueue'); }, sessionStartup: startup });
+    const request = { creationKey: 'workflow:lazy-run:step', selection: {
+      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      connectedServices: { v: 2 as const, bindingsByServiceId: {} },
+    }, workspace: { machineId: scope.machineId, directory: '/repo', checkoutRootPath: '/repo' } };
+    const controller = new AbortController();
+    const first = create({ ...request, signal: controller.signal });
+    const firstOutcome = first.catch(error => error);
+    let conversation = first;
+    try {
+      await expect.poll(() => launches).toBe(1);
+      if (recovery !== 'fresh') {
+        controller.abort(new WorkflowRuntimeInterruption());
+        await expect(firstOutcome).resolves.toBeInstanceOf(WorkflowRuntimeInterruption);
+        conversation = create({ ...request, ...(recovery === 'retained' ? {
+          retainedStartupOperation: { key: 'startup', serverId: 'server-1', machineId: scope.machineId, operationId: 'lazy-start' },
+        } : {}) });
+      }
+      let ready: Awaited<typeof conversation> | undefined;
+      const observed = conversation.then(value => { ready = value; }, () => undefined);
+      releaseLaunch();
+      await acceptedResponse;
+      // Drain the in-process acceptance response while native spawn completion
+      // remains held at its real tracked-runner boundary.
+      await new Promise<void>(resolve => setImmediate(resolve));
+      expect(ready).toBeUndefined();
+      expect(tracked.agentRuntimeDaemonServiceSessionOpenAttestation).toBeUndefined();
+      expect(operations.store.get(scope, 'lazy-start')).toMatchObject({ state: 'running' });
+      // A slow native start eventually settles its original spawn operation.
+      tracked.agentRuntimeDaemonServiceSessionOpenAttestation = {
+        request: { kind: 'create', sessionId: 'lazy-session', cwd: '/repo' }, providerSessionId: 'native',
+      };
+      await expect(operations.handlers.getV2({ operationId: 'lazy-start', waitForTerminal: true })).resolves.toMatchObject({
+        kind: 'found', operation: { state: 'succeeded' },
+      });
+      await expect(conversation).resolves.toMatchObject({ sessionId: 'lazy-session' });
+      await observed;
+      expect(launches).toBe(1);
+    } finally {
+      releaseLaunch();
+      operations.runner.cancel(scope, 'lazy-start');
+      await firstOutcome;
+      await conversation.catch(() => undefined);
+    }
   });
 
   it.each(['open', 'cancel', 'interrupt', 'rejoin_open', 'rejoin_cancel', 'rejoin_interrupt', 'rejoin_miswired', 'rejoin_retention_refused', 'cancel_before_entry', 'interrupt_before_entry'] as const)('keeps cold Session creation under its original startup observation owner (%s)', async outcome => {
@@ -551,18 +842,18 @@ describe('workflow Session step executor', () => {
         serverId: 'server-1', machineId: scope.machineId, workspaceRefId: 'workspace', cwd: '/repo' } });
       const review = { kind: 'pendingApproval' as const, code: 'project_setup_consent_required' as const,
         reviewedEffectDigest: 'setup', reviewedEffect: { commands: [] } };
-      void (async () => {
-        let approved = false;
-        do {
-          await operation.operationReview!.waitForResume(review, { review: async selected => {
-            approved = selected?.reviewedEffectDigest === 'setup';
-            return approved ? null : review;
-          } });
-          // Rejoining wakes setup to remeasure; it is not human consent.
-        } while (outcome.startsWith('rejoin_') && !approved);
-      })().then(() => { tracked.agentRuntimeDaemonServiceSessionOpenAttestation = {
-          request: { kind: 'create', sessionId: 'original-session', cwd: '/repo' }, providerSessionId: 'native',
-        }; }, () => undefined);
+      let approved = false;
+      do {
+        await operation.operationReview.waitForResume(review, { review: async selected => {
+          approved = selected?.reviewedEffectDigest === 'setup';
+          return approved ? null : review;
+        } });
+        // Rejoining wakes setup to remeasure; it is not human consent.
+      } while (outcome.startsWith('rejoin_') && !approved);
+      // The native boundary cannot report committed birth before setup consent.
+      tracked.agentRuntimeDaemonServiceSessionOpenAttestation = {
+        request: { kind: 'create', sessionId: 'original-session', cwd: '/repo' }, providerSessionId: 'native',
+      };
       return { type: 'success', sessionId: 'original-session', sessionCreationOutcome: {
         disposition: 'created', organizationPlacement: { folderId: null, tagIds: [] },
       } };
@@ -1855,7 +2146,7 @@ describe('workflow Session step executor', () => {
     expect(resolveExistingSessionConversation).not.toHaveBeenCalled();
   });
 
-  it('spawns a literal-engine Workflow leaf on its origin Session non-default Connected profile', async () => {
+  it.each([{ miswired: false, pending: false }, { miswired: false, pending: true }, { miswired: true, pending: false }])('spawns a literal-engine Workflow leaf on its origin Session non-default Connected profile (miswired=$miswired, pending=$pending)', async ({ miswired, pending }) => {
     const launches = installSessionCreationTransport();
     const originSessionId = 'c111111111111111111111111';
     const credentials = { token: 'token', encryption: null };
@@ -1867,13 +2158,21 @@ describe('workflow Session step executor', () => {
     } };
     const read = readiness.get.getMockImplementation()!;
     readiness.get.mockImplementation(async (url: string) => url.includes('/v1/artifacts')
-      ? { status: 200, data: { items: [], hasUnclassified: false } } : url.endsWith(`/v2/sessions/${originSessionId}`)
-      ? { status: 200, data: { session: createSessionRecordFixture({ id: originSessionId, active: true, encryptionMode: 'plain', workDepth: 0,
+      ? { status: 200, data: artifactKindListResponse([]) } : url.endsWith(`/v2/sessions/${originSessionId}`)
+      ? { status: 200, data: { session: createSessionRecordFixture({ id: originSessionId, active: !pending, encryptionMode: 'plain', workDepth: 0,
         metadataLayoutVersion: 1, metadata: JSON.stringify({ v: 1 }), share: null,
         ownerMetadata: createPlainSessionOwnerMetadataEnvelopeV1({ v: 1,
           workspace: { machineId: 'machine-1', path: '/repo' },
           nativeSession: { runtimeDescriptorV1: { v: 1, agentId: 'codex', agent: {} } },
           connectedServices: { connectedServices },
+          ...(pending ? { runtime: {
+            modelSelectionIntentV1: { v: 1, selection: { agentTargetKey: 'agent:happier.agent.codex/codex',
+              providerConnectionId: null, modelId: 'origin-pending-model' }, updatedAt: 2 },
+            sessionModelsV1: { v: 1, agentId: 'codex', updatedAt: 1, currentModelId: 'origin-applied-model', availableModels: [],
+              activeSelectionV1: createSessionActiveModelSelection({ selection: { agentTargetKey: 'agent:happier.agent.codex/codex',
+                providerConnectionId: null, modelId: 'origin-applied-model' }, source: 'runtime_readback',
+                runner: { pid: 1, processStartTimeMs: 1 }, teamCredentialModel: null }) ?? undefined },
+          } } : {}),
         }),
       }) } } : read(url));
     const origin = await resolveWorkflowSessionConversation({ credentials, sessionId: originSessionId, machineId: 'machine-1' });
@@ -1888,12 +2187,13 @@ describe('workflow Session step executor', () => {
       context: { source: { kind: 'inline' }, inputs: {}, machineId: 'machine-1', executionTarget: { kind: 'session' },
         workspaceTarget: { project: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' } },
         origin: { kind: 'direct', originSessionId }, authorization: { principal: { kind: 'host' } } },
-      admission: { kind: 'user' }, roleSelection: projectWorkflowConversationRoleSelection(origin),
+      admission: { kind: 'user' }, roleSelection: projectWorkflowConversationRoleSelection(origin, miswired ? 'other-machine' : origin.machineId),
       effects: { resolveTargetAvailability: async () => true } });
     expect(accepted.ok, JSON.stringify(accepted)).toBe(true);
     if (!accepted.ok) throw new Error(accepted.error.code);
     const leaf = accepted.snapshot.materializedLeaves[0]!;
-    expect(leaf.selection.connectedServices).toEqual(connectedServices);
+    expect(leaf.selection.connectedServices).toEqual(miswired ? undefined : connectedServices);
+    if (miswired) return;
     const create = createProductionFreshWorkflowSessionConversation({ credentials,
       serverId: 'server-1', machineId: 'machine-1', workDepth: 0, originRunId: 'run-1', originSessionId,
       machineAdmissionTransport: vi.fn() });
@@ -1902,9 +2202,18 @@ describe('workflow Session step executor', () => {
       creationKey: 'workflow:run-1:connected-leaf' })).resolves.toMatchObject({ sessionId: 'new-session' });
     expect(launches).toMatchObject([{ connectedServices, originSessionId, manager: { sessionId: originSessionId }, modelSelection,
       sessionConfigOptionOverrides: { overrides: { reasoning_effort: { value: 'low' } } } }]);
+    const snapshot = readSessionRolesV1(spawnedSessionBirthMetadata.get('new-session'));
+    expect(snapshot?.inheritedFrom).toBe(originSessionId);
+    expect(snapshot?.sessionRoles.builder.engine).toEqual({ agentTargetKey: modelSelection.ref.agentTargetKey,
+      modelId: modelSelection.ref.modelId });
+    expect(snapshot?.sessionRoles.reviewer.engine).toEqual(snapshot?.sessionRoles.builder.engine);
+    expect(Object.values(snapshot?.sessionRoles ?? {}).map(role => role.engine?.modelId))
+      .not.toContain('origin-pending-model');
+    expect(Object.values(snapshot?.sessionRoles ?? {}).map(role => role.engine?.modelId))
+      .not.toContain('origin-applied-model');
   });
 
-  it('creates fresh conversations through canonical target preparation and Session creation owners', async () => {
+  it.each(['profile:step', null] as const)('refuses a selected approval reference without canonical startup admission: %s', async approvalProfileId => {
     const launches = installSessionCreationTransport();
     const create = createProductionFreshWorkflowSessionConversation({
       credentials: { token: 'token', encryption: null },
@@ -1921,6 +2230,7 @@ describe('workflow Session step executor', () => {
     await expect(create({
       selection: {
         agentTarget,
+        approvalProfileId,
         connectedServices: { v: 2, bindingsByServiceId: {} },
         permissionMode: 'read_only',
         allowedTools: ['mcp__wilson-brief__*'],
@@ -1929,21 +2239,67 @@ describe('workflow Session step executor', () => {
       },
       workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
       creationKey: 'workflow:run-1:inv-1',
-    })).resolves.toEqual({ sessionId: 'new-session', machineId: 'machine-1', directory: '/repo',
-      origin: { kind: 'run_step', runId: 'run-1' }, workDepth: 3 });
-    expect(launches).toEqual([expect.objectContaining({
-      originKind: 'run_step',
-      originRunId: 'run-1',
-      workDepth: 3,
-      directory: '/repo',
-      approvedNewDirectoryCreation: false,
-      sessionCreationTag: expect.stringMatching(/^create:v1:/),
-      agentTarget,
-      permissionMode: 'read-only',
-      allowedTools: ['mcp__wilson-brief__*'],
-      unlistedTools: 'deny',
-      sessionConfigOptionOverrides: { v: 1, updatedAt: 1, overrides: {} },
-    })]);
+    })).rejects.toMatchObject({ code: 'approval_context_unavailable' });
+    expect(launches).toEqual([]);
+  });
+
+  it.each([
+    [undefined, true],
+    [undefined, false],
+    [undefined, undefined],
+    ['integrated', true],
+  ] as const)('prepares identical ordinary and Workflow launch facts while preserving frozen Workflow selections (terminal=%s, memory=%s)', async (terminalMode, memoryEnabled) => {
+    const launches = installSessionCreationTransport();
+    const credentials = { token: 'token', encryption: null };
+    const launch = SessionSpawnNewInputV2Schema.parse({
+      creationKey: 'ordinary-preparation-parity',
+      executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
+      directory: { kind: 'path', path: '/repo' },
+      agentTarget: { kind: 'agent', identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      modelSelection: { v: 1, updatedAt: 7, ref: { agentTargetKey: 'agent:happier.agent.claude/claude',
+        providerConnectionId: null, modelId: 'frozen-model' } },
+      permissionMode: 'read-only', connectedServices: { v: 2, bindingsByServiceId: {} },
+      ...(terminalMode ? { terminal: { mode: terminalMode } } : {}),
+      ...(memoryEnabled === undefined ? {} : { memoryEnabled }),
+    });
+    const creationKey = SessionCreationKeyV1Schema.parse(launch.creationKey);
+    const deps = createCliActionDeps({ token: credentials.token, credentials, sessionId: '', mode: 'plain', ctx: null,
+      serverId: 'server-1', serverHttpBaseUrl: resolveServerHttpBaseUrl(),
+      // Replace only exact-Machine IPC; both paths run the real target and birth owners.
+      machineActionDirectTargetTransport: { machineId: 'machine-1', invoke: async (method, request, options) => {
+        if (method === RPC_METHODS.DAEMON_SESSION_CREATION_PREPARE
+          || method === RPC_METHODS.DAEMON_SESSION_CREATION_DIRECTORY_PREFLIGHT) {
+          return await prepareSessionCreationTarget({ request: SessionCreationTargetPreparationRequestV1Schema.parse(request),
+            signal: options?.signal });
+        }
+        return await readiness.callMachineRpc({ method, request });
+      } },
+    });
+    if (!deps.sessionSpawnNew) throw new Error('Expected native Session spawn transport');
+    const ordinaryResult = await deps.sessionSpawnNew({ ...launch, creationKey,
+      sessionCreationTag: deriveSessionCreationTagV1({ callerCreationNamespace: 'user', creationKey }),
+      actionCaller: { kind: 'host' }, callerSurface: 'ui',
+    });
+    expect(ordinaryResult, JSON.stringify(ordinaryResult)).toMatchObject({ type: 'success', sessionId: 'new-session' });
+    const create = createProductionFreshWorkflowSessionConversation({ credentials, serverId: 'server-1',
+      machineId: 'machine-1', workDepth: 0, originRunId: 'preparation-parity', machineAdmissionTransport: vi.fn() });
+    await expect(create({ launch, selection: { agentTarget: launch.agentTarget,
+      modelSelection: { ...launch.modelSelection!, ref: { ...launch.modelSelection!.ref, modelId: 'later-mutable-model' } } },
+      workspace: { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' },
+      creationKey: 'workflow:preparation-parity:step',
+    })).resolves.toMatchObject({ sessionId: 'new-session' });
+    expect(launches).toHaveLength(2);
+    const [ordinary, workflow] = launches;
+    expect(workflow).toMatchObject({ directory: ordinary!.directory,
+      modelSelection: ordinary!.modelSelection, permissionMode: ordinary!.permissionMode });
+    expect(workflow!.modelSelection?.ref.modelId).toBe('frozen-model');
+    if (terminalMode === 'integrated') {
+      for (const launched of launches) {
+        expect(resolveTerminalRequestFromSpawnOptions({ happyHomeDir: '/happier', terminal: launched.terminal,
+          environmentVariables: { TMUX_SESSION_NAME: 'profile-terminal' } })).toEqual({ requested: 'plain' });
+      }
+    }
+    expect(workflow!.sessionCreationCorrespondence?.recipe).toEqual(ordinary!.sessionCreationCorrespondence?.recipe);
   });
 
   it('keeps the accepted model participant launch intact through run-step creation', async () => {
@@ -1993,11 +2349,38 @@ describe('workflow Session step executor', () => {
     { denied: false, boundSessionId: 'new-session', policy: 'composed-reject', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-automation', surface: 'agent' },
     { denied: false, boundSessionId: 'new-session', policy: 'composed-current-require', surface: 'agent' },
+    { denied: false, boundSessionId: 'new-session', policy: 'composed-missing-starter', surface: 'agent' },
+    { denied: false, boundSessionId: 'new-session', policy: 'composed-substituted-starter', surface: 'agent' },
+    { denied: false, boundSessionId: 'new-session', policy: 'composed-replay-profile', surface: 'agent' },
   ] as const)('creates a selected Discussion model only after reserving its retained ordinary participant slot (%j)', async ({ denied, boundSessionId, policy, surface }) => {
     const launches = installSessionCreationTransport();
+    const externalAgent = policy === 'composed';
+    if (externalAgent) {
+      const baseline = readCurrentContributionRegistry();
+      const plugin = definePlugin({ id: 'external.review-agent', version: '1.0.0', entrypoints: { daemon: './daemon.mjs' },
+        agents: { reviewer: { declaration: { title: 'External reviewer', runtime: { kind: 'custom' }, primary: 'sessions',
+          capabilities: { sessions: { open: ['create'], delivery: ['newTurn'], cancel: true, workspaceWrites: 'deny' } } },
+          factory: async () => ({ sessions: { async open() { throw new Error('Session startup uses the Machine process boundary'); } } }),
+          sessionRunnerFactory: { module: './agent.mjs', export: 'createRuntime', runtimeApiVersion: 1 },
+        } } });
+      const admitted = await createAuthoredAdmittedPluginRuntimeFixture({ controller: pluginReloadController,
+        plugins: [{ manifest: plugin.manifest, files: {
+          'agent.mjs': 'export async function createRuntime() { return { sessions: { async open() { throw new Error("Machine process boundary"); } } }; }',
+          'daemon.mjs': 'import { createRuntime } from "./agent.mjs"; export function activate(api) { api.agents.register("reviewer", createRuntime, { sessionRunnerFactory: { module: "./agent.mjs", export: "createRuntime", runtimeApiVersion: 1 } }); }',
+        } }] });
+      onTestFinished(async () => {
+        await admitted.dispose();
+        await pluginReloadController.adoptPreparedRuntimeRegistry({
+          registry: await resolveExecutablePluginRuntimeRegistry({ contributes: baseline, pluginIds: [] }),
+          changedPluginIds: ['external.review-agent'], runningSessionDisposition: 'retainRunningSessions',
+        });
+      });
+    }
     const launch = { executionTarget: { serverId: 'server-1', machineId: 'machine-1' },
       directory: { kind: 'path' as const, path: '/repo' },
-      agentTarget: { kind: 'agent' as const, identity: { pluginId: 'happier.agent.claude', localId: 'claude' } },
+      agentTarget: { kind: 'agent' as const, identity: externalAgent
+        ? { pluginId: 'external.review-agent', localId: 'reviewer' }
+        : { pluginId: 'happier.agent.claude', localId: 'claude' } },
       connectedServices: { v: 2 as const, bindingsByServiceId: {} } };
     const creationKey = 'workflow:discussion-run:invocation-1';
     const ref = { discussionId: 'discussion-1', participantSlotId: creationKey };
@@ -2058,6 +2441,7 @@ describe('workflow Session step executor', () => {
       ...(policy === 'disabled' ? { actions: { 'discussion.invite': { enabled: false } } } : {}),
     });
     let stored: ApprovalRequestV2 | undefined;
+    let invitationCards = 0;
     let retainedInvitationApproval: Extract<NonNullable<import('@happier-dev/protocol/workflows').WorkflowProgressEnvelopeV1['execution']>, { kind: 'action' }> | undefined;
     const host = createCliActionExecutorHarness({ token: credentials.token, credentials, sessionId: 'workflow-host', mode: 'plain', ctx: null,
       serverId: 'server-1', serverIdentityId: 'srv_home', serverHttpBaseUrl: resolveServerHttpBaseUrl(),
@@ -2069,7 +2453,7 @@ describe('workflow Session step executor', () => {
         getAccountSettings: () => null },
     }, {
       ...createDiscussionActionDeps({ credentials, serverId: 'server-1', serverHttpBaseUrl: resolveServerHttpBaseUrl() }),
-      approvalsCreate: async ({ request }) => { stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'invitation-approval' }; },
+      approvalsCreate: async ({ request }) => { invitationCards++; stored = ApprovalRequestV2Schema.parse(request); return { artifactId: 'invitation-approval' }; },
       approvalsGet: async () => stored ?? null,
       approvalsUpdate: async ({ request }) => {
         if (!stored) throw new Error('missing approval');
@@ -2082,10 +2466,10 @@ describe('workflow Session step executor', () => {
       isApprovalExecutionOriginCurrent: async () => true,
     });
     const executor = host.executor;
-    const action: WorkflowActionExecutor = { executor, buildContext: async ({ authorization }) => ({ surface, authority: 'account_automation',
+    const action: WorkflowActionExecutor = { executor, buildContext: async execution => ({ ...buildWorkflowActionContext(execution), surface, authority: 'account_automation',
         serverId: 'server-1', serverIdentityId: 'srv_home', runtimeAccountId: 'account-1', actionsSettings: settings,
         externalActionTarget: { kind: 'machine', machineId: 'machine-1', project: { machineId: 'machine-1', directory: '/repo' } },
-        actionCaller: { kind: 'workflowRun', runId: 'discussion-run', authorization } }),
+      }),
         ...(composed && policy !== 'composed-reclaim' ? { observeApproval: async ({ artifactId, actionRequestId, signal }: Parameters<NonNullable<WorkflowActionExecutor['observeApproval']>>[0]) => host.observeRecordedApprovalExecution({
           artifactId, signal, expectedOrigin: { actionId: 'discussion.invite', requestId: actionRequestId,
             accountId: 'account-1', serverIdentityId: 'srv_home', machineId: 'machine-1' },
@@ -2100,17 +2484,38 @@ describe('workflow Session step executor', () => {
     if (composed) {
       const store = createInMemoryWorkflowCoordinatorStore();
       const workspace = { machineId: 'machine-1', directory: '/repo', checkoutRootPath: '/repo' };
-      const accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: { version: 1, defaults: {}, inputs: [
+      let accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: { version: 1, defaults: {}, inputs: [
         { name: 'reviewer', valueType: 'json', required: true, inputType: { hostType: 'agentParticipant' } },
       ], blocks: [{ kind: 'step', id: 'review', input: [], result: { kind: 'text' },
         document: { text: 'Review the question', references: [], attachments: [] }, execution: { participant: { kind: 'input', name: 'reviewer' } } }] },
       context: { source: { kind: 'inline' }, inputs: { reviewer: { kind: 'model', launch } }, machineId: workspace.machineId,
         executionTarget: { kind: 'session' }, workspaceTarget: { project: workspace },
         origin: { kind: 'direct', discussion: discussionOrigin,
+          ...(policy === 'composed-automation' || policy === 'composed-missing-starter' ? {} : { authenticatedStarterV1: {
+            requestRef: 'authenticated-start', requester: { serverId: 'srv_home',
+              accountId: policy === 'composed-substituted-starter' ? 'substituted-person' : 'account-1' },
+          } }),
           actionPolicy: { surface: originSurface, authority: policy === 'composed-automation' ? 'account_automation' : 'present_user', actionsSettings: settings } },
         authorization: { principal: { kind: 'host' } } },
       admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
       if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
+      if (policy === 'composed-replay-profile') {
+        // A new replay inherits its initiating profile while retaining the old
+        // frozen model leaf, whose original selection had no profile reference.
+        const previous = accepted.snapshot;
+        const origin = { ...previous.origin!, actionPolicy: { ...previous.origin?.actionPolicy,
+          authority: 'present_user' as const, approvalProfileId: 'builtin:full-trust' } };
+        const replaySource = { ...previous, origin };
+        accepted = await materializeWorkflowAcceptedSnapshotV1({ definition: replaySource.authoredDefinition,
+          replay: { snapshot: replaySource }, context: { source: replaySource.source, inputs: replaySource.inputs,
+            machineId: replaySource.machineId, executionTarget: replaySource.executionTarget,
+            workspaceTarget: replaySource.workspaceTarget, origin,
+            authorization: { principal: replaySource.authorization.principal } },
+          admission: { kind: 'user' }, effects: { resolveTargetAvailability: async () => true } });
+        if (!accepted.ok) throw new Error(JSON.stringify(accepted.error));
+        expect(accepted.snapshot.materializedLeaves[0]?.selection.approvalProfileId).toBeUndefined();
+        expect(accepted.snapshot.origin?.actionPolicy?.approvalProfileId).toBe('builtin:full-trust');
+      }
       const inputs: unknown[] = [];
       const conversations = createProductionWorkflowConversationOwner({ credentials, serverId: 'server-1', machineId: workspace.machineId,
         createFreshConversation: create, resolveSharedRunConversation: async () => null,
@@ -2143,6 +2548,13 @@ describe('workflow Session step executor', () => {
       const run = { ...accepted.snapshot, runId: 'discussion-run', signal: lifetime.signal };
       const running = coordinator.run(run).then(result => ({ result }), error => ({ error }));
       try {
+        if (policy === 'composed-automation' || policy === 'composed-missing-starter' || policy === 'composed-substituted-starter') {
+          expect(await running).toMatchObject({ result: { state: 'interrupted' } });
+          expect(store.list().find(row => row.blockId === 'review')).toMatchObject({ reason: 'approval_requester_unavailable' });
+          expect(stored).toBeUndefined(); expect(invitationCards).toBe(0);
+          expect(reservations).toEqual([]); expect(launches).toEqual([]); expect(births).toEqual([]); expect(inputs).toEqual([]);
+          return;
+        }
         await vi.waitFor(() => {
           const row = store.list().find(row => row.blockId === 'review');
           expect(row, JSON.stringify({ reason: row?.reason, execution: row?.execution,
@@ -2152,11 +2564,13 @@ describe('workflow Session step executor', () => {
         const held = store.list().find(row => row.blockId === 'review');
         expect(stored).toMatchObject({ requestedSurface: 'agent', executionOriginV1: { caller: {
           kind: 'workflowRun', discussionModelReservation: { policySurface: originSurface },
+          authenticatedStarterV1: accepted.snapshot.origin?.authenticatedStarterV1,
         } } });
         expect(held).toMatchObject({ recordId: 'invocation-1', lifecycle: 'waiting_for_approval', execution: {
           kind: 'action', actionId: 'discussion.invite', output: { kind: 'approval_request_created', artifactId: 'invitation-approval' },
         } });
         expect(reservations).toEqual([]); expect(launches).toEqual([]); expect(births).toEqual([]);
+        expect(invitationCards).toBe(1);
         expect(inputs).toEqual([]);
         if (policy === 'composed-reclaim') expect(await running).toMatchObject({ result: { state: 'paused', reason: 'approval_required' } });
         expect(await executor.execute('approval.request.decide', { artifactId: 'invitation-approval',
@@ -2173,7 +2587,11 @@ describe('workflow Session step executor', () => {
         else expect(await running).toMatchObject({ result: { state: 'succeeded' } });
         expect(store.list().find(row => row.blockId === 'review')).toMatchObject({ recordId: held?.recordId, lifecycle: 'completed' });
         expect(reservations).toHaveLength(1); expect(launches).toHaveLength(1); expect(births).toHaveLength(1);
+        if (policy === 'composed-replay-profile') expect(births[0]).toMatchObject({ ownerMetadata: {
+          v: { runtime: { approvalProfileId: 'builtin:full-trust' } },
+        } });
         expect(inputs).toHaveLength(1);
+        expect(invitationCards).toBe(1);
         expect(await coordinator.run(run)).toMatchObject({ state: 'succeeded' });
         expect(reservations).toHaveLength(1); expect(launches).toHaveLength(1); expect(births).toHaveLength(1);
         expect(inputs).toHaveLength(1);
@@ -2185,7 +2603,9 @@ describe('workflow Session step executor', () => {
     }
     const invoke = () => create({ selection: {}, launch, creationKey,
       origin: { kind: 'direct', actionPolicy: { surface, authority: policy === 'require' ? 'present_user' : 'account_automation',
-        actionsSettings: settings } },
+        actionsSettings: settings }, authenticatedStarterV1: {
+          requestRef: 'authenticated-start', requester: { serverId: 'srv_home', accountId: 'account-1' },
+        } },
       ...(retainedInvitationApproval ? { retainedInvitationApproval } : {}),
       onInvitationApproval: async execution => { retainedInvitationApproval = execution; },
       startupAuthorization: { principal: { kind: 'host' }, admittedPermissionCeiling: 'default' },

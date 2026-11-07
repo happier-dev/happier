@@ -1,18 +1,19 @@
 import type { CliActionDepsParams } from './types';
 import type { readCurrentRunnerAgentStartPolicyV1 } from '@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient';
-import { measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
+import { actionStartTargetUnavailableV1, measureActionStartPhaseV1 } from '@happier-dev/protocol/actions/executor/agentStartAdmission';
 import { AgentStartSessionCallerV1Schema } from '@happier-dev/protocol/account/settings/admitAgentStartV1';
 import type { ActionExecutorDeps, ActionExecutorContext } from '@happier-dev/protocol';
 import { type RoleSourceReader } from '@/session/roles/roleSources';
 import { readAccountIdFromToken } from '@/cloud/decodeJwtPayload';
 import type { resolveCliAgentStartContextV1 } from '../resolveCliAgentStartContextV1';
+import { readCliSessionEngineBaselineV1 } from '../resolveCliAgentStartContextV1';
 import { resolveCliActionCallerSession } from '../resolveCliActionCallerSession';
 import type { fetchSessionById } from '@/session/transport/http/sessionsHttp';
 import type { bootstrapAccountSettingsContext } from '@/settings/accountSettings/bootstrapAccountSettingsContext';
 import { readPreparedAccountRoleOverrides } from '@/session/roles/sessionRoleContext';
-import type { runWithRequesterSessionCurrentnessCheckpoint, runWithoutRequesterSessionCurrentnessCheckpoint } from '@/daemon/sessionEncryption/requesterCurrentness';
+
 export function createCliAgentStartContext(
-  params: Pick<CliActionDepsParams, 'actionsSettingsProvider' | 'credentials' | 'getAgentStartRunCaller' | 'getCurrentAppliedChildSelection' | 'getCurrentTurnWorkDepth' | 'getSessionRoleContext' | 'readAgentStartPolicy' | 'savedSecretOperationContext' | 'sessionId' | 'token'>,
+  params: Pick<CliActionDepsParams, 'actionsSettingsProvider' | 'credentials' | 'getAgentStartRunCaller' | 'getCurrentAppliedChildSelection' | 'getCurrentTurnWorkDepth' | 'getSessionRoleContext' | 'readAgentStartPolicy' | 'savedSecretOperationContext' | 'sessionId' | 'token' | 'workflowStepRoleDefaultEngine'>,
   { prepareAccountRoleOverrides, readReadyAccountRoleOverrides, readRoleSources, resolveActionCallerSession }: Readonly<{
     prepareAccountRoleOverrides: (signal?: AbortSignal) => Promise<void>;
     readReadyAccountRoleOverrides: (signal?: AbortSignal) => ReturnType<typeof readPreparedAccountRoleOverrides>;
@@ -39,10 +40,8 @@ export function createCliAgentStartContext(
         workDepthLimit: settings.workDepthLimit, allowLists: settings.sessionAgentStartAllowListsV1 };
     }
     const session = await measureActionStartPhaseV1(context, 'caller_session', () => resolveActionCallerSession(context));
-    const refuse = (reason: import('@happier-dev/protocol/workflows/workflowProgressV1').WorkflowTargetUnavailableReasonV1) => {
-      context.recordActionStartDiagnostic?.({ phase: 'agent_start_context', refusalReason: reason });
-      return null;
-    };
+    const refuse = (reason: import('@happier-dev/protocol/workflows/workflowProgressV1').WorkflowTargetUnavailableReasonV1) =>
+      actionStartTargetUnavailableV1(context, 'agent_start_context', reason);
     if (!session) return refuse('caller_session_unavailable');
     const runCaller = params.getAgentStartRunCaller?.();
     if (params.getAgentStartRunCaller && !runCaller) return refuse('caller_run_unavailable');
@@ -69,56 +68,71 @@ export function createCliAgentStartContext(
     // Scope admission consumes the same validated caller, not Agent launch
     // selections. Catalog hydration repeats requester authority round trips
     // without contributing any fact to the fresh Home subtree decision.
-    const scopeOnly = options?.purpose === 'session_scope';
-    const requiresBoundStartPolicy = !scopeOnly && (Boolean(params.readAgentStartPolicy)
+    const scopeOnly = options?.purpose === 'session_scope' || options?.purpose === 'workflow_run';
+    const readsWorkPolicy = options?.purpose !== 'session_scope';
+    const requiresBoundStartPolicy = readsWorkPolicy && (Boolean(params.readAgentStartPolicy)
       || (params.actionsSettingsProvider ? !params.actionsSettingsProvider.getAccountSettings : !params.credentials));
     const sessionRoleContext = !scopeOnly ? params.getSessionRoleContext?.() : undefined;
+    const workflowStepRoleDefaultEngine = !scopeOnly && session.sessionId === params.sessionId
+      && !params.getCurrentAppliedChildSelection && !sessionRoleContext ? params.workflowStepRoleDefaultEngine : undefined;
     const prepareStartReads = async () => {
+      let appliedChildSelection: import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection | undefined;
+      const readAppliedSelection = session.sessionId === params.sessionId
+        ? params.getCurrentAppliedChildSelection ?? sessionRoleContext?.readAppliedChildSelection : session.readAppliedChildSelection;
+      if (!scopeOnly && readAppliedSelection) {
+        try { appliedChildSelection = await readAppliedSelection(); }
+        catch { appliedChildSelection = { status: 'unavailable' }; }
+      }
+      // Workflow daemon birth has no live origin baseline. Only its explicit
+      // resolved child engine may supply unfrozen Role defaults; ordinary live
+      // inheritance still requires applied native authority.
+      if (!scopeOnly && (!session.backendTarget || (appliedChildSelection?.status !== 'applied'
+        && !workflowStepRoleDefaultEngine))) {
+        return { roleSources: undefined, settings: null, appliedChildSelection, availableAgents: undefined,
+          roles: undefined, effectiveSnapshotUnavailable: true };
+      }
       if (!scopeOnly) await measureActionStartPhaseV1(context, 'role_overrides', () => prepareAccountRoleOverrides(context.signal));
       // The live Session owns fresh Role resolution, including its installed
       // Agent sources. A runner's cold built-in inventory cannot re-admit it.
-      const roles = sessionRoleContext ? await measureActionStartPhaseV1(context, 'role_sources',
-        () => sessionRoleContext.resolveRoles(context.signal)) : undefined;
       const roleSources = scopeOnly || sessionRoleContext ? undefined
         : await measureActionStartPhaseV1(context, 'role_sources', () => readRoleSources(context.signal));
-      const settings = scopeOnly ? null : await measureActionStartPhaseV1(context, 'account_settings', async () =>
+      const settings = !readsWorkPolicy ? null : await measureActionStartPhaseV1(context, 'account_settings', async () =>
         {
-        const [{ readCurrentRunnerAgentStartPolicyV1 }, { runWithoutRequesterSessionCurrentnessCheckpoint }, { bootstrapAccountSettingsContext }] = await Promise.all([import("@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient"), import("@/daemon/sessionEncryption/requesterCurrentness"), import("@/settings/accountSettings/bootstrapAccountSettingsContext")]);
+        const [{ readCurrentRunnerAgentStartPolicyV1 }, { bootstrapAccountSettingsContext }] = await Promise.all([import("@/agent/runtime/session/process/agentRuntimeDaemonServiceAuthorityClient"), import("@/settings/accountSettings/bootstrapAccountSettingsContext")]);
         return requiresBoundStartPolicy ? await (params.readAgentStartPolicy
           ? params.readAgentStartPolicy(context.signal) : readCurrentRunnerAgentStartPolicyV1(session.sessionId, context.signal))
         : params.actionsSettingsProvider?.getAccountSettings?.()
-        ?? (params.credentials ? (await runWithoutRequesterSessionCurrentnessCheckpoint(() =>
-          bootstrapAccountSettingsContext({ credentials: params.credentials!, mode: 'blocking' }))).settings : null);
+        ?? (params.credentials ? (await bootstrapAccountSettingsContext({ credentials: params.credentials, mode: 'blocking' })).settings : null);
       });
-      let appliedChildSelection: import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection | undefined;
-      if (!scopeOnly && session.sessionId === params.sessionId && params.getCurrentAppliedChildSelection) {
-        const { runWithoutRequesterSessionCurrentnessCheckpoint } = await import("@/daemon/sessionEncryption/requesterCurrentness");
-        try { appliedChildSelection = await runWithoutRequesterSessionCurrentnessCheckpoint(async () => params.getCurrentAppliedChildSelection!()); }
-        catch { appliedChildSelection = { status: 'unavailable' }; }
-      }
-      const availableAgents = scopeOnly || sessionRoleContext ? undefined : await measureActionStartPhaseV1(context, 'agent_inventory',
+      const availableAgents = scopeOnly ? undefined : await measureActionStartPhaseV1(context, 'agent_inventory',
         () => readEffectiveDeps().agentsBackendsList({ includeDisabled: false }));
+      // Prompt reads stay selected-only. Complete child snapshots additionally
+      // require the native owner's applied baseline and real enabled inventory.
+      const roles = sessionRoleContext && session.backendTarget ? await measureActionStartPhaseV1(context, 'role_sources', () =>
+        sessionRoleContext.resolveRoles({
+          defaultEngine: readCliSessionEngineBaselineV1({ backendTarget: session.backendTarget!, appliedChildSelection }).defaultEngine,
+          availableAgentTargetKeys: availableAgents!.items.filter(item => item.enabled).map(item => item.targetKey),
+        }, context.signal)) : undefined;
       return { roles, roleSources, settings, appliedChildSelection, availableAgents };
     };
-    // Built-in Role/Artifact, captured Settings and ACP reads join one bounded
-    // observation. Their owners exclude migrations, source/history maintenance
-    // and private publication; injected preparation above also leaves the scope.
-    const [{ runWithRequesterSessionCurrentnessCheckpoint }, { resolveCliAgentStartContextV1 }] = await Promise.all([import("@/daemon/sessionEncryption/requesterCurrentness"), import("../resolveCliAgentStartContextV1")]);
-    const { roles, roleSources, settings, appliedChildSelection, availableAgents } = await (params.savedSecretOperationContext && !scopeOnly
-      ? runWithRequesterSessionCurrentnessCheckpoint(prepareStartReads, { readOnly: true }) : prepareStartReads());
+    const { resolveCliAgentStartContextV1 } = await import("../resolveCliAgentStartContextV1");
+    const prepared = await prepareStartReads();
+    const { roles, roleSources, settings, appliedChildSelection, availableAgents } = prepared;
     context.signal?.throwIfAborted();
+    if ('effectiveSnapshotUnavailable' in prepared) return refuse('caller_agent_unavailable');
     if (!scopeOnly && params.savedSecretOperationContext && !await params.savedSecretOperationContext.isCurrent()) {
       return refuse('caller_session_unavailable');
     }
     context.signal?.throwIfAborted();
     if (requiresBoundStartPolicy && !settings) return refuse('requester_projection_unavailable');
-    return resolveCliAgentStartContextV1({
+    const resolved = resolveCliAgentStartContextV1({
       recordActionStartDiagnostic: context.recordActionStartDiagnostic,
       sessionId: session.sessionId,
       machineId: session.machineId, directory: session.directory,
       backendTarget: session.backendTarget ?? null,
       metadata: session.metadata, starterDepth: typeof starterDepth === 'number' ? starterDepth : undefined, runCaller,
       appliedChildSelection,
+      workflowStepRoleDefaultEngine,
       turnDepth,
       callerPermissionMode: context.callerPermissionMode ?? null, settings,
       accountRoleOverrides: scopeOnly ? undefined : await readReadyAccountRoleOverrides(context.signal),
@@ -127,6 +141,11 @@ export function createCliAgentStartContext(
         .filter((item) => item.enabled).map((item) => item.targetKey),
       roleSourceInventory: roleSources,
     });
+    // A scope witness proves identity/depth/reachability, not native execution
+    // configuration. Never let its metadata-only observation stand in for an
+    // admitted effective baseline in a later Role copy.
+    return scopeOnly && resolved && !('ok' in resolved) ? { ...resolved,
+      baseline: { machineId: resolved.baseline.machineId, directory: resolved.baseline.directory } } : resolved;
   };
   return resolveAgentStartContext;
 }

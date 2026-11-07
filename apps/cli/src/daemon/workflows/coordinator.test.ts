@@ -421,7 +421,7 @@ describe('workflow coordinator', () => {
       expect(text).toContain('<happier_discussion_context>');
       const entry = JSON.parse(text.split('\n').find(line => line.startsWith('{"author":'))!);
       expect(entry.author.kind).toBe('person');
-      expect(JSON.parse(entry.text).value).toEqual(external);
+      expect(JSON.parse(entry.text)).toEqual(external);
     }
   });
   it.each(['session', 'detached_run'] as const)('persists the %s deadline only at acceptance and preserves it on rejoin', async (target) => {
@@ -718,6 +718,52 @@ describe('workflow coordinator', () => {
     expect(itemOwners.every((row) => row.sharedConversationInvocationRecordId?.detached_run
       && store.readByLogicalInvocation(row.sharedConversationInvocationRecordId.detached_run)?.execution?.kind === 'detached_run')).toBe(true);
     expect([...store.records.values()].find((row) => row.blockId === '$root')).toBeUndefined();
+  });
+
+  it.each([
+    ['same_conversation', false], ['fresh_agent', false], ['same_conversation', true], ['fresh_agent', true],
+  ] as const)('keeps frozen PR framing for %s recovery and honors replacement=%s', async (conversation, replacement) => {
+    const store = createInMemoryWorkflowCoordinatorStore();
+    const runId = `frozen-pr-${conversation}-${replacement}`;
+    const rootKey = workflowInvocationKey({ runId, blockId: '$root', scope: [], attempt: 0 });
+    const oldKey = workflowInvocationKey({ runId, blockId: 'work', scope: [], attempt: 0 });
+    const newKey = workflowInvocationKey({ runId, blockId: 'work', scope: [], attempt: 1 });
+    const frozenText = 'Original role\n\n<happier_forge_evidence v="1">Original external comment</happier_forge_evidence>\n\nOriginal result contract';
+    const authored = { ...step('work'), input: [{ kind: 'input' as const, name: 'prUpdate' }] };
+    await store.ensureIntent({ blockKind: 'root', key: rootKey, recordId: 'root-exact', runId, blockId: '$root',
+      memberOrdinal: '0', path: { blockId: '$root', scope: [] }, attempt: 0, acceptedAtMs: 1, lifecycle: 'running',
+      workspace: { descriptor: workspace }, sharedConversationInvocationRecordId: { detached_run: 'previous-exact' } });
+    await store.ensureIntent({ blockKind: 'step', key: oldKey, recordId: 'previous-exact', runId, blockId: 'work',
+      memberOrdinal: '0', path: { blockId: 'work', scope: [] }, attempt: 0, acceptedAtMs: 1, lifecycle: 'superseded',
+      execution: detachedRun('old-native', 'old-input'),
+      input: { document: authored.document, input: [{ body: 'Original external comment' }], renderedText: frozenText } });
+    await store.ensureIntent({ blockKind: 'step', key: newKey, recordId: 'replacement-exact', runId, blockId: 'work',
+      memberOrdinal: '0', path: { blockId: 'work', scope: [] }, attempt: 1, acceptedAtMs: 2, lifecycle: 'pending',
+      previousAttemptRecordId: 'previous-exact', recovery: { conversation, input: replacement
+        ? { kind: 'replacement', value: { document: { ...authored.document, text: 'Replacement authored work' }, input: ['Replacement value'] } }
+        : { kind: 'original' } } });
+    const coordinator = createWorkflowCoordinator({ store, rootInvocationRecordId: 'root-exact', resolveWorkspace,
+      executeStep: async params => {
+        if (replacement) {
+          expect(params.input.text).toContain('Replacement authored work');
+          expect(params.input.text).toContain('Replacement value');
+          expect(params.input.text).not.toContain(frozenText);
+          expect(params.input.renderedText).toBeUndefined();
+        } else {
+          expect(params.input.text).toBe(frozenText);
+          expect(params.input.renderedText).toBe(frozenText);
+        }
+        expect(params.input.text).not.toContain('Later provider content');
+        const rendered = params.input.renderedText ?? params.input.text;
+        await params.beforeInputAdmission(rendered);
+        expect(store.read(newKey)?.input?.renderedText).toBe(rendered);
+        await params.onInputAccepted(detachedRun('new-native', 'new-input', params.execution));
+        return { kind: 'completed', result: 'done' };
+      },
+    });
+    await expect(coordinator.run({ runId, definition: { ...definition([authored]),
+      inputs: [{ name: 'prUpdate', valueType: 'json', required: true }] }, inputs: { prUpdate: { body: 'Later provider content' } },
+      executionTarget: { kind: 'detached_run' }, authorization })).resolves.toMatchObject({ state: 'succeeded' });
   });
 
   it('repairs a fresh-recovered completed leaf pointer before admitting its shared tail', async () => {
@@ -3000,7 +3046,6 @@ describe('workflow coordinator', () => {
     const baseStore = createInMemoryWorkflowCoordinatorStore();
     const executeStep = vi.fn(async ({ step: current }) => ({ kind: 'completed' as const, result: current.id }));
     let admissions = 0;
-    let controls = 0;
     const baseEnsureIntent = baseStore.ensureIntent.bind(baseStore);
     const store = {
       ...baseStore,

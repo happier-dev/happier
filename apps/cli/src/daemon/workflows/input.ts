@@ -2,8 +2,9 @@ import { MAX_AUTOMATION_MATERIALIZED_INPUT_UTF8_BYTES } from '@happier-dev/proto
 import { sameStrictJsonValue, StrictJsonValueSchema } from '@happier-dev/protocol/json/strictJsonValue';
 import { readWorkflowValuePathV1 } from '@happier-dev/protocol/workflows/workflowReferenceV1';
 import { WorkflowSessionContextV1Schema } from '@happier-dev/protocol/workflows/workflowSessionContextV1';
-import type { WorkflowSessionContextV1, WorkflowAuthoredProducerRef, WorkflowCondition, WorkflowDefinitionV1, WorkflowStepComposerDocument, WorkflowValueReference } from '@happier-dev/protocol/workflows';
+import type { WorkflowSessionContextV1, WorkflowAuthoredInputV1, WorkflowAuthoredProducerRef, WorkflowCondition, WorkflowDefinitionV1, WorkflowStepComposerDocument, WorkflowValueReference } from '@happier-dev/protocol/workflows';
 import type { AutomationRunCause } from '@happier-dev/protocol/automations/run-cause';
+import { AutomationConversationOccurrenceEvidenceV1Schema } from '@happier-dev/protocol/automations/automationOccurrenceV1';
 import { MENTION_KIND_V1, readMentionRefOpaqueForKindV1 } from '@happier-dev/protocol/runtime/input/mentionRefV1';
 import type { DiscussionPromptAuthorV1 } from '@happier-dev/protocol/sessions/messages/sessionInputPromptContextV1';
 import { compactWorkflowPromptContext, projectWorkflowPromptContext, renderWorkflowPromptContext } from './workflowPromptContext';
@@ -54,19 +55,27 @@ export function resolveAutomationWorkflowOccurrenceSeed(params: Readonly<{
   }
   if (params.cause.kind === 'trigger' && params.cause.triggerKind === 'schedule') {
     if (params.openedEvidence !== null) throw new WorkflowInputResolutionError('invalid_input');
-    return { scheduledFor: params.cause.evidence.scheduledFor, triggerId: params.cause.triggerId, ...fingerprintEvidence };
+    return { scheduledFor: params.cause.evidence.scheduledFor, triggerId: params.cause.triggerId,
+      ...fingerprintEvidence, occurrenceKey: params.cause.occurrenceKey };
   }
   if (params.cause.kind === 'trigger'
     && (params.cause.triggerKind === 'sessionLifecycle' || params.cause.triggerKind === 'runLifecycle')) {
     if (params.openedEvidence !== null) throw new WorkflowInputResolutionError('invalid_input');
-    return { ...params.cause.evidence, triggerId: params.cause.triggerId, ...fingerprintEvidence };
+    return { ...params.cause.evidence, triggerId: params.cause.triggerId, ...fingerprintEvidence, occurrenceKey: params.cause.occurrenceKey };
   }
   if (!isWorkflowJsonObject(params.openedEvidence)) {
     throw new WorkflowInputResolutionError('invalid_input');
   }
+  let evidence = params.openedEvidence;
+  if (params.cause.kind === 'conversation' && evidence.kind === 'conversation') {
+    const occurrence = AutomationConversationOccurrenceEvidenceV1Schema.safeParse(evidence);
+    if (!occurrence.success || !isWorkflowJsonObject(occurrence.data.input)) throw new WorkflowInputResolutionError('invalid_input');
+    evidence = occurrence.data.input;
+  }
+  if (!isWorkflowJsonObject(evidence)) throw new WorkflowInputResolutionError('invalid_input');
   return params.cause.kind === 'trigger' || params.cause.triggerId !== undefined
-    ? { ...params.openedEvidence, triggerId: params.cause.triggerId!, ...fingerprintEvidence }
-    : { ...params.openedEvidence, ...fingerprintEvidence };
+    ? { ...evidence, triggerId: params.cause.triggerId!, ...fingerprintEvidence, occurrenceKey: params.cause.occurrenceKey }
+    : { ...evidence, ...fingerprintEvidence, occurrenceKey: params.cause.occurrenceKey };
 }
 
 function matchesDeclaredInputType(value: WorkflowJsonValue, valueType: WorkflowDefinitionV1['inputs'][number]['valueType']): boolean {
@@ -333,6 +342,8 @@ export async function evaluateWorkflowStopCondition(
 
 export type MaterializedWorkflowStepInput = Readonly<{
   text: string;
+  /** Full leaf-rendered prompt frozen at its original admission. */
+  renderedText?: string;
   displayText?: string;
   references: WorkflowStepComposerDocument['references'];
   attachments: WorkflowStepComposerDocument['attachments'];
@@ -343,11 +354,22 @@ export type MaterializedWorkflowStepInput = Readonly<{
 export async function materializeWorkflowStepInput(params: Readonly<{
   document: WorkflowStepComposerDocument;
   references: readonly WorkflowValueReference[];
+  retainedInput?: WorkflowAuthoredInputV1;
   runtime: WorkflowValueResolutionRuntime;
   reviewContext?: Readonly<{ runId: string; invocationRecordId: string; contentRevision: string }>;
   /** Immutable Automation origin, carried only for prompt presentation. */
   automationCause?: AutomationRunCause;
 }>): Promise<MaterializedWorkflowStepInput> {
+  const retained = params.retainedInput;
+  if (retained?.renderedText !== undefined) {
+    return {
+      text: retained.renderedText, renderedText: retained.renderedText,
+      ...(retained.document.displayText === undefined ? {} : { displayText: retained.document.displayText }),
+      references: retained.document.references.filter(mention => mention.kind !== MENTION_KIND_V1.workflowInput),
+      attachments: retained.document.attachments,
+      values: retained.input,
+    };
+  }
   const values: WorkflowJsonValue[] = [];
   const tokens = new Map<number, string>();
   for (const mention of params.document.references) {

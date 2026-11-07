@@ -1,4 +1,5 @@
 import { posix as pathPosix } from 'node:path';
+import type { SessionAuthoringTerminalV1 } from '@happier-dev/protocol/sessions/authoring/creationFieldsV1';
 
 export type TerminalMode = 'plain' | 'tmux' | 'zellij' | 'herdr' | 'windows_terminal' | 'windows_console';
 
@@ -27,6 +28,15 @@ export type TerminalSpawnOptions = {
   tmux?: TerminalTmuxSpawnOptions;
   herdr?: { sessionName?: string };
 };
+
+/** Integrated authoring uses the app's terminal, so no native host may be inherited. */
+export function projectSessionAuthoringTerminalForSpawn(
+  terminal: SessionAuthoringTerminalV1 | null | undefined,
+): TerminalSpawnOptions | undefined {
+  if (!terminal) return undefined;
+  const { mode, windows: _windows, ...options } = terminal;
+  return { ...options, ...(mode ? { mode: mode === 'integrated' ? 'plain' : mode } : {}) };
+}
 
 export type ResolvedTerminalRequest =
   | { requested: 'plain' }

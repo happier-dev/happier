@@ -1,4 +1,3 @@
-import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { RpcLocalActionContext } from '@/api/rpc/types';
 import type { ActionExecutorContext } from '@happier-dev/protocol';
 import type { UsageLimitContinuationResult } from '@/daemon/connectedServices/continuation/continueSessionAfterUsageLimitReset';
@@ -10,12 +9,13 @@ import type { RpcHandlerContext } from '@/api/rpc/types';
 import type { RpcHandlerManager } from '@/api/rpc/RpcHandlerManager';
 import type { FilesystemAccessPolicy } from '@/rpc/handlers/fileSystem/accessPolicy/filesystemAccessPolicy';
 import type { SessionActionRpcOriginV1 } from '@happier-dev/protocol/socketRpc';
-import type { ResolvedRolesSnapshotV1, PluginRoleContributionV1, SessionUsageLimitRecoveryV1, ActionExecutorDeps, BackendTargetRefV2, SessionCreationTargetPreparationRequestV1, SessionCreationTargetPreparationResultV1 } from '@happier-dev/protocol';
+import type { ResolvedRolesSnapshotV1, RoleEngineV1, PluginRoleContributionV1, SessionUsageLimitRecoveryV1, ActionExecutorDeps, PersistedBackendTargetRefV2, SessionCreationTargetPreparationRequestV1, SessionCreationTargetPreparationResultV1 } from '@happier-dev/protocol';
 import type { SessionSkillReadItemV1 } from '@happier-dev/protocol/prompts/library/skills/skillReadV1';
 import type { AdmittedRequesterSessionBootstrap } from '@/daemon/sessionEncryption/requesterSessionCredentials';
 import type { RoleWorkspaceWritesPolicyPreparer } from '../roleActions';
 import type { RoleSourceReader } from '@/session/roles/roleSources';
 import type { StoredCredentials } from '@/persistence';
+import type { ConnectedServiceAccountEncryptionMode } from '@/api/client/connectedServiceCredentialApi';
 import type { CredentialedConnectedAccountAuthenticationHost } from '@/plugins/runtime/connectedAccounts/authenticationHost';
 import type { DirectSpawnedSessionTransport } from '@/session/services/createSpawnedSession';
 import type { ResolveSpawnConnectedServicesTeamResourceCatalog } from '@/session/services/spawnConnectedServicesDefaults';
@@ -38,6 +38,8 @@ import type { SessionRoleContext } from '@/session/roles/sessionRoleContext';
 import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient';
 export type ResumeInactiveSessionWhenUsageLimitReady = (input: Readonly<{
   sessionId: string;
+  /** Additional canonical owner (API token) of private exact-operation consent. */
+  readApprovedOperation?: ActionExecutorDeps['readApprovedOperation'];
   rawSession: RawSessionRecord;
   metadata: Record<string, unknown>;
   readiness?: 'provider_ready';
@@ -100,7 +102,8 @@ export type SessionActionRpcTransport = (request: Readonly<{
 
 export type MachineServiceActionDirectTargetInvocation = Parameters<NonNullable<ActionExecutorDeps['machineServiceAction']>>[0] & Readonly<{
   /** Captured requester read fact; never a serialized Action operand. */
-  canReadEnvironment(environmentId: string): Promise<boolean>;
+  canReadEnvironments(environmentIds: readonly string[]): Promise<ReadonlySet<string>>;
+  observeEnvironmentAccessChanges: (listener: Parameters<import('@/deployments/createCliDeploymentActionDeps').CliDeploymentEnvironmentAccessObserve>[2]) => ReturnType<import('@/deployments/createCliDeploymentActionDeps').CliDeploymentEnvironmentAccessObserve>;
   requesterAccountId: string | null;
 }>;
 
@@ -113,6 +116,7 @@ export type MachineActionDirectTargetTransport = Readonly<{
   machineSetupUpdatesApply?: NonNullable<ActionExecutorDeps['machineSetupUpdatesApply']>;
   /** Only the installed registered owner consumes an already Home-admitted Project root. */
   openProject?: NonNullable<ActionExecutorDeps['projectsOpen']>;
+  workspaceSyncPreflightTarget?: NonNullable<import('@/api/machine/rpcHandlers.workspaceSync').MachineWorkspaceSyncRpcService['preflightRelationshipTarget']>;
   /** Exact installed service owner; never re-enter its receiving Machine RPC dispatcher. */
   machineServiceAction?: (request: MachineServiceActionDirectTargetInvocation) => ReturnType<NonNullable<ActionExecutorDeps['machineServiceAction']>>;
   /** Same receiving daemon lifecycle owner; never recursively invoke Machine RPC. */
@@ -168,9 +172,9 @@ export type CliActionDepsParams = Readonly<{
   consumeArtifactSignedInLinkSecret?: (lookupId: string) => Promise<string | null>;
   onArtifactSignedInLinkOpened?: (opened: import('@happier-dev/protocol/actions/executor/artifactPublicLinkActions').ArtifactSignedInLinkOpenedV1) => void | Promise<void>;
   credentials?: StoredCredentials;
-  connectedAccountAuthenticationHost?: CredentialedConnectedAccountAuthenticationHost;
   /** Immutable Account mode from finite requester admission, including unavailable. */
   admittedAccountEncryptionMode?: ConnectedServiceAccountEncryptionMode;
+  connectedAccountAuthenticationHost?: CredentialedConnectedAccountAuthenticationHost;
   /** Daemon startup already owns this service; do not loop through its not-yet-open control transport. */
   pluginChangeService?: DaemonPluginChangeService;
   /** Canonical private-secret Action adapter supplied by the captured Account host. */
@@ -190,15 +194,16 @@ export type CliActionDepsParams = Readonly<{
   /** Memory-only prompted Provider credential, promoted only by the admitted connection owner. */
   providerPreparedSavedSecret?: Parameters<typeof createCliProviderActionExecuteV1>[0]['preparedSavedSecret'];
   projectModelsForAccount?: Parameters<typeof createCliProviderActionExecuteV1>[0]['projectModelsForAccount'];
+  readProviderForAccount?: Parameters<typeof createCliProviderActionExecuteV1>[0]['readProviderForAccount'];
   /** Installed exact-target Project producer; absent hosts retain Trust-only behavior. */
   projectAction?: ActionExecutorDeps['projectAction'];
   /** Receiving daemon's storage carrier and admitted target executor. */
   deploymentAction?: ActionExecutorDeps['deploymentAction'];
   resolveEnvironmentApprovalScope?: ActionExecutorDeps['resolveEnvironmentApprovalScope'];
   prepareDeploymentAction?: ActionExecutorDeps['prepareDeploymentAction'];
+  prepareDeploymentTeardown?: ActionExecutorDeps['prepareDeploymentTeardown'];
+  prepareDeploymentEnvironmentCreate?: ActionExecutorDeps['prepareDeploymentEnvironmentCreate'];
   prepareHostReviewedChildren?: ActionExecutorDeps['prepareHostReviewedChildren'];
-  prepareDeploymentPublish?: ActionExecutorDeps['prepareDeploymentPublish'];
-  deploymentPublish?: ActionExecutorDeps['deploymentPublish'];
   deploymentPrepare?: ActionExecutorDeps['deploymentPrepare'];
   deploymentTemplateInstantiate?: ActionExecutorDeps['deploymentTemplateInstantiate'];
   prepareDeploymentTemplateInstantiation?: ActionExecutorDeps['prepareDeploymentTemplateInstantiation'];
@@ -231,11 +236,13 @@ export type CliActionDepsParams = Readonly<{
     machineId?: unknown;
     workDepth?: unknown;
   }> | null;
-  getCurrentSessionBackendTarget?: (() => BackendTargetRefV2 | null | undefined) | null;
+  getCurrentSessionBackendTarget?: (() => PersistedBackendTargetRefV2 | null | undefined) | null;
   getCurrentSessionMetadata?: () => Readonly<Record<string, unknown>> | null;
   /** Current delivered plan of this runner; absent on a remote Account client. */
   getCurrentSessionSkillItems?: () => readonly SessionSkillReadItemV1[] | null;
   getCurrentAppliedChildSelection?: () => Promise<import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection> | import('@/agent/runtime/bridges/executionRun/runtime/openInputs').ExecutionRunAppliedParentSelection;
+  /** Host-only Workflow birth default; does not establish a live origin baseline. */
+  workflowStepRoleDefaultEngine?: RoleEngineV1;
   getCurrentSessionWorkDepth?: () => number | undefined;
   getAgentStartRunCaller?: () => import('../resolveCliAgentStartContextV1').AgentStartRunCallerBinding | null;
   getCurrentTurnWorkDepth?: (expectedTurnId?: string) => number | undefined;
@@ -251,6 +258,7 @@ export type CliActionDepsParams = Readonly<{
   prepareWorkspaceWritesPolicy?: RoleWorkspaceWritesPolicyPreparer;
   happyHomeDir?: string;
   resolveAutomationEventAdoptedDefinitionSet?: ResolveAutomationEventAdoptedDefinitionSetV1;
+  acquireAutomationEventObservationRegistry?: import('@/deployments/platformFailureNotices').PlatformFailureNoticeHost['acquirePluginRuntimeRegistryLease'];
   revalidatePluginActionCallerMaterialization?: RevalidatePluginActionCallerMaterialization;
   revalidatePluginActionCallerOccurrence?: RevalidatePluginActionCallerOccurrence;
   isUsageLimitRecoveryEnabled?: (() => Promise<boolean> | boolean) | null;
