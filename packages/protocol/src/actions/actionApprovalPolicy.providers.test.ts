@@ -26,7 +26,7 @@ describe('Provider Settings present-user approval policy', () => {
       } }).required, actionId).toBe(false);
     }
   }, 60_000);
-  it.each(['providers.connections.enable_detected', 'teams.credentials.delete'] as const)(
+  it.each(['providers.connections.enable_detected', 'providers.connections.endpoint.set', 'teams.credentials.delete'] as const)(
     'retains the designed local confirmation for %s until that exact confirmation completes', async actionId => {
       const { getActionSpec } = await import('./actionSpecs.js');
       const { resolveActionApprovalRouting } = await import('./actionApprovalPolicy.js');

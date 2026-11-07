@@ -21,7 +21,6 @@ type ProviderConnectionMutationScope = {
     resolveTarget: () => ProviderConnectionExecutionTarget | null;
     machineRevision: number;
     refresh: (scope?: ProviderConnectionRefreshScope) => Promise<void>;
-    mutate: ReturnType<typeof useProviderActionClient>['mutateProviderConnection'];
     readonly serverId: string | null;
     readonly accountLifetime: ActiveServerAccountScopeLifetime | null;
     readonly revision: number;
@@ -62,7 +61,6 @@ export function useProviderConnectionMutation(input: Readonly<{
     const activeScope = React.useRef<ProviderConnectionMutationScope>({
         resolveTarget: input.resolveTarget,
         refresh: input.refresh,
-        mutate: mutateProviderConnection,
         serverId: capturedServerId,
         accountLifetime,
         revision: 0,
@@ -83,7 +81,6 @@ export function useProviderConnectionMutation(input: Readonly<{
         activeScope.current = {
             resolveTarget: input.resolveTarget,
             refresh: input.refresh,
-            mutate: mutateProviderConnection,
             serverId: capturedServerId,
             accountLifetime,
             revision: activeScope.current.revision + 1,
@@ -97,7 +94,6 @@ export function useProviderConnectionMutation(input: Readonly<{
         // Callback refreshes do not retire an admitted Account operation. Keep
         // current presentation callbacks without dropping its approval result.
         activeScope.current.refresh = input.refresh;
-        activeScope.current.mutate = mutateProviderConnection;
     }
     // Account writes keep their Home/Account scope as machines change. Machine
     // writes must still be decided by this render's resolver: the target owner rebuilds the resolver
@@ -211,7 +207,9 @@ export function useProviderConnectionMutation(input: Readonly<{
                 }
                 let result: Awaited<ReturnType<typeof mutateProviderConnection>>;
                 try {
-                    result = await scope.mutate({ serverId: target?.serverId ?? scope.serverId, request: parsedRequest },
+                    // Keep the credential-bound client that authored this callback.
+                    // A peer Account replacement must not lend its new client to an old draft.
+                    result = await mutateProviderConnection({ serverId: target?.serverId ?? scope.serverId, request: parsedRequest },
                         { ...options, ...(operation.controller ? { signal: operation.controller.signal } : {}) });
                 } catch (caught) {
                     if (!isCurrentScope()) return null;
@@ -269,7 +267,7 @@ export function useProviderConnectionMutation(input: Readonly<{
             }
         })();
         return operation.promise;
-    }, [boundScope, boundMachineRevision, boundResolveTarget, updatePending]);
+    }, [boundScope, boundMachineRevision, boundResolveTarget, mutateProviderConnection, updatePending]);
     const isPending = React.useCallback((key: string): boolean => (
         pending.scope === activeScope.current && ((pending.countByKey.get(key) ?? 0) > 0
             || (pending.countByKey.get(stableJsonStringify([activeScope.current.machineRevision, key])) ?? 0) > 0)

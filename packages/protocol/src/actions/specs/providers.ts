@@ -206,7 +206,7 @@ function createProviderActionSpecsV1() {
   providerSpec('providers.connections.update', 'Update Provider connection',
     'Change a Provider connection, including gateway subscription slots, placement and helper models.', { danger: true }),
   providerSpec('providers.connections.endpoint.set', 'Set Provider address and request policy',
-    'Change or independently reset the Provider address and nonsecret request policy at the selected layer.', { danger: true }),
+    'Change or independently reset the Provider address and nonsecret request policy at the selected layer.', { danger: true, confirm: true }),
   providerSpec('providers.connections.duplicate', 'Duplicate Provider connection',
     'Make a copy of a Provider connection to adjust.', { danger: true }),
   providerSpec('providers.connections.delete', 'Delete Provider connection',

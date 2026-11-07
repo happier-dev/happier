@@ -3,9 +3,9 @@ import * as React from 'react';
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createProviderErrorV1 } from '@happier-dev/protocol/providers/errors';
 import { DaemonProviderConnectionMutationResponseV1Schema, RPC_METHODS } from '@happier-dev/protocol/rpc';
-import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, ProviderConnectionsCatalogV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
-import { PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1 } from '@happier-dev/protocol/providers/providerActionsV1';
-import { createProviderConnectionsDescribeFixture, createProviderConnectionViewFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
+import { DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1, PROVIDER_CONNECTIONS_ROWS_ROUTE_V1, ProviderConnectionsCatalogV1Schema, ProviderConnectionsRowMutationV1Schema } from '@happier-dev/protocol/providers/connections/connectionRowsV1';
+import { PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1, parseProviderActionRequestV1 } from '@happier-dev/protocol/providers/providerActionsV1';
+import { createProviderConnectionsDescribeFixture, createProviderConnectionViewFixture, createProviderSettingsAccountHarness, createProviderSettingsHarness, installProviderConnectionsCatalogHttpBoundary, installProviderSettingsRpcBoundary } from '@/dev/testkit/harness/providerSettingsHarness';
 import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLoader';
 import { waitForHomeGovernance } from '@/dev/testkit/harness/homeGovernanceHarness';
 import { renderHook } from '@/dev/testkit/hooks/renderHook';
@@ -237,6 +237,34 @@ describe('useProviderConnectionMutation', () => {
             expect(current).toBe(first);
         } finally { await act(async () => { gate.resolve(); await Promise.all([first, current]); }); }
         expect(refresh).not.toHaveBeenCalled();
+    });
+
+    it('refuses a captured peer Account write after credential replacement while admitting the replacement Account', async () => {
+        const peerCatalog = installProviderConnectionsCatalogHttpBoundary({ home: account.home,
+            serverId: otherServerId, catalog: DEFAULT_PROVIDER_CONNECTIONS_CATALOG_V1 });
+        const hook = await renderHook(() => ({
+            ...useProviderConnectionMutation({ resolveTarget: () => null, serverId: otherServerId, refresh: async () => {} }),
+            client: useProviderActionClient(otherServerId),
+        }));
+        await waitForHomeGovernance(() => expect(hook.getCurrent().client).toMatchObject({ ready: true,
+            accountScope: { resolution: { kind: 'bound', scope: { accountId: 'account-b' } } },
+        }));
+        const captured = hook.getCurrent().run;
+        await act(async () => { await account.home.switchAccount(otherServerId, 'replacement-account'); });
+        await waitForHomeGovernance(() => expect(hook.getCurrent().client).toMatchObject({ ready: true,
+            accountScope: { resolution: { kind: 'bound', scope: { accountId: 'replacement-account' } } },
+        }));
+        const writes = () => account.home.requestsFor(PROVIDER_CONNECTIONS_ROWS_ROUTE_V1)
+            .filter(request => ProviderConnectionsRowMutationV1Schema.safeParse(request.input).success);
+        const request = { action: 'createCustom' as const, connectionId: 'pc_peer', template: customTemplate(), savedSecretId: null, enable: true };
+        expect(parseProviderActionRequestV1(PROVIDER_CONNECTION_ACTION_ID_BY_OPERATION_V1.createCustom, request).input).toMatchObject(request);
+        await act(async () => { expect(await captured(request)).toBeNull(); });
+        expect(writes()).toHaveLength(0);
+        expect(providerHarness.state.requests).toEqual([]);
+        await act(async () => { expect(await hook.getCurrent().run(request)).toMatchObject({ status: 'success' }); });
+        expect(writes()).toHaveLength(1);
+        expect(peerCatalog.writes).toBe(1);
+        expect(peerCatalog.catalog.connections).toEqual([expect.objectContaining({ id: 'pc_peer' })]);
     });
 
     it('refuses a modal-delayed Machine enable after selection moves to another machine', async () => {
