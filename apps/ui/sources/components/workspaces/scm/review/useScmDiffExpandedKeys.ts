@@ -19,6 +19,7 @@ function buildExpandedWindow(input: Readonly<{
     viewableIndices: readonly number[];
     aheadCount: number;
     behindCount: number;
+    revealedIndex: number | null;
 }>): Set<string> | null {
     const validIndices = input.viewableIndices.filter((index) => (
         typeof index === 'number'
@@ -30,10 +31,17 @@ function buildExpandedWindow(input: Readonly<{
 
     const aheadCount = normalizeWindowCount(input.aheadCount);
     const behindCount = normalizeWindowCount(input.behindCount);
-    const start = Math.max(0, Math.min(...validIndices) - behindCount);
+    // A revealed file shown below other files is where the person reads. Growing the files above it would
+    // push it away, so the window starts at it.
+    const start = input.revealedIndex ?? Math.max(0, Math.min(...validIndices) - behindCount);
     const end = Math.min(input.allKeys.length - 1, Math.max(...validIndices) + aheadCount);
     return new Set(input.allKeys.slice(start, end + 1));
 }
+
+/** One reveal of a file; a new object is a new reveal. */
+export type ScmDiffReveal = Readonly<{ key: string; index: number }>;
+
+type RevealPhase = 'pending' | 'below' | 'done';
 
 export type ScmDiffExpandedKeysState = Readonly<{
     collapsedKeys: ReadonlySet<string>;
@@ -51,6 +59,8 @@ export function useScmDiffExpandedKeys(input: Readonly<{
     initialCollapsedKeys?: readonly string[] | null;
     onCollapsedKeysChange?: (keys: string[]) => void;
     viewableExpansionEnabled?: boolean;
+    /** The file the person last revealed. It anchors the large-review window while other files show above it. */
+    reveal?: ScmDiffReveal | null;
 }>): ScmDiffExpandedKeysState {
     const initialCollapsedKeysSignature = React.useMemo(() => {
         const raw = Array.isArray(input.initialCollapsedKeys)
@@ -138,14 +148,34 @@ export function useScmDiffExpandedKeys(input: Readonly<{
         ));
     }, [initialCollapsedKeysSignature, input.resetKey, input.tooLarge]);
 
+    // A reveal anchors the window only while the list shows other files above it (the list could not bring
+    // it to the top). It ends once it is the first file on screen or gone; then the ordinary window resumes.
+    const revealPhaseRef = React.useRef<Readonly<{ reveal: ScmDiffReveal; phase: RevealPhase }> | null>(null);
     React.useEffect(() => {
         if (!input.tooLarge) return;
         if (input.viewableExpansionEnabled === false) return;
-        const nextKeys = buildExpandedWindow(input) ?? initialAutoExpandedKeySet;
+        const reveal = input.reveal ?? null;
+        let revealedIndex: number | null = null;
+        if (reveal) {
+            const record = revealPhaseRef.current?.reveal === reveal ? revealPhaseRef.current : { reveal, phase: 'pending' as RevealPhase };
+            let phase = record.phase;
+            if (phase !== 'done') {
+                const index = input.allKeys[reveal.index] === reveal.key ? reveal.index : input.allKeys.indexOf(reveal.key);
+                const onScreen = index >= 0 && input.viewableIndices.includes(index);
+                if (onScreen && input.viewableIndices.some((viewable) => viewable >= 0 && viewable < index)) {
+                    phase = 'below';
+                    revealedIndex = index;
+                } else if (onScreen || phase === 'below' || index < 0) {
+                    phase = 'done';
+                }
+            }
+            revealPhaseRef.current = { reveal, phase };
+        }
+        const nextKeys = buildExpandedWindow({ ...input, revealedIndex }) ?? initialAutoExpandedKeySet;
         setAutoExpandedKeys((prev) => {
             return areStringSetsEqual(prev, nextKeys) ? prev : nextKeys;
         });
-    }, [initialAutoExpandedKeySet, input.aheadCount, input.allKeys, input.behindCount, input.tooLarge, input.viewableExpansionEnabled, input.viewableIndices]);
+    }, [initialAutoExpandedKeySet, input.aheadCount, input.allKeys, input.behindCount, input.reveal, input.tooLarge, input.viewableExpansionEnabled, input.viewableIndices]);
 
     const expandedKeys = React.useMemo(() => {
         if (!input.tooLarge) {

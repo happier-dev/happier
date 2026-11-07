@@ -1,5 +1,6 @@
 import { useEffectiveDiffPresentation } from '../diffPresentationStyle';
 import { DiffHunkRowTextInsetContext } from '../hunks/DiffHunkRow';
+import { DiffFindOpenedFoldRow } from '../DiffFindOpenedFoldRow';
 import { CODE_LINE_BASE_HEIGHT } from '@/components/ui/code/view/CodeLineRow';
 import * as React from 'react';
 import { PierreDiffScrollAnchor } from './PierreDiffScrollAnchor.web';
@@ -103,6 +104,8 @@ const PIERRE_UNIFIED_GUTTER_UNSAFE_CSS = `
 [data-separator] { font-family: var(--diffs-font-family, var(--diffs-font-fallback)); }
 [data-separator-content] { display: flex; align-items: center; gap: 1ch; }
 [data-hunk-context] { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; opacity: .8; }
+/* Wrapped code fits the pane: a row slotted after a line (a change's Keep/Discard row) must not widen the code column past it. */
+[data-diff][data-overflow=wrap] { --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr); }
 @media (min-width: 521px) {
   [data-unified] [data-gutter] { min-width: 8ch; }
   [data-unified] [data-column-number] { display: flex; gap: 1ch; justify-content: flex-end; }
@@ -590,6 +593,18 @@ function completePatchFromBase(parsed: FileDiffMetadata, patch: string, baseText
     });
 }
 
+/**
+ * Starts the worker pool a list's diff bodies will draw with, before the first of them arrives
+ * (`usePierreDiffRendererPreload`). The bodies then draw with Pierre at once, instead of first drawing
+ * every line through the Happier renderer while the pool initializes.
+ */
+export function preparePierreDiffRenderer(params: Readonly<{
+    style: 'unified' | 'split'; isDark: boolean; colors?: Record<string, unknown> | null;
+}>): void {
+    ensureHappierPierreThemeRegistered({ isDark: params.isDark, colors: params.colors });
+    getPierreDiffWorkerPool({ style: params.style, themeIds: resolveHappierPierreThemeIds({ isDark: params.isDark, colors: params.colors }) });
+}
+
 export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     const { theme } = useUnistyles();
     const isDark = theme.dark === true;
@@ -837,9 +852,29 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         if (lines.length) props.onPressLineRange?.(lines);
     });
 
+    // The band over the region Find opened sits after the last row before it, or above the first row of the file.
+    // The completed patch opens the whole run of omitted lines holding the match, and `hiddenCount` is that run.
+    const findOpenedAnchor = React.useMemo(() => {
+        if (!completedPatch || !findLines) return null;
+        const isOmitted = (line: CodeLine | undefined) => line !== undefined && line.hunkIndex === null && !line.renderIsHeaderLine;
+        let start = findLines.findIndex((line) => line.id === props.scrollToLineId);
+        if (start < 0) return null;
+        let end = start;
+        while (start > 0 && isOmitted(findLines[start - 1])) start -= 1;
+        while (isOmitted(findLines[end + 1])) end += 1;
+        const hiddenCount = end - start + 1;
+        for (let index = start - 1; index >= 0; index -= 1) {
+            const line = findLines[index]!;
+            if (line.renderIsHeaderLine) continue;
+            const side: DiffLineAnnotation<React.ReactNode>['side'] = line.kind === 'remove' ? 'deletions' : 'additions';
+            const lineNumber = side === 'deletions' ? line.oldLine : line.newLine;
+            if (typeof lineNumber === 'number' && lineNumber > 0) return { side, lineNumber, hiddenCount };
+        }
+        return { side: 'additions' as const, lineNumber: 0, hiddenCount };
+    }, [completedPatch, findLines, props.scrollToLineId]);
+
     const annotationContent = React.useMemo(() => {
-        if (!codeLines) return undefined;
-        if (!props.renderAfterLine) return undefined;
+        if (!codeLines || (!props.renderAfterLine && !findOpenedAnchor)) return undefined;
 
         const out = new Map<string, DiffLineAnnotation<React.ReactNode>>();
         const afterLine = new Map<string, string>();
@@ -851,10 +886,11 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             afterLine.set(lineId, key);
         };
         let previousContentLine: CodeLine | null = null;
-        for (const line of codeLines) {
+        const renderAfterLine = props.renderAfterLine;
+        for (const line of renderAfterLine ? codeLines : []) {
             const anchor = line.renderIsHeaderLine ? previousContentLine : line;
             if (!line.renderIsHeaderLine && (line.oldLine !== null || line.newLine !== null)) previousContentLine = line;
-            const node = props.renderAfterLine(line);
+            const node = renderAfterLine?.(line);
             if (!node) continue;
 
             if (line.renderIsHeaderLine && line.hunkIndex === 0) {
@@ -870,8 +906,14 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             append(line.id, side, lineNumber, node);
         }
 
+        if (findOpenedAnchor) {
+            const key = `${findOpenedAnchor.side}:${findOpenedAnchor.lineNumber}`;
+            const previous = out.get(key);
+            const band = <DiffFindOpenedFoldRow key="find-opened" hiddenCount={findOpenedAnchor.hiddenCount} onFoldAgain={refoldFind} />;
+            out.set(key, { side: findOpenedAnchor.side, lineNumber: findOpenedAnchor.lineNumber, metadata: previous ? <>{previous.metadata}{band}</> : band });
+        }
         return out.size > 0 ? { byPosition: out, afterLine } : undefined;
-    }, [codeLines, props.renderAfterLine]);
+    }, [codeLines, findOpenedAnchor, props.renderAfterLine, refoldFind]);
 
     // Pierre treats a new nonempty array as a structural repaint, even when only React content changed.
     // Its existing slots render current content independently; retain only unchanged ordered positions.
@@ -1119,7 +1161,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
     }, [mapPierreDiffLineToCodeLine, pressAddCommentForPierreLine, props.isCommentActive, props.onPressAddComment, theme.colors.text.secondary]);
 
     const paintRef = React.useRef<PierrePaint | null>(null);
-    const scrollTargetKey = codeLineScrollTargetKey(props.scrollToLineId, props.scrollToLineId ? props.findRangesByLineId?.get(props.scrollToLineId) : undefined);
+    const scrollTargetKey = codeLineScrollTargetKey(props.scrollToLineId, props.scrollToLineId ? props.findRangesByLineId?.get(props.scrollToLineId) : undefined, props.scrollToLineRequestId);
     const stopRetainedLanding = React.useRef<(() => void) | null>(null);
     React.useEffect(() => () => {
         stopRetainedLanding.current?.();
@@ -1142,7 +1184,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         const el = queryRoot.querySelector<HTMLElement>(pierreCodeLineSelector(target));
         const completeLanding = () => {
             lastScrolledLineIdRef.current = { key: targetKey, filePath: props.filePath };
-            if (props.findActive && el) {
+            if (el && !annotation) {
                 stopRetainedLanding.current?.();
                 stopRetainedLanding.current = retainCodeLineLanding(el);
             }
@@ -1159,8 +1201,8 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
         if (paint.virtualizer && paint.instance instanceof VirtualizedFileDiff) {
             const position = paint.instance.getLinePosition(lineNumber, side);
             if (!position) return;
-            // A row that is already mounted is landed on directly, in whichever element scrolls it, centered clear
-            // of the sticky file header and the Find bar. Pierre's offset for rows it has not measured (wrapped
+            // A row that is already mounted is landed on directly, in whichever element scrolls it, a third of the way
+            // down (clear of the sticky file header and the Find bar). Pierre's offset for rows it has not measured (wrapped
             // lines on a phone) can be far off, so the offset scroll below only brings an unmounted row into view.
             if (!annotation && scrollCodeLineIntoView(el)) {
                 completeLanding();
@@ -1180,7 +1222,7 @@ export const PierreDiffViewer = React.memo<DiffViewerProps>((props) => {
             if (annotation ? !annotationRect || annotationRect.height <= 0 : !el) return;
         } else {
             const node = annotationNode ?? el;
-            if (!scrollCodeLineIntoView(node, annotationNode ? 'start' : 'center')) return;
+            if (!scrollCodeLineIntoView(node, annotationNode ? 'start' : 'reading')) return;
         }
         completeLanding();
     };

@@ -1,3 +1,4 @@
+import { formatHappierDataBytes } from '@happier-dev/plugin-ui/presentation';
 import { resolvePreviewUnavailable, type PreviewUnavailable } from '@/components/ui/media/previewUnavailable';
 
 export type ImageComparePreview =
@@ -60,4 +61,15 @@ export function buildImageCompareModel<StageItem = never>(input: Readonly<{
     if (before.kind === 'present' && input.beforeItem !== undefined) gallery.push(input.beforeItem);
     if (after.kind === 'present' && input.afterItem !== undefined) gallery.push(input.afterItem);
     return { before, after, gallery };
+}
+
+/** A file's size change: storage units, signed by the change's direction; absent unless both sides were read. */
+export function formatBytesDelta(
+  before: number | null,
+  after: number | null,
+): string | null {
+  if (before === null || after === null) return null;
+  const delta = after - before;
+  // A file's size is storage: the shared decimal reading, signed by the change's direction.
+  return `${delta < 0 ? '−' : '+'}${formatHappierDataBytes(Math.abs(delta), { kind: 'storage' })}`;
 }

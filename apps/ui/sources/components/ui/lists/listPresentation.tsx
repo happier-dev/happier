@@ -2,6 +2,8 @@ import * as React from 'react';
 import { HappierBodyEdgeContext, HappierPageSectionContext } from '@happier-dev/plugin-ui/presentation';
 
 import type { PageColumn } from '@/components/ui/layout/contentWidthMode';
+import { PANE_TEXT_INSET_PX } from '@/components/ui/layout/headerBand';
+import { ITEM_ROW_PADDING_HORIZONTAL } from '@/components/ui/lists/itemDensityMetrics';
 
 /**
  * How grouped list content is presented.
@@ -32,10 +34,46 @@ export function useFloatingListSurface(): boolean {
     return React.useContext(FloatingListSurfaceContext);
 }
 
+/**
+ * A side pane's body (the right sidebar of a Session, a Project, a Discussion or the app): its text keeps
+ * the pane's one edge, `PANE_TEXT_INSET_PX`, the inset its header title uses. Set once by each host under
+ * its `RightSidebarPaneHeader`.
+ */
+const SidePaneBodyContext = React.createContext(false);
 
-/** Whether a list row here stands on a widget body's edge. Floating surfaces reset this context. */
+export function SidePaneBodyProvider(props: Readonly<{
+    /** `false` inside a card drawn on the pane: its rows keep the card's own inset, the card stands on the edge. */
+    active?: boolean;
+    children: React.ReactNode;
+}>) {
+    return <SidePaneBodyContext.Provider value={props.active !== false}>{props.children}</SidePaneBodyContext.Provider>;
+}
+
+/**
+ * Whether content here starts on a side pane's text edge: its section labels, its rows' leading marks and its
+ * flat page sections. A floating surface opened from the pane (React context crosses portals) keeps its own.
+ */
+export function useSidePaneTextEdge(): boolean {
+    const sidePane = React.useContext(SidePaneBodyContext);
+    const floating = React.useContext(FloatingListSurfaceContext);
+    return sidePane && !floating;
+}
+
+/**
+ * Whether a list row here stands on a widget body's edge (`HappierBodyEdgeContext`, set by the widget frame): its
+ * glyph lines up with the frame's mark and its meta with the frame's edge, so the row draws no inset of its own.
+ * A floating surface opened from the body starts outside it again (see `ListPresentationProvider` `floating`).
+ */
 export function useWidgetBodyRowEdge(): boolean {
     return React.useContext(HappierBodyEdgeContext);
+}
+
+/**
+ * The inset pane content (a rail's toolbar, rows and labels drawn outside `Item`) starts its text at: the side
+ * pane's text edge there, else the compact row inset such content shares with compact rows.
+ */
+export function usePaneContentInsetPx(): number {
+    return useSidePaneTextEdge() ? PANE_TEXT_INSET_PX : ITEM_ROW_PADDING_HORIZONTAL.compact;
 }
 
 /**

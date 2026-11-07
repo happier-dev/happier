@@ -3,21 +3,24 @@ import { View } from 'react-native';
 import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 
-import { DropdownMenu } from '@/components/ui/forms/dropdown/DropdownMenu';
+import { DropdownMenu, type DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
+import type { MenuItemSource } from '@/components/ui/forms/dropdown/selectableMenuTypes';
 import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
 import { Text } from '@/components/ui/text/Text';
 import { focusRingStyle } from '@/components/ui/interactions/interactionFeedback';
 import { useGitDisplaySettings } from '@/components/sessions/panes/git/display/GitDisplayMenu';
 import { Typography } from '@/constants/Typography';
-import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
 import { ChangedFilesReviewIndex } from './ChangedFilesReviewIndex';
 import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 import { ChangedFilesReviewFindCount } from './ChangedFilesReviewFind';
 
+import type { ChangedFilesReviewFileIndex } from './changedFilesReviewFileIndex';
+export { buildChangedFilesReviewFileIndex, type ChangedFilesReviewFileIndex } from './changedFilesReviewFileIndex';
+
 /** Phone Files' position and jump control, using the same list/tree index and focus owner as the rail. */
 export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
-    files: readonly ScmFileStatus[];
+    fileIndex: ChangedFilesReviewFileIndex;
     findModel?: ChangedFilesReviewFindModel;
     activePath: string | null;
     rootPath: string | null;
@@ -27,19 +30,23 @@ export function ChangedFilesReviewPhoneFileControl(props: Readonly<{
     const { theme } = useUnistyles();
     const display = useGitDisplaySettings();
     const [open, setOpen] = React.useState(false);
-    const index = Math.max(0, props.files.findIndex((file) => file.fullPath === props.activePath));
-    const active = props.files[index];
-    const position = t('walkthrough.stopOf', { number: index + 1, total: props.files.length });
-    const items = React.useMemo(() => !open || display.changesLayout === 'tree' ? [] : props.files.map((file) => ({
-        id: file.fullPath, title: file.fileName, subtitle: file.filePath, accessibilityLabel: file.fullPath,
-        rightElement: <ChangedFilesReviewFindCount model={props.findModel} path={file.fullPath} />,
-    })), [open, display.changesLayout, props.files, props.findModel]);
+    const { files, items, indexById } = props.fileIndex;
+    const index = Math.max(0, props.activePath ? indexById.get(props.activePath) ?? -1 : -1);
+    const active = files[index];
+    const position = t('walkthrough.stopOf', { number: index + 1, total: files.length });
+    const itemSource: MenuItemSource<DropdownMenuItem> = {
+        items, indexById,
+        getItem(index) {
+            const item = items[index];
+            return item ? { ...item, rightElement: <ChangedFilesReviewFindCount model={props.findModel} path={item.id} /> } : undefined;
+        },
+    };
     const focus = React.useCallback((path: string) => { props.onFocusPath(path); setOpen(false); }, [props.onFocusPath]);
     return <View testID="scm-comparison-file-control" style={styles.control}>
         <DropdownMenu testID="scm-comparison-file-picker" open={open} onOpenChange={setOpen}
-            items={display.changesLayout === 'tree' ? [] : items} selectedId={props.activePath} onSelect={focus}
+            items={[]} itemSource={display.changesLayout === 'tree' ? undefined : itemSource} selectedId={props.activePath} onSelect={focus}
             emptyLabel={null}
-            footer={display.changesLayout === 'tree' ? <ChangedFilesReviewIndex files={props.files} activePath={props.activePath}
+            footer={display.changesLayout === 'tree' ? <ChangedFilesReviewIndex files={files} activePath={props.activePath}
                 findModel={props.findModel}
                 commentCountByPath={props.commentCountByPath} onFocusPath={focus} rootPath={props.rootPath} placement="comparisonStream" /> : null}
             trigger={({ toggle }) => <HappierPressable testID="scm-comparison-file-trigger" accessibilityRole="button"

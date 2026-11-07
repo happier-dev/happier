@@ -22,6 +22,9 @@ import type { KeyboardCommandId } from '@/keyboard/types';
  * comparison's actions on the right. Files and Walkthrough draw the same bar, so switching views keeps
  * every control where it was.
  */
+/** The gap between the bar's trailing actions (`styles.trailing`): neighbours' finger frames split it. */
+export const SCM_COMPARISON_ACTIONS_GAP_PX = 8;
+
 export function ScmComparisonBar(props: Readonly<{ leading: React.ReactNode; trailing?: React.ReactNode; children?: React.ReactNode }>) {
     return (
         <View testID="scm-comparison-bar" style={styles.bar}>
@@ -208,7 +211,7 @@ const styles = StyleSheet.create((theme) => ({
         borderBottomColor: theme.colors.border.default,
     },
     leading: { flexDirection: 'row', flexWrap: 'wrap', alignItems: 'center', gap: theme.space.s8, flexGrow: 1, flexShrink: 1, minWidth: 0 },
-    trailing: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },
+    trailing: { flexDirection: 'row', alignItems: 'center', gap: SCM_COMPARISON_ACTIONS_GAP_PX },
     reviewAction: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8, flexShrink: 1, minWidth: 0 },
     reviewReason: { ...Typography.variant('meta'), color: theme.colors.text.secondary, flexShrink: 1, minWidth: 0,  },
     switchRow: { flexDirection: 'row', alignItems: 'center', gap: theme.space.s8 },

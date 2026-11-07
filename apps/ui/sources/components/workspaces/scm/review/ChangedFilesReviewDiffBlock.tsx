@@ -28,22 +28,24 @@ import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import { useFilePreviewSource, type UseFilePreviewSourceInput } from '@/components/ui/media/useFilePreviewSource';
 import { ImageCompare } from './imageCompare/ImageCompare';
+import { ReviewPdfChange } from './PdfChange';
 import { useImageCompare, type ImageCompareSource } from './imageCompare/useImageCompare';
 import { useMediaStage } from '@/components/ui/media/stage/useMediaStage';
 import type { FileViewerClass } from '@/scm/utils/filePresentation';
-import { buildWorkspacePreviewIdentity } from '@/components/ui/media/buildWorkspacePreviewIdentity';
 import type { ReviewCommentDraft } from '@/sync/domains/input/reviewComments/reviewCommentTypes';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import type { ChangedFilesReviewDiffStateSource } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffStore';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
+import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
+import { SurfaceFreshnessLine } from '@/components/ui/surfaces/SurfaceFreshnessLine';
 import type { ChangedFilesReviewFindModel } from './useChangedFilesReviewFind';
 import type { HunkReviewControllerParams } from './hunkReview/useHunkReviewController';
 import type { ReviewUnit } from '@happier-dev/protocol/scm/comparisonOccurrences';
 
 /** Keep / Discard on a Review file's changes (P5): the list's checkout and its one discard owner. */
 export type ReviewBlockHunkReview = Readonly<Pick<HunkReviewControllerParams, 'source' | 'host' | 'serverId' | 'onDiscard'
-    | 'discardDisabledReason' | 'undo' | 'onReviewAction' | 'onAsk' | 'onOutOfDate' | 'marks'>>;
+    | 'discardDisabledReason' | 'writeUnavailableReason' | 'undo' | 'onReviewAction' | 'onAsk' | 'onOutOfDate' | 'marks' | 'fileViewed' | 'active'>>;
 
 export type ReviewDiffState = Readonly<{
     status: 'idle' | 'loading' | 'loaded' | 'error';
@@ -65,6 +67,7 @@ export type ChangedFilesReviewDiffBlockProps = Readonly<{
     isBinaryContent?: boolean;
     estimatedChangedLines?: number | null;
     diffStateSource: ChangedFilesReviewDiffStateSource;
+    onRetryDiff?: (path: string) => void;
     reviewCommentsEnabled: boolean;
     reviewCommentDrafts: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
@@ -119,6 +122,7 @@ function areChangedFilesReviewDiffBlockPropsEqual(
         || prev.isBinaryContent !== next.isBinaryContent
         || prev.estimatedChangedLines !== next.estimatedChangedLines
         || prev.diffStateSource !== next.diffStateSource
+        || prev.onRetryDiff !== next.onRetryDiff
         || prev.reviewCommentsEnabled !== next.reviewCommentsEnabled
         || prev.onUpsertReviewCommentDraft !== next.onUpsertReviewCommentDraft
         || prev.onDeleteReviewCommentDraft !== next.onDeleteReviewCommentDraft
@@ -229,6 +233,10 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
     const noOverflowAnchor = Platform.OS === 'web' ? ({ overflowAnchor: 'none' } as any) : null;
     const testIdSafePath = React.useMemo(() => toTestIdSafeValue(filePath), [filePath]);
     const blockTestId = `scm-review-diff-${testIdSafePath}`;
+    const retryDiff = React.useCallback(() => props.onRetryDiff?.(filePath), [filePath, props.onRetryDiff]);
+    const retryAction = props.onRetryDiff ? { label: t('common.retry'), onPress: retryDiff } : undefined;
+    const freshness = state.status === 'loaded' && state.error ? <SurfaceFreshnessLine
+        testID={`${blockTestId}-freshness`} tone="warning" reason={state.error} action={retryAction} /> : null;
 
     const diffLoaded = state.status === 'loaded';
     const findContextBaseText = props.findActive && state.context?.status === 'loaded' ? state.context.baseText : undefined;
@@ -269,8 +277,9 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
     const imagePreviewInput: UseFilePreviewSourceInput = {
         source: props.workspaceScope ? { kind: 'workspace', scope: props.workspaceScope, filePath }
             : { kind: 'session', sessionId, filePath },
-        ...(props.workspaceScope ? buildWorkspacePreviewIdentity(props.workspaceScope, filePath, null, snapshotSignature)
-            : { cacheKey: snapshotSignature }),
+        // Workspace pictures use ImageCompare; this legacy Session-only read never needs a
+        // workspace preview key (which can carry the complete repository status signature).
+        cacheKey: !props.workspaceScope && fileIsImage ? snapshotSignature : null,
         mimeType: fileViewer.mimeType,
         // Workspace images read through `ImageCompare`; only a Session-only image needs this preview.
         enabled: props.evidenceOnly !== true && diffLoaded && !state.diff && fileIsImage && !props.workspaceScope,
@@ -347,18 +356,19 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
     if (state.status === 'error') {
         return (
             <View testID={blockTestId} style={[{ paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s12 }, noOverflowAnchor]}>
-                <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary,  }}>
-                    {state.error ?? t('files.reviewUnableToLoadDiff')}
-                </Text>
+                <SurfaceStateCard testID={`${blockTestId}-error`} kind="error" size="line"
+                    title={t('files.reviewUnableToLoadDiff')} reason={state.error ?? undefined} action={retryAction} />
             </View>
         );
     }
-    if (!state.diff || fileViewer.kind === 'image') {
+    // A captured binary patch names the files only; a picture or a PDF reads as itself, never as that text.
+    if (!state.diff || fileViewer.kind === 'image' || fileViewer.kind === 'pdf') {
         if (fileIsImage) {
             // Workspace images compare as images (one owner: `ImageCompare`, P5 modes).
             if (props.workspaceScope && props.imageCompare) {
                 return (
                     <View testID={blockTestId} style={noOverflowAnchor}>
+                        {freshness}
                         <ReviewBlockImageCompare scope={props.workspaceScope} filePath={filePath} viewer={fileViewer}
                             source={props.imageCompare} signature={snapshotSignature} testID="scm-review-image-preview" />
                     </View>
@@ -368,6 +378,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
             if (imagePreview.status === 'loading') {
                 return (
                     <View testID={blockTestId} style={[{ paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s12 }, noOverflowAnchor]}>
+                        {freshness}
                         <ActivitySpinner size="small" color={theme.colors.text.secondary} />
                     </View>
                 );
@@ -376,6 +387,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
             if (imagePreview.status === 'error') {
                 return (
                     <View testID={blockTestId} style={[{ paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s12 }, noOverflowAnchor]}>
+                        {freshness}
                         <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary,  }}>
                             {imagePreview.error}
                         </Text>
@@ -389,8 +401,19 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
             // size, and opens the File page that plays it.
             return (
                 <View testID={blockTestId} style={[{ paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s12 }, noOverflowAnchor]}>
+                    {freshness}
                     <ReviewBlockMediaLine filePath={filePath} viewer={fileViewer} scope={props.workspaceScope ?? null}
                         present={props.imageCompare ? !isDeletedSource(props.imageCompare) : true} onOpenFile={props.onOpenFile} />
+                </View>
+            );
+        }
+
+        if (fileViewer.kind === 'pdf' && props.workspaceScope && props.imageCompare) {
+            // A changed PDF reads as its identity and opens either revision; there is no visual PDF diff (P2 §1.4).
+            return (
+                <View testID={blockTestId} style={noOverflowAnchor}>
+                    {freshness}
+                    <ReviewPdfChange scope={props.workspaceScope} filePath={filePath} source={props.imageCompare} testID="scm-review-pdf-change" />
                 </View>
             );
         }
@@ -398,6 +421,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
         if (fileIsBinary) {
             return (
                 <View testID={blockTestId} style={[{ paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s12 }, noOverflowAnchor]}>
+                    {freshness}
                     <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary,  }}>
                         {t('files.binaryFile')}
                     </Text>
@@ -407,6 +431,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
 
         return (
             <View testID={blockTestId} style={[{ paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s12 }, noOverflowAnchor]}>
+                {freshness}
                 <Text style={{ ...Typography.variant('meta'), color: theme.colors.text.secondary,  }}>
                     {state.emptyFile ? t('files.emptyFile') : t('files.noChanges')}
                 </Text>
@@ -414,9 +439,13 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
         );
     }
 
+    // While Find is open its target is the current match, marked only by the match fill; the line ring is for hunk navigation.
+    const reviewHighlightLineId = props.findActive ? undefined : props.scrollToLineId;
+
     if (props.reviewCommentsEnabled) {
         return (
             <View ref={frameRef} collapsable={false} onLayout={columnNotes ? onFrameLayout : undefined} testID={blockTestId} style={[props.flat ? FLAT_BLOCK_STYLE : { paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 }, noOverflowAnchor, noteColumnStyle]}>
+            {freshness}
             {svgPictures}
                 <DiffReviewCommentsViewer
                     findActive={props.findActive}
@@ -427,7 +456,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     hunks={reviewHunks}
                     reviewUnits={props.reviewUnits}
                     scrollToLineId={props.scrollToLineId}
-                    highlightLineId={props.scrollToLineId}
+                    highlightLineId={reviewHighlightLineId}
                     onScrollToLine={props.onScrollToLine}
                     externalScrollView={props.externalScrollView}
                     filePath={filePath}
@@ -447,6 +476,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
 
     return (
             <View ref={frameRef} collapsable={false} onLayout={columnNotes ? onFrameLayout : undefined} testID={blockTestId} style={[props.flat ? FLAT_BLOCK_STYLE : { paddingHorizontal: theme.space.s16, paddingVertical: theme.space.s8 }, noOverflowAnchor, noteColumnStyle]}>
+            {freshness}
             {svgPictures}
             <View style={[props.flat ? FLAT_DIFF_FRAME_STYLE : { borderRadius: 12, overflow: 'hidden', borderWidth: 1, borderColor: theme.colors.border.default }, diffContainerStyle]}>
                 <DiffViewer
@@ -458,7 +488,7 @@ export const ChangedFilesReviewDiffBlock = React.memo((props: ChangedFilesReview
                     hunks={reviewHunks}
                     reviewUnits={props.reviewUnits}
                     scrollToLineId={props.scrollToLineId}
-                    highlightLineId={props.scrollToLineId}
+                    highlightLineId={reviewHighlightLineId}
                     onScrollToLine={props.onScrollToLine}
                     externalScrollView={props.externalScrollView}
                     mode="unified"

@@ -18,6 +18,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
     sessionId: string;
     workspaceScope?: WorkspaceScopeBase | null;
     diffStateSource: ChangedFilesReviewDiffStateSource;
+    onRetryDiff?: ChangedFilesReviewDiffBlockProps['onRetryDiff'];
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
@@ -77,6 +78,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         const fileReviewCommentDrafts = reviewCommentDraftsByDiffFilePath.get(path)
             ?? EMPTY_REVIEW_COMMENT_DRAFTS;
         const review = input.getHunkReview?.(path);
+        const imageCompare = fileFacts.imageCompare ?? null;
         return (
             <ChangedFilesReviewDiffBlock
                 theme={theme}
@@ -87,6 +89,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 isBinaryContent={fileFacts.isBinaryContent}
                 estimatedChangedLines={fileFacts.estimatedChangedLines}
                 diffStateSource={diffStateSource}
+                onRetryDiff={input.onRetryDiff}
                 reviewCommentsEnabled={reviewCommentsEnabled === true}
                 reviewCommentDrafts={fileReviewCommentDrafts}
                 onUpsertReviewCommentDraft={onUpsertReviewCommentDraft}
@@ -100,7 +103,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
                 flat={flat}
                 evidenceOnly={input.evidenceOnly}
                 hunkNotes={input.hunkNotes}
-                imageCompare={fileFacts.imageCompare ?? null}
+                imageCompare={imageCompare}
                 onOpenFile={fileFacts.onOpenFile}
                 hunkReview={review?.hunks ?? null}
                 reviewUnits={review?.reviewUnits}
@@ -114,6 +117,7 @@ export function useChangedFilesReviewDiffBlockRenderer(input: Readonly<{
         input.getHunkReview,
         input.findModel,
         input.findActive,
+        input.onRetryDiff,
         onDeleteReviewCommentDraft,
         onReviewCommentError,
         onScrollToLine,

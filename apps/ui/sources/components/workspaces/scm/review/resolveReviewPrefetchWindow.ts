@@ -1,5 +1,16 @@
 import type { ChangedFilesReviewRow } from './buildChangedFilesReviewRows';
 
+export function resolveReviewDiffDemandPaths(input: Readonly<{
+    findOpen: boolean;
+    allKeys: readonly string[];
+    requestedPaths: readonly string[] | null;
+    expandedKeys: ReadonlySet<string>;
+}>): readonly string[] {
+    if (input.findOpen) return input.allKeys;
+    // Expansion retains presentation state; it does not admit offscreen reads.
+    return input.requestedPaths?.filter(path => input.expandedKeys.has(path)) ?? [];
+}
+
 export type ReviewPrefetchWindow = Readonly<{ startFileIndex: number; endFileIndex: number }>;
 
 export function resolveReviewPrefetchWindow(input: Readonly<{

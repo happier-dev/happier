@@ -1,14 +1,19 @@
 import * as React from 'react';
-import * as Clipboard from 'expo-clipboard';
+import { useClipboardWrite } from '@/hooks/ui/useClipboardWrite';
 import { getScmComparisonDiscardRestriction, type ScmWorkingEntry, type ScmComparisonDiscardReason } from '@happier-dev/protocol/scm';
 import type { ScmComparison } from '@happier-dev/protocol/scm/comparison';
 import { buildReviewUnits, buildScmFileReviewUnits, buildScmReviewScopeId, type ReviewUnit } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import { formatHunk } from '@happier-dev/protocol/diff/hunks';
 import { useScmReviewedMarks, type ScmReviewedMarks } from '@/components/sessions/files/comparison/useScmReviewedMarks';
+import { useCapturedFileByPath, type CapturedFileByPath } from '@/components/sessions/files/comparison/useCapturedFileByPath';
+import { useScmFileViewed, useScmFileViewedFile, useScmFileViewedStatus } from '@/components/sessions/files/comparison/useScmFileViewed';
+import type { ScmFileViewedSource } from '@/sync/domains/scm/fileViewed';
 import type { DiffHunkAction, DiffHunkInfo, DiffHunkReviewState, DiffViewerHunks } from '@/components/ui/code/diff/diffViewerTypes';
 import type { ScmDiffSummaryHost } from '@/sync/ops/scmDiffSummary/results';
-import { buildHunkReviewSummary, moveHunkReviewCursor, orderHunkReviewFiles, resolveHunkReviewUnit, type HunkReviewCursor, type HunkReviewFile } from './hunkReviewModel';
+import { getLiveReviewBase, buildHunkReviewNavigation, buildHunkReviewSummary, moveHunkReviewCursor, resolveHunkReviewUnit, type HunkReviewCursor, type HunkReviewFile } from './hunkReviewModel';
+import { buildChangedFilesReviewFileIndex, type ChangedFilesReviewFileOrder } from '../changedFilesReviewFileIndex';
 import { t } from '@/text';
+import { getErrorMessage } from '@/utils/errors/getErrorMessage';
 
 function describeDiscardRestriction(reason: ScmComparisonDiscardReason): string {
     switch (reason) {
@@ -21,6 +26,7 @@ function describeDiscardRestriction(reason: ScmComparisonDiscardReason): string 
 
 export type HunkReviewSource = Readonly<{ kind: 'captured'; comparison: ScmComparison }>
     | Readonly<{ kind: 'live'; root: string }>;
+type UnitsByPath = Readonly<{ get(path: string): readonly ReviewUnit[] | undefined }>;
 export type HunkReviewActionTarget = Readonly<{
     path: string;
     changeKey: string;
@@ -41,16 +47,24 @@ export type HunkReviewChangeActions<DraftResult = never> = Readonly<{
 
 export type HunkReviewControllerParams = Readonly<{
     enabled?: boolean;
+    active?: boolean;
     source: HunkReviewSource;
     path: string;
     unifiedDiff: string;
+    /** Reuse the reading surface's captured lookup rather than indexing the same inventory twice. */
+    capturedFileByPath?: CapturedFileByPath | null;
     contentHash?: string | null;
     host: ScmDiffSummaryHost | null;
     serverId: string | null;
+    writeUnavailableReason?: string | null;
     /** A parent comparison reuses its one Account observer across rendered files. */
     marks?: ScmReviewedMarks;
+    /** An admitted source is shared by the comparison and its file rows; null explicitly disables it. */
+    fileViewed?: ScmFileViewedSource | null;
     /** The live comparison's currently loaded files, when reviewing several files. */
     liveFiles?: readonly Readonly<{ path: string; unifiedDiff: string; generated?: boolean; lockfile?: boolean; pending?: boolean }>[];
+    /** The parent Review's admitted inventory, aligned with liveFiles; picker and hunk cursor share this index. */
+    fileIndex?: ChangedFilesReviewFileOrder;
     /** Actual working-snapshot facts, not a kind inferred from a path or diff header. */
     liveEntries?: readonly Pick<ScmWorkingEntry, 'path' | 'kind' | 'hasIncludedDelta'>[];
     onNavigate?: (cursor: HunkReviewCursor) => void;
@@ -64,34 +78,67 @@ export type HunkReviewControllerParams = Readonly<{
 
 /** Review navigation, content identity and Keep share one owner on all reading surfaces. */
 export function useHunkReviewController(params: HunkReviewControllerParams) {
+    const writeClipboard = useClipboardWrite(params.serverId);
     const captured = params.source.kind === 'captured' ? params.source.comparison : null;
-    const unitsByPath = React.useMemo(() => {
+    const active = params.enabled !== false && params.active !== false;
+    const ownedFileViewed = useScmFileViewed({ comparison: captured, host: params.host, serverId: params.serverId,
+        enabled: params.fileViewed === undefined && params.enabled !== false, active, refreshToken: captured });
+    const fileViewed = params.fileViewed === undefined ? ownedFileViewed : params.fileViewed;
+    const fileViewedState = useScmFileViewedFile(fileViewed, params.path, active);
+    const fileViewedStatus = useScmFileViewedStatus(fileViewed, active);
+    const setFileViewed = React.useCallback((path: string, viewed: boolean) =>
+        fileViewed?.setViewed(path, viewed) ?? Promise.resolve(false), [fileViewed]);
+    const singlePath = captured || params.liveFiles ? null : params.path;
+    // A live file list fixes the checkout's order, units and rows once per list; only the open file's diff varies per page.
+    const liveBase = React.useMemo(() => !captured && params.liveFiles ? getLiveReviewBase(params.liveFiles) : null, [captured, params.liveFiles]);
+    // Inventory structure owns classification/order. Content and cursor changes only read it.
+    const inventory = React.useMemo(() => params.fileIndex ?? liveBase?.getInventory() ?? buildChangedFilesReviewFileIndex<Readonly<{
+        fullPath: string; generated?: boolean; lockfile?: boolean }>>(
+        captured ? captured.inventory.files.map(file => ({ fullPath: file.path, generated: file.generated, lockfile: file.lockfile }))
+            : [{ fullPath: singlePath ?? '', generated: undefined, lockfile: undefined }]),
+    [params.fileIndex, liveBase, captured?.inventory.files, singlePath]);
+    const openLiveUnits = React.useMemo(() => !captured ? buildReviewUnits(params.path, undefined, params.unifiedDiff) : null,
+        [captured, params.path, params.unifiedDiff]);
+    const unitsByPath = React.useMemo<UnitsByPath>(() => {
+        if (liveBase) return { get: path => path === params.path ? openLiveUnits! : liveBase.unitsByPath.get(path) };
         const result = new Map<string, readonly ReviewUnit[]>();
         if (captured) {
             for (const file of captured.inventory.files) result.set(file.path, buildScmFileReviewUnits(file.path === params.path
                 ? { ...file, evidence: { state: 'available', unifiedDiff: params.unifiedDiff } } : file));
         } else {
-            for (const file of params.liveFiles ?? []) result.set(file.path, buildReviewUnits(file.path, undefined,
-                file.path === params.path ? params.unifiedDiff : file.unifiedDiff));
-            if (!result.has(params.path)) result.set(params.path, buildReviewUnits(params.path, undefined, params.unifiedDiff));
+            result.set(params.path, openLiveUnits!);
         }
         return result;
-    }, [captured, params.liveFiles, params.path, params.unifiedDiff]);
+    }, [liveBase, captured?.inventory.files, params.path, params.unifiedDiff, openLiveUnits]);
     const units = unitsByPath.get(params.path) ?? [];
+    // Discard authority is decided per mounted row and per render; resolve its file by path, not by scanning.
+    const capturedFileByPath = useCapturedFileByPath(captured, params.capturedFileByPath);
+    const liveEntryByPath = React.useMemo(() => params.liveEntries ? new Map(params.liveEntries.map(entry => [entry.path, entry])) : null,
+        [params.liveEntries]);
     const files = React.useMemo<readonly HunkReviewFile[]>(() => {
-        if (captured) return captured.inventory.files.map(file => ({ path: file.path,
-            keys: (unitsByPath.get(file.path) ?? []).map(unit => unit.key),
-            generated: file.generated, lockfile: file.lockfile }));
-        if (params.liveFiles) return params.liveFiles.map(file => ({ ...file,
-            keys: (unitsByPath.get(file.path) ?? []).map(unit => unit.key) }));
+        if (captured) return inventory.items.map(item => ({ path: item.id,
+            keys: (unitsByPath.get(item.id) ?? []).map(unit => unit.key),
+            pending: capturedFileByPath?.get(item.id)?.evidence.state === 'deferred' }));
+        if (liveBase) {
+            const index = inventory.indexById.get(params.path);
+            const row = index === undefined ? undefined : liveBase.files[index];
+            const keys = units.map(unit => unit.key);
+            // The open file's diff is the page's own, so its row is never a pending (unloaded) one.
+            if (!row || (!row.pending && row.keys.length === keys.length && row.keys.every((key, i) => key === keys[i]))) return liveBase.files;
+            const next = liveBase.files.slice();
+            next[index!] = { ...row, keys, pending: false };
+            return next;
+        }
         return [{ path: params.path, keys: units.map(unit => unit.key) }];
-    }, [captured, params.liveFiles, params.path, units, unitsByPath]);
+    }, [captured !== null, capturedFileByPath, liveBase, params.path, units, unitsByPath, inventory]);
     const liveSource = React.useMemo(() => params.source.kind === 'live' ? {
         repositoryRootPath: params.source.root, source: { kind: 'workingTree' as const }, changeKeys: files.flatMap(file => file.keys),
     } : undefined, [params.source.kind, params.source.kind === 'live' ? params.source.root : null, files]);
     const ownedMarks = useScmReviewedMarks({ comparison: params.marks || params.enabled === false ? null : captured,
-        source: params.marks || params.enabled === false ? undefined : liveSource, host: params.host, serverId: params.serverId });
+        source: params.marks || params.enabled === false ? undefined : liveSource, host: params.host, serverId: params.serverId,
+        writeUnavailableReason: params.writeUnavailableReason });
     const marks = params.marks ?? ownedMarks;
+    const writeUnavailableReason = params.writeUnavailableReason ?? marks.unavailableReason;
     const scopeId = buildScmReviewScopeId(params.source.kind === 'captured'
         ? { repositoryRootPath: params.source.comparison.repository.rootPath, source: params.source.comparison.source }
         : { repositoryRootPath: params.source.root, source: { kind: 'workingTree' } });
@@ -104,9 +151,9 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
     const [discardingKey, setDiscardingKey] = React.useState<string | null>(null);
     const currentKey = selection?.path === params.path && units.some(unit => unit.key === selection.key)
         ? selection.key : units[0]?.key ?? null;
-    const cursor = files.some(file => file.path === params.path) ? { path: params.path, key: currentKey } : null;
-    const latest = React.useRef({ params, unitsByPath, marks, marked, files, cursor, scopeId });
-    latest.current = { params, unitsByPath, marks, marked, files, cursor, scopeId };
+    const cursor = inventory.indexById.has(params.path) ? { path: params.path, key: currentKey } : null;
+    const latest = React.useRef({ params, unitsByPath, capturedFileByPath, liveEntryByPath, marks, marked, files, cursor, scopeId, writeUnavailableReason });
+    latest.current = { params, unitsByPath, capturedFileByPath, liveEntryByPath, marks, marked, files, cursor, scopeId, writeUnavailableReason };
     const onHunks = React.useCallback((next: readonly DiffHunkInfo[]) => {
         setTable(previous => previous.length === next.length && previous.every((hunk, index) =>
             hunk.key === next[index]?.key && hunk.firstChangeLineId === next[index]?.firstChangeLineId) ? previous : next);
@@ -117,7 +164,7 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
         params.onNavigate?.(next);
     };
     const navigate = (direction: 1 | -1, fileOnly = false) => {
-        const next = moveHunkReviewCursor(files, cursor, direction, marked, fileOnly);
+        const next = moveHunkReviewCursor(navigation, cursor, direction, fileOnly);
         if (next) moveTo(next);
     };
     const findUnit = (key: string, path = params.path) => resolveHunkReviewUnit({ key, renderedScopeId: scopeId,
@@ -129,7 +176,7 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
     };
     const keep = (key: string, path = params.path) => {
         const unit = resolve(key, path);
-        if (!unit || latest.current.marks.unavailableReason) return;
+        if (!unit || latest.current.writeUnavailableReason) return;
         params.onReviewAction?.();
         const keeping = !latest.current.marked.has(unit.key);
         marks.setReviewedKeys([unit.key], keeping);
@@ -147,12 +194,12 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
     const restrictionFor = (key: string | null, path = params.path) => {
         const current = latest.current;
         if (current.params.source.kind === 'captured') {
-            const file = current.params.source.comparison.inventory.files.find(file => file.path === path);
+            const file = current.capturedFileByPath?.get(path);
             const unit = current.unitsByPath.get(path)?.find(unit => unit.key === key);
             return file && unit ? getScmComparisonDiscardRestriction({ kind: 'captured', file, hunkIndexes: [unit.hunkIndex] }) : null;
         }
         return getScmComparisonDiscardRestriction({ kind: 'live',
-            entry: current.params.liveEntries?.find(entry => entry.path === path), hunks: true });
+            entry: current.liveEntryByPath?.get(path), hunks: true });
     };
     const offersDiscard = (key: string | null, path = params.path) => Boolean(params.onDiscard) && restrictionFor(key, path)?.reason !== 'added_file';
     const discard = async (key: string, path = params.path) => {
@@ -169,17 +216,28 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
     };
     const copy = (key: string, path: string) => {
         const unit = resolve(key, path);
-        if (unit) void Clipboard.setStringAsync(formatHunk(unit.hunk));
+        if (unit) void writeClipboard(formatHunk(unit.hunk));
     };
-    const summary = React.useMemo(() => buildHunkReviewSummary(files, marked), [files, marked]);
-    const ordered = React.useMemo(() => orderHunkReviewFiles(files), [files]);
+    const { summary, navigation } = React.useMemo(() => ({
+        summary: buildHunkReviewSummary(files, marked, fileViewed?.getViewedPaths()),
+        navigation: buildHunkReviewNavigation(files, marked, inventory, fileViewed?.getViewedPaths()),
+    }), [files, marked, inventory, fileViewed, active]);
+    const viewedIndex = navigation.fileViewed;
+    React.useSyncExternalStore(React.useCallback(listener => {
+        if (!fileViewed || !viewedIndex || !active) return () => {};
+        return fileViewed.subscribeChanges(path => {
+            viewedIndex.setViewed(path, fileViewed.getFile(path).state === 'viewed');
+            listener();
+        });
+    }, [fileViewed, viewedIndex, active]), viewedIndex?.getVersion ?? (() => 0), () => 0);
+    const reviewedPaths = viewedIndex?.reviewedPaths ?? summary.reviewedPaths;
     const currentIndex = currentKey ? units.findIndex(unit => unit.key === currentKey) : -1;
     const revealKey = revealed === 'reading' ? null
         : revealed?.path === params.path && units.some(unit => unit.key === revealed.key) ? revealed.key : units[0]?.key ?? null;
-    const nextFile = moveHunkReviewCursor(files, cursor, 1, marked, true);
+    const nextFile = moveHunkReviewCursor(navigation, cursor, 1, true);
     const stateOfKey = (key: string): DiffHunkReviewState => discardingKey === key ? 'discarding' : marked.has(key) ? 'kept' : 'open';
     const disabledReason = (action: DiffHunkAction, key = currentKey, path = params.path) => {
-        if (action === 'keep') return marks.unavailableReason;
+        if (action === 'keep') return writeUnavailableReason ? getErrorMessage(writeUnavailableReason) : null;
         if (action !== 'discard') return null;
         const restriction = restrictionFor(key, path);
         return restriction ? describeDiscardRestriction(restriction.reason) : params.discardDisabledReason ?? null;
@@ -213,8 +271,8 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
         return (path: string): DiffViewerHunks => {
             const previous = published.get(path);
             if (previous) return previous;
-            const index = ordered.findIndex(file => file.path === path);
-            const offset = ordered.slice(0, Math.max(0, index)).reduce((sum, file) => sum + file.keys.length, 0);
+            const index = inventory.indexById.get(path);
+            const offset = index === undefined ? 0 : navigation.numberOffsets[index] ?? 0;
             const next: DiffViewerHunks = {
                 ...(path === params.path ? { onHunks } : {}),
                 currentIndex: path === params.path && currentIndex >= 0 ? currentIndex : null, numberOffset: offset, numberTotal: summary.total,
@@ -228,12 +286,14 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
             return next;
         };
     }, [captured, liveRoot, scopeId, params.path, displayedHash, params.liveEntries,
-        params.discardDisabledReason, marks.unavailableReason, marked, discardingKey,
-        currentIndex, ordered, summary.total, unitsByPath, marks.setReviewedKeys,
-        onHunks, params.onOutOfDate, params.onReviewAction, params.onDiscard, params.onAsk]);
+        params.discardDisabledReason, writeUnavailableReason, marked, discardingKey,
+        currentIndex, inventory, navigation, summary.total, unitsByPath, marks.setReviewedKeys,
+        onHunks, params.onOutOfDate, params.onReviewAction, params.onDiscard, params.onAsk, writeClipboard]);
+    const reviewUnitsForPath = React.useCallback((path: string) => unitsByPath.get(path) ?? [], [unitsByPath]);
     const hunks = hunksForPath(params.path);
     return {
-        hunks, hunksForPath, changeActionsForKey, reviewUnitsForPath: (path: string) => unitsByPath.get(path) ?? [],
+        fileViewed, fileViewedState, fileViewedStatus, reviewedPaths, setFileViewed,
+        hunks, hunksForPath, changeActionsForKey, reviewUnitsForPath,
         reviewUnits: units, cursor, currentIndex, currentHunk: table.find(hunk => hunk.key === currentKey) ?? null,
         /** Where the page should be scrolled: the change last moved to, never one the reader scrolled onto. */
         revealHunk: table.find(hunk => hunk.key === revealKey) ?? null,
@@ -249,15 +309,17 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
          */
         strip: { current: currentIndex < 0 ? 0 : currentIndex + 1, total: units.length,
             reviewed: units.filter(unit => marked.has(unit.key)).length,
-            filesLeft: ordered.filter(file => !summary.reviewedPaths.has(file.path)).length,
-            canKeepAll: !marks.unavailableReason && units.some(unit => !marked.has(unit.key)),
+            fileReviewKind: fileViewed ? 'sourceViewed' as const : 'local' as const,
+            fileCountsKnown: !fileViewed || fileViewedStatus.headOid !== null,
+            filesLeft: (fileViewed ? navigation.all.files.length : navigation.changes.files.length) - reviewedPaths.size,
+            canKeepAll: !fileViewed && !writeUnavailableReason && units.some(unit => !marked.has(unit.key)),
             nextFile: nextFile?.path !== params.path ? nextFile?.path ?? null : null,
-            fileComplete: units.length > 0 && units.every(unit => marked.has(unit.key)) },
+            fileComplete: fileViewed ? fileViewedState.state === 'viewed' : units.length > 0 && units.every(unit => marked.has(unit.key)) },
         next: () => navigate(1), previous: () => navigate(-1), nextFile: () => navigate(1, true), previousFile: () => navigate(-1, true),
         keepCurrent: () => { if (currentKey) keep(currentKey); },
         /** The phone bar's Keep: mark the current change, then glide to the next open change in this file. */
         keepCurrentAndAdvance: () => {
-            if (!currentKey || latest.current.marks.unavailableReason) return;
+            if (!currentKey || latest.current.writeUnavailableReason) return;
             const keeping = !marked.has(currentKey);
             keep(currentKey);
             if (!keeping) return;
@@ -269,9 +331,9 @@ export function useHunkReviewController(params: HunkReviewControllerParams) {
         discardUnavailableReason: restrictionFor(currentKey)?.reason ?? null,
         discardDisabledReason: disabledReason('discard'),
         askCurrent: params.onAsk ? () => { if (currentKey) ask(currentKey); } : undefined,
-        keepAll: () => { if (!marks.unavailableReason && units.length > 0) {
+        keepAll: () => { if (!fileViewed && !writeUnavailableReason && units.length > 0) {
             params.onReviewAction?.(); marks.setReviewedKeys(units.map(unit => unit.key), true);
         } },
-        reset: marks.clear, undo: params.undo,
+        reset: () => { if (!latest.current.writeUnavailableReason) latest.current.marks.clear(); }, undo: params.undo,
     };
 }

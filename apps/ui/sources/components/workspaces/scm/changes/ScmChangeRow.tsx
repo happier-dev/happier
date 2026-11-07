@@ -11,13 +11,15 @@ import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
 import { useIsActiveReviewFile } from '@/components/workspaces/scm/review/activeReviewFile';
 import { HAPPIER_TREE_ROW_METRICS } from '@happier-dev/plugin-ui/presentation';
-import { isTouchPrimaryPointer } from '@/components/ui/interactiveTargetSize';
 import { ScmChangeMark } from './ScmChangeMark';
 import { resolveScmChangeRowDisplayText } from './scmChangeRowDisplayText';
+import { scmChangeHasLineDelta } from '@/scm/scmLineDelta';
 import type { FindTextRange } from '@happier-dev/plugin-ui/presentation';
 import { FindHighlightedText } from '@/components/ui/text/FindHighlightedText';
 import { formatHappierDiffStat } from '@happier-dev/plugin-ui/presentation';
 import { DiffStat } from '../DiffStat';
+import { useHappierTouchPrimaryPointer } from '@happier-dev/plugin-ui/environment';
+import { usePaneContentInsetPx } from '@/components/ui/lists/listPresentation';
 const CHANGE_STATS_MIN_COLUMN_WIDTH = 38;
 const CHANGE_STATS_CHARACTER_WIDTH = 7;
 const CHANGE_STATS_COLUMN_EXTRA_WIDTH = 4;
@@ -65,8 +67,13 @@ const STACKED_ROW_PADDING_VERTICAL_PX = 6;
  * The compact (name, then folder, on one line) row takes the tree row's rhythm (Git lab TV): 28 under a
  * precise pointer, 36 under a finger, no gap between rows — so the list and the tree read alike.
  */
-function resolveCompactRowMinHeight(): number {
-    return isTouchPrimaryPointer() ? HAPPIER_TREE_ROW_METRICS.minHeightPx.touch : HAPPIER_TREE_ROW_METRICS.minHeightPx.precise;
+function resolveCompactRowMinHeight(touch: boolean): number {
+    return touch ? HAPPIER_TREE_ROW_METRICS.minHeightPx.touch : HAPPIER_TREE_ROW_METRICS.minHeightPx.precise;
+}
+
+/** The height a compact row draws at (no `phone` prop), for lists that place rows before measuring them. */
+export function resolveScmChangeCompactRowHeight(touch: boolean): number {
+    return Math.max(touch ? 40 : 0, resolveCompactRowMinHeight(touch));
 }
 
 type ChangeDescriptor = Readonly<{
@@ -184,11 +191,13 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
     const isActiveReviewFile = useIsActiveReviewFile(props.activeReviewFileKey ?? null, file.fullPath);
     const highlighted = props.highlighted === true || isActiveReviewFile;
     const paddingVertical = stacked ? STACKED_ROW_PADDING_VERTICAL_PX : compact ? 0 : density === 'compact' ? 4 : 10;
-    const touch = isTouchPrimaryPointer();
+    const touch = useHappierTouchPrimaryPointer(Platform.OS);
     const handset = touch || props.phone === true;
-    const minHeight = compact ? Math.max(handset ? 40 : 0, resolveCompactRowMinHeight()) : stacked && handset ? 52 : undefined;
+    const minHeight = compact ? (props.phone === true ? Math.max(40, resolveCompactRowMinHeight(touch)) : resolveScmChangeCompactRowHeight(touch))
+        : stacked && handset ? 52 : undefined;
     const nameFirst = stacked || compact || props.showChangeMark === false;
     const displayText = resolveScmChangeRowDisplayText(file, nameFirst);
+    const lineDelta = scmChangeHasLineDelta(file);
     const findText = (text: string, ranges?: readonly FindTextRange[]) => ranges?.length ? <FindHighlightedText text={text} ranges={ranges} /> : text;
     // Web reveals the row's actions on hover or focus (touch has no hover, so they stay visible there).
     const [actionsRevealed, setActionsRevealed] = React.useState(false);
@@ -198,6 +207,8 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
     const statsShown = !(stacked || compact) || !props.trailingElement || !trailingShown;
     const statsColumnWidth = props.statsColumnWidth ?? resolveScmChangeStatsColumnWidth([file]);
 
+    // In a side pane the row's mark starts on the pane's text edge, under the pane title and section labels.
+    const contentInsetPx = usePaneContentInsetPx();
     const containerStyle = React.useMemo(() => {
         // A stacked row under the pointer or keyboard focus takes the highlighted fill, so the ⋯ that
         // appears reads as belonging to it.
@@ -209,7 +220,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
                 ? (theme.colors.surface?.inset ?? theme.colors.surface?.base ?? theme.colors.text.secondary)
                 : (theme.colors.surface?.base ?? theme.colors.text.secondary);
         return {
-            paddingHorizontal: theme.space.s12,
+            paddingHorizontal: contentInsetPx,
             paddingVertical,
             ...(minHeight !== undefined ? { minHeight } : null),
             flexDirection: 'row',
@@ -219,7 +230,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
             borderBottomWidth: props.showDivider ? Platform.select({ ios: 0.33, default: 1 }) : 0,
             borderBottomColor: theme.colors.border?.default ?? theme.colors.text.secondary,
         } as const;
-    }, [actionsRevealed, highlighted, isWeb, minHeight, paddingVertical, props.proposalEmphasis, props.selected, theme.colors.surface?.selected, props.showDivider, stacked, theme.colors.state.active.background, theme.colors.border?.default, theme.colors.surface?.base, theme.colors.surface?.inset, theme.colors.text.secondary]);
+    }, [actionsRevealed, contentInsetPx, highlighted, isWeb, minHeight, paddingVertical, props.proposalEmphasis, props.selected, theme.colors.surface?.selected, props.showDivider, stacked, theme.colors.state.active.background, theme.colors.border?.default, theme.colors.surface?.base, theme.colors.surface?.inset, theme.colors.text.secondary]);
 
     const onKeyDown = React.useCallback((event: any) => {
         if (!isWeb) return;
@@ -320,7 +331,7 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
 
             {/* A compact row's counts sit after its folder; with no counts to show (a new empty file) the
                 folder keeps that room instead of an empty reserved column. */}
-            {statsShown && (!nameFirst || file.isComplete === false || file.linesAdded > 0 || file.linesRemoved > 0) ? (
+            {statsShown && (!nameFirst || file.isComplete === false || (lineDelta && (file.linesAdded > 0 || file.linesRemoved > 0))) ? (
             <View
                 testID="scm-change-row-stats-column"
                 style={{
@@ -335,8 +346,8 @@ export const ScmChangeRow = React.memo((props: ScmChangeRowProps) => {
             >
                 {file.isComplete === false ? (
                     <Text accessibilityLabel={t('common.unavailable')} style={{ color: theme.colors.text.secondary }}>{findText(displayText.unavailable ?? '', props.findRanges?.unavailable)}</Text>
-                ) : <DiffStat added={file.linesAdded} removed={file.linesRemoved}
-                    renderCount={(kind, text, style) => <Text style={style}>{findText(text, props.findRanges?.[kind])}</Text>} />}
+                ) : lineDelta ? <DiffStat added={file.linesAdded} removed={file.linesRemoved}
+                    renderCount={(kind, text, style) => <Text style={style}>{findText(text, props.findRanges?.[kind])}</Text>} /> : null}
             </View>
             ) : null}
         </>

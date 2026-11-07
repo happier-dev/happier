@@ -1,4 +1,4 @@
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 
 import type { ScmDiffCache } from '@/scm/diffCache/scmDiffCache';
 

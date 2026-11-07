@@ -1,6 +1,7 @@
 import * as React from 'react';
 
-import type { ScmComparisonFile, ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmComparisonFile} from '@happier-dev/protocol/scm/comparison';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 import { readRpcErrorCode } from '@happier-dev/protocol/rpcErrors';
 
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';

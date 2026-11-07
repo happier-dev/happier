@@ -9,6 +9,7 @@ import {
 import type { ScmReviewedMarksRecord } from '@happier-dev/protocol/scm/reviewedMarks';
 import { buildReviewUnits } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import { ScmComparisonSchema } from '@happier-dev/protocol/scm/comparison';
+import * as scmComparison from '@happier-dev/protocol/scm/comparison';
 import type { ScmWorkingEntry } from '@happier-dev/protocol/scm';
 import { renderScreen } from '@/dev/testkit/render/renderScreen';
 import { standardCleanup } from '@/dev/testkit/cleanup/standardCleanup';
@@ -16,6 +17,7 @@ import { storage } from '@/sync/domains/state/storage';
 import { KeyboardShortcutProvider } from '@/keyboard/KeyboardShortcutProvider';
 import { useReviewKeyboard } from './useReviewKeyboard';
 import { useHunkReviewController, type HunkReviewSource } from './useHunkReviewController';
+import { buildChangedFilesReviewFileIndex } from '../changedFilesReviewFileIndex';
 import { buildEditorChangeMarkers } from '@/components/ui/code/editor/editorChangeMarkers';
 import { useEditorChangeMarkers } from '@/components/ui/code/editor/useEditorChangeMarkers';
 import type {
@@ -40,6 +42,113 @@ afterEach(() => {
 const patch = '@@ -1,3 +1,3 @@\n-old\n+new\n middle\n-before\n+after\n';
 
 describe('hunk review through the shared keyboard and Account port', () => {
+  it('does no inventory classification or sorting on 55,559-file renders and cursor moves, and reorders real changes', async () => {
+    // REVIEWRAIL #44 had 55,559 changed files. Observe the real classifier, never replace its policy.
+    const classifications = vi.spyOn(scmComparison, 'classifyScmChangePath');
+    const sorts = vi.spyOn(Array.prototype, 'sort');
+    let liveFiles = Array.from({ length: 55_559 }, (_, index) => ({
+      path: index === 1 ? 'yarn.lock' : `src/file-${index}.ts`,
+      unifiedDiff: index === 0 ? patch : '', pending: index !== 0,
+    }));
+    let fileIndex = buildChangedFilesReviewFileIndex(liveFiles.map(file => ({ fullPath: file.path })));
+    let path = liveFiles[0]!.path;
+    let controller!: ReturnType<typeof useHunkReviewController>;
+    const marks = { record: null, pending: false, unavailableReason: null,
+      setReviewed() {}, setReviewedKeys() {}, clear() {} };
+    function Review() {
+      controller = useHunkReviewController({ source: { kind: 'live', root: '/repo' },
+        liveFiles, fileIndex, path, unifiedDiff: path === liveFiles[0]!.path ? patch : '',
+        host: null, serverId: null, marks, onNavigate: cursor => { path = cursor.path; } });
+      return null;
+    }
+    try {
+      const screen = await renderScreen(<Review />);
+      expect(classifications.mock.calls.length).toBeLessThanOrEqual(liveFiles.length);
+      classifications.mockClear();
+      sorts.mockClear();
+      for (let count = 0; count < 4; count += 1) await screen.update(<Review />);
+      expect(controller.strip.nextFile).toBe('src/file-2.ts');
+      await act(async () => controller.nextFile());
+      expect(controller.cursor?.path).toBe('src/file-2.ts');
+      expect(controller.strip.nextFile).toBe('src/file-3.ts');
+      expect(classifications).not.toHaveBeenCalled();
+      expect(sorts.mock.contexts.filter(value => Array.isArray(value) && value.some(item =>
+        item && typeof item === 'object' && 'keys' in item && 'path' in item))).toHaveLength(0);
+      path = liveFiles[0]!.path;
+      await screen.update(<Review />);
+      liveFiles = [liveFiles[0]!, { path: 'src/now-source.ts', unifiedDiff: '', pending: true }, ...liveFiles.slice(2)];
+      fileIndex = buildChangedFilesReviewFileIndex(liveFiles.map(file => ({ fullPath: file.path })));
+      await screen.update(<Review />);
+      expect(controller.strip.nextFile).toBe('src/now-source.ts');
+      expect(classifications.mock.calls.length).toBeLessThanOrEqual(liveFiles.length);
+      classifications.mockClear();
+      await act(async () => controller.nextFile());
+      expect(controller.cursor?.path).toBe('src/now-source.ts');
+      expect(controller.strip.nextFile).toBe('src/file-2.ts');
+      expect(classifications).not.toHaveBeenCalled();
+    } finally {
+      classifications.mockRestore();
+      sorts.mockRestore();
+    }
+  });
+  it('reads no working entry per Discard decision across 55,559 changed files, and still refuses a hunk Discard on an added file', async () => {
+    // Cold #47 capture: restrictionFor searched every working entry per mounted row and per render (2,875 ms).
+    let entryPathReads = 0;
+    const count = 55_559;
+    const liveFiles = Array.from({ length: count }, (_, index) => ({ path: `src/file-${index}.ts`, unifiedDiff: patch, pending: false }));
+    const liveEntries = liveFiles.map((file, index) => ({
+      get path() { entryPathReads += 1; return file.path; },
+      kind: index === count - 1 ? 'added' as const : 'modified' as const, hasIncludedDelta: false,
+    }));
+    const fileIndex = buildChangedFilesReviewFileIndex(liveFiles.map(file => ({ fullPath: file.path })));
+    const path = liveFiles[count - 2]!.path;
+    let controller!: ReturnType<typeof useHunkReviewController>;
+    const marks = { record: null, pending: false, unavailableReason: null, setReviewed() {}, setReviewedKeys() {}, clear() {} };
+    function Review() {
+      controller = useHunkReviewController({ source: { kind: 'live', root: '/repo' }, liveFiles, liveEntries, fileIndex, path,
+        unifiedDiff: patch, host: null, serverId: null, marks, onDiscard: () => {} });
+      return null;
+    }
+    const screen = await renderScreen(<Review />);
+    entryPathReads = 0;
+    for (let render = 0; render < 4; render += 1) await screen.update(<Review />);
+    // The rows a screen mounts near the end of the inventory.
+    const mountedRows = liveFiles.slice(-25).map(file => controller.hunksForPath(file.path));
+    expect(entryPathReads).toBe(0);
+    expect(controller.discardCurrent).toBeTypeOf('function');
+    expect(mountedRows[23]!.actions?.discard).toBeTypeOf('function');
+    expect(mountedRows[24]!.actions?.discard).toBeUndefined();
+  });
+  it('retains kept changes offline while blocking every Keep and Reset entry point, then recovers', async () => {
+    const units = buildReviewUnits('a.ts', undefined, patch);
+    let record: ScmReviewedMarksRecord | null = null;
+    const port = createScmReviewedMarksRecordPort({ source: { repositoryRootPath: '/repo', source: { kind: 'workingTree' },
+      changeKeys: units.map(unit => unit.key) }, transport: {
+      read: async () => ({ value: record, version: record ? 1 : -1 }),
+      compareAndSet: async value => { record = ScmReviewedMarksRecordSchema.parse(value); return { success: true, version: 1 }; },
+    } });
+    await port.setReviewedKeys([units[0]!.key], true);
+    const before = record;
+    let unavailable: string | null = 'Machine offline. Retry when connected.';
+    let review!: ReturnType<typeof useHunkReviewController>;
+    function Review() {
+      review = useHunkReviewController({ source: { kind: 'live', root: '/repo' }, path: 'a.ts', unifiedDiff: patch,
+        host: { machineId: 'machine' }, serverId: null, writeUnavailableReason: unavailable,
+        marks: { record, pending: false, unavailableReason: null, setReviewed: () => {},
+          setReviewedKeys: (keys, reviewed) => { void port.setReviewedKeys(keys, reviewed); }, clear: () => { void port.clear(); } },
+      });
+      return null;
+    }
+    const screen = await renderScreen(<Review />);
+    expect(review.changeActionsForKey(units[0]!.key)?.state).toBe('kept');
+    expect(review.changeActionsForKey(units[0]!.key)?.disabledReason('keep')).toBe(unavailable);
+    await act(async () => { review.changeActionsForKey(units[0]!.key)?.keep(); review.keepAll(); review.reset(); });
+    expect(record).toBe(before);
+    unavailable = null;
+    await screen.update(<Review />);
+    await act(async () => { review.changeActionsForKey(units[1]!.key)?.keep(); });
+    expect(record).toMatchObject({ reviewedChangeKeys: units.map(unit => unit.key) });
+  });
   it('publishes no new per-file hunk model for 20 unrelated editor draft renders and retains the displayed action authority', async () => {
     let controller!: ReturnType<typeof useHunkReviewController>;
     let renders = 0;
@@ -58,7 +167,7 @@ describe('hunk review through the shared keyboard and Account port', () => {
         source: { kind: 'live', root: '/repo' }, path: liveFiles[0]!.path, unifiedDiff: patch,
         liveFiles, liveEntries, contentHash, host: null, serverId: null,
         onAsk, onDiscard,
-        marks: { record: null, unavailableReason: null, setReviewed: () => {}, clear: () => {}, setReviewedKeys },
+        marks: { record: null, pending: false, unavailableReason: null, setReviewed: () => {}, clear: () => {}, setReviewedKeys },
       });
       return <Consumer hunks={controller.hunksForPath(liveFiles[0]!.path)} />;
     }
@@ -80,6 +189,44 @@ describe('hunk review through the shared keyboard and Account port', () => {
     // An old row retains both its displayed hash and its authorizing action producer.
     await act(async () => initial.actions?.discard?.({ key: controller.reviewUnits[0]!.key } as DiffHunkInfo));
     expect(discarded).toEqual([{ generation: 0, expectedHash: 'saved-v1' }]);
+  });
+  it('opens a deferred captured file when moving past the last loaded change', async () => {
+    const unifiedDiff = '@@ -1 +1 @@\n-old\n+new\n';
+    let comparison = ScmComparisonSchema.parse({ id: 'capture', source: { kind: 'session', sessionId: 's1' },
+      repository: { rootPath: '/repo' }, endpoints: {}, inventory: { state: 'complete', reasons: [],
+        files: ['a.ts', 'b.ts'].map(path => ({ path, changeKind: 'modified', binary: false,
+          generated: false, lockfile: false,
+          evidence: path === 'a.ts' ? { state: 'available', unifiedDiff }
+            : { state: 'deferred', reason: 'Opened-file evidence has not been read' },
+          occurrences: [{ id: `${path}:first`, alias: `${path}:first`, path, position: 0,
+            before: { startLine: 1, lineCount: 1 }, after: { startLine: 1, lineCount: 1 } }],
+        })) } });
+    const port = createScmReviewedMarksRecordPort({ comparison, transport: {
+      read: async () => ({ value: null, version: -1 }),
+      compareAndSet: async () => ({ success: true, version: 0 }),
+    } });
+    const marks = { record: null, pending: false, unavailableReason: null,
+      setReviewed: port.setReviewed, setReviewedKeys: port.setReviewedKeys, clear: port.clear };
+    let controller!: ReturnType<typeof useHunkReviewController>;
+    function Review() {
+      const [path, setPath] = React.useState('a.ts');
+      controller = useHunkReviewController({ source: { kind: 'captured', comparison }, path,
+        unifiedDiff: comparison.inventory.files.find(file => file.path === path)?.evidence.unifiedDiff ?? '',
+        host: null, serverId: null, fileViewed: null, marks, onNavigate: cursor => setPath(cursor.path) });
+      return null;
+    }
+    const screen = await renderScreen(<Review />);
+    expect(controller.reviewUnits).toHaveLength(1);
+    await act(async () => controller.next());
+    expect(controller.cursor).toEqual({ path: 'b.ts', key: null });
+    comparison = ScmComparisonSchema.parse({ ...comparison, inventory: { ...comparison.inventory,
+      files: comparison.inventory.files.map(file => ({ ...file, evidence: { state: 'available', unifiedDiff } })) } });
+    await screen.update(<Review />);
+    expect(controller.reviewUnits).toHaveLength(1);
+    expect(controller.cursor?.path).toBe('b.ts');
+    expect(controller.cursor?.key).toBe(controller.reviewUnits[0]!.key);
+    await act(async () => controller.next());
+    expect(controller.cursor?.path).toBe('a.ts');
   });
   it('preserves the published review model through a diff block repaint', async () => {
     const source = createChangedFilesReviewDiffStateSource();
@@ -125,7 +272,7 @@ describe('hunk review through the shared keyboard and Account port', () => {
     function Review() {
       controller = useHunkReviewController({ source, path: 'a.ts', unifiedDiff: patch, liveEntries,
         host: null, serverId: null, onDiscard: discarded, onAsk: asked, marks: { record: null,
-          unavailableReason: null, setReviewed: () => {}, clear: () => {},
+          pending: false, unavailableReason: null, setReviewed: () => {}, clear: () => {},
           setReviewedKeys: (keys, kept) => { void port.setReviewedKeys(keys, kept); } } });
       return null;
     }
@@ -219,7 +366,7 @@ describe('hunk review through the shared keyboard and Account port', () => {
         onOutOfDate: outOfDate,
         marks: {
           record: null,
-          unavailableReason: null,
+          pending: false, unavailableReason: null,
           setReviewed: () => {},
           clear: () => {},
           setReviewedKeys: (keys, kept) => {
@@ -325,7 +472,7 @@ describe('hunk review through the shared keyboard and Account port', () => {
         serverId: null,
         marks: {
           record: null,
-          unavailableReason: null,
+          pending: false, unavailableReason: null,
           setReviewed: () => {},
           setReviewedKeys: keep,
           clear: () => {},
@@ -395,7 +542,7 @@ describe('hunk review through the shared keyboard and Account port', () => {
           record: {
             reviewedChangeKeys: record,
           } as unknown as ScmReviewedMarksRecord,
-          unavailableReason: null,
+          pending: false, unavailableReason: null,
           setReviewed: () => {},
           clear: () => {},
           setReviewedKeys: (next, on) => {
@@ -469,7 +616,7 @@ describe('hunk review through the shared keyboard and Account port', () => {
     });
     expect(controller.currentHunk?.key).toBe(keys[1]);
   });
-  it('R keeps the current change offline, advances the comparison counter and rejects a stale row', async () => {
+  it('R keeps the current change, advances the comparison counter and rejects a stale row', async () => {
     storage.setState({
       settings: {
         ...initialSettings,
@@ -524,7 +671,7 @@ describe('hunk review through the shared keyboard and Account port', () => {
         onOutOfDate: outOfDate,
         marks: {
           record,
-          unavailableReason: null,
+          pending: false, unavailableReason: null,
           setReviewed: () => {},
           setReviewedKeys,
           clear: () => {},

@@ -1,3 +1,4 @@
+import { retainIfEqual } from '@/sync/domains/state/structuralSharing';
 import type { ReviewDiffState } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffBlock';
 
 type Listener = () => void;
@@ -39,7 +40,8 @@ export function createChangedFilesReviewDiffStateSource(initialStates?: Iterable
 
     const setDiffState = (path: string, next: ReviewDiffState) => {
         const prev = stateByPath.get(path);
-        if (prev === next) return;
+        // A refetch that returns the same patch must not republish: every row and the whole-snapshot reader re-render on it.
+        if (retainIfEqual(prev, next) === prev) return;
         stateByPath.set(path, next);
         emit(path);
     };

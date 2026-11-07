@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 
 import { ScmDiffCache } from './scmDiffCache';
 
@@ -14,6 +14,25 @@ function key(input: { sessionId?: string; sig?: string; area?: ScmDiffArea; path
 }
 
 describe('ScmDiffCache', () => {
+    it('does not copy the repository signature into every file lookup key', async () => {
+        const cache = new ScmDiffCache({ maxEntries: 30, maxTotalBytes: 10_000, now: () => 1 });
+        const signature = JSON.stringify(Array.from({ length: 59_448 }, (_, index) => `rows/row${index}.txt`));
+        // Observe real Map lookups without replacing cache decisions. A new
+        // composite string makes hashing work proportional to repository × files.
+        const lookups = vi.spyOn(Map.prototype, 'get');
+        let copiedSignatureLookups: number;
+        try {
+            for (let index = 0; index < 23; index++) {
+                const input = key({ path: `rows/row${index}.txt`, sig: signature });
+                await cache.getOrLoad(input, async () => ({ success: true, diff: 'held body' }));
+                cache.get(input);
+            }
+            copiedSignatureLookups = lookups.mock.calls.filter(([value]) =>
+                typeof value === 'string' && value.length > signature.length && value.includes(signature)).length;
+        } finally { lookups.mockRestore(); }
+        expect(copiedSignatureLookups).toBe(0);
+    });
+
     it('shares equivalent concurrent loads and cached results, with freshness and scope isolation', async () => {
         const cache = new ScmDiffCache({ maxEntries: 10, maxTotalBytes: 10_000, now: () => 1 });
         let finish!: (value: { success: true; diff: string }) => void;

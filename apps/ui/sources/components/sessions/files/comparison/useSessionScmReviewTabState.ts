@@ -1,10 +1,10 @@
 import * as React from 'react';
+import { useOptionalAppPaneContext } from '@/components/appShell/panes/AppPaneContext';
 import type { AppPaneScopeApi } from '@/components/appShell/panes/hooks/useAppPaneScope';
 import { createSessionScmReviewDetailsTab, SESSION_DETAILS_SCM_REVIEW_TAB_KEY, type SessionScmReviewTarget } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
-import { requestActiveReviewFileForComparison, useActiveReviewFilePath } from '@/components/workspaces/scm/review/activeReviewFile';
+import { activeReviewFileKeyForComparison, requestActiveReviewFileForComparison, useActiveReviewFilePath } from '@/components/workspaces/scm/review/activeReviewFile';
 import { scmComparisonKey } from './filesComparison';
 import type { SessionScmReviewComparison, SessionScmReviewView } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
-
 import { getScmReviewComparison, retainScmReviewComparison, subscribeScmDiffSummaryHostState } from '@/sync/ops/scmDiffSummary/generate';
 import { useServerCredentialAccountScopeBinding } from '@/sync/domains/scope/useServerCredentialAccountScopes';
 import { serverAccountScopeKeySuffix } from '@/sync/domains/scope/serverAccountScope';
@@ -29,6 +29,28 @@ export function useSessionScmReviewComparison(sessionId: string, serverId: strin
 const SCROLL_PERSIST_DEBOUNCE_MS = 250;
 const SCROLL_PERSIST_EPSILON_PX = 1;
 
+type ReviewModelChoice = Readonly<{ hostKey: string; preference: string | null; value: string }>;
+
+/** Responsive presenters can remount the form; its draft belongs to the retained review pane. */
+export function useScmReviewModelChoice(hostKey: string, preference: string | null, scopeId?: string) {
+    const [localChoice, setLocalChoice] = React.useState<ReviewModelChoice | null>(null);
+    const pane = useOptionalAppPaneContext(context => {
+        const tab = scopeId ? context.state.scopes[scopeId]?.details.tabState[SESSION_DETAILS_SCM_REVIEW_TAB_KEY] : null;
+        const choice = tab && typeof tab === 'object' && 'modelChoice' in tab ? tab.modelChoice as ReviewModelChoice | null : null;
+        return { dispatch: context.dispatch, choice };
+    });
+    const dispatch = pane?.dispatch;
+    const choice = scopeId && pane ? pane.choice : localChoice;
+    const setModel = React.useCallback((value: string) => {
+        const modelChoice = { hostKey, preference, value };
+        if (scopeId && dispatch) {
+            dispatch({ type: 'patchDetailsTabState', scopeId, tabKey: SESSION_DETAILS_SCM_REVIEW_TAB_KEY,
+                patch: { modelChoice }, persist: false });
+        } else setLocalChoice(modelChoice);
+    }, [dispatch, hostKey, preference, scopeId]);
+    return { chosenModel: choice?.hostKey === hostKey && choice.preference === preference ? choice.value : null, setModel };
+}
+
 type ReviewPaneState = Readonly<{
     scopeState?: Readonly<{ details?: Readonly<{ tabState?: Readonly<Record<string, unknown>> }> }> | null;
 }>;
@@ -41,31 +63,35 @@ export function useScmReviewActiveFileSelection(params: Readonly<{
     isCurrent?: () => boolean;
 }>) {
     const tabKey = `${SESSION_DETAILS_SCM_REVIEW_TAB_KEY}:activeFile`;
+    const activeFileKey = activeReviewFileKeyForComparison(params.activeFileKey, params.comparison);
     const selectionKey = JSON.stringify([params.hostKey, params.comparison ? scmComparisonKey(params.comparison) : null]);
     const raw = params.persistedSelection ?? params.pane.scopeState?.details?.tabState?.[tabKey];
     const saved = raw && typeof raw === 'object' ? raw as { selectionKey?: unknown; path?: unknown } : null;
     const initial = React.useRef<Readonly<{ key: string; path: string | null; restored: boolean }> | null>(null);
     if (!initial.current || initial.current.key !== selectionKey) initial.current = { key: selectionKey,
         path: saved?.selectionKey === selectionKey && typeof saved.path === 'string' ? saved.path : null, restored: false };
-    const activePath = useActiveReviewFilePath(params.activeFileKey);
+    const activePath = useActiveReviewFilePath(activeFileKey);
     const setDetailsTabState = params.pane.setDetailsTabState;
     React.useEffect(() => {
         if (!initial.current) return;
-        if (!params.presented) {
+        if (params.view !== 'files') {
             initial.current = { ...initial.current, restored: false };
             return;
         }
-        // Walkthrough keeps this comparison's mounted selection; only a retired presentation needs restoration.
-        if (params.view !== 'files' || !params.comparison || initial.current.restored) return;
+        // A hidden Files view keeps its rows and scroll. Restore only after that body retires,
+        // rather than issuing another focus/virtualizer scroll every time its tab returns.
+        if (!params.presented || !params.comparison || initial.current.restored) return;
         const path = initial.current.path;
-        if (path && !requestActiveReviewFileForComparison(params.activeFileKey, path, params.comparison, params.isCurrent)) return;
+        if (path && !requestActiveReviewFileForComparison(activeFileKey, path, params.comparison, params.isCurrent)) return;
         initial.current = { ...initial.current, restored: true };
-    }, [params.activeFileKey, params.comparison, params.isCurrent, params.presented, params.view, selectionKey]);
+    }, [activeFileKey, params.comparison, params.isCurrent, params.presented, params.view, selectionKey]);
     React.useEffect(() => {
         if (!params.presented || params.view !== 'files' || !activePath) return;
         if (initial.current) initial.current = { ...initial.current, path: activePath };
         if (saved?.selectionKey !== selectionKey || saved?.path !== activePath) setDetailsTabState(tabKey, { selectionKey, path: activePath });
     }, [activePath, params.presented, params.view, saved?.selectionKey, saved?.path, selectionKey, setDetailsTabState, tabKey]);
+    return React.useMemo(() => ({ key: activeFileKey, navigationKey: params.activeFileKey,
+        presented: params.presented, externalLifecycle: true }), [activeFileKey, params.activeFileKey, params.presented]);
 }
 
 function scrollPositionsEqual(previous: unknown, next: unknown): boolean {

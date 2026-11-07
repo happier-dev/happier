@@ -4,7 +4,7 @@ import { Platform } from 'react-native';
 import { normalizeDiffPresentationPreference, useDiffSplitFits } from '@/components/ui/code/diff/diffPresentationStyle';
 import type { DropdownMenuItem } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { ScmComparisonMoreMenu, type ScmComparisonMenuSection } from '@/components/sessions/files/comparison/ScmComparisonMoreMenu';
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 import { useSettingMutable } from '@/sync/domains/state/storage';
 import { t } from '@/text';
 import { useEffectiveDiffWrapLines } from '@/components/ui/code/diff/diffPresentationStyle';
@@ -17,6 +17,8 @@ export type ChangedFilesReviewMoreMenuProps = Readonly<{
     onDiffArea: (area: ScmDiffArea) => void;
     /** The host's own rows (review comments), ahead of the display choices. */
     leadingSections?: readonly ScmComparisonMenuSection[];
+    /** Rows after the display choices: the pane's lent rows when this is a header's own `⋯`. */
+    trailingSections?: readonly ScmComparisonMenuSection[];
     testID?: string;
     /** The gap to the neighbouring bar action: their finger frames split it. */
     interactiveTargetGapPx?: number;
@@ -31,7 +33,7 @@ export type ChangedFilesReviewMoreMenuProps = Readonly<{
  * Review's display choices as menu rows, for whichever menu shows them: the wide bar's own `⋯`, or the
  * phone comparison menu's Display section.
  */
-export function useChangedFilesReviewDisplayMenu(props: Omit<ChangedFilesReviewMoreMenuProps, 'testID' | 'leadingSections' | 'interactiveTargetGapPx'>): Readonly<{
+export function useChangedFilesReviewDisplayMenu(props: Omit<ChangedFilesReviewMoreMenuProps, 'testID' | 'leadingSections' | 'trailingSections' | 'interactiveTargetGapPx'>): Readonly<{
     items: DropdownMenuItem[];
     select: (id: string) => void;
 }> {
@@ -82,6 +84,8 @@ export function useChangedFilesReviewDisplayMenu(props: Omit<ChangedFilesReviewM
 export const ChangedFilesReviewMoreMenu = React.memo(function ChangedFilesReviewMoreMenu(props: ChangedFilesReviewMoreMenuProps) {
     const { items, select } = useChangedFilesReviewDisplayMenu(props);
     const leading = props.leadingSections;
-    const sections = React.useMemo(() => [...(leading ?? []), { id: 'display', items, onSelect: select }], [items, leading, select]);
+    const trailing = props.trailingSections;
+    const sections = React.useMemo(() => [...(leading ?? []), { id: 'display', items, onSelect: select }, ...(trailing ?? [])],
+        [items, leading, select, trailing]);
     return <ScmComparisonMoreMenu sections={sections} testID={props.testID} interactiveTargetGapPx={props.interactiveTargetGapPx} />;
 });

@@ -1,4 +1,4 @@
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 
 export type ScmDiffCacheKey = Readonly<{
     sessionId: string;
@@ -22,7 +22,10 @@ export type ScmDiffCacheOptions = Readonly<{
 export type ScmDiffLoadResult = Readonly<{ success: true; diff: string }> | Readonly<{ success: false; error: string }>;
 
 export class ScmDiffCache {
-    private readonly inFlight = new Map<string, { key: ScmDiffCacheKey; promise: Promise<ScmDiffLoadResult> }>();
+    // Snapshot signatures contain the repository's full status projection. Keep
+    // that string as its own Map key so each file lookup reuses its cached hash.
+    private readonly keysBySnapshot = new Map<string, Map<string, ScmDiffCacheKey>>();
+    private readonly inFlight = new Map<ScmDiffCacheKey, { key: ScmDiffCacheKey; promise: Promise<ScmDiffLoadResult> }>();
 
     async getOrLoad(key: ScmDiffCacheKey, load: () => Promise<ScmDiffLoadResult>): Promise<ScmDiffLoadResult> {
         const cached = this.get(key);
@@ -30,18 +33,20 @@ export class ScmDiffCache {
         const storageKey = this.toStorageKey(key);
         const pending = this.inFlight.get(storageKey);
         if (pending) return pending.promise;
-        const promise = load();
-        this.inFlight.set(storageKey, { key, promise });
+        let promise: Promise<ScmDiffLoadResult> | undefined;
         try {
+            promise = load();
+            this.inFlight.set(storageKey, { key, promise });
             const result = await promise;
             if (result.success && this.inFlight.get(storageKey)?.promise === promise) this.set(key, result.diff);
             return result;
         } finally {
             if (this.inFlight.get(storageKey)?.promise === promise) this.inFlight.delete(storageKey);
+            this.forgetUnusedKey(storageKey);
         }
     }
 
-    private readonly entries = new Map<string, ScmDiffCacheEntry & Readonly<{ sessionId: string; path: string }>>();
+    private readonly entries = new Map<ScmDiffCacheKey, ScmDiffCacheEntry & Readonly<{ sessionId: string; path: string }>>();
     private totalBytes = 0;
     private maxEntries: number;
     private maxTotalBytes: number;
@@ -54,7 +59,10 @@ export class ScmDiffCache {
     get(key: ScmDiffCacheKey): ScmDiffCacheEntry | null {
         const storageKey = this.toStorageKey(key);
         const existing = this.entries.get(storageKey) ?? null;
-        if (!existing) return null;
+        if (!existing) {
+            this.forgetUnusedKey(storageKey);
+            return null;
+        }
 
         // Refresh LRU order by reinserting at the end.
         this.entries.delete(storageKey);
@@ -95,12 +103,15 @@ export class ScmDiffCache {
     invalidateSession(sessionId: string): void {
         if (!sessionId) return;
         for (const [storageKey, pending] of this.inFlight) {
-            if (pending.key.sessionId === sessionId) this.inFlight.delete(storageKey);
+            if (pending.key.sessionId !== sessionId) continue;
+            this.inFlight.delete(storageKey);
+            this.forgetUnusedKey(storageKey);
         }
         for (const [storageKey, entry] of this.entries) {
             if (entry.sessionId !== sessionId) continue;
             this.entries.delete(storageKey);
             this.totalBytes -= entry.byteSize;
+            this.forgetUnusedKey(storageKey);
         }
     }
 
@@ -108,7 +119,9 @@ export class ScmDiffCache {
         const sessionId = input.sessionId;
         if (!sessionId) return;
         for (const [storageKey, pending] of this.inFlight) {
-            if (pending.key.sessionId === sessionId && input.paths.has(pending.key.path)) this.inFlight.delete(storageKey);
+            if (pending.key.sessionId !== sessionId || !input.paths.has(pending.key.path)) continue;
+            this.inFlight.delete(storageKey);
+            this.forgetUnusedKey(storageKey);
         }
 
         for (const [storageKey, entry] of this.entries) {
@@ -116,6 +129,7 @@ export class ScmDiffCache {
             if (!input.paths.has(entry.path)) continue;
             this.entries.delete(storageKey);
             this.totalBytes -= entry.byteSize;
+            this.forgetUnusedKey(storageKey);
         }
     }
 
@@ -124,9 +138,33 @@ export class ScmDiffCache {
         return Math.max(0, diff.length * 2);
     }
 
-    private toStorageKey(key: ScmDiffCacheKey): string {
-        // Use a separator that cannot appear in paths.
-        return `${key.sessionId}\u0000${key.snapshotSignature}\u0000${key.diffArea}\u0000${key.path}`;
+    private fileKey(key: ScmDiffCacheKey): string {
+        return `${key.sessionId}\u0000${key.diffArea}\u0000${key.path}`;
+    }
+
+    private toStorageKey(key: ScmDiffCacheKey): ScmDiffCacheKey {
+        let keys = this.keysBySnapshot.get(key.snapshotSignature);
+        if (!keys) {
+            keys = new Map();
+            this.keysBySnapshot.set(key.snapshotSignature, keys);
+        }
+        const fileKey = this.fileKey(key);
+        let stored = keys.get(fileKey);
+        if (!stored) {
+            stored = key;
+            keys.set(fileKey, stored);
+        }
+        return stored;
+    }
+
+    private forgetUnusedKey(key: ScmDiffCacheKey): void {
+        if (this.entries.has(key) || this.inFlight.has(key)) return;
+        const keys = this.keysBySnapshot.get(key.snapshotSignature);
+        const fileKey = this.fileKey(key);
+        // An invalidated load may finish after a replacement has acquired this path.
+        if (keys?.get(fileKey) !== key) return;
+        keys.delete(fileKey);
+        if (keys.size === 0) this.keysBySnapshot.delete(key.snapshotSignature);
     }
 
     private evictIfNeeded(): void {
@@ -134,13 +172,14 @@ export class ScmDiffCache {
         const maxTotalBytes = this.maxTotalBytes;
 
         while (this.entries.size > maxEntries || (maxTotalBytes > 0 && this.totalBytes > maxTotalBytes)) {
-            const oldestKey = this.entries.keys().next().value as string | undefined;
+            const oldestKey = this.entries.keys().next().value;
             if (!oldestKey) break;
             const oldest = this.entries.get(oldestKey);
             this.entries.delete(oldestKey);
             if (oldest) {
                 this.totalBytes -= oldest.byteSize;
             }
+            this.forgetUnusedKey(oldestKey);
         }
     }
 }

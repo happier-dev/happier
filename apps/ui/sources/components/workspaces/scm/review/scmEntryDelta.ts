@@ -1,6 +1,6 @@
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 
-import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
+import type { ScmWorkingEntry, ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 
 export function totalsChangedLines(snapshot: ScmWorkingSnapshot | null, area: ScmDiffArea): number {
@@ -11,29 +11,16 @@ export function totalsChangedLines(snapshot: ScmWorkingSnapshot | null, area: Sc
     return totals.includedAdded + totals.includedRemoved + totals.pendingAdded + totals.pendingRemoved;
 }
 
-export type ScmEntryDelta = Readonly<{
-    isComplete?: boolean;
-    hasIncludedDelta: boolean;
-    hasPendingDelta: boolean;
-    includedAdded: number;
-    includedRemoved: number;
-    pendingAdded: number;
-    pendingRemoved: number;
-}>;
-
-export function entryToDelta(entry: any): ScmEntryDelta {
-    return {
-        ...(entry?.stats?.isComplete === undefined ? {} : { isComplete: entry.stats.isComplete }),
-        hasIncludedDelta: Boolean(entry?.hasIncludedDelta),
-        hasPendingDelta: Boolean(entry?.hasPendingDelta),
-        includedAdded: Number(entry?.stats?.includedAdded ?? 0),
-        includedRemoved: Number(entry?.stats?.includedRemoved ?? 0),
-        pendingAdded: Number(entry?.stats?.pendingAdded ?? 0),
-        pendingRemoved: Number(entry?.stats?.pendingRemoved ?? 0),
-    };
+export function indexScmEntriesByPath(entries: readonly ScmWorkingEntry[]): ReadonlyMap<string, ScmWorkingEntry> {
+    const map = new Map<string, ScmWorkingEntry>();
+    for (const entry of entries) {
+        if (!entry.path) continue;
+        map.set(entry.path, entry);
+    }
+    return map;
 }
 
-export function fileHasDeltaForArea(file: ScmFileStatus, delta: ScmEntryDelta | null, area: ScmDiffArea): boolean {
+export function fileHasDeltaForArea(file: ScmFileStatus, delta: ScmWorkingEntry | null, area: ScmDiffArea): boolean {
     if (delta) {
         if (area === 'included') return delta.hasIncludedDelta;
         if (area === 'pending') return delta.hasPendingDelta;
@@ -45,26 +32,27 @@ export function fileHasDeltaForArea(file: ScmFileStatus, delta: ScmEntryDelta | 
     return true;
 }
 
-export function toAreaFileStatus(file: ScmFileStatus, delta: ScmEntryDelta | null, area: ScmDiffArea): ScmFileStatus {
+export function toAreaFileStatus(file: ScmFileStatus, delta: ScmWorkingEntry | null, area: ScmDiffArea): ScmFileStatus {
     if (!delta) {
         // Best-effort: keep existing stats if we don't have entry-level numbers.
-        return area === 'included'
-            ? { ...file, isIncluded: true }
-            : area === 'pending'
-                ? { ...file, isIncluded: false }
-                : file;
+        const isIncluded = area === 'both' ? file.isIncluded : area === 'included';
+        return file.isIncluded === isIncluded ? file : { ...file, isIncluded };
     }
-    if (area === 'included') {
-        return { ...file, hasIncludedDelta: delta.hasIncludedDelta, isComplete: delta.isComplete, isIncluded: true, linesAdded: delta.includedAdded, linesRemoved: delta.includedRemoved };
-    }
-    if (area === 'pending') {
-        return { ...file, hasIncludedDelta: delta.hasIncludedDelta, isComplete: delta.isComplete, isIncluded: false, linesAdded: delta.pendingAdded, linesRemoved: delta.pendingRemoved };
-    }
+    const isIncluded = area === 'both' ? file.isIncluded : area === 'included';
+    const linesAdded = area === 'included' ? delta.stats.includedAdded : area === 'pending'
+        ? delta.stats.pendingAdded : delta.stats.includedAdded + delta.stats.pendingAdded;
+    const linesRemoved = area === 'included' ? delta.stats.includedRemoved : area === 'pending'
+        ? delta.stats.pendingRemoved : delta.stats.includedRemoved + delta.stats.pendingRemoved;
+    // Status rows already carry their area's facts. Keep those rows rather than copying the
+    // entire checkout again before Review can draw its first visible diff.
+    if (file.isIncluded === isIncluded && file.linesAdded === linesAdded && file.linesRemoved === linesRemoved
+        && file.hasIncludedDelta === delta.hasIncludedDelta && file.isComplete === delta.stats.isComplete) return file;
     return {
         ...file,
+        isIncluded,
         hasIncludedDelta: delta.hasIncludedDelta,
-        isComplete: delta.isComplete,
-        linesAdded: delta.includedAdded + delta.pendingAdded,
-        linesRemoved: delta.includedRemoved + delta.pendingRemoved,
+        isComplete: delta.stats.isComplete,
+        linesAdded,
+        linesRemoved,
     };
 }

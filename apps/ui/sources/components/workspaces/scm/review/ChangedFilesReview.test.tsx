@@ -126,10 +126,15 @@ vi.mock('@/components/ui/code/diff/DiffFilesListView', () => ({
             return React.createElement(React.Fragment, { key: file.key }, row, inline);
         };
 
+        // Leading rows (the stream's file index) read after the header and before the files, as the real list draws them.
+        const leading = props.leadingRows
+            ? props.leadingRows.keys.map((key: string, index: number) => React.createElement(React.Fragment, { key: `leading:${key}` }, props.leadingRows.render(index)))
+            : null;
         return React.createElement(
             'VirtualizedList',
             props,
             header,
+            leading,
             data.map((item: any, index: number) => renderFile(item, index)),
             footer,
         );
@@ -551,55 +556,6 @@ vi.mock('@/components/ui/scroll/resolveWebScrollableElement', () => ({
 
 vi.mock('@/utils/ui/toTestIdSafeValue', () => ({
     toTestIdSafeValue: (value: string) => String(value ?? '').trim().replace(/[^a-zA-Z0-9._-]/g, '_'),
-}));
-
-vi.mock('@/components/workspaces/scm/review/scmEntryDelta', () => ({
-    totalsChangedLines: (snapshot: any, area: string) => {
-        const totals = snapshot?.totals;
-        if (!totals) return 0;
-        if (area === 'included') return Number(totals.includedAdded ?? 0) + Number(totals.includedRemoved ?? 0);
-        if (area === 'pending') return Number(totals.pendingAdded ?? 0) + Number(totals.pendingRemoved ?? 0);
-        return Number(totals.includedAdded ?? 0) + Number(totals.includedRemoved ?? 0)
-            + Number(totals.pendingAdded ?? 0) + Number(totals.pendingRemoved ?? 0);
-    },
-    entryToDelta: (entry: any) => ({
-        hasIncludedDelta: Boolean(entry?.hasIncludedDelta),
-        hasPendingDelta: Boolean(entry?.hasPendingDelta),
-        includedAdded: Number(entry?.stats?.includedAdded ?? 0),
-        includedRemoved: Number(entry?.stats?.includedRemoved ?? 0),
-        pendingAdded: Number(entry?.stats?.pendingAdded ?? 0),
-        pendingRemoved: Number(entry?.stats?.pendingRemoved ?? 0),
-    }),
-    fileHasDeltaForArea: (file: any, delta: any, area: string) => {
-        if (delta) {
-            if (area === 'included') return delta.hasIncludedDelta;
-            if (area === 'pending') return delta.hasPendingDelta;
-            return delta.hasIncludedDelta || delta.hasPendingDelta;
-        }
-        if (area === 'included') return file.isIncluded === true;
-        if (area === 'pending') return file.isIncluded !== true;
-        return true;
-    },
-    toAreaFileStatus: (file: any, delta: any, area: string) => {
-        if (!delta) {
-            return area === 'included'
-                ? { ...file, isIncluded: true }
-                : area === 'pending'
-                    ? { ...file, isIncluded: false }
-                    : file;
-        }
-        if (area === 'included') {
-            return { ...file, isIncluded: true, linesAdded: delta.includedAdded, linesRemoved: delta.includedRemoved };
-        }
-        if (area === 'pending') {
-            return { ...file, isIncluded: false, linesAdded: delta.pendingAdded, linesRemoved: delta.pendingRemoved };
-        }
-        return {
-            ...file,
-            linesAdded: delta.includedAdded + delta.pendingAdded,
-            linesRemoved: delta.includedRemoved + delta.pendingRemoved,
-        };
-    },
 }));
 
 vi.mock('@/scm/diff/defaultMode', () => ({
@@ -1025,14 +981,15 @@ describe('ChangedFilesReview', () => {
         expect(typeof Header).toBe('function');
         const headerScreen = await renderScreen(React.createElement(Header));
         expect(headerScreen.findByTestId('scm-review-index')).not.toBeNull();
-        const indexRows = headerScreen.findAllByType('ScmChangeRow' as any);
+        // The index rows are the list's leading rows, drawn before the files in the same scroll.
+        const indexRows = screen.findAllByType('ScmChangeRow' as any).filter((row) => row.props.layout === 'compact');
         expect(indexRows.map((row) => row.props.file.fullPath)).toEqual(['src/a.ts', 'src/b.ts']);
         expect(indexRows[0]?.props.leadingElement?.props?.testID).toBe('commit-toggle-a.ts');
     });
 
     it('as a Details tab, still lists every changed file when the comparison is too large to open every diff', async () => {
         diffFilesListViewSpy.mockClear();
-        await renderChangedFilesReview({
+        const screen = await renderChangedFilesReview({
             allRepositoryChangedFiles: [fileA, fileB],
             detailsHeader: { isSelectedForCommit: () => false },
             maxFiles: 1,
@@ -1042,7 +999,23 @@ describe('ChangedFilesReview', () => {
         const headerScreen = await renderScreen(React.createElement(Header));
         // A large change needs its file list most: the index is how a reader finds a file in it.
         expect(headerScreen.findByTestId('scm-review-index')).not.toBeNull();
-        expect(headerScreen.findAllByType('ScmChangeRow' as any).map((row) => row.props.file.fullPath)).toEqual(['src/a.ts', 'src/b.ts']);
+        expect(diffFilesListViewSpy.mock.calls.at(-1)?.[0]?.leadingRows?.keys).toEqual(['src/a.ts', 'src/b.ts']);
+        expect(screen.findAllByType('ScmChangeRow' as any).filter((row) => row.props.layout === 'compact')
+            .map((row) => row.props.file.fullPath)).toEqual(['src/a.ts', 'src/b.ts']);
+    });
+
+    it('lists every changed file in the comparison rail even with no Details header (captured comparisons)', async () => {
+        diffFilesListViewSpy.mockClear();
+        const screen = await renderChangedFilesReview({
+            allRepositoryChangedFiles: [fileA, fileB],
+            comparisonChrome: { indexPlacement: 'rail', renderBarLeading: () => null, renderHeader: () => null },
+        });
+        await flushReviewEffects(2);
+        const rail = screen.findByTestId('scm-comparison-rail');
+        expect(rail).not.toBeNull();
+        // The rail's rows go through the canonical virtualized list: every file is in its data; only rows on screen mount.
+        const rows = rail!.findAll((node) => node.props.testID === 'scm-review-index-rows' && Array.isArray(node.props.data))[0];
+        expect(rows?.props.data.map((file: any) => file.fullPath)).toEqual(['src/a.ts', 'src/b.ts']);
     });
 
     it('keeps the compact toolbar and no file list outside Details', async () => {

@@ -3,7 +3,18 @@ import { describe, expect, it } from 'vitest';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 
 import { buildChangedFilesReviewRows } from './buildChangedFilesReviewRows';
-import { resolveReviewPrefetchWindow } from './resolveReviewPrefetchWindow';
+import { resolveReviewDiffDemandPaths, resolveReviewPrefetchWindow } from './resolveReviewPrefetchWindow';
+
+it('revalidates only expanded viewport demand, retaining Find access to the whole repository', () => {
+    const allKeys = Array.from({ length: 59_448 }, (_, index) => `row${index}.txt`);
+    const input = { findOpen: false, allKeys,
+        requestedPaths: allKeys.slice(0, 6), expandedKeys: new Set(allKeys.slice(0, 23)) };
+    expect(resolveReviewDiffDemandPaths(input)).toEqual(allKeys.slice(0, 6));
+    expect(resolveReviewDiffDemandPaths({ ...input, expandedKeys: new Set(allKeys.slice(1, 23)) })).toEqual(allKeys.slice(1, 6));
+    expect(resolveReviewDiffDemandPaths({ ...input, requestedPaths: [allKeys[22]!] })).toEqual([allKeys[22]]);
+    expect(resolveReviewDiffDemandPaths({ ...input, requestedPaths: [] })).toEqual([]);
+    expect(resolveReviewDiffDemandPaths({ ...input, findOpen: true })).toBe(allKeys);
+});
 
 function file(path: string): ScmFileStatus {
     return {

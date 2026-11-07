@@ -23,12 +23,13 @@ import type { ScmWorkingSnapshot } from '@/sync/domains/state/storageTypes';
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { t } from '@/text';
 import { scmUiBackendRegistry } from '@/scm/registry/scmUiBackendRegistry';
-import type { RepositoryCheckpointTurnMetadata, ScmDiffArea } from '@happier-dev/protocol';
+import type { RepositoryCheckpointTurnMetadata} from '@happier-dev/protocol/sessions/changes/types';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 import { useChangedFilesReviewDiffLoading } from '@/components/workspaces/scm/review/useChangedFilesReviewDiffLoading';
 import { type ChangedFilesReviewRow } from '@/components/workspaces/scm/review/buildChangedFilesReviewRows';
 import { useChangedFilesReviewPrefetch } from '@/components/workspaces/scm/review/useChangedFilesReviewPrefetch';
 import { useChangedFilesReviewFocusPath } from '@/components/workspaces/scm/review/useChangedFilesReviewFocusPath';
-import { entryToDelta, fileHasDeltaForArea, toAreaFileStatus, totalsChangedLines, type ScmEntryDelta } from '@/components/workspaces/scm/review/scmEntryDelta';
+import { indexScmEntriesByPath, fileHasDeltaForArea, toAreaFileStatus, totalsChangedLines } from '@/components/workspaces/scm/review/scmEntryDelta';
 import { ChangedFilesSectionHeader } from '@/components/workspaces/scm/review/ChangedFilesSectionHeader';
 import { HorizontalScrollableRow } from '@/components/ui/scroll/HorizontalScrollableRow';
 import { ChangedFilesReviewDiffAreaSelector } from '@/components/workspaces/scm/review/ChangedFilesReviewDiffAreaSelector';
@@ -41,7 +42,6 @@ import { ScmChangeRow } from '@/components/workspaces/scm/changes/ScmChangeRow';
 import { buildSnapshotSignature } from '@/scm/statusSync/projectState';
 import { resolveFileViewerKind } from '@/scm/utils/filePresentation';
 import type { ChangedFilesReviewDiffBlockProps } from './ChangedFilesReviewDiffBlock';
-import { useCapturedFileByPath } from '@/components/sessions/files/comparison/useCapturedFileByPath';
 import { buildScmDiffSnapshotSignature, buildScmFileDiffSnapshotSignature } from '@/scm/diffCache/scmDiffCacheKey';
 import { scmDiffCache } from '@/scm/diffCache/scmDiffCacheSingleton';
 import { toTestIdSafeValue } from '@/utils/ui/toTestIdSafeValue';
@@ -53,24 +53,30 @@ import { DiffFilesListView, type DiffFilesListViewHandle, type DiffFilesListView
 import type { DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { retainDeep, retainKeyedRows } from '@/sync/domains/state/structuralSharing';
 import { WrapLinesToggleButton } from '@/components/ui/code/WrapLinesToggleButton';
-import { useScmDiffExpandedKeys } from '@/components/workspaces/scm/review/useScmDiffExpandedKeys';
+import { useScmDiffExpandedKeys, type ScmDiffReveal } from '@/components/workspaces/scm/review/useScmDiffExpandedKeys';
 import { useScmReviewViewabilityConfig } from '@/scm/review/useScmReviewViewabilityConfig';
 import { resolveWebScrollableElement } from '@/components/ui/scroll/resolveWebScrollableElement';
 import type { WorkspaceScopeBase } from '@/sync/domains/workspaces/workspaceScope';
 import type { ScmReviewUnifiedDiffFetcher } from '@/components/workspaces/scm/review/scmReviewDiffFetcher';
 import type { Theme } from '@/theme';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { IconButton } from '@/components/ui/buttons/IconButton';
 import { Tooltip } from '@/components/ui/overlays/Tooltip';
 import { preserveWebScrollAnchorAfterToggle } from './preserveWebScrollAnchorAfterToggle';
-import { ChangedFilesReviewIndex } from './ChangedFilesReviewIndex';
-import { ChangedFilesReviewPhoneFileControl } from './ChangedFilesReviewPhoneFileControl';
+import { ChangedFilesReviewIndex, ChangedFilesReviewIndexRowsScope, useChangedFilesReviewIndexLeadingRows } from './ChangedFilesReviewIndex';
+import { buildChangedFilesReviewFileIndex, ChangedFilesReviewPhoneFileControl } from './ChangedFilesReviewPhoneFileControl';
 import { ReviewKeyboardBindings } from './hunkReview/ReviewKeyboardBindings';
 import { useHunkReviewController } from './hunkReview/useHunkReviewController';
+import { buildLiveReviewFiles, type LiveReviewFile } from './hunkReview/hunkReviewModel';
+import { useCapturedFileByPath } from '@/components/sessions/files/comparison/useCapturedFileByPath';
 import { buildDiffHunkTable } from '@/components/ui/code/diff/hunks/buildDiffHunkTable';
 import { buildScmFileReviewUnits } from '@happier-dev/protocol/scm/comparisonOccurrences';
 import { ChangedFilesReviewMoreMenu, useChangedFilesReviewDisplayMenu } from './ChangedFilesReviewMoreMenu';
 import type { ScmComparisonMenuSection } from '@/components/sessions/files/comparison/ScmComparisonPhoneHeader';
+import { useLentHeaderMenuSection } from '@/components/sessions/files/comparison/ScmComparisonMoreMenu';
+import { ScmFileViewedFact, ScmFileViewedMark } from '@/components/sessions/files/comparison/ScmFileViewedMark';
+import type { ScmFileViewedSource } from '@/sync/domains/scm/fileViewed';
 import { useFindSurfaceRuntime } from '@/keyboard/KeyboardShortcutProvider';
 import { DiffFileActionsMenu } from '@/components/ui/code/diff/DiffFileActionsMenu';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
@@ -83,6 +89,7 @@ import { SelectionListFilterChip } from '@/components/ui/selectionList';
 import { formatAsOfTime } from '@/utils/time/formatAsOfTime';
 import { resolveScmDiffAreaLabels, resolveScmDiffAreaVocabulary } from '@/scm/diff/diffAreaLabels';
 import { useChangedFilesReviewFind, type ReviewFindTarget } from './useChangedFilesReviewFind';
+import { resolveReviewDiffDemandPaths } from './resolveReviewPrefetchWindow';
 import { useIntraLineWordDiffConfig } from '@/components/ui/code/diff/useIntraLineWordDiffConfig';
 import { useFindBarPresentation } from '@/components/ui/find/FindBarPlacement';
 import { ChangedFilesReviewFindSurface, ChangedFilesReviewFindButton, ChangedFilesReviewFindCount } from './ChangedFilesReviewFind';
@@ -139,11 +146,15 @@ export type ChangedFilesReviewCoverage = Readonly<{
     linesKnown: boolean;
 }>;
 
+/** Facts only Review's controller knows, offered to the caller's header. */
+export type ChangedFilesReviewHeaderFacts = Readonly<{ viewed: React.ReactNode | null }>;
 
 type ChangedFilesReviewProps = {
     /** Captured endpoints: diffs remain evidence-backed; admitted review controls are supplied separately. */
     evidenceOnly?: boolean;
     toolbarLeading?: React.ReactNode;
+    /** The source's unavailable state can replace the empty card while preserving Review's chrome. */
+    emptyState?: React.ReactNode;
     /**
      * Drawn as a Details tab (details lab 2, R1): the Review header with one honest count, then the
      * file list first, then the stream. Absent, the compact toolbar of an embedded list stays.
@@ -174,7 +185,8 @@ type ChangedFilesReviewProps = {
         menuSections?: readonly ScmComparisonMenuSection[];
         /** Narrow screens recompose the same toolbar into their standard navigation header. */
         renderBar?: (coverage: ChangedFilesReviewCoverage, displayActions: React.ReactNode, sections?: readonly ScmComparisonMenuSection[]) => React.ReactNode;
-        renderHeader: (coverage: ChangedFilesReviewCoverage) => React.ReactNode;
+        /** `facts.viewed`: the source's own Viewed count (GitHub), drawn beside the header's other coverage facts. */
+        renderHeader: (coverage: ChangedFilesReviewCoverage, facts?: ChangedFilesReviewHeaderFacts) => React.ReactNode;
         indexPlacement: 'rail' | 'stream' | 'phone';
         /** Where the files live, for the rail's tree (no listing is read). */
         rootPath?: string | null;
@@ -193,9 +205,11 @@ type ChangedFilesReviewProps = {
      * The shared active-file scope (`activeReviewFile`): while `presented`, Review reports the file it
      * is on and brings a file a changed-files list asks for into view.
      */
-    activeReviewFile?: Readonly<{ key: string; presented: boolean; externalLifecycle?: boolean }> | null;
+    activeReviewFile?: Readonly<{ key: string; navigationKey?: string; presented: boolean; externalLifecycle?: boolean }> | null;
     /** Keep / Discard rows on each file's changes (the live checkout; `useReviewListHunkReview`). */
     hunkReview?: ReviewBlockHunkReview | null;
+    /** A source's Viewed facts without Keep / Discard (a plugin's pull request); `hunkReview.fileViewed` otherwise. */
+    fileViewed?: ScmFileViewedSource | null;
     theme: ChangedFilesReviewTheme;
     sessionId?: string;
     /** Presentation/cache identity only. Workspace hosts always supply their Machine diff reader. */
@@ -226,7 +240,7 @@ type ChangedFilesReviewProps = {
     diffAutoRefreshIntervalMs?: number;
     diffRefreshToken?: number;
     providerDiffByPath?: ReadonlyMap<string, string | null> | null;
-    comparisonFiles?: readonly import('@happier-dev/protocol').ScmComparisonFile[];
+    comparisonFiles?: readonly import('@happier-dev/protocol/scm/comparison').ScmComparisonFile[];
     reviewCommentsEnabled?: boolean;
     reviewCommentDrafts?: readonly ReviewCommentDraft[];
     onUpsertReviewCommentDraft?: (draft: ReviewCommentDraft) => void;
@@ -351,14 +365,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         }
     }, [diffConfig.availableModes, hasIncludedDelta, hasPendingDelta]);
 
-    const entryDeltaByPath = React.useMemo(() => {
-        const map = new Map<string, ScmEntryDelta & { entry: ScmWorkingSnapshot['entries'][number] }>();
-        for (const entry of snapshot?.entries ?? []) {
-            if (!entry?.path) continue;
-            map.set(entry.path, { ...entryToDelta(entry), entry });
-        }
-        return map;
-    }, [snapshot?.entries]);
+    const entryDeltaByPath = React.useMemo(() => indexScmEntriesByPath(snapshot?.entries ?? []), [snapshot?.entries]);
 
     const baseSections = React.useMemo(() => {
         const repositoryChangedFiles = filterDirectoryLikeScmFileStatuses(allRepositoryChangedFiles);
@@ -492,18 +499,24 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         return out;
     }, [baseSections, diffArea, entryDeltaByPath]);
 
-    const reviewFiles = React.useMemo(() => {
+    const { files: reviewFiles, coverage } = React.useMemo(() => {
         const out: ScmFileStatus[] = [];
         const seen = new Set<string>();
+        let added = 0;
+        let removed = 0;
+        let linesKnown = true;
         for (const section of sections) {
             for (const file of section.files) {
                 if (!file?.fullPath) continue;
                 if (seen.has(file.fullPath)) continue;
                 seen.add(file.fullPath);
                 out.push(file);
+                added += Math.max(0, file.linesAdded ?? 0);
+                removed += Math.max(0, file.linesRemoved ?? 0);
+                if (file.isComplete === false) linesKnown = false;
             }
         }
-        return out;
+        return { files: out, coverage: { fileCount: out.length, added, removed, linesKnown } satisfies ChangedFilesReviewCoverage };
     }, [sections]);
 
     const tooLarge = reviewFiles.length > maxFiles || totalsChangedLines(snapshot, diffArea) > maxChangedLines;
@@ -541,17 +554,14 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         return out;
     }, [sections]);
 
-    const reviewListFiles = React.useMemo(() => reviewFileEntries.map((entry) => entry.file), [reviewFileEntries]);
-    const coverageFileCount = reviewListFiles.length;
-    const coverageAdded = reviewListFiles.reduce((sum, file) => sum + Math.max(0, file.linesAdded ?? 0), 0);
-    const coverageRemoved = reviewListFiles.reduce((sum, file) => sum + Math.max(0, file.linesRemoved ?? 0), 0);
-    const coverageLinesKnown = reviewListFiles.every((file) => file.isComplete !== false);
-    const coverage = React.useMemo<ChangedFilesReviewCoverage>(() => ({
-        fileCount: coverageFileCount,
-        added: coverageAdded,
-        removed: coverageRemoved,
-        linesKnown: coverageLinesKnown,
-    }), [coverageAdded, coverageFileCount, coverageLinesKnown, coverageRemoved]);
+    const { reviewListFiles, reviewFileIndex } = React.useMemo(() => {
+        const files = reviewFileEntries.map((entry) => entry.file);
+        return {
+            reviewListFiles: files,
+            reviewFileIndex: buildChangedFilesReviewFileIndex(files,
+                props.hunkReview?.source.kind === 'captured' ? props.hunkReview.source.comparison.inventory.files : undefined),
+        };
+    }, [reviewFileEntries, props.hunkReview?.source.kind === 'captured' ? props.hunkReview.source.comparison.inventory.files : null]);
 
     const publishedKeys = React.useRef<readonly string[]>([]);
     const allKeys = React.useMemo(() => publishedKeys.current = retainDeep(
@@ -566,11 +576,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const findSurfaceRef = React.useRef<View | null>(null);
     const findSurfaceInstance = React.useId();
     const findSurfaceId = `review:${reviewScopeKey}:${findSurfaceInstance}`;
-    const pathToRowIndex = React.useMemo(() => {
-        const map = new Map<string, number>();
-        for (let i = 0; i < allKeys.length; i++) map.set(allKeys[i] as string, i);
-        return map;
-    }, [allKeys]);
+    const pathToRowIndex = reviewFileIndex.indexById;
 
     const listRef = React.useRef<DiffFilesListViewHandle | null>(null);
     // One list owns the scroll. The phone control follows its measured editorial header, then pins;
@@ -647,11 +653,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
 
     // A comparison opens with lockfiles and generated output folded (lab WT8): listed and tagged, one tap
     // from their diff, never hidden. A person's own folding, once stored, wins.
-    const comparisonDefaultCollapsedPaths = React.useMemo(() => (
-        props.comparisonChrome
-            ? reviewFiles.map((file) => file.fullPath).filter((path) => resolveScmChangePathTag(path) !== null)
-            : null
-    ), [props.comparisonChrome, reviewFiles]);
+    const comparisonDefaultCollapsedPaths = props.comparisonChrome ? reviewFileIndex.defaultCollapsedPaths : null;
+    const [reveal, setReveal] = React.useState<ScmDiffReveal | null>(null);
     const { expandedKeys, collapsedKeys, toggleCollapsed } = useScmDiffExpandedKeys({
         allKeys,
         viewableIndices: prefetch.viewableRowIndices,
@@ -662,6 +665,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         initialCollapsedKeys: props.initialCollapsedPaths ?? comparisonDefaultCollapsedPaths,
         onCollapsedKeysChange: props.onCollapsedPathsChange,
         viewableExpansionEnabled,
+        reveal,
     });
 
     React.useEffect(() => {
@@ -903,32 +907,11 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         };
     }, [props.onScrollTopChange]);
 
-    const requestedDiffPaths = React.useMemo(() => {
-        if (findOpen) return allKeys;
-        if (!tooLargeForExpansion) return prefetch.requestedPaths?.filter(path => expandedKeys.has(path)) ?? [];
+    const requestedDiffPaths = React.useMemo(() => resolveReviewDiffDemandPaths({
+        findOpen, allKeys, expandedKeys, requestedPaths: prefetch.requestedPaths,
+    }), [findOpen, allKeys, expandedKeys, prefetch.requestedPaths]);
 
-        const requested = new Set<string>();
-        for (const path of prefetch.requestedPaths ?? []) {
-            if (typeof path === 'string' && path.trim().length > 0 && expandedKeys.has(path)) requested.add(path);
-        }
-        for (const path of expandedKeys) {
-            if (typeof path === 'string' && path.trim().length > 0) requested.add(path);
-        }
-
-        const out: string[] = [];
-        const seen = new Set<string>();
-        for (const file of reviewListFiles) {
-            const path = file?.fullPath;
-            if (!path || seen.has(path) || !requested.has(path)) continue;
-            seen.add(path);
-            out.push(path);
-        }
-        if (out.length > 0) return out;
-
-        return [];
-    }, [findOpen, allKeys, expandedKeys, prefetch.requestedPaths, reviewListFiles, tooLargeForExpansion]);
-
-    const { diffStateSource } = useChangedFilesReviewDiffLoading({
+    const { diffStateSource, retryDiff } = useChangedFilesReviewDiffLoading({
         sessionId,
         reviewScopeKey,
         isRepo: Boolean(snapshot?.repo.isRepo),
@@ -955,6 +938,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         const index = pathToRowIndex.get(path);
         if (typeof index !== 'number') return;
         cancelInitialScrollRestore();
+        setReveal({ key: path, index });
         // On web, animated programmatic scrolls can trigger subtle event/restore-state glitches in
         // some browsers / RN-web stacks. Focus navigation should be deterministic, so keep it
         // non-animated on web.
@@ -962,7 +946,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             ...(props.comparisonChrome?.indexPlacement === 'phone' ? { viewOffset: phoneControlHeight.value } : null) });
     }, [pathToRowIndex, phoneControlHeight, props.comparisonChrome?.indexPlacement, cancelInitialScrollRestore]);
 
-    const navigationPaths = React.useMemo(() => reviewListFiles.map((file) => file.fullPath), [reviewListFiles]);
+    const navigationPaths = allKeys;
     const revealFindTarget = React.useCallback((target: ReviewFindTarget | null) => {
         setFindTarget((previous) => previous?.filePath === target?.filePath && previous?.lineId === target?.lineId ? previous : target);
         if (target) scrollToPath(target.filePath);
@@ -986,7 +970,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         return file ? [file.fullPath] : [];
     }), [prefetch.viewableRowIndices, reviewListFiles]);
     const preferredReviewPath = findTarget?.filePath ?? lineTarget?.filePath ?? highlightedPath ?? props.focusPath ?? null;
-    const activeReviewPath = preferredReviewPath && navigationPaths.includes(preferredReviewPath) && (visibleReviewPaths.length === 0 || visibleReviewPaths.includes(preferredReviewPath))
+    const activeReviewPath = preferredReviewPath && pathToRowIndex.has(preferredReviewPath) && (visibleReviewPaths.length === 0 || visibleReviewPaths.includes(preferredReviewPath))
         ? preferredReviewPath
         : (visibleReviewPaths[0] ?? navigationPaths[0] ?? null);
     const expandReviewPathRef = React.useRef(expandPath);
@@ -1009,25 +993,31 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     }, [activeReviewPath]);
 
     const activeReviewFileKey = props.activeReviewFile?.key ?? null;
+    const reviewNavigationKey = props.activeReviewFile?.navigationKey ?? null;
     const reviewPresenterId = React.useId();
     const activeReviewFilePresented = props.activeReviewFile?.presented === true;
     React.useEffect(() => {
-        if (!activeReviewFileKey) return;
-        publishActiveReviewFile(activeReviewFileKey, { presented: activeReviewFilePresented, activePath: activeReviewPath, presenterId: reviewPresenterId });
-    }, [activeReviewFileKey, activeReviewFilePresented, activeReviewPath, reviewPresenterId]);
+        // The file owner publishes one selection, projected to the tab and its Git list. Restores
+        // stay on the tab's comparison channel and never become scope-wide navigation requests.
+        for (const key of [activeReviewFileKey, reviewNavigationKey]) {
+            if (key) publishActiveReviewFile(key, { presented: activeReviewFilePresented, activePath: activeReviewPath, presenterId: reviewPresenterId });
+        }
+    }, [activeReviewFileKey, reviewNavigationKey, activeReviewFilePresented, activeReviewPath, reviewPresenterId]);
     React.useEffect(() => () => {
-        if (activeReviewFileKey) publishActiveReviewFile(activeReviewFileKey, { presented: false, activePath: null, presenterId: reviewPresenterId });
-    }, [activeReviewFileKey, reviewPresenterId]);
+        for (const key of [activeReviewFileKey, reviewNavigationKey]) {
+            if (key) publishActiveReviewFile(key, { presented: false, activePath: null, presenterId: reviewPresenterId });
+        }
+    }, [activeReviewFileKey, reviewNavigationKey, reviewPresenterId]);
     const activeReviewFileRequest = useActiveReviewFileRequest(activeReviewFileKey);
     const handledRequestNonceRef = React.useRef<number | null>(props.activeReviewFile?.externalLifecycle ? null : activeReviewFileRequest?.nonce ?? null);
     React.useEffect(() => {
         // The shared body first promotes a qualified request to its exact comparison.
         if (!activeReviewFileRequest || activeReviewFileRequest.comparison || !activeReviewFilePresented
             || handledRequestNonceRef.current === activeReviewFileRequest.nonce
-            || !navigationPaths.includes(activeReviewFileRequest.path)) return;
+            || !pathToRowIndex.has(activeReviewFileRequest.path)) return;
         handledRequestNonceRef.current = activeReviewFileRequest.nonce;
         focusFile(activeReviewFileRequest.path);
-    }, [activeReviewFileRequest, activeReviewFilePresented, focusFile, navigationPaths]);
+    }, [activeReviewFileRequest, activeReviewFilePresented, focusFile, pathToRowIndex]);
 
     // Prefetch scheduling + viewability windowing is handled by useChangedFilesReviewPrefetch.
 
@@ -1064,24 +1054,28 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             [reviewEnabled, activeReviewPath, diffStateSource]),
         () => null,
     );
-    const reviewControllerFiles = React.useMemo(() => navigationPaths.map(path => ({ path,
-        unifiedDiff: reviewDiffs?.get(path)?.diff ?? '', pending: reviewDiffs?.get(path)?.status !== 'loaded',
-    })), [navigationPaths, reviewDiffs]);
-    const activeDiff = activeReviewPath ? props.hunkReview?.source.kind === 'captured'
-        ? props.hunkReview.source.comparison.inventory.files.find(file => file.path === activeReviewPath)?.evidence
+    const publishedControllerFiles = React.useRef<readonly LiveReviewFile[] | undefined>(undefined);
+    const reviewControllerFiles = React.useMemo(() => publishedControllerFiles.current = buildLiveReviewFiles(
+        publishedControllerFiles.current, navigationPaths, reviewDiffs), [navigationPaths, reviewDiffs]);
+    const capturedComparison = props.hunkReview?.source.kind === 'captured' ? props.hunkReview.source.comparison : null;
+    const capturedFileByPath = useCapturedFileByPath(capturedComparison);
+    const activeDiff = activeReviewPath ? capturedComparison
+        ? capturedFileByPath?.get(activeReviewPath)?.evidence
         : reviewDiffs?.get(activeReviewPath)?.diff ?? activeReadOnlyDiff?.diff : null;
     const activeUnifiedDiff = typeof activeDiff === 'string' ? activeDiff
         : activeDiff?.state === 'available' ? activeDiff.unifiedDiff : '';
     const controller = useHunkReviewController({
         ...props.hunkReview,
+        ...(props.fileViewed === undefined ? {} : { fileViewed: props.fileViewed }),
         enabled: reviewEnabled,
+        active: props.hunkReview?.active !== false && props.activeReviewFile?.presented !== false,
         source: props.hunkReview?.source ?? { kind: 'live', root: workspaceScope?.rootPath ?? '' },
         host: props.hunkReview?.host ?? null, serverId: props.hunkReview?.serverId ?? null,
-        path: activeReviewPath ?? '', unifiedDiff: activeUnifiedDiff, liveFiles: reviewControllerFiles,
+        path: activeReviewPath ?? '', unifiedDiff: activeUnifiedDiff, liveFiles: reviewControllerFiles, fileIndex: reviewFileIndex,
         liveEntries: snapshot?.entries,
+        capturedFileByPath,
         onNavigate: cursor => {
-            const file = props.hunkReview?.source.kind === 'captured'
-                ? props.hunkReview.source.comparison.inventory.files.find(file => file.path === cursor.path) : null;
+            const file = capturedFileByPath?.get(cursor.path);
             const diff = file ? file.evidence : diffStateSource.getDiffState(cursor.path).diff;
             const unifiedDiff = typeof diff === 'string' ? diff : diff?.state === 'available' ? diff.unifiedDiff : '';
             const destination = buildDiffHunkTable({ mode: 'unified', filePath: cursor.path, unifiedDiff,
@@ -1091,8 +1085,6 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             if (destination) focusLine({ filePath: cursor.path, lineId: destination.revealLineId });
         },
     });
-    const capturedComparison = props.hunkReview?.source.kind === 'captured' ? props.hunkReview.source.comparison : null;
-    const capturedFileByPath = useCapturedFileByPath(capturedComparison);
     const { hunksForPath, reviewUnitsForPath } = controller;
     const capturedReview = capturedComparison !== null;
     const getHunkReview = React.useMemo(() => reviewEnabled ? (path: string) => ({
@@ -1110,6 +1102,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         sessionId,
         workspaceScope,
         diffStateSource,
+        onRetryDiff: retryDiff,
         reviewCommentsEnabled,
         reviewCommentDrafts,
         onUpsertReviewCommentDraft: props.onUpsertReviewCommentDraft,
@@ -1126,7 +1119,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
 
     const detailsHeader = props.detailsHeader ?? null;
     // A large change needs its file list most: diffs open on demand past maxFiles, but every file stays listed.
-    const showIndex = detailsHeader !== null && reviewListFiles.length > 0;
+    // A comparison view lists them in its own rail or stream whether or not it is a Details tab (captured comparisons never are).
+    const showIndex = (detailsHeader !== null || props.comparisonChrome != null) && reviewListFiles.length > 0;
     // Only the index reads these, so a review drawn without it keeps a stable list header.
     const indexFiles = showIndex ? reviewListFiles : NO_INDEX_FILES;
     const indexDrafts = showIndex ? props.reviewCommentDrafts : undefined;
@@ -1145,10 +1139,32 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const phoneFileControl = comparisonChrome?.indexPlacement === 'phone' && reviewListFiles.length > 0;
     const phoneHeaderSpaceStyle = phoneFileControl ? phoneControlSpace : null;
     const renderComparisonHeader = comparisonChrome?.renderHeader ?? null;
+    // The source's Viewed facts (GitHub): one count in the header, one mark per file header row.
+    const fileViewed = controller.fileViewed;
+    const setFileViewed = controller.setFileViewed;
+    const fileViewedActive = props.hunkReview?.active !== false && props.activeReviewFile?.presented !== false;
     const streamHeader = React.useMemo(
-        () => (renderComparisonHeader ? renderComparisonHeader(coverage) : null),
-        [coverage, renderComparisonHeader],
+        () => (renderComparisonHeader ? renderComparisonHeader(coverage, { viewed: fileViewed
+            ? <ScmFileViewedFact source={fileViewed} total={coverage.fileCount} active={fileViewedActive} /> : null }) : null),
+        [coverage, renderComparisonHeader, fileViewed, fileViewedActive],
     );
+    // The stream's index rows are the list's own leading rows (one scroll; only rows on screen mount).
+    // While any of them is on screen the index is still in view; the jump menu takes over past it.
+    const [indexRowsViewable, setIndexRowsViewable] = React.useState(true);
+    const streamIndexRows = useChangedFilesReviewIndexLeadingRows({
+        enabled: showIndex && !indexInRail && !phoneFileControl,
+        renderRowAccessory: comparisonChrome?.renderIndexAccessory ?? null,
+        findModel: reviewFind,
+        files: indexFiles,
+        activePath: null,
+        commentCountByPath,
+        onFocusPath: onIndexFocusPath,
+        activeReviewFileKey: props.activeReviewFile?.key ?? null,
+        renderCommitToggle: indexRenderCommitToggle,
+        placement: comparisonChrome ? 'comparisonStream' : 'stream',
+        onViewableChange: setIndexRowsViewable,
+    });
+    const indexRowsInList = streamIndexRows.leadingRows != null;
     const ListHeaderComponent = React.useCallback(() => {
         return (
             <View>
@@ -1169,7 +1185,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 ) : null}
                 {reviewFiles.length === 0 && !(changedFilesViewMode === 'turn_checkpoint' && turnCheckpointMetadata?.contentConfidence === 'unavailable') && (
                     // Nothing to review is one calm state, like the pane's other empty states, not a caption under a header.
-                    <SurfaceStateCard testID="changed-files-review-empty" kind="empty" iconName="git-diff"
+                    props.emptyState ?? <SurfaceStateCard testID="changed-files-review-empty" kind="empty" iconName="git-diff"
                         title={t(resolveChangedFilesEmptyStateTranslationKey(changedFilesViewMode))}
                         reason={t('files.noChangesPurpose')} />
                 )}
@@ -1199,6 +1215,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         diffConfig.availableModes,
         diffAreaLabels,
         reviewFiles.length,
+        props.emptyState,
         setDiffArea,
         theme.colors.border.default,
         theme.colors.surface.inset,
@@ -1251,7 +1268,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
             const hasPreview = viewer.kind === 'image' || viewer.kind === 'svg' || viewer.kind === 'pdf';
             const hasMediaFacts = hasPreview || viewer.kind === 'audio' || viewer.kind === 'video';
             const capturedFile = hasMediaFacts ? capturedFileByPath?.get(entry.key) : undefined;
-            const workingEntry = hasMediaFacts ? entryDeltaByPath.get(entry.key)?.entry : undefined;
+            const workingEntry = hasMediaFacts ? entryDeltaByPath.get(entry.key) : undefined;
             const imageSignature = hasPreview ? workingEntry && snapshot
                 ? buildScmFileDiffSnapshotSignature(snapshot, workingEntry) : snapshotSignature : null;
             const imageCompare: ReviewListFile['imageCompare'] = capturedComparison
@@ -1289,7 +1306,7 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 expanded={params.expanded}
                 onPress={params.onToggleExpanded}
             >
-                <Icon name={params.expanded ? 'caret-down' : 'caret-right'} size={12} color={theme.colors.text.secondary} />
+                <DisclosureCaret expanded={params.expanded} size={12} />
             </HappierPressable>
         );
 
@@ -1376,6 +1393,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                             {renderFileActions ? renderFileActions(file) : null}
                             {renderFileTrailingActions ? renderFileTrailingActions(file) : null}
                             {props.evidenceOnly ? null : <DiffFileActionsMenu filePath={file.fullPath} onOpenFile={() => deferOnWeb(() => onFilePress(file))} />}
+                            {fileViewed ? <ScmFileViewedMark source={fileViewed} path={file.fullPath} setFileViewed={setFileViewed}
+                                active={fileViewedActive} /> : null}
                         </View>
                     )}
                     onPressPinned={onFilePressPinned ? () => deferOnWeb(() => onFilePressPinned(file)) : undefined}
@@ -1428,6 +1447,9 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         hasComparisonChrome,
         props.evidenceOnly,
         highlightedPath,
+        fileViewed,
+        setFileViewed,
+        fileViewedActive,
     ]);
 
     const renderFileNotes = props.comparisonChrome?.renderFileNotes ?? null;
@@ -1446,18 +1468,11 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
         );
     }, [notesPlacement, renderDiffBlock, renderFileNotes, onFilePress, props.evidenceOnly]);
 
-    const reviewTotals = reviewListFiles.reduce(
-        (sum, file) => ({
-            added: sum.added + Math.max(0, file.linesAdded ?? 0),
-            removed: sum.removed + Math.max(0, file.linesRemoved ?? 0),
-        }),
-        { added: 0, removed: 0 },
-    );
     const reviewMeta: DetailsTabHeaderMetaFact[] = [
         { key: 'files', text: t('detailsSurface.review.files', { count: reviewFiles.length }), testID: 'scm-review-count-files' },
     ];
-    if (reviewTotals.added > 0 || reviewTotals.removed > 0) {
-        reviewMeta.push({ key: 'stat', kind: 'diffStat', added: reviewTotals.added, removed: reviewTotals.removed });
+    if (coverage.added > 0 || coverage.removed > 0) {
+        reviewMeta.push({ key: 'stat', kind: 'diffStat', added: coverage.added, removed: coverage.removed });
     }
     const isSelectedForCommit = detailsHeader?.isSelectedForCommit ?? null;
     const nextCommitCount = isSelectedForCommit ? reviewListFiles.filter((file) => isSelectedForCommit(file)).length : 0;
@@ -1467,14 +1482,15 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     if (snapshot && typeof snapshot.fetchedAt === 'number' && snapshot.fetchedAt > 0) {
         reviewMeta.push({ key: 'asOf', text: t('surfaceState.asOf', { time: formatAsOfTime(snapshot.fetchedAt) }), tone: 'muted' });
     }
-    const activeIndex = activeReviewPath ? navigationPaths.indexOf(activeReviewPath) : -1;
-    const jumpItems = navigationPaths.map((path, index) => ({
+    const activeIndex = activeReviewPath ? pathToRowIndex.get(activeReviewPath) ?? -1 : -1;
+    // Comparison chrome has its own file control; only the Details header consumes this jump menu.
+    const showJump = navigationPaths.length > 1 && (!showIndex || (!indexInRail && (indexRowsInList ? !indexRowsViewable : scrolledPastIndex)));
+    const jumpItems = !comparisonChrome && detailsHeader && showJump ? navigationPaths.map((path, index) => ({
         id: path,
         label: `${index + 1} / ${navigationPaths.length}  ${path.split('/').pop() ?? path}`,
-    }));
+    })) : [];
     const chromeStyles = changedFilesReviewChromeStyles(theme);
     // With the file list in a rail it never scrolls away, so the jump menu is only for the stream list.
-    const showJump = navigationPaths.length > 1 && (!showIndex || (!indexInRail && scrolledPastIndex));
 
     const reviewDisplayActions = (
         <>
@@ -1528,6 +1544,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
     const findRuntime = useFindSurfaceRuntime();
     const displayMenu = useChangedFilesReviewDisplayMenu({ diffArea, availableDiffAreas: diffConfig.availableModes,
         diffAreaLabels, onDiffArea: setDiffArea });
+    // The review header's `⋯` also carries what its pane lends (a phone group's other pages, close).
+    const lentMenuSection = useLentHeaderMenuSection();
     const comparisonMenuSections: readonly ScmComparisonMenuSection[] = [
         { id: 'find', items: [{ id: 'open', testID: 'scm-review-find', title: t('find.surface.changes'),
             icon: <Icon name="magnifying-glass" size={16} color={theme.colors.text.secondary} /> }],
@@ -1559,7 +1577,8 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 </View>
             )}
             controls={reviewNavigationControls}
-            menu={<ChangedFilesReviewMoreMenu diffArea={diffArea} availableDiffAreas={diffConfig.availableModes} diffAreaLabels={diffAreaLabels} onDiffArea={setDiffArea} />}
+            menu={<ChangedFilesReviewMoreMenu diffArea={diffArea} availableDiffAreas={diffConfig.availableModes} diffAreaLabels={diffAreaLabels} onDiffArea={setDiffArea}
+                trailingSections={lentMenuSection ? [lentMenuSection] : undefined} />}
         />
     ) : null;
 
@@ -1611,10 +1630,11 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                 </View>
             ) : null}
             <View ref={reviewViewportRef} collapsable={false} style={{ flex: 1, minHeight: 0, minWidth: 0 }}>
+                <ChangedFilesReviewIndexRowsScope rows={streamIndexRows.rows}>
                 <DiffFilesListView
                     ref={listRef as any}
                     testID="scm-review-list"
-                    files={diffFiles as any}
+                    files={diffFiles}
                     expandedKeys={findExpandedKeys}
                     onToggleExpanded={toggleCollapsedPreservingWebScroll}
                     canRenderInlineDiffs={true}
@@ -1625,9 +1645,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     drawDistanceMultiplier={REVIEW_DIFF_LIST_DRAW_DISTANCE_MULTIPLIER}
                     inlineDiffContainerVariant="none"
                     renderBeforeFileRow={renderBeforeFileRow as any}
-                    renderFileRow={renderFileRow as any}
+                    renderFileRow={renderFileRow}
                     renderInlineUnifiedDiff={renderInlineUnifiedDiff as any}
                     ListHeaderComponent={ListHeaderComponent as any}
+                    leadingRows={streamIndexRows.leadingRows}
                     ListFooterComponent={props.bottomInsetPx ? (() => <View style={{ height: props.bottomInsetPx }} />) as any : undefined}
                     onScroll={handleScroll}
                     onLayout={onReviewListLayout}
@@ -1636,9 +1657,10 @@ function ChangedFilesReviewInner(props: ChangedFilesReviewProps) {
                     onViewableItemsChanged={prefetch.onViewableItemsChanged as any}
                     scrollEventThrottle={16}
                 />
+                </ChangedFilesReviewIndexRowsScope>
                 {phoneFileControl ? <Animated.View testID="scm-comparison-file-sticky" onLayout={onPhoneControlLayout}
                     style={[{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 1 }, phoneControlStyle]}>
-                    <ChangedFilesReviewPhoneFileControl files={reviewListFiles} activePath={activeReviewPath}
+                    <ChangedFilesReviewPhoneFileControl fileIndex={reviewFileIndex} activePath={activeReviewPath}
                         findModel={reviewFind}
                         rootPath={comparisonChrome?.rootPath ?? snapshot?.repo.rootPath ?? null}
                         commentCountByPath={commentCountByPath} onFocusPath={focusFile} />

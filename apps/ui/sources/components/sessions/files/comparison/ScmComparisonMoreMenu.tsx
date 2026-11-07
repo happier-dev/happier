@@ -7,6 +7,9 @@ import {
   type DropdownMenuItem,
 } from '@/components/ui/forms/dropdown/DropdownMenu';
 import { t } from '@/text';
+import { Icon, ICON_SIZE } from '@/components/ui/icons/Icon';
+import { useLentHeaderMenuRows } from '@/components/navigation/stackHeaderActions';
+import { useUnistyles } from 'react-native-unistyles';
 
 /**
  * A view's own part of the comparison menu (Find, the diff's display choices, a walkthrough's edits). Its rows
@@ -30,6 +33,21 @@ export function scmComparisonMenuSectionItems(
     id: `section:${section.id}:${item.id}`,
     category,
   }));
+}
+
+/**
+ * The rows a pane lends to the header this menu is the `⋯` of (a phone group's other pages, pin, close), as the menu's
+ * last section; null when none. Only a header's own `⋯` adds it, never a bar's.
+ */
+export function useLentHeaderMenuSection(): ScmComparisonMenuSection | null {
+  const { theme } = useUnistyles();
+  const rows = useLentHeaderMenuRows();
+  return React.useMemo(() => !rows || rows.length === 0 ? null : {
+    id: 'lent',
+    items: rows.map((row) => ({ id: row.id, testID: row.testID, title: row.title,
+      icon: <Icon name={row.iconName} size={ICON_SIZE.sm} color={theme.colors.text.secondary} /> })),
+    onSelect: (id) => rows.find((row) => row.id === id)?.onSelect(),
+  }, [rows, theme.colors.text.secondary]);
 }
 
 /** Routes a chosen row to the section that offered it; false when no section owns the id. */

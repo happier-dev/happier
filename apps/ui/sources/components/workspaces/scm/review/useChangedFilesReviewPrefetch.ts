@@ -1,6 +1,6 @@
 import * as React from 'react';
 
-import type { ScmDiffArea } from '@happier-dev/protocol';
+import type { ScmDiffArea } from '@happier-dev/protocol/scm/workingSnapshot';
 
 import type { ScmFileStatus } from '@/scm/scmStatusFiles';
 import { useSetting } from '@/sync/domains/state/storage';
@@ -161,28 +161,31 @@ export function useChangedFilesReviewPrefetch(input: Readonly<{
         return reviewFilePaths.slice(window.startFileIndex, window.endFileIndex + 1);
     }, [input.rows, prefetchEnabled, reviewFilePaths, viewabilityConfig.aheadCount, viewabilityConfig.behindCount, viewableRowIndices]);
 
+    const visiblePaths = new Set(requestedPaths ?? []);
+    const prefetchPaths = (prefetchWindowPaths ?? []).filter((path) =>
+        !visiblePaths.has(path) && !input.isCollapsed(path));
+    const prefetchPathsKey = JSON.stringify(prefetchPaths);
+    const prefetchRequestRef = React.useRef({ signature: input.snapshotSignature, paths: prefetchPaths });
+    prefetchRequestRef.current = { signature: input.snapshotSignature, paths: prefetchPaths };
+
     React.useEffect(() => {
         if (!prefetchEnabled) return;
         // Custom read ports belong to the demand loader, which owns their queue
         // and cancellation. They do not share the live Session acquisition cache.
         if (fetchUnifiedDiffForPath) return;
-        const signature = input.snapshotSignature;
+        const { signature, paths } = prefetchRequestRef.current;
         if (!signature) return;
-        if (!prefetchWindowPaths || prefetchWindowPaths.length === 0) return;
-
-        const visible = new Set<string>(requestedPaths ?? []);
-        // The foreground loader owns visible demand. Buffer acquisition is useful
-        // only for expanded rows; it shares that loader's acquisition cache.
-        const toPrefetch = prefetchWindowPaths.filter((p) => !visible.has(p) && !input.isCollapsed(p));
-        if (toPrefetch.length === 0) return;
+        if (paths.length === 0) return;
 
         prefetchScheduler.prefetch({
             sessionId: input.sessionId,
             snapshotSignature: signature,
             diffArea: input.diffArea,
-            paths: toPrefetch,
+            paths,
         });
-    }, [input.diffArea, input.isCollapsed, input.sessionId, input.snapshotSignature, prefetchEnabled, prefetchWindowPaths, requestedPaths, prefetchScheduler, fetchUnifiedDiffForPath]);
+        // Snapshot revalidation belongs to mounted foreground demand. Prefetch
+        // runs when the buffer demand changes, using the latest snapshot then.
+    }, [input.diffArea, input.sessionId, prefetchEnabled, prefetchPathsKey, prefetchScheduler, fetchUnifiedDiffForPath]);
 
     const maxDiffLoadConcurrency = prefetchEnabled ? prefetchConcurrency : 1;
     return { prefetchEnabled, requestedPaths, prefetchWindowPaths, onViewableItemsChanged, viewableRowIndices, maxDiffLoadConcurrency };

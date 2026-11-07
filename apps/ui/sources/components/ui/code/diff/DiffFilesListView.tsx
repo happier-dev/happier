@@ -1,5 +1,5 @@
 import * as React from 'react';
-import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent } from 'react-native';
+import type { LayoutChangeEvent, NativeScrollEvent, NativeSyntheticEvent, ViewToken } from 'react-native';
 import { Pressable, View, Platform } from 'react-native';
 import { usePresentationWindowDimensions } from '@/utils/platform/responsive';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
@@ -9,6 +9,7 @@ import type { VirtualizedListRef } from '@/components/ui/lists/virtualized/virtu
 
 import type { DiffFileEntry } from '@/components/ui/code/model/diff/diffViewModel';
 import { DiffViewer } from '@/components/ui/code/diff/DiffViewer';
+import { usePierreDiffRendererPreload } from '@/components/ui/code/diff/pierre/pierreRendererLoader';
 import { Text } from '@/components/ui/text/Text';
 import { t } from '@/text';
 import { resolveInlineDiffVirtualization } from '@/components/ui/code/diff/resolveInlineDiffVirtualization';
@@ -17,6 +18,7 @@ import { useInlineDiffVirtualizationThresholds } from '@/components/ui/code/diff
 import { resolveInlineDiffVirtualizedMaxHeight } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedMaxHeight';
 import { resolveInlineDiffVirtualizedViewportStyle } from '@/components/ui/code/diff/resolveInlineDiffVirtualizedViewportStyle';
 import { Icon } from '@/components/ui/icons/Icon';
+import { DisclosureCaret } from '@/components/ui/lists/DisclosureCaret';
 import { motionTokens } from '@/components/ui/motion/motionTokens';
 import { FileIcon } from '@/components/ui/media/FileIcon';
 import { InlineRepoPathLabel } from '@/components/ui/path/InlineRepoPathLabel';
@@ -27,6 +29,8 @@ import type { DiffViewerBaseProps } from './diffViewerTypes';
 import { FindHighlightedText, sliceFindRanges } from '@/components/ui/text/FindHighlightedText';
 import { normalizeRepoPathParts } from '@/utils/path/normalizeRepoPathParts';
 import { PaneHeaderScrollIsolation, usePaneHeaderScrollSink } from '@/components/appShell/panes/paneHeaderScroll';
+import { useHappierHitArea } from '@happier-dev/plugin-ui/presentation';
+import { HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE } from '@happier-dev/plugin-ui/environment';
 
 export function diffFileDisplayPath(file: DiffFileEntry) {
     const { dir, name } = normalizeRepoPathParts({ fullPath: file.filePath ?? t('status.unknown') });
@@ -93,6 +97,16 @@ function InlineDiffBody<TFile extends DiffFileEntry>(props: Readonly<{
         ? resolveInlineDiffVirtualizedViewportStyle(props.input.maxVirtualizedHeight) : null]}>{content}</View>;
 }
 
+/** A row drawn before the files in the list's own scroll (`leadingRows`); it holds no file index. */
+type DiffFilesListLeadingItem = Readonly<{
+    leading: true;
+    key: string;
+    index: number;
+    render: ((index: number) => React.ReactNode) | undefined;
+}>;
+type DiffFilesListRow<TFile extends DiffFileEntry> = DiffFilesListViewItem<TFile> | DiffFilesListLeadingItem;
+const isLeadingItem = <TFile extends DiffFileEntry,>(item: DiffFilesListRow<TFile>): item is DiffFilesListLeadingItem => 'leading' in item;
+
 export type DiffFilesListViewHandle = Readonly<{
     clearMeasurementCache: () => void;
     scrollToIndex: (params: Readonly<{ index: number; animated?: boolean; viewPosition?: number; viewOffset?: number }>) => void;
@@ -114,6 +128,18 @@ export type DiffFilesListViewProps<TFile extends DiffFileEntry = DiffFileEntry> 
     virtualizedListLayout?: DiffFilesListVirtualizedListLayout;
     inlineDiffContainerVariant?: 'default' | 'none';
     ListHeaderComponent?: any;
+    /**
+     * Rows that read before the files in the same scroll (the Review's file index): virtualized with the
+     * files, so a large inventory mounts only what is on screen. File indices (scrollToIndex, viewability,
+     * render callbacks) stay in file space; `onViewableChange` says whether any of these rows is on screen.
+     */
+    leadingRows?: Readonly<{
+        keys: readonly string[];
+        render: (index: number) => React.ReactNode;
+        /** A row's height before it is drawn, so offsets past unmeasured rows (a restored scroll, a far jump) hold. */
+        estimatedSize?: (index: number) => number;
+        onViewableChange?: (viewable: boolean) => void;
+    }> | null;
     ListFooterComponent?: any;
     onScroll?: (event: NativeSyntheticEvent<NativeScrollEvent>) => void;
     onLayout?: (event: LayoutChangeEvent) => void;
@@ -144,6 +170,59 @@ export type DiffFilesListViewProps<TFile extends DiffFileEntry = DiffFileEntry> 
     }>) => React.ReactNode;
 }>;
 
+/** The gap between the file menu and the open-file button beside it. */
+const OPEN_FILE_BUTTON_GAP_PX = 10;
+
+/**
+ * The open-file button keeps a raw pressable for the web-only double click (pins the tab), which the shared
+ * pressable does not model; its hit area is still the shared owner's, sharing the gap to the file menu beside it.
+ */
+function OpenFileButton(props: Readonly<{
+    testID: string;
+    accessibilityLabel: string;
+    onPress: () => void;
+    onDoublePress: (() => void) | undefined;
+    controlColor: string;
+    hoverColor: string;
+}>) {
+    const hitArea = useHappierHitArea({
+        restingStyle: () => styles.openFileButton,
+        hitTarget: HAPPIER_POINTER_MINIMUM_INTERACTIVE_TARGET_SIZE,
+        hitReach: { left: OPEN_FILE_BUTTON_GAP_PX / 2 },
+    });
+    const doubleClick = props.onDoublePress
+        ? { onDoubleClick: (event: { preventDefault?: () => void; stopPropagation?: () => void }) => {
+            event?.preventDefault?.();
+            event?.stopPropagation?.();
+            props.onDoublePress?.();
+        } }
+        : {};
+    return (
+        <Pressable
+            testID={props.testID}
+            accessibilityRole="button"
+            accessibilityLabel={props.accessibilityLabel}
+            hitSlop={hitArea.hitSlop}
+            onLayout={hitArea.onLayout}
+            onPress={props.onPress}
+            {...doubleClick}
+            style={(state) => {
+                // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
+                const hovered = (state as { hovered?: boolean }).hovered === true;
+                return [
+                    styles.openFileButton,
+                    { backgroundColor: props.controlColor },
+                    hovered ? [styles.openFileButtonHovered, { backgroundColor: props.hoverColor }] : null,
+                    state.pressed ? styles.openFileButtonPressed : null,
+                ];
+            }}
+        >
+            {hitArea.frame}
+            <Icon name="file" size={14} color={styles.openFileIcon.color as string} />
+        </Pressable>
+    );
+}
+
 function DiffFilesListViewInner<TFile extends DiffFileEntry>(
     props: DiffFilesListViewProps<TFile>,
     ref: React.ForwardedRef<DiffFilesListViewHandle>,
@@ -160,6 +239,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         virtualizeFileList,
         inlineDiffContainerVariant,
         ListHeaderComponent,
+        leadingRows,
         ListFooterComponent,
         onScroll,
         onLayout,
@@ -172,8 +252,8 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         drawDistanceMultiplier,
         renderBeforeFileRow,
         renderFileRow,
-        getFindStateForFile,
         renderInlineUnifiedDiff,
+        getFindStateForFile,
     } = props;
     const virtualizedListLayout = props.virtualizedListLayout ?? 'bounded';
     const { theme } = useUnistyles();
@@ -199,6 +279,8 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
     const [inlineRendererContext] = React.useState(() => React.createContext<DiffFilesListViewProps<TFile>['renderInlineUnifiedDiff']>(undefined));
     const listRef = React.useRef<VirtualizedListRef | null>(null);
 
+    // The bodies this list draws arrive after it mounts: prepare their renderer now, while rows load.
+    usePierreDiffRendererPreload(canRenderInlineDiffs);
     const { height: windowHeight } = usePresentationWindowDimensions();
     const { lineThreshold: virtualizationLineThreshold, byteThreshold: virtualizationByteThreshold } = useInlineDiffVirtualizationThresholds();
 
@@ -212,7 +294,10 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         return Math.max(1, Math.floor(height * multiplier));
     }, [drawDistanceMultiplier, windowHeight]);
 
-    const getItemType = React.useCallback(() => 'file', []);
+    // Expanded diff heights must not become the estimate for every collapsed
+    // header: a large inventory can otherwise exceed the browser's scroll extent.
+    // Leading rows (the Review index) are their own type, so their small measured height never becomes a file's estimate.
+    const getItemType = React.useCallback((item: DiffFilesListRow<TFile>) => isLeadingItem(item) ? 'leading' : item.expanded ? 'expanded-file' : 'file', []);
     const virtualizedListStyle = React.useMemo(() => {
         const style: Record<string, unknown> = { flex: 1 };
         if (Platform.OS === 'web') {
@@ -221,7 +306,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         return style;
     }, []);
     const virtualizedListContentContainerStyle = React.useMemo(() => ({ paddingBottom: 12 }), []);
-    const keyExtractor = React.useCallback((item: DiffFilesListViewItem<TFile>) => item.key, []);
+    const keyExtractor = React.useCallback((item: DiffFilesListRow<TFile>) => item.key, []);
 
     const listItemCacheRef = React.useRef(new Map<string, DiffFilesListViewItem<TFile>>());
     const listData = React.useMemo(() => {
@@ -246,6 +331,24 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         listItemCacheRef.current = next;
         return data;
     }, [expandedKeys, files]);
+    const leadingKeys = leadingRows?.keys;
+    const renderLeadingRow = leadingRows?.render;
+    const leadingItems = React.useMemo<readonly DiffFilesListLeadingItem[]>(
+        () => (leadingKeys ?? []).map((key, index) => ({ leading: true, key: `leading:${key}`, index, render: renderLeadingRow })),
+        [leadingKeys, renderLeadingRow],
+    );
+    const leadingCount = leadingItems.length;
+    const estimateLeadingRow = leadingRows?.estimatedSize;
+    const getEstimatedItemSize = React.useMemo(() => (estimateLeadingRow
+        ? (item: DiffFilesListRow<TFile>) => (isLeadingItem(item) ? estimateLeadingRow(item.index) : undefined)
+        : undefined), [estimateLeadingRow]);
+    const leadingCountRef = React.useRef(leadingCount);
+    leadingCountRef.current = leadingCount;
+    const rows = React.useMemo<readonly DiffFilesListRow<TFile>[]>(
+        () => (leadingCount === 0 ? listData : [...leadingItems, ...listData]),
+        [leadingCount, leadingItems, listData],
+    );
+
     const clearMeasurementCache = React.useCallback(() => {
         if (virtualizeFileList !== true) return;
         try {
@@ -257,7 +360,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
 
     const scrollToIndex = React.useCallback((params: Readonly<{ index: number; animated?: boolean; viewPosition?: number; viewOffset?: number }>) => {
         try {
-            listRef.current?.scrollToIndex?.(params);
+            listRef.current?.scrollToIndex?.({ ...params, index: params.index + leadingCountRef.current });
         } catch {
             // ignore
         }
@@ -280,6 +383,25 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         }),
         [clearMeasurementCache, scrollToIndex, scrollToOffset],
     );
+
+    // Viewability reaches the consumer in file space; leading rows report only whether any is on screen.
+    const viewabilityTargetsRef = React.useRef({ onViewableItemsChanged, onLeadingViewableChange: leadingRows?.onViewableChange });
+    viewabilityTargetsRef.current = { onViewableItemsChanged, onLeadingViewableChange: leadingRows?.onViewableChange };
+    const hasViewabilityConsumer = onViewableItemsChanged != null || leadingRows?.onViewableChange != null;
+    const handleViewableItemsChanged = React.useCallback((info: { viewableItems: ViewToken[]; changed: ViewToken[] }) => {
+        const targets = viewabilityTargetsRef.current;
+        const count = leadingCountRef.current;
+        if (count === 0) {
+            targets.onViewableItemsChanged?.(info);
+            return;
+        }
+        const toFileSpace = (tokens: readonly ViewToken[]) => tokens.flatMap((token) => (
+            token.item && isLeadingItem(token.item as DiffFilesListRow<TFile>) ? []
+                : [{ ...token, index: typeof token.index === 'number' ? token.index - count : token.index }]
+        ));
+        targets.onLeadingViewableChange?.(info.viewableItems.some((token) => token.isViewable && token.item && isLeadingItem(token.item as DiffFilesListRow<TFile>)));
+        targets.onViewableItemsChanged?.({ viewableItems: toFileSpace(info.viewableItems), changed: toFileSpace(info.changed) });
+    }, []);
 
     const renderContextRef = React.useRef<DiffFilesListViewRenderContext<TFile> | null>(null);
     renderContextRef.current = {
@@ -452,7 +574,7 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
                             accessibilityRole="button"
                         >
                             <View style={styles.fileRowMain}>
-                                <Icon name={expanded ? 'caret-down' : 'caret-right'} size={12} color={styles.filePath.color} />
+                                <DisclosureCaret expanded={expanded} size={12} />
                                 <FileIcon fileName={file.filePath ?? ''} size={16} appearance="line" />
                                 <InlineRepoPathLabel fullPath={diffFileDisplayPath(file)} preferNameOverPath align="start" pathTextStyle={styles.path} nameTextStyle={styles.filePath} findRanges={findState?.pathRanges} />
                                 {file.kind ? (
@@ -494,36 +616,14 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
                         {typeof file.filePath === 'string' ? <DiffFileActionsMenu filePath={file.filePath} /> : null}
 
                         {typeof file.filePath === 'string' && (ctx.onOpenFile || ctx.onOpenFilePinned) ? (
-                            <Pressable
+                            <OpenFileButton
                                 testID={`diff-files-open:${file.key}`}
-                                accessibilityRole="button"
                                 accessibilityLabel={t('session.detailsPanel.openTabA11y', { title: file.filePath })}
-                                hitSlop={8}
                                 onPress={() => ctx.onOpenFile?.(file.filePath as string)}
-                                // @ts-expect-error - react-native types do not model web-only double click props; RN Web supports onDoubleClick.
-                                onDoubleClick={
-                                    Platform.OS === 'web' && ctx.onOpenFilePinned
-                                        ? (event: any) => {
-                                            event?.preventDefault?.();
-                                            event?.stopPropagation?.();
-                                            ctx.onOpenFilePinned?.(file.filePath as string);
-                                        }
-                                        : undefined
-                                }
-                                style={(state) => {
-                                    const { pressed } = state;
-                                    // RN Web exposes `hovered` in the Pressable state callback, but `react-native` types do not model it.
-                                    const hovered = (state as { hovered?: boolean }).hovered === true;
-                                    return [
-                                        styles.openFileButton,
-                                        { backgroundColor: ctx.controlColor },
-                                        hovered ? [styles.openFileButtonHovered, { backgroundColor: ctx.rowHoverColor }] : null,
-                                        pressed ? styles.openFileButtonPressed : null,
-                                    ];
-                                }}
-                            >
-                                <Icon name="file" size={14} color={styles.openFileIcon.color as any} />
-                            </Pressable>
+                                onDoublePress={Platform.OS === 'web' && ctx.onOpenFilePinned ? () => ctx.onOpenFilePinned?.(file.filePath as string) : undefined}
+                                controlColor={ctx.controlColor}
+                                hoverColor={ctx.rowHoverColor}
+                            />
                         ) : null}
                     </View>
                 )}
@@ -537,7 +637,9 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         );
     }, [inlineRendererContext]);
     const renderVirtualizedItem = React.useCallback(
-        ({ item, index }: { item: DiffFilesListViewItem<TFile>; index: number }) => renderFileNode(item, index),
+        ({ item, index }: { item: DiffFilesListRow<TFile>; index: number }) => (isLeadingItem(item)
+            ? <>{item.render?.(item.index) ?? null}</>
+            : renderFileNode(item, index - leadingCountRef.current)),
         [renderFileNode],
     );
 
@@ -547,11 +649,11 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
         <PaneHeaderScrollIsolation>
         <PierreScrollRootVirtualizerProvider>
             {shouldUseVirtualizedList ? (
-                <VirtualizedList<DiffFilesListViewItem<TFile>>
+                <VirtualizedList<DiffFilesListRow<TFile>>
                     ref={listRef}
                     testID={testID}
                     style={virtualizedListStyle}
-                    data={listData}
+                    data={rows}
                     keyExtractor={keyExtractor}
                     renderItem={renderVirtualizedItem}
                     contentContainerStyle={virtualizedListContentContainerStyle}
@@ -559,13 +661,14 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
                     estimatedItemSize={DIFF_FILE_ROW_ESTIMATED_ITEM_SIZE}
                     drawDistance={drawDistance}
                     getItemType={getItemType}
+                    getEstimatedItemSize={getEstimatedItemSize}
                     ListHeaderComponent={ListHeaderComponent}
                     ListFooterComponent={ListFooterComponent}
                     onScroll={handleScroll}
                     onLayout={onLayout}
                     onLoad={onLoad}
                     onContentSizeChange={onContentSizeChange}
-                    onViewableItemsChanged={onViewableItemsChanged}
+                    onViewableItemsChanged={hasViewabilityConsumer ? handleViewableItemsChanged : undefined}
                     scrollEventThrottle={scrollEventThrottle}
                 />
             ) : (
@@ -575,6 +678,9 @@ function DiffFilesListViewInner<TFile extends DiffFileEntry>(
                             ? ListHeaderComponent()
                             : ListHeaderComponent)
                         : null}
+                    {leadingItems.map((item) => (
+                        <React.Fragment key={item.key}>{renderLeadingRow?.(item.index) ?? null}</React.Fragment>
+                    ))}
                     {listData.map((item, index) => (
                         <React.Fragment key={item.key}>
                             {renderFileNode(item, index)}
@@ -653,7 +759,7 @@ const styles = StyleSheet.create((theme) => ({
         fontFamily: 'monospace',
     },
     openFileButton: {
-        marginLeft: 10,
+        marginLeft: OPEN_FILE_BUTTON_GAP_PX,
         // The row's own horizontal inset, so the button sits inside its card instead of on the pane edge.
         marginRight: 12,
         width: 28,
