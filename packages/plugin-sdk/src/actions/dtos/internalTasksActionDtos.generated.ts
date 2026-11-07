@@ -10,7 +10,7 @@ export type InternalTasksActionInputById = {
             accountId: string;
         };
         name: string;
-        colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
+        colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
     };
     readonly "tasks.internal.labels.clearColor": {
         scope: {
@@ -19,50 +19,140 @@ export type InternalTasksActionInputById = {
         };
         name: string;
     };
+    readonly "tasks.internal.read": {
+        taskId: string;
+        ownerAccountId?: string | undefined;
+    };
+    readonly "tasks.internal.share": {
+        principal: {
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        };
+        accessLevel: 'admin' | 'edit' | 'view';
+        taskId: string;
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        ownerAccountId?: string | undefined;
+    };
+    readonly "tasks.internal.unshare": {
+        principal: {
+            kind: 'account';
+            accountId: string;
+        } | {
+            kind: 'group';
+            teamId: string;
+            groupId: string;
+        } | {
+            kind: 'team';
+            teamId: string;
+        };
+        taskId: string;
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        ownerAccountId?: string | undefined;
+    };
+    readonly "tasks.internal.grants": {
+        taskId: string;
+        ownerAccountId?: string | undefined;
+    };
+    readonly "tasks.internal.prepare": {
+        taskId: string;
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        ownerAccountId?: string | undefined;
+    };
     readonly "tasks.internal.list": Record<string, never>;
     readonly "tasks.internal.create": {
         fields: {
             title: string;
-            createdBy?: string | undefined;
-            notes?: string | undefined;
-            owner?: string | undefined;
-            dueAt?: number | undefined;
-            parentId?: string | undefined;
-            blockedBy?: string[] | undefined;
+            state?: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted' | undefined;
             labels?: string[] | undefined;
-            links?: {
+            owner?: string | undefined;
+            links?: undefined | {
                 url: string;
                 title?: string | undefined;
-            }[] | undefined;
+            }[];
+            notes?: string | undefined;
+            dueAt?: number | undefined;
+            blockedBy?: (Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | string)[] | undefined;
+            createdBy?: string | undefined;
+            parentId?: Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | string | undefined;
         };
     };
     readonly "tasks.internal.edit": {
-        scope: {
-            serverId: string;
-            accountId: string;
-        };
-        taskId: string;
         fields: {
-            notes?: string | null | undefined;
-            owner?: string | null | undefined;
-            dueAt?: number | null | undefined;
-            parentId?: string | null | undefined;
-            blockedBy?: string[] | null | undefined;
-            labels?: string[] | null | undefined;
-            links?: {
+            notes?: null | string | undefined;
+            owner?: null | string | undefined;
+            dueAt?: null | number | undefined;
+            blockedBy?: (Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | string)[] | null | undefined;
+            labels?: null | string[] | undefined;
+            links?: null | undefined | {
                 url: string;
                 title?: string | undefined;
-            }[] | null | undefined;
+            }[];
             title?: string | undefined;
+            parentId?: Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | null | string | undefined;
+        };
+        taskId: string;
+        ownerAccountId?: string | undefined;
+        scope?: undefined | {
+            serverId: string;
+            accountId: string;
         };
     };
     readonly "tasks.internal.transition": {
-        scope: {
+        state: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted';
+        taskId: string;
+        ownerAccountId?: string | undefined;
+        scope?: undefined | {
             serverId: string;
             accountId: string;
         };
-        taskId: string;
-        state: 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled';
     };
 };
 export type InternalTasksActionResultById = {
@@ -74,16 +164,16 @@ export type InternalTasksActionResultById = {
         };
         labelCatalog: {
             name: string;
-            colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
+            colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
         }[];
-    } | {
-        status: 'unavailable';
     } | {
         status: 'failed';
         reason: string;
     } | {
         status: 'refused';
         reason: string;
+    } | {
+        status: 'unavailable';
     } | {
         status: 'uncertain';
         reason: string;
@@ -96,27 +186,253 @@ export type InternalTasksActionResultById = {
         };
         labelCatalog: {
             name: string;
-            colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
+            colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
         }[];
-    } | {
-        status: 'unavailable';
     } | {
         status: 'failed';
         reason: string;
     } | {
         status: 'refused';
         reason: string;
+    } | {
+        status: 'unavailable';
+    } | {
+        status: 'uncertain';
+        reason: string;
+    };
+    readonly "tasks.internal.read": {
+        status: 'applied';
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        todo: {
+            id: string;
+            title: string;
+            done: boolean;
+            createdAt: number;
+            updatedAt: number;
+            state: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted';
+            createdBy?: string | undefined;
+            notes?: string | undefined;
+            owner?: string | undefined;
+            dueAt?: number | undefined;
+            parentId?: string | undefined;
+            blockedBy?: (Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | string)[] | undefined;
+            labels?: string[] | undefined;
+            links?: undefined | {
+                url: string;
+                title?: string | undefined;
+            }[];
+            completedAt?: number | undefined;
+            linkedSessions?: Record<string, {
+                title: string;
+                linkedAt: number;
+                session?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                    sessionId: string;
+                };
+            }> | undefined;
+            ownerAccountId?: string | undefined;
+            access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
+            ownerDisplayName?: null | string | undefined;
+            labelColors?: undefined | {
+                name: string;
+                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+            }[];
+        };
+    } | {
+        status: 'failed';
+        reason: string;
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'unavailable';
+    };
+    readonly "tasks.internal.share": {
+        status: 'applied';
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        todo: {
+            id: string;
+            title: string;
+            done: boolean;
+            createdAt: number;
+            updatedAt: number;
+            state: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted';
+            createdBy?: string | undefined;
+            notes?: string | undefined;
+            owner?: string | undefined;
+            dueAt?: number | undefined;
+            parentId?: string | undefined;
+            blockedBy?: (Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | string)[] | undefined;
+            labels?: string[] | undefined;
+            links?: undefined | {
+                url: string;
+                title?: string | undefined;
+            }[];
+            completedAt?: number | undefined;
+            linkedSessions?: Record<string, {
+                title: string;
+                linkedAt: number;
+                session?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                    sessionId: string;
+                };
+            }> | undefined;
+            ownerAccountId?: string | undefined;
+            access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
+            ownerDisplayName?: null | string | undefined;
+            labelColors?: undefined | {
+                name: string;
+                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+            }[];
+        };
+    } | {
+        status: 'failed';
+        reason: string;
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'unavailable';
+    } | {
+        status: 'uncertain';
+        reason: string;
+    };
+    readonly "tasks.internal.unshare": {
+        status: 'access';
+        ownerAccountId: string;
+        taskId: string;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
+        grants: {
+            principal: {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
+            accessLevel: 'admin' | 'edit' | 'view';
+            createdByAccountId: string;
+            createdAt: number;
+            display: {
+                name: null | string;
+                username?: null | string | undefined;
+            };
+            readiness?: undefined | {
+                readyCount: number;
+                pendingCount: number;
+                unavailableCounts: {
+                    plain_account: number;
+                    encryption_setup_required: number;
+                    encryption_inconsistent: number;
+                };
+            };
+        }[];
+        ownerDisplayName?: null | string | undefined;
+    } | {
+        status: 'failed';
+        reason: string;
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'unavailable';
+    } | {
+        status: 'uncertain';
+        reason: string;
+    };
+    readonly "tasks.internal.grants": {
+        status: 'access';
+        ownerAccountId: string;
+        taskId: string;
+        access: 'admin' | 'edit' | 'owner' | 'view' | null;
+        grants: {
+            principal: {
+                kind: 'account';
+                accountId: string;
+            } | {
+                kind: 'group';
+                teamId: string;
+                groupId: string;
+            } | {
+                kind: 'team';
+                teamId: string;
+            };
+            accessLevel: 'admin' | 'edit' | 'view';
+            createdByAccountId: string;
+            createdAt: number;
+            display: {
+                name: null | string;
+                username?: null | string | undefined;
+            };
+            readiness?: undefined | {
+                readyCount: number;
+                pendingCount: number;
+                unavailableCounts: {
+                    plain_account: number;
+                    encryption_setup_required: number;
+                    encryption_inconsistent: number;
+                };
+            };
+        }[];
+        ownerDisplayName?: null | string | undefined;
+    } | {
+        status: 'failed';
+        reason: string;
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'unavailable';
+    } | {
+        status: 'uncertain';
+        reason: string;
+    };
+    readonly "tasks.internal.prepare": {
+        status: 'failed';
+        reason: string;
+    } | {
+        status: 'prepared';
+        appliedRecipientAccountIds: string[];
+        skippedRecipientAccountIds: string[];
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'unavailable';
     } | {
         status: 'uncertain';
         reason: string;
     };
     readonly "tasks.internal.list": {
-        status: 'unavailable';
-    } | {
         status: 'failed';
-        reason: string;
-    } | {
-        status: 'refused';
         reason: string;
     } | {
         status: 'ok';
@@ -130,42 +446,112 @@ export type InternalTasksActionResultById = {
             done: boolean;
             createdAt: number;
             updatedAt: number;
-            state: 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled';
+            state: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted';
             createdBy?: string | undefined;
             notes?: string | undefined;
             owner?: string | undefined;
             dueAt?: number | undefined;
             parentId?: string | undefined;
-            blockedBy?: string[] | undefined;
+            blockedBy?: (Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | string)[] | undefined;
             labels?: string[] | undefined;
-            links?: {
+            links?: undefined | {
                 url: string;
                 title?: string | undefined;
-            }[] | undefined;
+            }[];
             completedAt?: number | undefined;
             linkedSessions?: Record<string, {
                 title: string;
                 linkedAt: number;
-                session?: {
+                session?: undefined | {
                     serverId: string;
                     accountId: string;
                     sessionId: string;
-                } | undefined;
+                };
             }> | undefined;
-            labelColors?: {
+            ownerAccountId?: string | undefined;
+            access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
+            ownerDisplayName?: null | string | undefined;
+            labelColors?: undefined | {
                 name: string;
-                colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
-            }[] | undefined;
+                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+            }[];
         }[];
         undoneOrder: string[];
         completedOrder: string[];
-        labelCatalog?: {
+        unavailableTasks?: undefined | {
+            ownerAccountId: string;
+            taskId: string;
+            error: 'task_content_unavailable';
+            reason: 'encryption_inconsistent' | 'encryption_setup_required' | 'plain_account' | 'recipient_key_pending' | 'task_content_invalid';
+        }[];
+        labelCatalog?: undefined | {
             name: string;
-            colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
-        }[] | undefined;
+            colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+        }[];
+    } | {
+        status: 'refused';
+        reason: string;
+    } | {
+        status: 'unavailable';
     };
     readonly "tasks.internal.create": {
-        status: 'unavailable';
+        status: 'applied';
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        todo: {
+            id: string;
+            title: string;
+            done: boolean;
+            createdAt: number;
+            updatedAt: number;
+            state: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted';
+            createdBy?: string | undefined;
+            notes?: string | undefined;
+            owner?: string | undefined;
+            dueAt?: number | undefined;
+            parentId?: string | undefined;
+            blockedBy?: (Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | string)[] | undefined;
+            labels?: string[] | undefined;
+            links?: undefined | {
+                url: string;
+                title?: string | undefined;
+            }[];
+            completedAt?: number | undefined;
+            linkedSessions?: Record<string, {
+                title: string;
+                linkedAt: number;
+                session?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                    sessionId: string;
+                };
+            }> | undefined;
+            ownerAccountId?: string | undefined;
+            access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
+            ownerDisplayName?: null | string | undefined;
+            labelColors?: undefined | {
+                name: string;
+                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+            }[];
+        };
     } | {
         status: 'failed';
         reason: string;
@@ -173,46 +559,61 @@ export type InternalTasksActionResultById = {
         status: 'refused';
         reason: string;
     } | {
-        status: 'applied';
-        todo: {
-            id: string;
-            title: string;
-            done: boolean;
-            createdAt: number;
-            updatedAt: number;
-            state: 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled';
-            createdBy?: string | undefined;
-            notes?: string | undefined;
-            owner?: string | undefined;
-            dueAt?: number | undefined;
-            parentId?: string | undefined;
-            blockedBy?: string[] | undefined;
-            labels?: string[] | undefined;
-            links?: {
-                url: string;
-                title?: string | undefined;
-            }[] | undefined;
-            completedAt?: number | undefined;
-            linkedSessions?: Record<string, {
-                title: string;
-                linkedAt: number;
-                session?: {
-                    serverId: string;
-                    accountId: string;
-                    sessionId: string;
-                } | undefined;
-            }> | undefined;
-            labelColors?: {
-                name: string;
-                colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
-            }[] | undefined;
-        };
+        status: 'unavailable';
     } | {
         status: 'uncertain';
         reason: string;
     };
     readonly "tasks.internal.edit": {
-        status: 'unavailable';
+        status: 'applied';
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        todo: {
+            id: string;
+            title: string;
+            done: boolean;
+            createdAt: number;
+            updatedAt: number;
+            state: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted';
+            createdBy?: string | undefined;
+            notes?: string | undefined;
+            owner?: string | undefined;
+            dueAt?: number | undefined;
+            parentId?: string | undefined;
+            blockedBy?: (Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | string)[] | undefined;
+            labels?: string[] | undefined;
+            links?: undefined | {
+                url: string;
+                title?: string | undefined;
+            }[];
+            completedAt?: number | undefined;
+            linkedSessions?: Record<string, {
+                title: string;
+                linkedAt: number;
+                session?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                    sessionId: string;
+                };
+            }> | undefined;
+            ownerAccountId?: string | undefined;
+            access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
+            ownerDisplayName?: null | string | undefined;
+            labelColors?: undefined | {
+                name: string;
+                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+            }[];
+        };
     } | {
         status: 'failed';
         reason: string;
@@ -220,46 +621,61 @@ export type InternalTasksActionResultById = {
         status: 'refused';
         reason: string;
     } | {
-        status: 'applied';
-        todo: {
-            id: string;
-            title: string;
-            done: boolean;
-            createdAt: number;
-            updatedAt: number;
-            state: 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled';
-            createdBy?: string | undefined;
-            notes?: string | undefined;
-            owner?: string | undefined;
-            dueAt?: number | undefined;
-            parentId?: string | undefined;
-            blockedBy?: string[] | undefined;
-            labels?: string[] | undefined;
-            links?: {
-                url: string;
-                title?: string | undefined;
-            }[] | undefined;
-            completedAt?: number | undefined;
-            linkedSessions?: Record<string, {
-                title: string;
-                linkedAt: number;
-                session?: {
-                    serverId: string;
-                    accountId: string;
-                    sessionId: string;
-                } | undefined;
-            }> | undefined;
-            labelColors?: {
-                name: string;
-                colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
-            }[] | undefined;
-        };
+        status: 'unavailable';
     } | {
         status: 'uncertain';
         reason: string;
     };
     readonly "tasks.internal.transition": {
-        status: 'unavailable';
+        status: 'applied';
+        scope: {
+            serverId: string;
+            accountId: string;
+        };
+        todo: {
+            id: string;
+            title: string;
+            done: boolean;
+            createdAt: number;
+            updatedAt: number;
+            state: 'backlog' | 'canceled' | 'completed' | 'started' | 'unstarted';
+            createdBy?: string | undefined;
+            notes?: string | undefined;
+            owner?: string | undefined;
+            dueAt?: number | undefined;
+            parentId?: string | undefined;
+            blockedBy?: (Readonly<{
+                source: Readonly<{
+                    pluginId: string;
+                    localId: string;
+                }>;
+                kindId: string;
+                collisionScope: string;
+                entryId: string;
+            }> | string)[] | undefined;
+            labels?: string[] | undefined;
+            links?: undefined | {
+                url: string;
+                title?: string | undefined;
+            }[];
+            completedAt?: number | undefined;
+            linkedSessions?: Record<string, {
+                title: string;
+                linkedAt: number;
+                session?: undefined | {
+                    serverId: string;
+                    accountId: string;
+                    sessionId: string;
+                };
+            }> | undefined;
+            ownerAccountId?: string | undefined;
+            access?: 'admin' | 'edit' | 'owner' | 'view' | undefined;
+            ownerDisplayName?: null | string | undefined;
+            labelColors?: undefined | {
+                name: string;
+                colorToken: 'accent' | 'danger' | 'info' | 'secondaryText' | 'success' | 'warning';
+            }[];
+        };
     } | {
         status: 'failed';
         reason: string;
@@ -267,40 +683,7 @@ export type InternalTasksActionResultById = {
         status: 'refused';
         reason: string;
     } | {
-        status: 'applied';
-        todo: {
-            id: string;
-            title: string;
-            done: boolean;
-            createdAt: number;
-            updatedAt: number;
-            state: 'backlog' | 'unstarted' | 'started' | 'completed' | 'canceled';
-            createdBy?: string | undefined;
-            notes?: string | undefined;
-            owner?: string | undefined;
-            dueAt?: number | undefined;
-            parentId?: string | undefined;
-            blockedBy?: string[] | undefined;
-            labels?: string[] | undefined;
-            links?: {
-                url: string;
-                title?: string | undefined;
-            }[] | undefined;
-            completedAt?: number | undefined;
-            linkedSessions?: Record<string, {
-                title: string;
-                linkedAt: number;
-                session?: {
-                    serverId: string;
-                    accountId: string;
-                    sessionId: string;
-                } | undefined;
-            }> | undefined;
-            labelColors?: {
-                name: string;
-                colorToken: 'success' | 'secondaryText' | 'accent' | 'info' | 'warning' | 'danger';
-            }[] | undefined;
-        };
+        status: 'unavailable';
     } | {
         status: 'uncertain';
         reason: string;
