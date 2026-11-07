@@ -2,6 +2,7 @@ import { describe, expect, it, onTestFinished, vi } from 'vitest';
 import {
   hrefForDestinationRef,
   resolveCompactAppDestinations,
+  resolveCurrentAppDestination,
 } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
@@ -20,16 +21,16 @@ import {
 } from '@/sync/domains/server/serverProfiles';
 import {
   readScopedWorkspaceLayout,
+  serializeWorkspaceLayout,
   workspaceLayoutScopeKey,
-  writeScopedWorkspaceLayout,
 } from './workspacePersistence';
-import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
-import { createWorkspaceFileDetailsTab } from '../panes/details/fileDetailsTab';
 import {
   buildSessionDetailsTabHref,
   parseSessionPaneUrlState,
   serializeSessionPaneUrlState,
 } from '@/components/sessions/panes/url/sessionPaneUrlState';
+import { createSessionScmReviewDetailsTab } from '@/components/sessions/panes/details/sessionDetailsTabBuilders';
+import { createWorkspaceFileDetailsTab } from '../panes/details/fileDetailsTab';
 
 installPanelCommonModuleMocks();
 // Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
@@ -106,18 +107,88 @@ function harness(
 }
 
 describe('workspace navigation adapter', () => {
-  it('replaces ordinary Machine previews while browsing the rail', () => {
+  it('keeps an ordinary Workflow item in Settings while explicit Workflow navigation changes section', () => {
+    const h = harness();
+    h.adapter.openHref('/settings/roles', { section: true });
+    const settingsTab = h.active().id;
+    expect(resolveCurrentAppDestination(h.catalog, h.adapter.sectionPathname!)?.column).toBe('settings');
+    expect(h.adapter.openHref('/workflows/definition-1', { mode: 'newTab' })).toBe(true);
+    expect(h.active().target.kind).toBe('workflow');
+    expect(resolveCurrentAppDestination(h.catalog, h.adapter.sectionPathname!)?.column).toBe('settings');
+    expect(h.state().tabs[settingsTab]?.target.kind).toBe('settings');
+    h.adapter.openHref('/workflows/settings', { section: true });
+    expect(resolveCurrentAppDestination(h.catalog, h.adapter.sectionPathname!)?.column).toBe('workflows');
+  });
+  it('replaces the retained current tab for ordinary opens and focuses an already open destination', () => {
+    const h = harness();
+    h.adapter.initialize('/session/A1?serverId=home-a');
+    for (const href of ['/workflows', '/workflows/definition-1', '/workflows/runs/run-1', '/projects']) {
+      expect(h.adapter.openHref(href)).toBe(true);
+      expect(h.active().id).toBe('A');
+      expect(Object.keys(h.state().tabs)).toHaveLength(1);
+    }
+    h.adapter.openHref('/workflows/definition-1', { mode: 'newTab', tabId: 'A' });
+    const workflowTab = h.active().id;
+    expect(workflowTab).not.toBe('A');
+    expect(Object.keys(h.state().tabs)).toHaveLength(2);
+    h.adapter.activateTab('group:1', 'A');
+    h.adapter.openHref('/workflows/definition-1', { tabId: 'A' });
+    expect(h.active().id).toBe(workflowTab);
+    expect(h.state().tabs.A.target.kind).toBe('projects');
+    expect(Object.keys(h.state().tabs)).toHaveLength(2);
+  });
+
+  it('honors a split intent from an addressed source tab without replacing it', () => {
+    const h = harness();
+    h.adapter.initialize('/session/A1?serverId=home-a');
+    expect(h.adapter.openHref('/workflows/definition-1', {
+      tabId: 'A', mode: 'splitRight', availableSizePx: 1400, minimumFirstSizePx: 320,
+    })).toBe(true);
+    expect(h.state().tabs.A.target.kind).toBe('session');
+    expect(h.active().target.kind).toBe('workflow');
+    expect(Object.keys(h.state().groups)).toHaveLength(2);
+  });
+  it('keeps entity opens and pane focus inside the explicitly selected section', () => {
+    const h = harness();
+    h.adapter.initialize('/session/A1?serverId=home-a');
+    h.adapter.openHref('/workflows/definition-1');
+    expect(h.active().target.kind).toBe('workflow');
+    expect(h.adapter.sectionPathname).toBe('/session/A1');
+    h.adapter.openHref('/workflows', { section: true });
+    h.adapter.openHref('/session/A1?serverId=home-a');
+    expect(h.active().target.kind).toBe('session');
+    expect(h.adapter.sectionPathname).toBe('/workflows');
+    h.adapter.openHref('/workflows/runs/run-1', {
+      mode: 'splitRight', availableSizePx: 1400, minimumFirstSizePx: 320,
+    });
+    expect(Object.keys(h.state().groups)).toHaveLength(2);
+    expect(h.adapter.sectionPathname).toBe('/workflows');
+    h.adapter.activateTab('group:1', 'A');
+    expect(h.adapter.sectionPathname).toBe('/workflows');
+    expect(h.adapter.openHref('/unregistered', { section: true })).toBe(false);
+    expect(h.adapter.sectionPathname).toBe('/workflows');
+  });
+  it('qualifies a restored resource before adopting its matching address', () => {
+    const h = harness([], { serverId: 'home-a', accountId: 'alice' });
+    h.adapter.openHref('/machines/machine-a');
+    const tabId = h.active().id;
+    h.adapter.dispatch({ type: 'setTarget', tabId, target: { kind: 'machines', params: { id: 'machine-a' } } });
+    h.adapter.initialize('/machines/machine-a?serverId=home-a');
+    expect(h.active().id).toBe(tabId);
+    expect(h.active().target.params.serverId).toBe('home-a');
+  });
+  it('replaces the current Machine tab while browsing the rail', () => {
     const h = harness([], { serverId: 'home-a', accountId: 'alice' });
     for (const machineId of ['machine-a', 'machine-b', 'machine-c']) {
       expect(h.adapter.openHref(`/machines/${machineId}`)).toBe(true);
       const machines = Object.values(h.state().tabs).filter(tab => tab.target.kind === 'machines');
       expect(machines).toHaveLength(1);
-      expect(machines[0]).toMatchObject({ preview: true, pinned: false, target: { params: { id: machineId } } });
-      expect(Object.keys(h.state().tabs)).toHaveLength(2);
+      expect(machines[0]).toMatchObject({ preview: false, pinned: false, target: { params: { id: machineId } } });
+      expect(Object.keys(h.state().tabs)).toHaveLength(1);
     }
   });
 
-  it('retains the unpinned Machine page while the person goes through Settings to its other door', () => {
+  it('opens Settings and the other Machine door in the same tab', () => {
     const h = harness([], { serverId: 'home-a', accountId: 'alice' });
     h.adapter.openHref('/machines/machine-a?tab=processes');
     const retainedId = h.active().id;
@@ -140,9 +211,10 @@ describe('workspace navigation adapter', () => {
     h.adapter.openHref(second);
     expect(h.active().id).toBe(retainedId);
     expect(hrefForDestinationRef(h.catalog, h.active().target)).toBe(`${second}${second.includes('?') ? '&' : '?'}serverId=home-a`);
-    expect(Object.values(h.state().tabs).filter(tab => tab.id !== 'A')).toHaveLength(1);
+    expect(Object.values(h.state().tabs)).toHaveLength(1);
     h.adapter.openHref('/settings/machines/machine-a?serverId=home-b');
-    expect(h.active().id).not.toBe(retainedId);
+    expect(h.active().id).toBe(retainedId);
+    expect(h.active().target.params.serverId).toBe('home-b');
   });
 
   it.each([
@@ -164,7 +236,7 @@ describe('workspace navigation adapter', () => {
           (tab) => tab.target.kind === 'machines',
         ),
       ).toHaveLength(1);
-      h.adapter.openHref('/machines/machine-a?serverId=home-b');
+      h.adapter.openHref('/machines/machine-a?serverId=home-b', { mode: 'newTab' });
       expect(h.active().id).not.toBe(retainedId);
       expect(h.active().target.params.serverId).toBe('home-b');
     },
@@ -202,7 +274,7 @@ describe('workspace navigation adapter', () => {
     h.adapter.openHref('/machines/machine-a', { mode: 'newTab' });
     const retainedId = h.active().id;
     scope.serverId = 'home-b';
-    h.adapter.openHref('/machines/machine-a');
+    h.adapter.openHref('/machines/machine-a', { mode: 'newTab' });
     expect(h.active().id).not.toBe(retainedId);
     expect(h.state().tabs[retainedId]?.target.params.serverId).toBe('home-a');
     expect(h.active().target.params.serverId).toBe('home-b');
@@ -210,7 +282,7 @@ describe('workspace navigation adapter', () => {
     const unscoped = harness();
     unscoped.adapter.openHref('/machines/machine-a', { mode: 'newTab' });
     const unqualifiedId = unscoped.active().id;
-    unscoped.adapter.openHref('/machines/machine-a?serverId=home-b');
+    unscoped.adapter.openHref('/machines/machine-a?serverId=home-b', { mode: 'newTab' });
     expect(unscoped.active().id).not.toBe(unqualifiedId);
   });
 
@@ -286,16 +358,46 @@ describe('workspace navigation adapter', () => {
       expect(h.adapter.findOpenHref(href)).toBeNull();
       expect(h.adapter.openHref(href, options)).toBe(true);
       const opened = h.active().id;
-      expect(opened).not.toBe('A');
+      if (entry === 'file-recent') expect(opened).not.toBe('A');
+      else expect(opened).toBe('A');
       expect(h.active().target).toEqual(h.adapter.resolveOpenTarget(href));
       expect(h.active().target.kind).toBe('sessionDetails');
-      expect(h.state().tabs.A.target).toEqual(session);
+      if (entry === 'file-recent') expect(h.state().tabs.A.target).toEqual(session);
       h.adapter.activateTab(h.state().focusedGroupId, 'A');
       expect(h.adapter.openHref(href, options)).toBe(true);
       expect(h.active().id).toBe(opened);
-      expect(Object.keys(h.state().tabs)).toHaveLength(2);
+      expect(Object.keys(h.state().tabs)).toHaveLength(entry === 'file-recent' ? 2 : 1);
     },
   );
+
+  it('opens phone Details and File selections in place and restores the previous page through Back', () => {
+    const h = harness([], { serverId: 'home-a', accountId: 'alice' });
+    h.adapter.initialize('/session/A1?serverId=home-a');
+    const walkthroughHref = buildSessionDetailsTabHref({ sessionId: 'A1', serverId: 'home-a',
+      tab: createSessionScmReviewDetailsTab({ comparison: { kind: 'workingTree' }, view: 'walkthrough' }) })!;
+    const fileHref = buildSessionDetailsTabHref({ sessionId: 'A1', serverId: 'home-a', tab: createWorkspaceFileDetailsTab('src/file-000.js') })!;
+    h.adapter.openHref(walkthroughHref);
+    h.adapter.openHref(fileHref);
+    expect(h.active().id).toBe('A');
+    expect(Object.keys(h.state().tabs)).toEqual(['A']);
+    expect(parseSessionPaneUrlState(h.active().target.params)?.details).toMatchObject({ kind: 'file', path: 'src/file-000.js' });
+    h.adapter.step(-1);
+    expect(h.active().id).toBe('A');
+    expect(parseSessionPaneUrlState(h.active().target.params)?.details).toMatchObject({ kind: 'scmReview', view: 'walkthrough' });
+  });
+
+  it('keeps the source Session context when Details is followed by its File scene selection', () => {
+    const h = harness([], { serverId: 'home-a', accountId: 'alice' });
+    h.adapter.initialize('/session/A1?serverId=home-a&details=file&path=old.ts');
+    h.adapter.openHref('/session/A1?serverId=home-a&mobileSurface=chat', { mode: 'newTab', reuseExisting: false });
+    const source = h.active().id;
+    h.adapter.openHref('/session/A1/details?serverId=home-a&details=scmReview&comparison=workingTree&view=walkthrough', { tabId: source, replace: true });
+    h.adapter.openHref('/session/A1?serverId=home-a&mobileSurface=tabs', { tabId: source, replace: true });
+    expect(h.active().id).toBe(source);
+    expect(parseSessionPaneUrlState(h.active().target.params)?.details).toMatchObject({ kind: 'scmReview', view: 'walkthrough' });
+    expect(Object.keys(h.state().tabs)).toHaveLength(2);
+    expect(h.state().tabs.A.target.params.path).toBe('old.ts');
+  });
 
   it('keeps an already selected Computer pane when phone chrome projects Details and returns to Chat', () => {
     const h = harness([], { serverId: 'home-a', accountId: 'alice' });
@@ -329,12 +431,15 @@ describe('workspace navigation adapter', () => {
     h.adapter.acceptUrl('/session/A1/details?serverId=home-a&details=file&path=src%2Fa.ts&source=file&anchor=fileLine&startLine=20');
     expect(h.active().id).toBe(tabId);
     expect(parseSessionPaneUrlState(h.active().target.params)?.details).toMatchObject({ anchor: { kind: 'fileLine', startLine: 20 } });
-    // An independent resource or Home still gets its own destination, not this File's memory.
+    // Another resource or Home replaces this tab; no old anchor is carried.
     h.adapter.acceptUrl('/session/A1/details?serverId=home-a&details=file&path=src%2Fb.ts');
-    expect(h.active().id).not.toBe(tabId);
+    expect(h.active().id).toBe(tabId);
+    expect(parseSessionPaneUrlState(h.active().target.params)?.details).toMatchObject({ path: 'src/b.ts' });
+    expect(parseSessionPaneUrlState(h.active().target.params)?.details).not.toHaveProperty('anchor');
     const otherFileTab = h.active().id;
     h.adapter.acceptUrl('/session/A1/details?serverId=home-b&details=file&path=src%2Fb.ts');
-    expect(h.active().id).not.toBe(otherFileTab);
+    expect(h.active().id).toBe(otherFileTab);
+    expect(h.active().target.params.serverId).toBe('home-b');
   });
 
   it('does not adopt a different Machine or Home Details link as the current pane projection', () => {
@@ -358,7 +463,9 @@ describe('workspace navigation adapter', () => {
           }),
         })}`,
       );
-      expect(h.active().id).not.toBe('A');
+      expect(h.active().id).toBe('A');
+      expect(h.active().target.params.serverId).toBe(serverId);
+      expect(parseSessionPaneUrlState(h.active().target.params)?.details).toMatchObject({ kind: 'computerScreen', machineId });
     }
   });
 
@@ -383,6 +490,25 @@ describe('workspace navigation adapter', () => {
       expect(h.active().id).toBe('A');
       expect(Object.keys(h.state().tabs)).toEqual(['A']);
       expect(h.active().target.params.mobileSurface).toBe(surface);
+    }
+  });
+  it.each(['git', 'files', 'terminal'].flatMap(tool => ['url', 'replace'].map(entry => ({ tool, entry }))))(
+    'keeps phone /$tool selection and its return in the same Session destination through $entry', ({ tool, entry }) => {
+    const h = harness([], { serverId: 'home-a', accountId: 'alice' });
+    h.adapter.initialize('/session/A1?serverId=home-a&mobileSurface=chat');
+    const tabId = h.active().id;
+    for (const href of [
+      `/session/A1/${tool}?serverId=home-a`,
+      '/session/A1?serverId=home-a&mobileSurface=chat',
+      `/session/A1/${tool}?serverId=home-a`,
+      '/session/A1?serverId=home-a&mobileSurface=companion',
+      '/session/A1/terminal?serverId=home-a',
+      '/session/A1?serverId=home-a&mobileSurface=chat',
+    ]) {
+      expect(entry === 'url' ? h.adapter.acceptUrl(href) : h.adapter.openHref(href, { replace: true })).toBe(true);
+      expect(h.active().id).toBe(tabId);
+      expect(Object.keys(h.state().tabs)).toEqual([tabId]);
+      expect(hrefForDestinationRef(h.catalog, h.active().target)).toBe(href);
     }
   });
   it('reuses the retained terminal when a phone scene re-admits changed Session pane parameters', () => {
@@ -549,7 +675,7 @@ describe('workspace navigation adapter', () => {
     });
     const key = workspaceLayoutScopeKey({ ...scope, windowId: 'main' });
     const saved = readScopedWorkspaceLayout(
-      JSON.parse(JSON.stringify(writeScopedWorkspaceLayout({}, key, original))),
+      JSON.parse(JSON.stringify({ [key]: serializeWorkspaceLayout(original) })),
       key,
     );
     if (!saved) throw new Error('Written layout was not admitted');
@@ -582,16 +708,16 @@ describe('workspace navigation adapter', () => {
     expect(active()).toEqual(original.tabs[paneId]);
     expect(Object.keys(state.tabs)).toEqual([paneId]);
     adapter.acceptUrl(`/session/${sessionId}?serverId=${alias}&right=files`);
-    expect(active().id).not.toBe(paneId);
+    expect(active().id).toBe(paneId);
     expect(active().target.params.right).toBe('files');
     adapter.initialize(
       `/session/${sessionId}?serverId=${alias}&bottom=terminal&accountId=bob`,
     );
-    expect(active().id).not.toBe(paneId);
+    expect(active().id).toBe(paneId);
     adapter.initialize(
       `/session/${sessionId}?serverId=unrelated-home&bottom=terminal`,
     );
-    expect(active().id).not.toBe(paneId);
+    expect(active().id).toBe(paneId);
     adapter.initialize(
       `/session/${sessionId}?serverId=${home}&bottom=terminal&right=files`,
     );
@@ -775,6 +901,51 @@ describe('workspace navigation adapter', () => {
       ),
     ).toHaveLength(3);
   });
+  it('keeps a Project preview in its originating instance rather than an older duplicate', () => {
+    const h = harness([], { serverId: 'home-a', accountId: 'account-a' });
+    h.adapter.openHref('/projects/wr_1/code?serverId=home-a&initialFile=src%2Fa.ts', { mode: 'newTab', reuseExisting: false });
+    const older = h.active().id;
+    h.adapter.openHref('/projects/wr_1/changes?serverId=home-a&initialFile=src%2Fa.ts&fileView=changes', { mode: 'newTab', reuseExisting: false });
+    const editing = h.active().id;
+    expect(editing).not.toBe(older);
+    const retained = h.state().tabs[older];
+    h.adapter.openHref('/projects/wr_1/code?serverId=home-a&initialFile=src%2Fa.ts&source=file&anchor=fileLine&startLine=1',
+      { mode: 'preview', reuseExisting: true });
+    expect(h.active().id).toBe(editing);
+    expect(h.active().target.params.startLine).toBe('1');
+    expect(h.state().tabs[older]).toBe(retained);
+    // Resource identity includes the Home; an unrelated source still finds the addressed Project.
+    h.adapter.openHref('/projects/wr_1/code?serverId=home-b', { mode: 'newTab', reuseExisting: false });
+    h.adapter.openHref('/projects/wr_1/code?serverId=home-a&initialFile=src%2Fb.ts', { mode: 'preview', reuseExisting: true });
+    expect(h.active().id).toBe(older);
+  });
+  it('keeps addressed Project page navigation in its source pane through hide and reload', () => {
+    const h = harness([], { serverId: 'home-a', accountId: 'alice' });
+    h.adapter.openHref('/projects/wr_1/terminal?serverId=home-a', { mode: 'newTab', reuseExisting: false });
+    const older = h.active();
+    h.adapter.openHref('/projects/wr_1/terminal?serverId=home-a', { mode: 'newTab', reuseExisting: false });
+    const shellPane = h.active().id;
+    const tabCount = Object.keys(h.state().tabs).length;
+    for (const href of ['/projects/wr_1/overview?serverId=home-a', '/projects/wr_1/overview?serverId=home-a&mobileSurface=terminal']) {
+      expect(h.adapter.openHref(href, { mode: 'preview', tabId: shellPane, reuseExisting: false, replace: true })).toBe(true);
+      expect(h.active().id).toBe(shellPane);
+      expect(Object.keys(h.state().tabs)).toHaveLength(tabCount);
+      expect(h.state().tabs[older.id]).toBe(older);
+      expect(hrefForDestinationRef(h.catalog, h.active().target)).toBe(href);
+    }
+    const key = workspaceLayoutScopeKey({ serverId: 'home-a', accountId: 'alice', windowId: 'same-window' });
+    let restored = readScopedWorkspaceLayout(JSON.parse(JSON.stringify({ [key]: serializeWorkspaceLayout(h.state()) })), key);
+    if (!restored) throw new Error('Written Project layout was not admitted');
+    const adapter = createWorkspaceNavigationAdapter({
+      getState: () => restored!, getCatalog: () => h.catalog,
+      getScope: () => ({ serverId: 'home-a', accountId: 'alice' }),
+      dispatch: action => { restored = reduceWorkspaceState(restored!, action); },
+      transport: { commit: () => {} }, createId: () => 'unexpected-new-pane', onChange: () => {},
+    });
+    adapter.initialize('/projects/wr_1/overview?serverId=home-a&mobileSurface=terminal');
+    expect(restored.tabs[restored.groups[restored.focusedGroupId].activeTabId].id).toBe(shellPane);
+    expect(restored.tabs[older.id]).toEqual(older);
+  });
   it('reuses a retained unqualified Session when the legacy workspace has no Account scope', () => {
     const h = harness();
     h.adapter.openHref('/session/legacy', {
@@ -942,6 +1113,7 @@ describe('workspace navigation adapter', () => {
 
   it('preserves explicit preview disposition when reusing its qualified destination', () => {
     const h = harness();
+    h.adapter.dispatch({ type: 'openTab', groupId: 'group:1', tab: { id: 'preview', target: { kind: 'newTab', params: {} }, preview: true, pinned: false } });
     h.adapter.openHref('/session/preview?serverId=home-a');
     const id = h.active().id;
     h.adapter.openHref('/session/preview?serverId=home-a', {
@@ -1009,6 +1181,8 @@ describe('workspace navigation adapter', () => {
         placement: {} as NonNullable<
           Parameters<typeof resolveCompactAppDestinations>[0]['pages'][number]
         >['placement'],
+        target: { kind: 'app' },
+        visible: true,
         routePath: '/plugins/acme.notes/notes',
       },
     ]);
@@ -1031,6 +1205,7 @@ describe('workspace navigation adapter', () => {
   });
   it('promotes an existing preview through new-tab intent without duplicating its identity or pinning it', () => {
     const h = harness();
+    h.adapter.dispatch({ type: 'openTab', groupId: 'group:1', tab: { id: 'preview', target: { kind: 'newTab', params: {} }, preview: true, pinned: false } });
     h.adapter.openHref('/session/B1?serverId=home-b');
     const previewId = h.active().id;
     expect(h.active().preview).toBe(true);
@@ -1042,18 +1217,18 @@ describe('workspace navigation adapter', () => {
         (tab) => tab.target.params.id === 'B1',
       ),
     ).toHaveLength(1);
-    h.adapter.openHref('/session/C1?serverId=home-c');
+    h.adapter.openHref('/session/C1?serverId=home-c', { mode: 'newTab' });
     const explicitId = h.active().id;
     h.adapter.openHref('/session/C1?serverId=home-c', {
       tabId: explicitId,
-      mode: 'newTab',
+      mode: 'preview',
     });
     expect(h.active()).toMatchObject({
       id: explicitId,
       pinned: false,
       preview: false,
     });
-    h.adapter.openHref('/session/D1?serverId=home-d');
+    h.adapter.openHref('/session/D1?serverId=home-d', { mode: 'newTab' });
     expect(h.state().tabs[previewId].target.params.id).toBe('B1');
     expect(h.state().tabs[explicitId].target.params.id).toBe('C1');
     h.adapter.openHref('/session/B1?serverId=home-b', { mode: 'newTab' });
@@ -1081,6 +1256,8 @@ describe('workspace navigation adapter', () => {
           placement: {} as NonNullable<
             Parameters<typeof resolveCompactAppDestinations>[0]['pages'][number]
           >['placement'],
+          target: { kind: 'app' },
+          visible: true,
           routePath: '/plugins/acme.notes/notes',
         },
       ]);
@@ -1168,6 +1345,8 @@ describe('workspace navigation adapter', () => {
         placement: {} as NonNullable<
           Parameters<typeof resolveCompactAppDestinations>[0]['pages'][number]
         >['placement'],
+        target: { kind: 'app' },
+        visible: true,
         routePath: '/plugins/acme.notes/notes',
       },
     ]);
@@ -1188,7 +1367,9 @@ describe('workspace navigation adapter', () => {
         (tab) => tab.target.kind === 'plugin:acme.notes:notes',
       ),
     ).toHaveLength(1);
-    expect(Object.keys(h.state().groups)).toHaveLength(1);
+    expect(Object.keys(h.state().groups)).toHaveLength(2);
+    expect(h.state().tabs.A.target.kind).toBe('session');
+    expect(h.adapter.sectionPathname).toBe('/session/A1');
     h.adapter.openHref('/plugins/acme.notes/notes/third', { tabId: 'A' });
     expect(h.active().id).toBe(pluginTabId);
     expect(h.state().tabs.A.target.kind).toBe('session');
@@ -1308,24 +1489,4 @@ describe('workspace navigation adapter', () => {
     expect(h.state().focusedGroupId).toBe('group:1');
     expect(h.active().target.params).toEqual({ id: 'A1', serverId: 'home-a' });
   });
-  it.each(['git', 'files', 'terminal'].flatMap(tool => ['url', 'replace'].map(entry => ({ tool, entry }))))(
-    'keeps phone /$tool selection and its return in the same Session destination through $entry', ({ tool, entry }) => {
-    const h = harness([], { serverId: 'home-a', accountId: 'alice' });
-    h.adapter.initialize('/session/A1?serverId=home-a&mobileSurface=chat');
-    const tabId = h.active().id;
-    for (const href of [
-      `/session/A1/${tool}?serverId=home-a`,
-      '/session/A1?serverId=home-a&mobileSurface=chat',
-      `/session/A1/${tool}?serverId=home-a`,
-      '/session/A1?serverId=home-a&mobileSurface=companion',
-      '/session/A1/terminal?serverId=home-a',
-      '/session/A1?serverId=home-a&mobileSurface=chat',
-    ]) {
-      expect(entry === 'url' ? h.adapter.acceptUrl(href) : h.adapter.openHref(href, { replace: true })).toBe(true);
-      expect(h.active().id).toBe(tabId);
-      expect(Object.keys(h.state().tabs)).toEqual([tabId]);
-      expect(hrefForDestinationRef(h.catalog, h.active().target)).toBe(href);
-    }
-  });
-
 });

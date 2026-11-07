@@ -1,5 +1,13 @@
 import * as React from 'react';
+import { Platform } from 'react-native';
 import { usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useDestinationInstanceFacts } from '@/components/appShell/workspace/destinationInstanceContext';
+import { useOptionalWorkspaceNavigation } from '@/components/appShell/workspace/WorkspaceNavigationContext';
+import { openWorkspaceHrefOrElse } from '@/components/appShell/workspace/workspaceActionRuntime';
+import { admitInternalRouteHref } from '@/utils/path/routeUtils';
+import { readSessionRouteServerId } from '@/hooks/session/sessionRouteServerScope';
+import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
+import { useActiveServerAccountScopeLifetime } from '@/sync/domains/state/storage';
 
 import {
     normalizePluginUiSubPathV1,
@@ -23,6 +31,7 @@ import {
 } from '@/components/plugins/surfaces/pluginSurfaceDestinations';
 import {
     isSamePluginSurfaceLaunchAuthority,
+    createPluginSurfaceLaunchAuthority,
     resolveSelectedPluginSurfaceLaunchAuthority,
     type PluginSurfaceLaunchAuthority,
 } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
@@ -40,13 +49,15 @@ import { usePluginLocalizedTextResolver } from '@/sync/domains/plugins/ui/i18n';
 import { getPreferredLanguage } from '@/text';
 import { runGuardedNavigation } from '@/utils/navigation/runGuardedNavigation';
 import { fireAndForget } from '@/utils/system/fireAndForget';
+import { usePluginSurfaceWindowPresentation } from '@/components/plugins/surfaces/pluginSurfaceWindowPresentation';
 
 import {
     usePluginPages,
     selectPluginPagePlacements,
     type PluginPage,
 } from './pluginPages';
-import { appendPluginPageRouteSubPath, pluginPageTargetKey, type PluginPageTarget } from './pluginPageRoute';
+import { appendPluginPageRouteSubPath, buildPluginMachinePageRoutePath, parsePluginAppPageRoutePath, pluginPageTargetKey, type PluginPageTarget } from './pluginPageRoute';
+import { usePluginPageIngress, type StagePluginPageExplicitHref } from './pluginPageIngress';
 
 /**
  * Host-provided navigation into a plugin page (EU-5b), and the launch input
@@ -84,6 +95,8 @@ export type PluginPageLaunchOpen = Readonly<{
     input: PluginUiLaunchInputV1 | undefined;
     /** Ephemeral mount discriminator; never a route or persistence key. */
     instanceKey?: PluginUiInstanceKeyV1;
+    /** Original explicit ingress awaiting its first admitted Account; never persisted or delivered. */
+    pendingIngressHref?: string;
 }>;
 
 export type PluginPageLaunchInputQuery = Readonly<{
@@ -114,10 +127,20 @@ export type PluginPageLaunchInputStore = Readonly<{
     retire: (authority?: PluginSurfaceLaunchAuthority) => void;
     /** Retire a pending open unless one of these exact page authorities retains it. */
     retireOutside: (authorities: readonly PluginSurfaceLaunchAuthority[]) => void;
+    /** Bind an explicit ingress once, then select only its exact admitted page occurrence. */
+    resolveIngressAuthority: (authorities: PluginPageLaunchAuthorities, accountLifetime?: ActiveServerAccountScopeLifetime | null) => void;
+    /** Leaving both origin and destination withdraws an undelivered open before Back can restore it. */
+    retireOutsideLocation: (location: Readonly<{ pageId: string; subPath: string }> | null, href?: string) => void;
     subscribe: (listener: () => void) => () => void;
 }>;
 
-export function createPluginPageLaunchInputStore(): PluginPageLaunchInputStore {
+/** The route owner admits equivalent encodings before an origin is compared. */
+function pageLaunchOriginKey(href: string): string {
+    return JSON.stringify(parsePluginAppPageRoutePath(href) ?? href);
+}
+
+export function createPluginPageLaunchInputStore(readCurrentHref?: () => string): PluginPageLaunchInputStore {
+    let pendingOriginKey: string | undefined;
     const store = createPluginSurfaceLaunchInputStore<PluginPageLaunchOpen>((open) => (
         // Page id and subpath are separately normalized by the route owner.
         // A delimiter makes their pair one exact handoff location without
@@ -125,22 +148,77 @@ export function createPluginPageLaunchInputStore(): PluginPageLaunchInputStore {
         `${pluginPageTargetKey(open.target ?? { kind: 'app' })}\u0000${open.pageId}\u0000${open.subPath}`
     ));
     return Object.freeze({
-        stage: store.stage,
-        peek: (query) => store.peek({
+        stage: (open) => {
+            const previousOrigin = pendingOriginKey;
+            pendingOriginKey = readCurrentHref === undefined ? undefined : pageLaunchOriginKey(readCurrentHref());
+            const staged = store.stage(open);
+            if (!staged) pendingOriginKey = previousOrigin;
+            return staged;
+        },
+        peek: (query) => query.authority.occurrenceId === null ? null : store.peek({
             authority: query.authority,
             handoffKey: `${pluginPageTargetKey(query.target ?? { kind: 'app' })}\u0000${query.pageId}\u0000${query.subPath}`,
         }),
         settle: store.settle,
         retire: store.retire,
         retireOutside: store.retireOutside,
+        resolveIngressAuthority: (authorities, accountLifetime) => {
+            const retained = [...authorities.values()];
+            store.updatePending(open => {
+                // An exact staged launch can only survive its original authority;
+                // a replacement occurrence or Machine must never adopt it.
+                if (open.authority.occurrenceId !== null) return open;
+                let lifetime = open.authority.accountLifetime;
+                if (!lifetime && open.pendingIngressHref !== undefined) {
+                    if (!accountLifetime) {
+                        retained.push(open.authority);
+                        return open;
+                    }
+                    if (!isExplicitIngressHomeCurrent(open.pendingIngressHref, accountLifetime)) return null;
+                    lifetime = accountLifetime;
+                    const { pendingIngressHref: _consumedHref, ...boundOpen } = open;
+                    open = { ...boundOpen, authority: createPluginSurfaceLaunchAuthority({
+                        serverId: lifetime.scope.serverId, accountLifetime: lifetime,
+                    }) };
+                }
+                if (!lifetime?.isCurrent()) return null;
+                const authority = authorities.get(open.pageId);
+                if (authority) return authority.accountLifetime === lifetime ? { ...open, authority } : null;
+                retained.push(open.authority);
+                return open;
+            });
+            store.retireOutside(retained);
+        },
+        retireOutsideLocation: (location, href) => {
+            store.updatePending(open => {
+                if (location?.pageId === open.pageId && location.subPath === open.subPath) {
+                    // Arrival ends the origin exemption, even if the renderer
+                    // has not taken this handoff yet. Back is a real departure.
+                    pendingOriginKey = undefined;
+                    return open;
+                }
+                // Staging precedes navigation. A publication of the source
+                // location during that transition has not left this open.
+                return href !== undefined && pendingOriginKey === pageLaunchOriginKey(href) ? open : null;
+            });
+        },
         subscribe: store.subscribe,
     });
+}
+
+function isExplicitIngressHomeCurrent(href: string, lifetime: ActiveServerAccountScopeLifetime): boolean {
+    if (!lifetime.isCurrent()) return false;
+    const serverId = readSessionRouteServerId({
+        serverId: new URL(href, 'https://internal.invalid').searchParams.get('serverId'),
+    });
+    return !serverId || areServerProfileIdentifiersEquivalent(serverId, lifetime.scope.serverId);
 }
 
 type PluginPageLaunchInputScopeValue = Readonly<{
     target: PluginPageTarget;
     authoritiesByPageId: PluginPageLaunchAuthorities;
     store: PluginPageLaunchInputStore;
+    stageExplicitHref: StagePluginPageExplicitHref;
 }>;
 
 const PluginPageLaunchInputScopeContext = (
@@ -157,10 +235,9 @@ export type PluginPageLaunchAuthorities = ReadonlyMap<string, PluginSurfaceLaunc
 /**
  * Derive launch authorities from the one canonical page catalog.
  *
- * A page without the union's exact selected materialization stamp is not a
- * launch destination. This deliberately does not fall back to the app shell's
- * ambient machine, because that could bind a bounded input to a replica the
- * user did not select.
+ * A page needs its exact Account custody or selected Machine producer stamp.
+ * This deliberately does not fall back to the app shell's ambient Machine,
+ * because that could bind a bounded input to a replica the user did not select.
  */
 export function resolvePluginPageLaunchAuthorities(input: Readonly<{
     pages: readonly PluginPage[];
@@ -202,37 +279,57 @@ export function PluginPageLaunchInputScope(props: Readonly<{
     pages?: readonly PluginPage[];
     children: React.ReactNode;
 }>): React.ReactElement {
-    const [store] = React.useState(createPluginPageLaunchInputStore);
+    const pathname = usePathname();
+    const pathnameRef = React.useRef(pathname);
+    pathnameRef.current = pathname;
+    const [store] = React.useState(() => createPluginPageLaunchInputStore(() => (
+        Platform.OS === 'web' && typeof window !== 'undefined'
+            ? `${window.location.pathname}${window.location.search}` : pathnameRef.current
+    )));
     // This is the incumbent Account lifecycle, not a page-owned generation.
     // Capturing it here makes staging, delivery and retirement all consume the
     // same authority the destination mount will receive.
-    const accountLifetime = captureActiveServerAccountScopeLifetime();
+    const accountLifetime = useActiveServerAccountScopeLifetime();
     const [, refreshAfterAccountRetirement] = React.useReducer((revision: number) => revision + 1, 0);
     const pluginLocale = getPreferredLanguage();
     const localizePluginText = usePluginLocalizedTextResolver({
             projection: props.pluginUiProjection,
             locale: pluginLocale,
     });
+    // A caller may build its target inline on every render; equal targets keep one identity so the context
+    // value below is not republished to every shell consumer.
+    const targetKey = pluginPageTargetKey(props.target);
+    const stableTarget = React.useRef(props.target);
+    if (pluginPageTargetKey(stableTarget.current) !== targetKey) stableTarget.current = props.target;
+    const target = stableTarget.current;
     const ownPlacements = React.useMemo(() => props.pages ? [] : selectPluginPagePlacements(props.pluginUiProjection,
-        { container: 'appPage', targetKind: props.target.kind }), [props.pages, props.pluginUiProjection, props.target.kind]);
-    const ownPages = usePluginPages({ target: props.target,
+        { container: 'appPage', targetKind: target.kind }), [props.pages, props.pluginUiProjection, target.kind]);
+    const ownPages = usePluginPages({ target,
         placements: ownPlacements,
         localize: localizePluginText,
     });
     const pages = props.pages ?? ownPages;
-    const targetKey = pluginPageTargetKey(props.target);
     React.useEffect(() => () => store.retire(), [store, targetKey]);
-    const authoritiesByPageId = React.useMemo(
-        () => resolvePluginPageLaunchAuthorities({ pages, accountLifetime }),
-        [accountLifetime, pages],
-    );
+    // A projection that fills in page by page re-resolves every page; the same grants keep one Map, so the
+    // context below is republished only when an authority really changes (or its Account lifetime retires).
+    const heldAuthorities = React.useRef<PluginPageLaunchAuthorities | null>(null);
+    const authoritiesByPageId = React.useMemo(() => {
+        const next = resolvePluginPageLaunchAuthorities({ pages, accountLifetime });
+        const held = heldAuthorities.current;
+        const same = held !== null && held.size === next.size && [...next].every(([pageId, authority]) => {
+            const previous = held.get(pageId);
+            return previous !== undefined && isSamePluginSurfaceLaunchAuthority(previous, authority);
+        });
+        heldAuthorities.current = same ? held : next;
+        return heldAuthorities.current;
+    }, [accountLifetime, pages]);
 
     React.useEffect(() => {
         // A selected page origin is a full producer identity. Keep a pending
         // handoff only if that exact page authority remains selected; a union
         // machine/generation cannot retain an input for another plugin's page.
-        store.retireOutside([...authoritiesByPageId.values()]);
-    }, [authoritiesByPageId, store]);
+        store.resolveIngressAuthority(authoritiesByPageId, accountLifetime);
+    }, [accountLifetime, authoritiesByPageId, store]);
     React.useEffect(() => {
         const retirement = accountLifetime?.onRetire(() => {
             // `onRetire` runs synchronously from the incumbent reset owner.
@@ -248,15 +345,67 @@ export function PluginPageLaunchInputScope(props: Readonly<{
     }, [accountLifetime, refreshAfterAccountRetirement, store]);
     React.useEffect(() => () => { store.retire(); }, [store]);
 
+    const authoritiesRef = React.useRef(authoritiesByPageId);
+    authoritiesRef.current = authoritiesByPageId;
+    const stageExplicitHref = React.useCallback<StagePluginPageExplicitHref>((href, lifetime = captureActiveServerAccountScopeLifetime()) => {
+        if (targetKey !== 'app' || (lifetime && !isExplicitIngressHomeCurrent(href, lifetime))) return false;
+        const location = parsePluginAppPageRoutePath(href);
+        if (!location) return false;
+        const pageId = buildPluginSurfaceDestinationId(location.pluginId, location.localId);
+        if (!lifetime) {
+            const staged = store.stage({ target: { kind: 'app' }, authority: createPluginSurfaceLaunchAuthority({}),
+                pageId, subPath: location.subPath, input: undefined, pendingIngressHref: href });
+            // The OS may finish resolving its initial URL after Account admission.
+            // Bind that original ingress in the same slot without replaying the OS read.
+            store.resolveIngressAuthority(authoritiesRef.current, captureActiveServerAccountScopeLifetime());
+            return staged;
+        }
+        const selected = authoritiesRef.current.get(pageId);
+        // A cold URL is an explicit open under ONE current Account, not yet an
+        // executable page grant. The same pending slot waits for exact admission.
+        const authority = selected && selected.accountLifetime === lifetime ? selected : createPluginSurfaceLaunchAuthority({
+            serverId: lifetime.scope.serverId, accountLifetime: lifetime,
+        });
+        return store.stage({ target: { kind: 'app' }, authority, pageId, subPath: location.subPath, input: undefined });
+    }, [store, targetKey]);
+    const retireUnmatchedLocation = React.useCallback((href: string) => {
+        const location = parsePluginAppPageRoutePath(href);
+        store.retireOutsideLocation(location ? {
+            pageId: buildPluginSurfaceDestinationId(location.pluginId, location.localId), subPath: location.subPath,
+        } : null, href);
+    }, [store]);
+    usePluginPageIngress(stageExplicitHref, retireUnmatchedLocation, target.kind === 'app');
     const value = React.useMemo(
-        () => Object.freeze({ authoritiesByPageId, store, target: props.target }),
-        [authoritiesByPageId, store, props.target],
+        () => Object.freeze({ authoritiesByPageId, store, target, stageExplicitHref }),
+        [authoritiesByPageId, store, target, stageExplicitHref],
     );
     return React.createElement(
         PluginPageLaunchInputScopeContext.Provider,
         { value },
         props.children,
     );
+}
+
+/** Explicit external/notification navigation joins the same page launch handoff as openSurface. */
+export function usePluginPageExplicitNavigation(): (href: string) => void {
+    const scope = React.useContext(PluginPageLaunchInputScopeContext);
+    const router = useRouter();
+    const current = React.useRef({ scope, router });
+    current.current = { scope, router };
+    return React.useCallback((href: string) => {
+        const lifetime = captureActiveServerAccountScopeLifetime();
+        const navigate = () => {
+            // A notification may have proved Account A before the existing
+            // unsaved-edits guard awaited a human decision. Never lend that
+            // explicit open to whichever Account is active after the decision.
+            if (lifetime && !lifetime.isCurrent()) return;
+            current.current.scope?.stageExplicitHref(href, lifetime);
+            current.current.router.push(admitInternalRouteHref(href));
+        };
+        if (parsePluginAppPageRoutePath(href)) {
+            fireAndForget(Promise.resolve(runGuardedNavigation(navigate)), { tag: 'plugin-page-explicit-navigation' });
+        } else navigate();
+    }, []);
 }
 
 /**
@@ -297,8 +446,8 @@ export type PluginPageCatalogActivation = Readonly<{
 }>;
 
 export type CreatePluginPageCatalogActivationHandlerInput = Readonly<{
-    pathname: string;
     navigate: (routePath: string) => void;
+    openWindow?: (routePath: string) => Promise<PluginSurfaceOpenOutcome>;
     stageLaunchInput: (open: Readonly<{
         pageId: string;
         subPath: string;
@@ -309,10 +458,9 @@ export type CreatePluginPageCatalogActivationHandlerInput = Readonly<{
 /**
  * Adapts a compact catalog activation to the page launch owner.
  *
- * Staging intentionally precedes route-currentness suppression. A page that is
- * already mounted at its root must observe a user navigation as an explicit
- * input-less open, replacing any earlier ephemeral payload without adding a
- * second history entry.
+ * An already-mounted page observes catalog activation as an explicit input-less
+ * open. The router owns route currentness and history: its Expo pathname mirror
+ * can still name the page root after the workspace moved to a detail.
  */
 export function createPluginPageCatalogActivationHandler(
     input: CreatePluginPageCatalogActivationHandlerInput,
@@ -322,7 +470,6 @@ export function createPluginPageCatalogActivationHandler(
             // Staging can update an already-mounted editor, so it belongs
             // after the dirty decision, not merely before guarded routing.
             input.stageLaunchInput({ pageId: destination.id, subPath: '', input: undefined });
-            if (destination.routePath === input.pathname) return;
             input.navigate(destination.routePath);
         })), { tag: 'plugin-page-catalog-navigation' });
     };
@@ -334,19 +481,17 @@ export function createPluginPageCatalogActivationHandler(
  * It reuses the canonical launch-input staging scope and the real route owner;
  * callers cannot create a parallel route or ephemeral-input path.
  */
-export function usePluginPageCatalogActivationHandler(): (
+export function usePluginPageCatalogActivationHandler(navigate?: (routePath: string) => void): (
     destination: PluginPageCatalogActivation,
 ) => void {
     const router = useRouter();
-    const pathname = usePathname();
     const stageLaunchInput = usePluginPageLaunchInputStaging();
     return React.useMemo(() => createPluginPageCatalogActivationHandler({
-        pathname,
         stageLaunchInput,
-        navigate: (routePath) => {
+        navigate: navigate ?? ((routePath) => {
             router.push(routePath as Parameters<typeof router.push>[0]);
-        },
-    }), [pathname, router, stageLaunchInput]);
+        }),
+    }), [navigate, router, stageLaunchInput]);
 }
 
 /**
@@ -366,6 +511,14 @@ export function usePluginPageLaunch(location: Readonly<{
 }>): PluginPageLaunchOpen | null {
     const scope = React.useContext(PluginPageLaunchInputScopeContext);
     const { localId, pluginId, subPath } = location;
+    const workspace = useOptionalWorkspaceNavigation();
+    const destination = useDestinationInstanceFacts();
+    // A cold web Expo body can precede catalog admission, then disappear when
+    // the retained workspace takes over. It is not the delivery destination.
+    // Hidden retained pages likewise have no renderer to receive a new open;
+    // native stack routes remain their own physical hosts.
+    const canReceive = destination?.visible !== false
+        && (Platform.OS !== 'web' || workspace === null || destination !== null);
     // Built from the ROUTE, through the canonical qualified-id builder, so the
     // open is also retired when the route resolves to no page at all (an
     // uninstalled, hidden or unknown destination) instead of being left pending.
@@ -379,15 +532,16 @@ export function usePluginPageLaunch(location: Readonly<{
         scope ? scope.store.subscribe(onStoreChange) : () => {}
     ), [scope]);
     const getSnapshot = React.useCallback(() => (
-        scope && authority && subPath !== null
+        canReceive && scope && authority && subPath !== null
             ? scope.store.peek({ authority, pageId, subPath, target: scope.target })
             : null
-    ), [authority, pageId, scope, subPath]);
+    ), [authority, canReceive, pageId, scope, subPath]);
     const staged = React.useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
 
     const [delivered, setDelivered] = React.useState<PluginPageLaunchOpen | null>(null);
     const retained = (
-        delivered !== null
+        canReceive
+        && delivered !== null
         && scope !== null
         && authority !== null
         && subPath !== null
@@ -425,7 +579,8 @@ export function usePluginPageLaunchInput(location: Readonly<{
 
 export type CreatePluginPageDestinationHandlerInput = Readonly<{
     pages: readonly PluginPage[];
-    navigate: (routePath: string) => void;
+    navigate: (routePath: string) => void | Promise<void>;
+    openWindow?: (routePath: string) => PluginSurfaceOpenOutcome | Promise<PluginSurfaceOpenOutcome>;
     stageLaunchInput: (open: Readonly<{
         target?: PluginPageTarget;
         pageId: string;
@@ -450,7 +605,7 @@ export type CreatePluginPageOpenSurfaceHandlerInput = CreatePluginPageDestinatio
 function openResolvedPluginPage(input: Readonly<{
     page: PluginPage;
     request: PluginSurfaceOpenRequest;
-}> & Pick<CreatePluginPageDestinationHandlerInput, 'navigate' | 'stageLaunchInput'>): PluginSurfaceOpenOutcome | Promise<PluginSurfaceOpenOutcome> {
+}> & Pick<CreatePluginPageDestinationHandlerInput, 'navigate' | 'stageLaunchInput' | 'openWindow'>): PluginSurfaceOpenOutcome | Promise<PluginSurfaceOpenOutcome> {
     const { page, request } = input;
     if (request.instanceKey !== undefined) {
         return {
@@ -476,6 +631,16 @@ function openResolvedPluginPage(input: Readonly<{
             reason: 'plugin_surface_open_sub_path_invalid',
         };
     }
+    const routePath = page.target.kind === 'machine'
+        ? buildPluginMachinePageRoutePath({ ...page.target, pluginId: page.pluginId, localId: page.localId, subPath })
+        : appendPluginPageRouteSubPath(page.routePath, subPath);
+    if (request.presentation === 'window') {
+        // A new realm restores through the incumbent page fallback. Runtime
+        // launch input remains one-shot in its original mounted scope.
+        return input.openWindow?.(routePath) ?? {
+            ok: false, code: 'unsupported_method', reason: 'plugin_surface_open_window_unsupported',
+        };
+    }
     let outcome: PluginSurfaceOpenOutcome = {
         ok: false, code: 'unavailable', reason: 'plugin_page_navigation_cancelled',
     };
@@ -493,7 +658,8 @@ function openResolvedPluginPage(input: Readonly<{
             outcome = { ok: false, code: 'unavailable', reason: 'plugin_surface_open_origin_unavailable' };
             return;
         }
-        input.navigate(appendPluginPageRouteSubPath(page.routePath, subPath));
+        const navigation = input.navigate(routePath);
+        if (navigation) return navigation.then(() => { outcome = { ok: true }; });
         outcome = { ok: true };
     });
     return admission === true ? outcome : admission.then(() => outcome);
@@ -508,6 +674,7 @@ export function createPluginPageOpenSurfaceHandler(
         ...(input.accountLifetime === undefined ? {} : { accountLifetime: input.accountLifetime }),
         ...(input.policyContext === undefined ? {} : { policyContext: input.policyContext }),
         handlers: { appPage: createPluginPageDestinationHandler(input) },
+        ...(input.openWindow ? { windowHandlers: { appPage: createPluginPageDestinationHandler(input) } } : {}),
     });
 }
 
@@ -550,15 +717,17 @@ export function usePluginPageDestinationHandler(input: Readonly<{
     pages: readonly PluginPage[];
 }>): PluginSurfaceDestinationContainerHandler {
     const router = useRouter();
-    const pathname = usePathname();
     const stageLaunchInput = usePluginPageLaunchInputStaging();
+    const openWindow = usePluginSurfaceWindowPresentation();
     const { pages } = input;
     return React.useMemo(() => createPluginPageDestinationHandler({
         pages,
         stageLaunchInput,
-        navigate: (routePath) => {
-            if (routePath === pathname) return;
+        openWindow,
+        // This owner also mounts above WorkspaceProvider. Its existing bridge
+        // reaches the mounted workspace even while Expo still mirrors the root.
+        navigate: (routePath) => openWorkspaceHrefOrElse(routePath, () => {
             router.push(routePath as Parameters<typeof router.push>[0]);
-        },
-    }), [pages, pathname, router, stageLaunchInput]);
+        }),
+    }), [openWindow, pages, router, stageLaunchInput]);
 }

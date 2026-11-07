@@ -4,9 +4,9 @@ import { resolveCompactAppDestinations, resolveDestinationRefFromHref } from '..
 import { createWorkspaceNavigationAdapter } from './workspaceNavigationAdapter';
 import { createWorkspaceActionAdapter } from './workspaceActions';
 import { createWorkspaceState, reduceWorkspaceState } from './workspaceState';
-import { resolveWorkspaceEntityDrop, resolveWorkspaceEntityHref } from './workspaceEntityDrop';
+import { resolveWorkspaceEntityDrop, resolveWorkspaceEntityHref, WORKSPACE_ENTITY_KINDS } from './workspaceEntityDrop';
 import type { WorkspaceNavigationContextValue } from './WorkspaceNavigationContext';
-import { isWorkspaceActionId } from '@happier-dev/protocol';
+import { isWorkspaceActionId } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import { EntityDropAdmissionV1Schema } from '@happier-dev/protocol/plugins/ui';
 import { presentPaneDropAdmission } from '../splitCanvas/presentation/paneDropPresentation';
 import { createWorkspaceDropScene } from './workspaceDropScene';
@@ -36,6 +36,32 @@ function harness() {
 }
 
 describe('workspace entity Action admission', () => {
+    it('honors an open-beside Action for an already-open destination', () => {
+        const h = harness();
+        expect(h.execute('workspace.tabs.open', { href: '/workflows/definition-1' })).toEqual({ ok: true });
+        expect(h.execute('workspace.tabs.open', { href: '/workflows/definition-1', groupId: 'group:1', mode: 'splitRight' })).toEqual({ ok: true });
+        expect(h.workspace.state.tabs.anchor.target.kind).toBe('session');
+        expect(Object.keys(h.workspace.state.groups)).toHaveLength(2);
+        expect(Object.values(h.workspace.state.tabs).filter(tab => tab.target.kind === 'workflow')).toHaveLength(1);
+    });
+    it('opens a Workflow beside the Session and splits an already-open destination instead of activating it', () => {
+        const h = harness();
+        expect(WORKSPACE_ENTITY_KINDS).toContain('workflow');
+        const drop = () => resolveWorkspaceEntityDrop({ ...h, scope, workspaceRefs: [],
+            item: { kind: 'workflow', scope, workflowId: 'definition-1' },
+            target: { leafId: 'group:1', placement: 'right' }, availableSizePx: 1400, minimumExistingSizePx: 400 });
+        const first = drop();
+        if (first.status !== 'allowed' || !isWorkspaceActionId(first.effect.actionId)) throw new Error('Expected workspace effect');
+        expect(h.execute(first.effect.actionId, first.effect.input)).toEqual({ ok: true });
+        expect(h.workspace.state.tabs.anchor.target.kind).toBe('session');
+        expect(Object.keys(h.workspace.state.groups)).toHaveLength(2);
+        const second = drop();
+        expect(second).toMatchObject({ status: 'allowed', effect: { actionId: 'workspace.split' } });
+        if (second.status !== 'allowed' || !isWorkspaceActionId(second.effect.actionId)) throw new Error('Expected split effect');
+        expect(h.execute(second.effect.actionId, second.effect.input)).toEqual({ ok: true });
+        expect(h.workspace.state.tabs.anchor.target.kind).toBe('session');
+        expect(Object.values(h.workspace.state.tabs).filter(tab => tab.target.kind === 'workflow')).toHaveLength(1);
+    });
     it('uses the same live screen identity in drag scenes and gives unresolved nested Session screens the shared untitled fallback', () => {
         const h = harness();
         const ref = resolveDestinationRefFromHref(h.catalog, '/session/existing/info');
@@ -106,7 +132,7 @@ describe('workspace entity Action admission', () => {
         expect(h.workspace.state.groups['group:1'].tabIds.at(-1)).toBe('anchor');
         expect(Object.values(h.workspace.state.tabs).find(tab => tab.target.kind === 'inbox')).toMatchObject({ preview: false });
         const existing = resolveWorkspaceEntityDrop({ ...h, scope, workspaceRefs: [],
-            item: { kind: 'session', scope, address: { serverId: 'home', sessionId: 'existing' } }, target: { leafId: 'group:1', placement: 'right' } });
+            item: { kind: 'session', scope, address: { serverId: 'home', sessionId: 'existing' } }, target: { leafId: 'group:1', placement: 'center' } });
         expect(existing).toMatchObject({ status: 'allowed', effect: { actionId: 'workspace.tabs.activate', input: { tabId: 'anchor' } } });
         expect(Object.values(h.workspace.state.tabs).filter(tab => tab.target.kind === 'session')).toHaveLength(1);
     });

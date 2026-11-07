@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { act } from 'react-test-renderer';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { MachinePoolViewV1 } from '@happier-dev/protocol';
+import type { MachinePoolViewV1 } from '@happier-dev/protocol/machines/pools/v1';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 
 import { createMachineFixture, renderScreen } from '@/dev/testkit';
@@ -44,7 +44,7 @@ const state = vi.hoisted(() => ({
 // collection model, the Activity classifier and the working-count projection stay real.
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
-    return createExpoRouterMock({ router: { push: routerPush } }).module;
+    return createExpoRouterMock({ router: { push: routerPush, navigate: routerPush } }).module;
 });
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
@@ -208,14 +208,12 @@ describe('SidebarMachinesPopoverContent', () => {
         expect(row('mine')?.props.detail).toBeUndefined();
         expect(meta('mine')).toBe('machineDetailPage.work.working:2');
         expect(meta('shared')).toBe('machineDetailPage.work.working:1');
-        // Offline says why, never "No work": one quiet line under the name, where an online row has its strip
-        // (MPG-18), so a long presence sentence never wraps the name's line.
+        // Offline says why, never "No work": one quiet line that closes the name's line (lab `rm` P, MPG-18), with no
+        // strip beneath the name.
         const edge = row('edge')?.props;
-        expect(edge?.titleMeta).toBeUndefined();
-        expect((edge?.subtitle as React.ReactElement<{ children: unknown }> | undefined)?.props.children)
-            .toEqual(expect.stringMatching(/./));
-        expect((edge?.subtitle as React.ReactElement<{ children: unknown }> | undefined)?.props.children)
-            .not.toBe('machineDetailPage.work.none');
+        expect(edge?.subtitle).toBeUndefined();
+        expect(meta('edge')).toEqual(expect.stringMatching(/./));
+        expect(meta('edge')).not.toBe('machineDetailPage.work.none');
         expect(screen.findByTestId('sidebar-machines-working')?.props.children).toBe('machineDetailPage.work.working:3');
     });
 
@@ -242,6 +240,45 @@ describe('SidebarMachinesPopoverContent', () => {
         expect(screen.findByTestId(`sidebar-machines-row.${HOME}.other`)).toBeTruthy();
         await act(async () => { screen.findByTestId(`sidebar-machines-needs-you.${HOME}.mine.action`)!.props.onPress(); });
         expect(routerPush).toHaveBeenLastCalledWith(`/machines/mine?serverId=${HOME}&tab=processes&sort=memory`);
+    });
+
+    it('builds only the rows near its scrolled list for a census-sized fleet, and builds later rows as it scrolls', async () => {
+        const census = Array.from({ length: 120 }, (_, index) => machine(`census-${index}`));
+        state.groups = [{ serverId: HOME, serverName: 'Home A', accountScope: SCOPE, status: 'idle', machines: census }];
+        state.managed = {};
+        state.pools = [];
+        // The DOM geometry boundary: each row's shell stands 60px under the one before it, in creation (list) order.
+        let placed = 0;
+        const content = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 360, height: 120 * 60 }) };
+        const screen = await renderPopover({ createNodeMock: (element: { props?: { testID?: unknown } }) => {
+            const testID = typeof element.props?.testID === 'string' ? element.props.testID : '';
+            if (testID === 'sidebar-machines-list') return { getInnerViewRef: () => content, scrollTo() {} };
+            if (testID.startsWith('sidebar-machines-row-window.')) {
+                const top = 60 * placed++;
+                return { getBoundingClientRect: () => ({ left: 0, top, width: 360, height: 60 }) };
+            }
+            return null;
+        } });
+        const list = screen.findAll(node => node.props?.testID === 'sidebar-machines-list' && typeof node.props?.onLayout === 'function')[0]!;
+        await act(async () => { list.props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 360, height: 400 } } }); });
+        await act(async () => { list.props.onContentSizeChange?.(360, 120 * 60); });
+        await act(async () => {});
+        const built = () => new Set(screen.findAll(node => typeof node.props?.testID === 'string'
+            && node.props.testID.startsWith(`sidebar-machines-row.${HOME}.census-`) && typeof node.props?.onPress === 'function')
+            .map(node => node.props.testID as string));
+        // A data-sized roster never mounts every row: what is built is bounded by the list's viewport.
+        const top = built();
+        expect(top.size).toBeGreaterThan(0);
+        expect(top.size).toBeLessThan(census.length / 3);
+        // Scrolled far down, the rows there are built and the ones it left are put away (their height holds their place).
+        await act(async () => { list.props.onScroll({ nativeEvent: { contentOffset: { x: 0, y: 3000 },
+            contentSize: { width: 360, height: 120 * 60 }, layoutMeasurement: { width: 360, height: 400 } } }); });
+        await act(async () => {});
+        const scrolled = built();
+        expect(scrolled.size).toBeGreaterThan(0);
+        expect(scrolled.size).toBeLessThan(census.length / 3);
+        expect([...scrolled].some(id => !top.has(id))).toBe(true);
+        expect([...top].some(id => !scrolled.has(id))).toBe(true);
     });
 
     it('has no All machines link with exactly one machine', async () => {

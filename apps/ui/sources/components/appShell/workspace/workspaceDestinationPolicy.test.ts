@@ -19,7 +19,7 @@ describe('workspace destination admission', () => {
         expect(identity({})).not.toBe(identity({ id: 'a', serverId: 'home' }));
     });
 
-    it('contracts identical workflow destinations while retaining other definitions, runs, Homes and non-workflow tabs', () => {
+    it('preserves explicit workflow instances, distinct definitions, runs and Homes', () => {
         const record: SharedWorkspaceTabs = { v: 1, order: ['first', 'other', 'duplicate', 'run', 'other-home', 'session'], pairs: [['duplicate', 'other']], tabsById: {
             first: { id: 'first', target: { kind: 'workflow', params: { id: 'workflow-1', serverId: 'home-a' } }, pinned: false },
             other: { id: 'other', target: { kind: 'workflow', params: { id: 'workflow-2' } }, pinned: false },
@@ -29,9 +29,7 @@ describe('workspace destination admission', () => {
             session: { id: 'session', target: { kind: 'session', params: { id: 'session-1' } }, pinned: false },
         } };
         const normalized = normalizeWorkspaceSingletonTabs(record, []);
-        expect(normalized.order).toEqual(['first', 'other', 'run', 'other-home', 'session']);
-        expect(normalized.tabsById.first).toMatchObject({ pinned: true, target: record.tabsById.duplicate.target });
-        expect(normalized.pairs).toEqual([['first', 'other']]);
+        expect(normalized).toBe(record);
         expect(normalizeWorkspaceSingletonTabs(normalized, [])).toBe(normalized);
     });
 
@@ -44,23 +42,26 @@ describe('workspace destination admission', () => {
         else state = reconcileWorkspaceSyncedTabs(state, { v: 1, order: ['first', 'session', 'duplicate'], pairs: [],
             tabsById: { first, session, duplicate } }, () => 'blank');
         const admitted = admitWorkspaceSingletonState(state, [], () => 'blank');
-        expect(Object.values(admitted.tabs).filter(tab => tab.target.kind === 'workflow')).toHaveLength(1);
-        expect(admitted.tabs.first).toMatchObject({ pinned: source === 'restore', preview: false });
+        expect(Object.values(admitted.tabs).filter(tab => tab.target.kind === 'workflow')).toHaveLength(2);
+        expect(admitted.tabs.duplicate).toMatchObject({ pinned: false, preview: source === 'restore' });
+        expect(admitted.tabs.first).toMatchObject({ pinned: true, preview: false });
         expect(admitted.tabs.session).toEqual(session);
-        expect(admitted.groups[admitted.focusedGroupId].activeTabId).toBe(source === 'restore' ? 'first' : 'session');
+        expect(admitted.groups[admitted.focusedGroupId].activeTabId).toBe(source === 'restore' ? 'duplicate' : 'session');
         expect(admitted.recentlyClosed).toEqual([]);
         expect(admitWorkspaceSingletonState(admitted, [], () => 'blank')).toBe(admitted);
     });
 
-    it('keeps the focused workflow visible when its duplicate is retired from another pane', () => {
+    it('preserves an explicitly split instance of a Workflow in its own pane', () => {
         const first = { id: 'first', target: { kind: 'workflow', params: { id: 'workflow-1' } }, pinned: false, preview: false };
         const duplicate = { ...first, id: 'duplicate' };
         let state = reduceWorkspaceState(createWorkspaceState(first), { type: 'openTab', groupId: 'group:1', tab: duplicate });
         state = reduceWorkspaceState(state, { type: 'splitTab', tabId: 'duplicate', sourceGroupId: 'group:1', targetGroupId: 'group:1',
             newGroupId: 'group:2', axis: 'row', placement: 'after', availableSizePx: 1200, minimumFirstSizePx: 320, minimumSecondSizePx: 320 });
         const admitted = admitWorkspaceSingletonState(state, [], () => 'blank');
-        expect(admitted.groups[admitted.focusedGroupId].activeTabId).toBe('first');
-        expect(admitted.tabs.duplicate).toBeUndefined();
+        expect(admitted.groups[admitted.focusedGroupId].activeTabId).toBe('duplicate');
+        expect(admitted.tabs.first).toEqual(first);
+        expect(admitted.tabs.duplicate).toEqual(duplicate);
+        expect(Object.keys(admitted.groups)).toHaveLength(2);
         expect(admitted.recentlyClosed).toEqual([]);
     });
 });

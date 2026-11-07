@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
-import { ActionIdSchema, isWorkspaceActionId } from '@happier-dev/protocol';
+import { ActionIdSchema} from '@happier-dev/protocol/actions/actionIds';
+import { isWorkspaceActionId, WorkspaceTabsListOutputSchema } from '@happier-dev/protocol/actions/workspaceActionFamily';
 import { resolveCompactAppDestinations } from '../destinations/compactAppDestinationCatalog';
 import { installPanelCommonModuleMocks } from '@/components/ui/panels/panelTestHelpers';
 import { createWorkspaceActionAdapter } from './workspaceActions';
@@ -11,6 +12,7 @@ import { serializeSessionPaneUrlState, parseSessionPaneUrlState } from '@/compon
 import { createFileFindSeedHandoff } from '../panes/fileFindSeedHandoff';
 import { makeExternalSessionHistoricalImportLocalId } from '@happier-dev/protocol/sessions/external/historicalImportIdentity';
 import type { ServerAccountScopeLifetime } from '@/sync/domains/scope/serverAccountScope';
+import { PROJECT_PAGES, resolveProjectRoutePathForSurface } from '@/components/workspaceCockpit/project/projectCockpitState';
 
 installPanelCommonModuleMocks();
 // Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
@@ -21,6 +23,69 @@ vi.mock('@/sync/api/session/sessionDataKeyEnvelopesApi', () => {
 });
 
 describe('workspace Action intent adapter', () => {
+    it('lists a window-presented source tab through the public workspace output schema', () => {
+        let state = createWorkspaceState({ id: 'placed', target: { kind: 'session', params: { id: 'session-a', serverId: 'home-a' } }, pinned: true, preview: false });
+        state = reduceWorkspaceState(state, { type: 'setPresentation', tabId: 'placed', presentation: { windowId: 'window-a' } });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: true, workflows: false, friends: false,
+        } });
+        const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog,
+            dispatch: action => { state = reduceWorkspaceState(state, action); },
+            transport: { commit: () => {} }, createId: () => 'new', onChange: () => {} });
+        const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null, createId: () => 'new' });
+        const result = WorkspaceTabsListOutputSchema.parse(execute('workspace.tabs.list', {}));
+        expect(result.tabs).toEqual([{ id: 'placed', groupId: 'group:1',
+            target: { kind: 'session', params: { id: 'session-a', serverId: 'home-a' } },
+            pinned: true, preview: false, presentation: { windowId: 'window-a' } }]);
+    });
+    it('opens every declared Project page through real destination admission without a Source binding', () => {
+        let state = createWorkspaceState({ id: 'project', target: { kind: 'project', params: {
+            workspaceRefId: 'wr_1', serverId: 'home-a', pageId: 'code',
+        } }, pinned: false, preview: false });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: {
+            externalSessions: false, inbox: true, workflows: false, friends: false,
+        } });
+        const commits: string[] = [];
+        const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog,
+            dispatch: action => { state = reduceWorkspaceState(state, action); },
+            transport: { commit: href => { commits.push(href); } }, createId: () => 'other', onChange: () => {} });
+        navigation.initialize('/projects/wr_1/code?serverId=home-a');
+        const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null, createId: () => 'other' });
+        for (const page of PROJECT_PAGES) {
+            const href = resolveProjectRoutePathForSurface({ workspaceRefId: 'wr_1', surface: page,
+                serverId: 'home-a', rawWorktreeId: 'checkout-a' });
+            expect(execute('workspace.tabs.open', { href, tabId: 'project', mode: 'preview', reuseExisting: false }), page)
+                .toEqual({ ok: true });
+            expect(state.tabs.project.target).toEqual({ kind: 'project', params: {
+                workspaceRefId: 'wr_1', serverId: 'home-a', pageId: page, worktreeId: 'checkout-a',
+            } });
+            expect(commits.at(-1)).toBe(href);
+        }
+        const before = state;
+        expect(execute('workspace.tabs.open', { href: '/projects/wr_1/not-a-page', tabId: 'project',
+            mode: 'preview', reuseExisting: false })).toMatchObject({ ok: false, errorCode: 'workspace_destination_unavailable' });
+        expect(state).toBe(before);
+    });
+
+    it('replaces the current history entry only when the admitted open requests it', () => {
+        let state = createWorkspaceState({ id: 'project', target: { kind: 'project', params: {
+            workspaceRefId: 'wr_1', serverId: 'home-a', pageId: 'context',
+        } }, pinned: false, preview: false });
+        const catalog = resolveCompactAppDestinations({ pages: [], builtins: { externalSessions: false, inbox: true, workflows: false, friends: false } });
+        const navigation = createWorkspaceNavigationAdapter({ getState: () => state, getCatalog: () => catalog,
+            dispatch: action => { state = reduceWorkspaceState(state, action); }, transport: { commit: () => {} },
+            createId: () => 'other', onChange: () => {} });
+        navigation.initialize('/projects/wr_1/context?serverId=home-a');
+        const execute = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null, createId: () => 'other' });
+        expect(execute('workspace.tabs.open', { href: '/projects/wr_1/code?serverId=home-a', tabId: 'project',
+            mode: 'preview', reuseExisting: false, replace: true })).toEqual({ ok: true });
+        expect(navigation.history.entries).toHaveLength(1);
+        expect(state.tabs.project.target.params.pageId).toBe('code');
+        expect(execute('workspace.tabs.open', { href: '/projects/wr_1/changes?serverId=home-a', tabId: 'project',
+            mode: 'preview', reuseExisting: false })).toEqual({ ok: true });
+        expect(navigation.history.entries).toHaveLength(2);
+    });
+
     it('opens session and project file arms through real navigation with line ranges and view intent', () => {
         let state = createWorkspaceState({ id: 'session-tab', target: { kind: 'session', params: { id: 'session-a', serverId: 'home-a' } }, pinned: false, preview: false });
         const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: true, friends: false }, pages: [] });
@@ -178,7 +243,7 @@ describe('workspace Action intent adapter', () => {
             .toEqual({ kind: 'file', path: 'src/a.ts', anchor: { kind: 'fileLine', startLine: 17 } });
         expect(Object.keys(state.tabs)).toEqual(['a']);
     });
-    it('uses live measurements for atomic destination edges and focuses already-open destinations without requiring geometry', () => {
+    it('uses live measurements for destination edges, including an already-open destination', () => {
         let state = createWorkspaceState({ id: 'a', target: { kind: 'session', params: { id: 'a', serverId: 'home-a' } }, pinned: false, preview: false });
         state = reduceWorkspaceState(state, { type: 'openTab', groupId: 'group:1', tab: { id: 'current', target: { kind: 'session', params: { id: 'current', serverId: 'home-a' } }, pinned: false, preview: true } });
         const catalog = resolveCompactAppDestinations({ builtins: { externalSessions: false, inbox: true, workflows: true, friends: false }, pages: [] });
@@ -200,7 +265,7 @@ describe('workspace Action intent adapter', () => {
         expect(state.tabs.current).toBe(before.tabs.current);
         const incoming = state.groups[state.focusedGroupId].activeTabId;
         const unmeasured = createWorkspaceActionAdapter({ getState: () => state, navigation, readCanvas: () => null, createId: () => `new:${++id}` });
-        expect(unmeasured('workspace.tabs.open', { href: '/session/incoming?serverId=home-a', mode: 'splitDown', groupId: 'group:1' })).toEqual({ ok: true });
+        expect(unmeasured('workspace.tabs.open', { href: '/session/incoming?serverId=home-a', mode: 'splitDown', groupId: 'group:1' })).toMatchObject({ ok: false, errorCode: 'workspace_layout_unmeasured' });
         expect(state.groups[state.focusedGroupId].activeTabId).toBe(incoming);
         expect(Object.keys(state.groups)).toHaveLength(2);
     });

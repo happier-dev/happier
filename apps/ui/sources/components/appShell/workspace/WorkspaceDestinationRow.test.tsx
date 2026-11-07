@@ -21,6 +21,8 @@ import { storage } from '@/sync/domains/state/storageStore';
 import { ENTITY_DRAG_DELIVERY_MIME_V1 } from '@happier-dev/protocol/plugins/ui';
 import { workflowRunRowFromSummary } from '@/sync/store/domains/workflowRuns';
 import { registerMountedTabUnsavedChangesGuard } from '@/utils/navigation/runGuardedNavigation';
+import { Collection, useHappierCollection } from '@happier-dev/plugin-ui';
+import { CoreCollectionScope } from '@/components/ui/lists/collection/CoreCollectionScope';
 
 installPanelCommonModuleMocks();
 // Recipient-envelope HTTP/process APIs are outside this deterministic workspace owner harness.
@@ -72,6 +74,49 @@ describe('workspace destination row browser gestures', () => {
         });
         standardCleanup();
     });
+    it('keeps core Collection destination actions in the shared item menu without changing ordinary open', async () => {
+        const h = harness();
+        const onOpen = vi.fn();
+        const items = [{ id: 'plugin', title: 'Plugin settings' }];
+        function Surface() {
+            const model = useHappierCollection({ items, keyOf: item => item.id, openKey: null, onOpenChange: onOpen });
+            return <CoreCollectionScope><Collection model={model} presentation="grid" detail="none" scroll="page"
+                minListWidth={200} minDetailWidth={200} preferredListRatio={1} accessibilityLabel="Plugins" testID="core-destinations"
+                anatomy={{ glyph: () => null, title: item => item.title, accessibilityLabel: item => item.title,
+                    columnTitles: { title: 'Plugin' }, testID: () => 'plugin-card', destination: () => ({ href: '/settings/plugins?view=installed&plugin=example' }) }} />
+            </CoreCollectionScope>;
+        }
+        const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}><Surface /></WorkspaceNavigationProvider>);
+        await act(async () => {
+            screen.find(node => node.props.testID === 'core-destinations:stage' && typeof node.props.onLayout === 'function')
+                .props.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 900, height: 800 } } });
+        });
+        await screen.pressByTestIdAsync('plugin-card');
+        expect(onOpen).toHaveBeenCalledExactlyOnceWith('plugin');
+        expect(Object.keys(h.state().tabs)).toEqual(['A']);
+        const item = screen.find(node => node.props.testID === 'plugin-card'
+            && node.props.secondaryActions?.some((action: { id: string }) => action.id === WORKSPACE_OPEN_IN_NEW_TAB_ID));
+        await act(async () => { item.props.onSecondaryAction(WORKSPACE_OPEN_IN_NEW_TAB_ID); });
+        expect(onOpen).toHaveBeenCalledOnce();
+        expect(Object.values(h.state().tabs).some(tab => tab.target.kind === 'settings')).toBe(true);
+        expect(screen.findByType(WorkspaceDestinationRow).props.existingMenu).toBe(true);
+    });
+    it('registers a typed folder without a navigation href', async () => {
+        const item = { kind: 'repository-file', scope: { serverId: 'home-b', accountId: 'account-a' }, machineId: 'machine', path: '/workspace/src', entryKind: 'directory' } as const;
+        let openMenu: (() => void) | undefined;
+        const screen = await renderScreen(<WorkspaceDestinationRow href={null} entityItem={item} entityTitle="src/">{actions => {
+            openMenu = actions.openMenu;
+            return <ViewBoundary />;
+        }}</WorkspaceDestinationRow>);
+        const host = document.createElement('div');
+        screen.root.findAllByType('View')[0].props.ref(host);
+        const drag = new Event('dragstart', { bubbles: true, cancelable: true });
+        Object.defineProperty(drag, 'dataTransfer', { value: { setData: vi.fn(), effectAllowed: '' } });
+        act(() => { host.dispatchEvent(drag); });
+        expect(runtime.getSnapshot().item).toEqual(item);
+        act(() => { runtime.cancel(); openMenu?.(); });
+        expect(screen.findByType(DropdownMenu).props.items).toContainEqual(expect.objectContaining({ id: 'entity.mentionInComposer' }));
+    });
     it('opens the shared menu with the context-menu key and Shift-F10 while leaving text controls alone', async () => {
         const h = harness();
         const screen = await renderScreen(<WorkspaceNavigationProvider value={h.workspace}>
@@ -109,22 +154,6 @@ describe('workspace destination row browser gestures', () => {
         expect([pointer.defaultPrevented, keyboard.defaultPrevented]).toEqual([true, true]);
         expect(openExistingMenu).toHaveBeenCalledTimes(2);
         expect(screen.findAllByType(DropdownMenu)).toHaveLength(0);
-    });
-    it('registers a typed folder without a navigation href', async () => {
-        const item = { kind: 'repository-file', scope: { serverId: 'home-b', accountId: 'account-a' }, machineId: 'machine', path: '/workspace/src', entryKind: 'directory' } as const;
-        let openMenu: (() => void) | undefined;
-        const screen = await renderScreen(<WorkspaceDestinationRow href={null} entityItem={item} entityTitle="src/">{actions => {
-            openMenu = actions.openMenu;
-            return <ViewBoundary />;
-        }}</WorkspaceDestinationRow>);
-        const host = document.createElement('div');
-        screen.root.findAllByType('View')[0].props.ref(host);
-        const drag = new Event('dragstart', { bubbles: true, cancelable: true });
-        Object.defineProperty(drag, 'dataTransfer', { value: { setData: vi.fn(), effectAllowed: '' } });
-        act(() => { host.dispatchEvent(drag); });
-        expect(runtime.getSnapshot().item).toEqual(item);
-        act(() => { runtime.cancel(); openMenu?.(); });
-        expect(screen.findByType(DropdownMenu).props.items).toContainEqual(expect.objectContaining({ id: 'entity.mentionInComposer' }));
     });
     it('lets a Details tab middle click reach guarded close without outward-opening its non-null href', async () => {
         const h = harness();
@@ -180,9 +209,8 @@ describe('workspace destination row browser gestures', () => {
             const host = document.createElement('div');
             const primary = document.createElement('button');
             host.appendChild(primary);
-            for (const view of screen.root.findAllByType(View).filter(node => typeof node.props.ref === 'function')) {
-                view.props.ref(host);
-            }
+            const destination = screen.root.findByType(WorkspaceDestinationRow);
+            destination.findAllByType('View')[0].props.ref(host);
             vi.stubGlobal('navigator', { platform: 'MacIntel' });
             const event = new MouseEvent('click', { metaKey: true, bubbles: true, cancelable: true });
             primary.dispatchEvent(event);

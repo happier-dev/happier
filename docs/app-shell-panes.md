@@ -4,6 +4,87 @@ This page describes the unreleased 0.3 shell contracts under integration. The sh
 side panel, details workspace and bottom pane under one scoped owner. The left navigation column
 has its own visibility owner; hiding a page's main column does not collapse navigation.
 
+Hosted Machines layouts inherit the selected section for every registered child.
+Preset creation and editing use their existing Settings URLs inside the
+Machines detail area; the Machines column remains the single machine list there.
+
+The workspace navigation adapter holds the selected app section for its mounted
+lifetime, seeded by the initial admitted route. Opening an entity or focusing a
+pane keeps that section's rail and list. Explicit section navigation uses
+`useOpenAppSection` (including catalog activation and phone main tabs); ordinary
+destination routers and open Actions keep their existing entity-open meaning.
+Reloading or admitting a different Account starts from that entry route again.
+An edge open or drop uses the measured split owner even when the destination is
+already open: it moves the existing tab beside the target pane rather than
+silently activating it. Plugin app pages retain their single mounted instance.
+Phones push the entity within the selected tab and do not offer splits.
+
+An ordinary rail or collection-row open focuses the destination's existing tab,
+or replaces the current tab's content when that destination is not already open.
+Retained and preview tabs follow the same rule. Only an explicit Open in new tab,
+modifier-click or split intent creates another tab; the existing unsaved-change
+guard still controls departure from an editor. Explicit item instances survive restore and sync; singleton admission applies only to the existing app-page hubs. The portable tab schema is unchanged.
+
+Contextual Start destinations use the Details arm of `PanePresentationIntent` with
+`start: true`. `dispatchDetailsTabOpen` owns placement: the existing Details
+renderer on wide screens, or that same scope's renderer in a large phone sheet.
+Transcript hosts without pane columns declare `DetailsStartSheetHost`; they use
+that same sheet inside their current host at every width. This covers tool-message
+details, standalone Run details and navigable embedded Sessions. The sheet lends
+the existing Session Details renderer for its mounted lifetime; no public
+`session.open` destination or separate opinion modal is involved.
+Cockpit page presenters decline Start; callers do not choose a phone route.
+The focused Chat scene consumes `detailsStartScopeId` and leaves that sheet open
+until dismissal instead of closing Details as part of its ordinary pane sync.
+Replacing the Details tab replaces the sheet body too. Closing the sheet releases
+its body and leaves saved desktop visibility under the existing persistence owner.
+
+`ContextualStartComposer` owns Opinion and Run's Who, question and Where controls.
+Each flow supplies its existing choices and declares what the composer may offer.
+Opinion retains Discussion's Account, Bot, Session and model candidates, recipe
+Change, and editable Machine and folder. Its Account directory search belongs to
+that same Who list; a folded list exposes it through Show all. Run supplies its
+canonical Agent/model options and keeps its Machine read-only. Session and comparison starts retain
+their existing folder; other detached starts allow folder selection through
+Workflow's path browser. The shared controls do not change Run admission or turn
+participants into Runs. Accepted opinions replace Start with their Discussion
+even when the answer also starts a Fresh opinions Run.
+
+Run starts use `SessionInteractiveExecutionRunDraftView` and the Session draft
+repository. Seeded review, plan and delegate requests enter through
+`buildExecutionRunActionDraftInputForUi`; the retired transcript-card records are
+imported once into the existing intent/role draft. The importer preserves an
+existing selection, appends instructions, and removes each source only after the
+destination is durable. Interrupted source removal can leave editable duplicate
+instructions on retry. Running and unsupported historical records remain intact.
+Comparison review uses the same Run form and `startReviewOfComparison` adapter;
+the plugin review selector returns admitted credential choices from that form
+without starting a review. Review options share `useReviewExecutionRunLaunchOptions`.
+Connect uses its existing anchored presenter on wide screens and its body inline
+on phones. Partial starts name the reviewers that did not start in the accepted
+Run's result, while the existing group-findings owner keeps sibling findings
+accessible. Comparison acceptance also retains the originating SCM pane's reviewer
+links and requested walkthrough navigation. Accepted Run markers open the Run
+through the Details command owner.
+
+Contextual Workflow starts use the same Start placement. Session and Discussion
+callers pass a definition reference to `WorkflowStartDetailsBody`; the mounted
+body reads the selected definition and uses `useWorkflowComposerStart`. The
+existing Account-scoped `useWorkflowRunNowController` retains reviewed inputs
+and a pending submission across dismissal and reopen. Acceptance replaces the
+Start tab with the existing Workflow Run pane. Saved Workflow selection stays
+in the Session; All workflows remains explicit library navigation. Definition
+listing retains its existing body-bearing pages; the picker adds no per-row
+definition reads.
+
+Short value-returning forms use `createAnchoredSheetChrome`: an anchored card
+on wide screens and a bottom sheet on phones, with the existing no-anchor
+placement when a trigger is unavailable. Plugin Action inputs, Session-address
+selection, review selection and Session recipes keep their domain bodies and
+cancel/retirement owners. A selector returns a value; it does not start work.
+Library, editor and replay Workflow starts use this chrome around their existing
+composer rather than the contextual Start pane.
+
 ## Destination windows (0.3 development)
 
 Native `app_window.rs` owns Session window creation, readiness, reuse, teardown
@@ -144,6 +225,30 @@ Home qualification. The Settings loader imports 0.2's Session-surface map once b
 its old carrier. Existing current records win on a partial-copy retry, and a refused copy retains
 the source for a later read. The three Project maps are 0.3-only and have no Settings conversion.
 
+Pane visibility is desktop layout state. At a phone landing, `AppPaneProvider` restores selections,
+tabs and view state through `model/paneScopePersistence.ts`, with Right, Details and Bottom closed
+and main visible. This also applies to late hydration. Explicit open actions still present phone
+sheets. Phone-landing writes checkpoint content and selection while preserving saved desktop
+visibility, including after resizing, so returning to a desktop landing restores the columns.
+Resizing an already open view retains its current panes; it does not hydrate them again.
+
+Session Editor-first pages keep their desktop selection in the same scope's optional
+`mainTabId`; the right pane retains its independent destination and visibility.
+Selecting or closing a companion leaves the main page selected. Returning to Chat clears
+only `mainTabId`. Phone writes preserve this saved desktop choice. `SessionRightPanel`
+supplies each visited body's stable keyed surface to `PaneColumnsHost`/`MultiPaneHost`,
+which moves its presentation between main, side and hidden without remounting it.
+If both selections name the same body, main presents it while the companion checkpoint
+remains saved; hidden bodies retain their existing demand and unsaved-work lifecycle.
+
+Project Open and standalone Source details publish page Back through
+`components/ui/layout/usePageBackControl.tsx`, consumed by `PageHeader` via
+`NavigationBackChromeProvider`. Open uses its existing cancel path with a
+`/projects` fallback; Sources uses `safeRouterBack` with `/projects/sources`.
+The Source loading and unavailable states retain the same header and control.
+Split list/detail layouts keep the list as navigation instead of adding a
+second detail Back. This is unreleased 0.3 behavior.
+
 ## Main column visibility
 
 A host offers hide/show by supplying `mainColumn: { hideLabel, showLabel, identity }`.
@@ -151,7 +256,7 @@ The destination supplies its own name, mark and existing lifecycle presentation;
 not infer a Session or Workflow state from a scope id. A host without this descriptor offers no
 hide control. Session and Project headers supply their domain wording; app pages use their title.
 
-`PaneScopeState.mainHidden` is a persisted preference, changed by the `setMainHidden` reducer
+`PaneScopeState.mainHidden` is persisted pane state, changed by the `setMainHidden` reducer
 action. `usePaneMainColumn()` exposes the host's effective `hidden`, `canHide`, `folded`,
 labels, identity and `setHidden`/`toggle` controls to descendants. It returns null outside a host.
 An active presentation outside the host's descendant context, such as Session presentation intents, receives the same
@@ -213,26 +318,40 @@ of the sheet inside the page slot, so it follows the column's drawn width (drag,
 collapse) through ordinary layout. A peeked column floats in a body overlay right after the rail.
 Settings and Home console columns use the same plane.
 
-The device-local `rightPanelPlacement` setting (`canvas` default, `sheet`; anchor
-`appearance.rightPanelPlacement`, set from Appearance and the Look panel, agents via `settings.set`)
-chooses where a page's docked right panel and its action rail stand. `SidebarNavigator` reads it once;
-the frame resolves it (`sheet` without chrome and off the web) and publishes the tail hosts and the
-page's empty-tail width through `appShellTail.tsx`. `PaneColumnsHost` stands the docked right column and
-the rail in the tail only for the one page on screen at the trailing edge (not Editor first, not one pane
-of a split) and budgets its layout with the empty-tail width, so both placements resolve the same widths.
-`AppShellTailSlot` keeps one container per column, so changing places moves it without remounting.
-Overlay, in-main and hidden presentations and the details drawers stay in the page. On the canvas the
-rail takes the plane's paint and the docked panel is a sheet of its own: content paint, the page's corner
-radius, an 8 px canvas gap from the page and the window inset beneath it, drawn inside the column's own
-width so it opens, closes and resizes with it. The rail's active action of that open panel is its tab: the
-panel's material from the rail's inner edge, rounded away from the panel (`PaneActionRailContext`
-`panelAttached`); elsewhere the active action keeps its edge marker.
+The device-local `rightPanelPlacement` setting (`separate` default, `line`, `shadow`; anchor
+`appearance.rightPanelPlacement`, set from Appearance tiles and the Look panel, agents via `settings.get/set`)
+chooses how a page's docked right panel stands against the page. Stored values from before the three-way
+choice read as their successors (`canvas` → `separate`, `sheet` → `line`); unknown values read as `separate`.
+`SidebarNavigator` reads it once; the frame resolves it (`line` without chrome and off the web) into a
+placement (`canvas` for Separate, `sheet` for the joined styles) and a divider, and publishes the tail hosts
+and the page's empty-tail width through `appShellTail.tsx`. On the web shell the page's action rail always
+stands in the tail, on the canvas, like the app rail; with Separate the docked right column stands there too.
+`PaneColumnsHost` uses the tail only for the one page on screen at the trailing edge (not Editor first, not one
+pane of a split) and budgets its layout with the empty-tail width, so every placement resolves the same widths.
+`AppShellTailSlot` keeps one container per column, so changing places moves it without remounting. Overlay,
+in-main and hidden presentations and the details drawers stay in the page. With Separate the docked panel is
+a sheet of its own: content paint, the page's corner radius, an 8 px canvas gap from the page and the window
+inset beneath it, drawn inside the column's own width so it opens, closes and resizes with it. With Line or
+Shadow the panel joins the page sheet, divided by a hairline or by the pane header's shade turned on its side
+(`JoinedPanelShade` in `MultiPaneHost`), and the page casts its seam on both edges.
+
+The rail's active action of an open docked panel is its tab (`PaneActionRailContext` `panelAttached`): the
+panel's sheet, from the rail's inner edge, rounded away from the panel, with concave fillets. `MultiPaneHost`
+gives every docked panel one opaque `surface.base` sheet (its `GlassSurface` is not glass when docked): the
+panel stands in the shell's tail, nested in the page's coat in React but with nothing of it behind, so a nested
+glass coat would be cleared over the bare window in the desktop app. The tab paints that same sheet. When it is the
+first action it continues the top edge of the panel's sheet, which squares that corner (the panel's own, or
+the page's through `AppShellTail.joinTrailingTopCorner`). Elsewhere the active action keeps its edge marker.
 
 Every sheet's rounded corners leave pixels the sheet does not paint. `appShellMaterialPlane.tsx` owns the
-shell's sheet geometry and `AppShellSheetCorners`, which coats those cutouts once with the neighbouring
-plane (masked to the outside of the curve, never behind a translucent sheet), so the desktop app's native
-window material never shows at a corner. The tail paints no plane of its own: the rail coats its column
-and the window inset is its own strip.
+shell's sheet geometry, the canvas coat (`useAppShellCanvasCoat`, the chrome plane the app rail stands on)
+and `AppShellSheetCorners`, which coats those cutouts once with the neighbouring plane (masked to the outside
+of the curve, never behind a translucent sheet), so the desktop app's native window material never shows at a
+corner. Everything on the trailing canvas (trailing corner cutouts, the window inset, a Separate panel's gap
+and inset, the rail) takes that one canvas coat; only the navigation column has the sidebar plane. The tail
+paints no plane of its own and the rail paints nothing of its own: it lays the canvas coat around its tab
+(left out under the tab and its fillets, and masked outside the tab's rounded trailing corners with
+`AppShellSheetCorners`), so no pixel of the rail shows the desktop app's bare native material.
 
 `PaneHeader` owns the pane header band (title, identity, facts, Back, close, an optional overline and a
 phone navigation band); `DetailsTabHeader` is the one adaptive content/fit adapter over it, used by Session
@@ -251,7 +370,9 @@ bottom pane and popovers are isolated from the main scope; outside a scope a hea
 The right-sidebar catalog supplies each tab's default placement. Session essentials lead the rail:
 Info, Work and People, followed by Changes, Files and Terminal. Project and Discussion rails consume
 their own scoped catalog entries. Selection is separate from presentation order: an absent or stale
-Session selection still opens Changes when available.
+Session selection still opens Changes when available. A fresh Project scope starts with its pane closed at
+every width, so the page has its room first; the rail opens a companion, and that choice then persists per
+scope like any other pane state.
 
 `mobileSurfacePinning.ts` owns effective placement for the rail, overflow, customizer and preview.
 Catalog `auto` resolves to pinned only for known positive content; empty or unknown content resolves
@@ -295,8 +416,79 @@ last visible measurement until a real resize. Do not hand-write `width > 0` guar
 Openers request a destination kind through the existing pane adapter. An implicit open does not
 move an already-open tab. Details retain their existing preview/pinned and split-workspace owners.
 
-`shell.column.get/set` address `navigation` (the default), `main` or `side`; `tab` on a side-panel
-set selects an existing built-in or plugin tab and opens that panel. Main visibility uses the inverse
+Session detail navigation resolves at `detailNavigationItems`: the existing sidebar registry delegates
+to that owner, and desktop/phone chrome projects its admitted destinations. Chat is the default page;
+Open files remains owned by the workspace strip on desktop. In desktop Editor-first, Session-group
+tools expose both page and companion destinations: the Session column draws them as page tabs under its
+header (`SessionPageTabs`), only when more than one page is eligible, and a selected page starts under that
+header and strip (`PaneMainTopAnchor` reports the inset to `MultiPaneHost`). A desktop body resolves its own
+list beside the phone navigator's; it reuses an enclosing list only when presentation (and on desktop,
+arrangement) match. Review, Terminal and Computer retain their existing Details, dock and screen effects.
+Customize is one `DetailNavigationCustomizer` per page kind with Desktop / Phone, each addressed list and,
+on cockpit phones, the Bottom/Top page-tab choice; with Top, pinned pages scroll in `PhonePageStripView`
+under the header (Session, Project, Discussion and Machine), and the bottom bar keeps companions and the single More.
+With Chat as the only pinned page, Session and Discussion draw no phone strip and Chat keeps its bottom slot.
+A desktop detail with Chat alone draws no strip. A phone consumes the mounted Session catalog and selection; its
+pathname no longer independently chooses Session chrome. Project likewise publishes its mounted
+catalog and restored selection to floating and native phone chrome. `projectPageCatalog` joins its
+pages and admitted companions through `detailNavigationItems`; Changes and Code each have page and
+companion destinations. Their phone buttons select the page, while desktop companion launchers retain
+their pane selection and are suppressed only while the corresponding page is active. App tools remain
+companions. Discussion's pane host resolves Chat as a page and Participants, Agents and Details as
+companions through the same item owner. Its focused mounted presentation supplies phone chrome;
+the route retains only the existing surface parameter. The desktop rail, phone panel adapter and
+`shell.column` reads and selections consume that list without acquiring Discussion data.
+Discussion desktop companions read `detailPages.discussion.desktop.companions`, with catalog defaults and no seed;
+Project/App keep `workspaceRail`. Discussion phone items read `detailPages.discussion.phone.items` independently.
+The shared phone placement/menu owner fits both floating bars with room for their permanent More/Customize trigger;
+native presenters use the same item placement without a second overflow decision. Discussion rail and phone More
+open the same Desktop/Phone customizer. Discussion's Chat-only Top mode keeps Chat in the bottom bar without a page strip,
+while retaining the mounted thread. The existing Chat roster acquisition serves recipients, mentions and faces; opening Participants
+reuses that owner and mounts only the selected companion.
+
+In 0.3 development, Machine's typed tab table remains its body/route adapter and supplies page descriptors to
+`detailNavigationItems`. Its desktop strip, phone strip/bar and mounted `shell.column` owner consume that list.
+Machine page placement uses `detailPages.machine.desktop.pages` and `detailPages.machine.phone.items`, with
+catalog defaults and no seed; `pageTabs.machine` changes only Cockpit phones. Classic keeps its in-page strip.
+Overview remains pinned. Hidden placement does not deny a direct route. The mounted Machine publishes phone
+chrome with its Home identity; no pathname fallback selects it. There are no declared Machine companions, so
+the Machine side column is unavailable. More and Customize only describe navigation: the selected route still
+owns plugin acquisition, core resource demand, tab retention and nested scroll ownership. Navigation does not
+wake a stopped Machine. Service-detail content retains its existing Back and control Actions.
+
+In 0.3 development, Workflow editor Steps/Flow and run Map/Steps/Activity descriptors come from
+`detailNavigationItems`. `workflowNavigation` adapts their existing controlled view and pane owners;
+`WorkflowNavigationViews` renders shared tabs, rail, phone More and Customize. Editor Flow can be
+a page or an independent companion; Settings retains its inner Settings/Agent content.
+Settings opens through the mounted editor's navigation Action on desktop and phone; the editor
+binds that Action to its addressed Account lifetime or the active Profile Account
+when no lifetime is supplied. An explicitly null lifetime keeps that Action unavailable.
+Run inspection stays in `DetailsPaneHost`, with the same selected invocation and run consumer. Placement addresses are
+`detailPages.workflowEditor` and `detailPages.workflowRun`: desktop `pages`/`companions`, phone `items`.
+The corresponding `pageTabs` branch affects Cockpit phones; Classic retains its in-page strip. Only
+the presented mounted body publishes phone chrome. The Workflows library remains a collection filter,
+and Start remains a run operation rather than a navigation item. No draft or run state is copied.
+
+In 0.3 development, Environment's canonical deployment navigation ids feed `detailNavigationItems`.
+`environmentNavigation` adapts the existing route destination, including Settings-section links, to
+the mounted main-column Action; it has no companion column. Desktop pages and phone items use
+`detailPages.environment.desktop.pages` and `.phone.items`, without seeding from Project. Cockpit
+honors `pageTabs.environment`; Classic retains the in-page strip. Only the presented Environment
+publishes its child projection. The enclosing desktop pane and phone Project column registrations
+delegate navigation to that model; the phone chrome presents the same model. The parent Project's
+desktop tabs and phone top strip yield to the child's navigation while retaining Project identity.
+Leaving or hiding it withdraws the projection and restores the parent Project presentation and column Actions.
+The existing Variables draft owner retains the unfinished bulk file, classification choices and created
+Saved Secret references across page changes; cancel and the editor's scope lifecycle clear them.
+Deployment reads and lifecycle stay with their existing owners.
+Receipt and provider details with one view do not gain an empty navigation strip.
+
+The Project header and phone More menu open the shared Desktop/Phone navigation customizer.
+Its desktop sections edit pages and companions independently; its phone section edits one item list.
+
+`shell.column.get/set` address `navigation` (the default), `main` or `side`; `tab` selects a page on
+main or a companion on side, through the mounted owner. Optional read `items` expose navigation
+metadata without loading bodies. Main visibility uses the inverse
 of `mainHidden`. Arrangement uses `settings.get/set` on its declared anchor. Widths remain continuous
 geometry controls rather than Actions. These reversible view Actions retain their existing default
 approval policy; per-Action user settings still apply. See [Actions](actions.md).

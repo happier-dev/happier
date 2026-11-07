@@ -1,5 +1,5 @@
 import * as React from 'react';
-import { useLocalSearchParams, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSearchParams, useOpenAppSection } from '@/components/appShell/workspace/destinationRoute';
 
 import { WorkflowEditorHostScreen } from '@/components/workflows/screens/WorkflowEditorHostScreen';
 import { WorkflowMissingDefinitionState } from '@/components/workflows/screens/WorkflowMissingDefinitionState';
@@ -7,7 +7,7 @@ import { WorkflowsGate } from '@/components/workflows/gating/WorkflowsGate';
 
 /** Thin Artifact edit route. Identity only — no private definition in the URL. */
 export function EditWorkflowRoute(): React.ReactElement {
-    const router = useRouter();
+    const openSection = useOpenAppSection();
     const params = useLocalSearchParams<{ id?: string | string[] }>();
     const definitionId = Array.isArray(params.id) ? params.id[0] : params.id;
     if (definitionId === undefined || definitionId.length === 0) {
@@ -15,7 +15,7 @@ export function EditWorkflowRoute(): React.ReactElement {
             <WorkflowsGate>
                 <WorkflowMissingDefinitionState
                     testID="workflow-edit-invalid"
-                    onOpenCollection={() => router.replace('/workflows' as never)}
+                    onOpenCollection={() => openSection('/workflows', true)}
                 />
             </WorkflowsGate>
         );

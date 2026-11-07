@@ -1,6 +1,6 @@
 import * as React from 'react';
-import { Platform, ScrollView, View } from 'react-native';
-import { useRouter } from 'expo-router';
+import { Platform, View } from 'react-native';
+import { useOpenAppSection, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { StyleSheet, useUnistyles } from 'react-native-unistyles';
 import { HappierCollectionListMark, HappierPressable, happierPageTextMetrics } from '@happier-dev/plugin-ui/presentation';
 
@@ -34,6 +34,8 @@ import { useMachineSummarySettingValue } from '@/components/machines/summary/use
 import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layout/PageHeaderEntityParts';
 import { SETTINGS_ROUTES } from '@/components/settings/catalog/routes';
 import { MachineResourceLiveDemand } from '@/sync/domains/machines/resources/useMachineResourceLiveDemand';
+import { NearViewportWindow } from '@/components/widgets/NearViewportWindow';
+import { PAGE_ROW_TOUCH_MIN_HEIGHT_PX } from '@/components/ui/lists/pageRowMetrics';
 import { useMachineResourceRefreshing, useMachineResourceSummary } from '@/sync/domains/machines/resources/useMachineResourceSummary';
 import { ActivitySpinner } from '@/components/ui/feedback/ActivitySpinner';
 import { RoundButton } from '@/components/ui/buttons/RoundButton';
@@ -56,10 +58,10 @@ import { machineHeaderOriginKey, setMachineHeaderOrigin } from '@/components/mac
 import { measureInWindow } from '@/components/ui/popover/measure';
 import { unionWindowFlightRects } from '@/components/ui/motion/rectFlight';
 
-import { collectMachineAttention } from '@/components/machines/attention/collectMachineAttention';
+import { useMachineAttention } from '@/sync/domains/machines/resources/useMachineAttention';
 
 import { MachinesNeedsYouGroup, MachinesSinceYouLastLooked } from './MachinesPopoverAttention';
-import { RAIL_POPOVER_ROSTER_LIST_STYLE, RailPopoverRoster } from './RailPopoverRoster';
+import { RailPopoverRoster, RailPopoverRosterList } from './RailPopoverRoster';
 import type { SidebarFooterPopoverContentProps } from './SidebarFooterPopoverButton';
 
 /**
@@ -84,6 +86,7 @@ export function SidebarMachinesPopoverContent(props: SidebarFooterPopoverContent
 const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: SidebarFooterPopoverContentProps & Readonly<{ guardSeenAt: number }>) {
     const { theme } = useUnistyles();
     const router = useRouter();
+    const openSection = useOpenAppSection();
     const auth = useAuth();
     const model = useMachinesSettingsViewModel();
     const addOptions = useMachineAddOptions(model.visibleMachineGroups);
@@ -97,7 +100,7 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
         managedFirstAnswerPending: model.managedFirstAnswerPending,
     });
     // What each machine publishes (plan 20): the sentence title, Needs you first, then everything else.
-    const attention = React.useMemo(() => collectMachineAttention(model.visibleMachineGroups), [collection, model.reachabilityRevision, model.visibleMachineGroups]);
+    const attention = useMachineAttention(model.visibleMachineGroups);
     const needsYouKeys = React.useMemo(() => new Set(selectAttentionSubjects(attention.entries).map(entry => entry.key)), [attention.entries]);
     // The glance is about machines: archived recovery rows stay in the collection's own list; a machine
     // listed under Needs you is not listed again below it.
@@ -120,9 +123,9 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
     latest.current = props.close;
     const open = React.useCallback((href: string, tag: string) => {
         latest.current();
-        const result = runGuardedNavigation(() => router.push(href as never));
+        const result = runGuardedNavigation(() => openSection(href));
         if (result !== true) fireAndForget(result, { tag });
-    }, [router]);
+    }, [openSection]);
     const openRow = React.useCallback((row: MachineCollectionRow, identity?: readonly unknown[]) => {
         // The row's mark + name rectangle travels to the machine page's header's mark + name (MPG-32): measured in
         // window coordinates on press, handed over once.
@@ -243,11 +246,7 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
             {/* The panel opens between the header and the list, so the rows beneath are its live preview. */}
             {customizing ? <MachineSummaryCustomizePanel onDone={() => setCustomizing(false)} /> : null}
             {/* The list scrolls inside a fixed frame: the header and the add rows never move. */}
-            <ScrollView
-                testID="sidebar-machines-list"
-                style={RAIL_POPOVER_ROSTER_LIST_STYLE}
-                keyboardShouldPersistTaps="always"
-            >
+            <RailPopoverRosterList testID="sidebar-machines-list">
                 {loading ? (
                     <Item testID="sidebar-machines-loading" title={t('common.loading')} density="compact" mode="info"
                         showChevron={false} pressableStyle={collectionListStyles.row} />
@@ -255,10 +254,11 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
                 <MachinesSinceYouLastLooked entries={attention.entries} guardSeenAt={props.guardSeenAt} />
                 <MachinesNeedsYouGroup entries={attention.entries} nowMs={nowMs} onOpen={open}
                     caption={<MachineSummaryCaption metrics={summary.metrics} style={summary.style} />} />
-                {sections.filter(section => section.rows.length > 0).map((section, index) => (
+                {sections.filter(section => section.rows.length > 0).map((section, index, shown) => (
                     <MachinesPopoverSection
                         key={section.key}
                         section={section}
+                        firstRowIndex={shown.slice(0, index).reduce((count, previous) => count + previous.rows.length, 0)}
                         // One caption names the instruments, on the first group's line (R7).
                         caption={index === 0 && needsYouKeys.size === 0 ? <MachineSummaryCaption metrics={summary.metrics} style={summary.style} /> : null}
                         thisComputerMachineId={thisComputerMachineId}
@@ -274,7 +274,7 @@ const MachinesPopoverBody = React.memo(function MachinesPopoverBody(props: Sideb
                 ))}
                 <MachinePoolsSection groups={model.visibleMachineGroups} variant="rail"
                     onOpen={href => open(href, 'SidebarMachines.openPool')} />
-            </ScrollView>
+            </RailPopoverRosterList>
         </RailPopoverRoster>
     );
 });
@@ -288,6 +288,8 @@ const WorkingTotal = React.memo(function WorkingTotal() {
 
 const MachinesPopoverSection = React.memo(function MachinesPopoverSection(props: Readonly<{
     section: MachineCollectionSection;
+    /** How many rows the sections above hold: this section's rows start no higher than that many row heights. */
+    firstRowIndex: number;
     caption: React.ReactNode;
     thisComputerMachineId: string | null;
     onOpenRow: (row: MachineCollectionRow, identity?: readonly unknown[]) => void;
@@ -298,13 +300,24 @@ const MachinesPopoverSection = React.memo(function MachinesPopoverSection(props:
     return (
         <>
             {section.title || props.caption ? <CollectionListGroupLabel title={section.title ?? ''} trailing={props.caption ?? undefined} /> : null}
-            {section.rows.map(row => (
-                <MachinesPopoverRow
+            {/* A fleet-sized roster builds only the rows near its list's viewport (and the prebuild window below
+                it, so Tab always has a built row to move to); the others hold their place by height. */}
+            {section.rows.map((row, index) => (
+                <NearViewportWindow
                     key={machineCollectionRowKey(row)}
-                    row={row}
-                    thisComputer={row.kind === 'machine' && row.machineId === props.thisComputerMachineId}
-                    onOpen={props.onOpenRow}
-                />
+                    id={machineCollectionRowKey(row)}
+                    testID={`sidebar-machines-row-window.${machineCollectionRowKey(row)}`}
+                    pinned={false}
+                    overscan
+                    estimatedTop={(props.firstRowIndex + index) * PAGE_ROW_TOUCH_MIN_HEIGHT_PX}
+                    estimatedHeight={PAGE_ROW_TOUCH_MIN_HEIGHT_PX}
+                >
+                    <MachinesPopoverRow
+                        row={row}
+                        thisComputer={row.kind === 'machine' && row.machineId === props.thisComputerMachineId}
+                        onOpen={props.onOpenRow}
+                    />
+                </NearViewportWindow>
             ))}
         </>
     );
@@ -368,21 +381,21 @@ const MachinesPopoverRow = React.memo(function MachinesPopoverRow(props: Readonl
                 availability={availability} style={setting.style} metrics={setting.metrics} layout="under" />
         )
     ) : undefined;
-    // An offline or away machine says why in one quiet line under its name, where an online row has its strip
-    // (MPG-18), so a long "last seen" sentence never wraps the name's line.
-    const awayLine = row.online ? undefined : <Text style={styles.quietLine} numberOfLines={1}>{detail}</Text>;
+    // An offline or away machine has no strip: its one quiet line ("Offline · last seen yesterday") closes the
+    // name's line, as the lab draws it (MPG-18), and steps beneath the name only when the two cannot share it.
     return (
         <Item
+            rowRole="item"
             testID={`sidebar-machines-row.${row.serverId}.${id}`}
             title={row.title}
             titleRef={nameRef}
             // A roster row keeps the name on its one line, as the list column does (lab `rm` P).
             titleLines={1}
-            subtitle={awayLine ?? strip}
+            subtitle={strip}
             titleAccessory={tag ? <Text style={styles.tag} numberOfLines={1}>{tag}</Text> : undefined}
             // What it is doing (or why it is away) closes the name's line, level with the name, never centred
             // against the strip beneath it (lab `rm` P).
-            titleMeta={awayLine ? undefined : <Text style={styles.rowMeta} numberOfLines={1}>{detail}</Text>}
+            titleMeta={<Text style={row.online ? styles.rowMeta : styles.quietLine} numberOfLines={1}>{detail}</Text>}
             accessibilityLabel={[row.title, tag, detail].filter(Boolean).join(', ')}
             icon={(
                 <MachineResourceLiveDemand machineKeys={[{ serverId: row.serverId, machineId }]} detail="summary"

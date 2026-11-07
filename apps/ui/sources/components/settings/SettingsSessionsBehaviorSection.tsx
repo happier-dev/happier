@@ -1,4 +1,5 @@
 import * as React from 'react';
+import { useOpenAppSection } from '@/components/appShell/workspace/destinationRoute';
 
 import type { SettingsBelowFoldSectionsProps } from '@/components/settings/settingsBelowFoldSectionTypes';
 import { SettingsCatalogOverviewGroup } from '@/components/settings/SettingsCatalogOverviewGroup';
@@ -20,6 +21,7 @@ export const SettingsSessionsBehaviorSection = React.memo(function SettingsSessi
     router,
     showAutomations,
 }: SettingsSessionsBehaviorSectionProps) {
+    const openSection = useOpenAppSection();
     return (
         <SettingsCatalogOverviewGroup
             groupId="groupSessionsBehavior"
@@ -40,7 +42,9 @@ export const SettingsSessionsBehaviorSection = React.memo(function SettingsSessi
                         : t('workflows.destination.runSettingsPage.description')}
                     // Workflow run settings live under the Workflows destination (FIN 04 §3.5); while
                     // Automations is off on this device the row leads to the switch that turns it on.
-                    onPress={() => router.push(automationsNeedLocalEnablement ? SETTINGS_ROUTES.features : '/workflows/settings')}
+                    onPress={() => automationsNeedLocalEnablement
+                        ? router.push(SETTINGS_ROUTES.features)
+                        : openSection('/workflows/settings')}
                 />
             ) : null}
         />

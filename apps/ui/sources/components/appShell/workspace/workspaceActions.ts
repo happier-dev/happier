@@ -324,10 +324,9 @@ export function createWorkspaceActionAdapter(input: Readonly<{
                     const reuseExisting = 'reuseExisting' in data ? data.reuseExisting ?? true : true;
                     const direction = mode === 'splitLeft' ? 'left' : mode === 'splitRight' ? 'right'
                         : mode === 'splitUp' ? 'up' : mode === 'splitDown' ? 'down' : null;
-                    const alreadyOpen = reuseExisting ? input.navigation.findOpenHref(data.href) : null;
-                    const measurement = direction && !alreadyOpen
+                    const measurement = direction
                         ? input.readCanvas()?.readSplitMeasurement(groupId, direction) : null;
-                    if (direction && !measurement && !alreadyOpen) {
+                    if (direction && !measurement) {
                         return workspaceActionFailure('workspace_layout_unmeasured');
                     }
                     let cancelFind: (() => void) | undefined;

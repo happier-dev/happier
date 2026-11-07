@@ -5,11 +5,11 @@ import type { JsonValue } from '@happier-dev/protocol/json/strictJsonValue';
 import type { RoleOverrideV1 } from '@happier-dev/protocol/prompts/roles/rolesV1';
 import type { WorkflowPluginSourceV1 } from '@happier-dev/protocol/workflows/workflowPluginSourceContractV1';
 
-import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useOpenAppSection, useRouter } from '@/components/appShell/workspace/destinationRoute';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { useMountedRef } from '@/hooks/ui/useMountedRef';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { useActiveServerAccountScope, useAllMachines, useMachineListForServer } from '@/sync/domains/state/storage';
+import { useActiveServerAccountScope, useActiveMachineFacts, useMachineListForServer } from '@/sync/domains/state/storage';
 import { exportWorkflowDefinition } from '@/sync/domains/workflows/workflowInterchange';
 import { isWorkflowProjectTarget, type WorkflowAuthoringTarget } from '@/sync/domains/workflows/workflowProjectTarget';
 import { createWorkflowRunRoute } from '@/sync/domains/workflows/workflowRunRoute';
@@ -31,21 +31,22 @@ import { WorkflowEditorBody, type WorkflowEditorView } from './WorkflowEditorBod
 import { useWorkflowAuthoringHost } from './useWorkflowAuthoringHost';
 import { useWorkflowAccountLifetime } from '../workflowAccountScope';
 import { useWorkflowEditorAccountMemory } from './useWorkflowEditorAccountMemory';
+import { useControlledWorkflowEditorDraftStore } from '../editor/workflowEditorDraftStore';
 
-/** A read-only catalog source, read through the same paged library owner as every picker. */
+/** A read-only catalog source, resolved exactly through the shared definition Action owner. */
 export function WorkflowPluginEditorHostScreen(props: Readonly<{ workflow: string; intent?: 'run' }>): React.ReactElement {
+    const openSection = useOpenAppSection();
     const catalog = useWorkflowPluginSource(props.workflow);
     const focusedScope = useActiveServerAccountScope();
     const accountLifetime = useWorkflowAccountLifetime();
     const scope = accountLifetime === undefined ? focusedScope : accountLifetime?.scope;
-    const router = useRouter();
     const plugin = catalog.source;
     if (plugin === null) {
         if (catalog.status === 'failed') return <SurfaceStateCard kind="error"
             title={t('workflows.loadFailedTitle')} reason={t('workflows.loadFailedBody')}
             action={{ label: t('workflows.retry'), onPress: catalog.retry }} />;
         if (catalog.status !== 'missing') return <SurfaceStateCard kind="loading" title={t('workflows.editor.loadingTitle')} />;
-        return <WorkflowMissingDefinitionState onOpenCollection={() => router.replace('/workflows' as never)} />;
+        return <WorkflowMissingDefinitionState onOpenCollection={() => openSection('/workflows', true)} />;
     }
     return <CatalogDefinition key={`${scope?.serverId}/${scope?.accountId}/${plugin.workflow}/${plugin.version}`}
         plugin={plugin} serverId={scope?.serverId ?? null} intent={props.intent} />;
@@ -53,12 +54,12 @@ export function WorkflowPluginEditorHostScreen(props: Readonly<{ workflow: strin
 
 /** Local built-ins do not depend on the Account library being available. */
 export function WorkflowBuiltinEditorHostScreen(props: Readonly<{ workflow: string; intent?: 'run' }>): React.ReactElement {
+    const openSection = useOpenAppSection();
     const focusedScope = useActiveServerAccountScope();
     const accountLifetime = useWorkflowAccountLifetime();
     const scope = accountLifetime === undefined ? focusedScope : accountLifetime?.scope;
-    const router = useRouter();
     const entry = getBuiltinWorkflowCatalogV1().find((item) => item.id === props.workflow);
-    if (entry === undefined) return <WorkflowMissingDefinitionState onOpenCollection={() => router.replace('/workflows' as never)} />;
+    if (entry === undefined) return <WorkflowMissingDefinitionState onOpenCollection={() => openSection('/workflows', true)} />;
     return <CatalogDefinition key={`${scope?.serverId}/${scope?.accountId}/${entry.id}/${entry.version}`}
         plugin={entry} serverId={scope?.serverId ?? null} intent={props.intent} />;
 }
@@ -76,9 +77,9 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
         ? { kind: 'catalog' as const, workflow: props.plugin.workflow, pluginVersion: props.plugin.version }
         : { kind: 'catalog' as const, workflow: props.plugin.id };
     const router = useRouter();
-    const focusedMachines = useAllMachines();
     const accountLifetime = useWorkflowAccountLifetime();
-    const addressedMachines = useMachineListForServer(accountLifetime?.scope.serverId ?? '');
+    const focusedMachines = useActiveMachineFacts(accountLifetime === undefined);
+    const addressedMachines = useMachineListForServer(accountLifetime?.scope.serverId ?? '', accountLifetime !== undefined);
     const machines = accountLifetime === undefined ? focusedMachines : addressedMachines ?? [];
     const { recentMachinePaths } = useWorkflowEditorAccountMemory(accountLifetime, { workspaceRefs: false });
     const [focusedLifetime] = React.useState(captureActiveServerAccountScopeLifetime);
@@ -97,6 +98,7 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     const draft = React.useMemo(() => buildWorkflowEditorDraftFromDefinition({
         draftId: `catalog:${plugin.workflow}:${plugin.version}`, name: plugin.title, definition: plugin.definition,
     }), [plugin.definition, plugin.title, plugin.version, plugin.workflow]);
+    const draftStore = useControlledWorkflowEditorDraftStore(draft);
     const [selectedBlockId, setSelectedBlockId] = React.useState<string | null>(null);
     const [view, setView] = React.useState<WorkflowEditorView>('steps');
     const host = useWorkflowAuthoringHost({ projectTarget: target, serverId: props.serverId });
@@ -150,7 +152,7 @@ function CatalogDefinition(props: Readonly<{ plugin: WorkflowPluginSourceV1 | Bu
     return <>
         {runComposer}
         <WorkflowEditorBody
-            draft={draft} onChange={() => {}} documentPresentation={{ editable: false,
+            draftStore={draftStore} onChange={() => {}} documentPresentation={{ editable: false,
                 note: builtin === null ? t('workflows.plugins.readOnly') : t('workflows.examples.builtInDescription') }}
             machineName={machine ? getMachineDisplayName(machine) : null}
             projectTarget={target} projectMachines={machines}

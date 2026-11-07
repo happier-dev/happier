@@ -78,7 +78,7 @@ describe('workspace KV synchronization', () => {
         expect(writes).toEqual([]);
         controller.stop();
     });
-    it('rebases a retired workflow detail onto its matching definition rather than the first workflow tab', async () => {
+    it('closes only the addressed explicit workflow instance after a normalized refresh', async () => {
         const other = { ...tab('other'), target: { kind: 'workflow', params: { id: 'workflow-2' } } };
         const remote = { ...tab('remote'), target: { kind: 'workflow', params: { id: 'workflow-1' } } };
         const duplicate = { ...remote, id: 'duplicate' };
@@ -90,8 +90,9 @@ describe('workspace KV synchronization', () => {
         await controller.refresh();
         controller.enqueue([{ type: 'close', tabId: 'duplicate' }]);
         await controller.flush();
-        expect(stored.order).toEqual(['other']);
+        expect(stored.order).toEqual(['other', 'remote']);
         expect(stored.tabsById.other).toEqual(other);
+        expect(stored.tabsById.remote).toEqual(remote);
         controller.stop();
     });
     it('preserves the original workflow operation when a peer retargets its proposed winner to another definition', async () => {

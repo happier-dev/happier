@@ -1,5 +1,6 @@
 import * as React from 'react';
-import { usePathname } from 'expo-router';
+import { useDestinationPathname } from '@/components/appShell/workspace/DestinationInstanceHost';
+import { useWorkspaceSectionPathname } from '@/components/appShell/workspace/WorkspaceNavigationContext';
 
 import {
     useCompactAppDestinations,
@@ -14,7 +15,9 @@ export function useAppShellLocation(): Readonly<{
     location: AppShellLocation;
 }> {
     const catalog = useCompactAppDestinations();
-    const pathname = usePathname();
+    const destinationPathname = useDestinationPathname();
+    const sectionPathname = useWorkspaceSectionPathname();
+    const pathname = sectionPathname ?? destinationPathname;
     const location = React.useMemo(() => resolveAppShellLocation(catalog, pathname), [catalog, pathname]);
     return { catalog, location };
 }

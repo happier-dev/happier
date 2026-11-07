@@ -25,7 +25,6 @@ installSettingsViewCommonModuleMocks({
                 Dimensions: {
                     get: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
                 },
-                useWindowDimensions: () => ({ width: 1600, height: 900, scale: 2, fontScale: 1 }),
                 Platform: {
                     OS: 'web',
                     select: (options: any) => (options && 'default' in options ? options.default : undefined),
@@ -42,7 +41,7 @@ installSettingsViewCommonModuleMocks({
     router: async () => {
         const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
         const routerMock = createExpoRouterMock({
-            router: { push: routerPushSpy },
+            router: { push: routerPushSpy, navigate: routerPushSpy },
         });
         return routerMock.module;
     },
@@ -73,7 +72,7 @@ vi.mock('expo-image', () => ({
 vi.mock('expo-router', async () => {
     const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
     const routerMock = createExpoRouterMock({
-        router: { push: routerPushSpy },
+        router: { push: routerPushSpy, navigate: routerPushSpy },
     });
     return routerMock.module;
 });

@@ -193,16 +193,29 @@ export function createScrollViewNearViewportTracker(
     };
 }
 
-function useNearViewportPlacement(tracker: Pick<NearViewportTracker, 'subscribe' | 'getWindow'> | null, span: NearViewportSpan | null, measuredViewport = false) {
+/**
+ * A host whose tracker follows only the visible window (`overscan: false`, for live demand) can still build
+ * ahead of it by the same prebuild rule the overscanning hosts use: one viewport above, two below.
+ */
+export function readNearViewportBuildWindow(tracker: Pick<NearViewportTracker, 'getWindow'> | null, overscan: boolean): NearViewportWindow | null {
+    const window = tracker?.getWindow() ?? null;
+    if (!overscan || window === null) return window;
+    return resolveNearViewportWindow({ windowTopOffset: window.top, viewportHeight: window.bottom - window.top, quantum: PAGE_ROW_TOUCH_MIN_HEIGHT_PX });
+}
+
+type NearViewportPlacement = 'near' | 'far' | 'unmeasured';
+function readNearViewportPlacement(tracker: Pick<NearViewportTracker, 'getWindow'> | null, span: NearViewportSpan | null, measuredViewport: boolean, overscan: boolean): NearViewportPlacement {
+    if (tracker === null) return 'near';
+    const window = readNearViewportBuildWindow(tracker, overscan);
+    if (span === null) return 'unmeasured';
+    if (window === null) return measuredViewport ? 'unmeasured' : 'near';
+    return isSpanNearViewport(window, span) ? 'near' : 'far';
+}
+
+function useNearViewportPlacement(tracker: Pick<NearViewportTracker, 'subscribe' | 'getWindow'> | null, span: NearViewportSpan | null, measuredViewport = false, overscan = false) {
     const read = React.useCallback(
-        () => {
-            if (tracker === null) return 'near';
-            const window = tracker.getWindow();
-            if (span === null) return 'unmeasured';
-            if (window === null) return measuredViewport ? 'unmeasured' : 'near';
-            return isSpanNearViewport(window, span) ? 'near' : 'far';
-        },
-        [span, tracker, measuredViewport],
+        () => readNearViewportPlacement(tracker, span, measuredViewport, overscan),
+        [span, tracker, measuredViewport, overscan],
     );
     return React.useSyncExternalStore(tracker?.subscribe ?? subscribeWithoutScrollHost, read, read);
 }
@@ -217,10 +230,21 @@ export function useMeasuredNearViewport(
     nodeRef: React.RefObject<unknown>,
     focused: boolean,
     instanceId: string,
+    /** Build ahead of a visible-window tracker by the prebuild rule (`readNearViewportBuildWindow`). */
+    overscan = false,
 ): Readonly<{ near: boolean; measured: boolean; measure: () => void }> {
     const latestMeasurement = React.useRef<Promise<NearViewportSpan | null> | null>(null);
-    const [span, setSpan] = React.useState<NearViewportSpan | null>(null);
-    const placement = useNearViewportPlacement(tracker, span, true);
+    // The measured place is not rendered: only the placement it decides is. Re-measures after a layout change
+    // (rows above moving) publish to the placement read, so the reader renders only when near/far flips.
+    const span = React.useRef<NearViewportSpan | null>(null);
+    const [spanListeners] = React.useState(() => new Set<() => void>());
+    const subscribe = React.useCallback((listener: () => void) => {
+        spanListeners.add(listener);
+        const unsubscribe = tracker?.subscribe(listener);
+        return () => { spanListeners.delete(listener); unsubscribe?.(); };
+    }, [spanListeners, tracker]);
+    const read = React.useCallback(() => readNearViewportPlacement(tracker, span.current, true, overscan), [tracker, overscan]);
+    const placement = React.useSyncExternalStore(subscribe, read, read);
     // A hidden retained page has no geometry (display: none): its place is what it last presented, and
     // it is measured again on the render that presents it.
     const presented = useLayoutPresentationActive();
@@ -231,9 +255,12 @@ export function useMeasuredNearViewport(
         latestMeasurement.current = measurement;
         void measurement.then(next => {
             if (latestMeasurement.current !== measurement || nodeRef.current !== node) return;
-            setSpan(current => current?.top === next?.top && current?.height === next?.height ? current : next);
+            const current = span.current;
+            if (current?.top === next?.top && current?.height === next?.height) return;
+            span.current = next;
+            for (const listener of [...spanListeners]) listener();
         });
-    }, [nodeRef, presented, tracker]);
+    }, [nodeRef, presented, spanListeners, tracker]);
     React.useEffect(() => {
         if (!tracker || !presented) return;
         let revision = tracker.getLayoutRevision();

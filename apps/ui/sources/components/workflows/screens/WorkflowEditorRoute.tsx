@@ -1,7 +1,7 @@
 import * as React from 'react';
 import { parseWorkflowDefinitionRefV1 } from '@happier-dev/protocol/workflows';
 
-import { useLocalSearchParams, usePathname, useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useLocalSearchParams, useOpenAppSection, usePathname } from '@/components/appShell/workspace/destinationRoute';
 import { WorkflowsGate } from '@/components/workflows/gating/WorkflowsGate';
 import { WorkflowBuiltinEditorHostScreen, WorkflowPluginEditorHostScreen } from './WorkflowCatalogEditorHostScreen';
 import { WorkflowEditorHostScreen, type WorkflowEditorSource, type WorkflowSavedEntryIntent } from './WorkflowEditorHostScreen';
@@ -15,7 +15,7 @@ import { areServerAccountScopesEqual, type ServerAccountScopeLifetime } from '@/
 
 /** Create and saved URLs are two identities of the same mounted editor. */
 export function WorkflowEditorRoute(): React.ReactElement {
-    const router = useRouter();
+    const openSection = useOpenAppSection();
     const pathname = usePathname();
     const params = useLocalSearchParams<{
         id?: string | string[]; intent?: string | string[]; importJson?: string;
@@ -35,7 +35,7 @@ export function WorkflowEditorRoute(): React.ReactElement {
     if (serverId && !displayBinding) return <WorkflowsGate>{resolution.kind === 'resolving'
         ? <SurfaceStateCard kind="loading" title={t('workflows.editor.loadingTitle')} />
         : <WorkflowMissingDefinitionState testID="workflow-detail-unavailable"
-            onOpenCollection={() => router.replace('/workflows' as never)} />}</WorkflowsGate>;
+            onOpenCollection={() => openSection('/workflows', true)} />}</WorkflowsGate>;
     let source: WorkflowEditorSource;
     if (pathname === '/workflows/new') {
         // Only opaque seed handles travel in the URL; private definition and
@@ -60,7 +60,7 @@ export function WorkflowEditorRoute(): React.ReactElement {
         const intent: WorkflowSavedEntryIntent | undefined = rawIntent === 'run' || rawIntent === 'schedule' ? rawIntent : undefined;
         if (definitionId === undefined || definitionId.length === 0) {
             return <WorkflowsGate><WorkflowMissingDefinitionState testID="workflow-detail-invalid"
-                onOpenCollection={() => router.replace('/workflows' as never)} /></WorkflowsGate>;
+                onOpenCollection={() => openSection('/workflows', true)} /></WorkflowsGate>;
         }
         const reference = parseWorkflowDefinitionRefV1(definitionId);
         if (reference?.kind === 'plugin') {

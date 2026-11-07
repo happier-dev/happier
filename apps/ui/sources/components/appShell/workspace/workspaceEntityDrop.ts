@@ -13,7 +13,7 @@ import type { PaneDropAdmission } from '../splitCanvas/presentation/paneDropPres
 import { resolveWorkspaceRefById } from '@/sync/domains/workspaces/workspaceRefs';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 
-export const WORKSPACE_ENTITY_KINDS: readonly EntityDragKindV1[] = ['workspace-tab', 'session', 'destination', 'repository-file'];
+export const WORKSPACE_ENTITY_KINDS: readonly EntityDragKindV1[] = ['workspace-tab', 'session', 'workflow', 'destination', 'repository-file'];
 
 function resolveWorkspaceEntityFile(item: EntityDragItemV1, input: Readonly<{
     scope: EntityDragScopeV1;
@@ -38,6 +38,9 @@ export function resolveWorkspaceEntityHref(item: EntityDragItemV1, input: Readon
     if (item.kind === 'destination') href = item.href;
     if (item.kind === 'session') href = hrefForDestinationRef(input.catalog, {
         kind: 'session', params: { id: item.address.sessionId, serverId: item.address.serverId, accountId: item.scope.accountId },
+    });
+    if (item.kind === 'workflow') href = hrefForDestinationRef(input.catalog, {
+        kind: 'workflow', params: { id: item.workflowId },
     });
     const file = resolveWorkspaceEntityFile(item, input);
     if (file) href = buildWorkspaceFileLink(file);
@@ -96,7 +99,10 @@ export function resolveWorkspaceEntityDrop(input: Readonly<{
         const href = resolveWorkspaceEntityHref(item, input);
         if (!href) return refuse('workspace_destination_unavailable');
         const existing = workspace.findOpenHref?.(href);
-        if (existing) return { status: 'allowed', effect: { actionId: 'workspace.tabs.activate', input: { tabId: existing.tabId } } };
+        if (existing) {
+            if (target.placement === 'center') return { status: 'allowed', effect: { actionId: 'workspace.tabs.activate', input: { tabId: existing.tabId } } };
+            return resolveWorkspaceEntityDrop({ ...input, item: { kind: 'workspace-tab', scope, tabId: existing.tabId } });
+        }
         if (target.placement !== 'center') {
             const destination = resolveDestinationRefFromHref(input.catalog, href);
             if (input.availableSizePx === undefined || input.minimumExistingSizePx === undefined

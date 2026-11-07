@@ -1,9 +1,10 @@
 import type { CompactAppDestination, DestinationRef } from '../destinations/compactAppDestinationCatalog';
 import { hrefForDestinationRef, resolveDestinationRefFromHref } from '../destinations/compactAppDestinationCatalog';
 import { createWorkspaceNavigationHistory, recordWorkspaceNavigation, stepWorkspaceNavigation, workspaceNavigationRestorationActions, type WorkspaceNavigationEntry } from './workspaceNavigationHistory';
-import { createWorkspaceEmptyTab, type WorkspaceAction, type WorkspaceState, type WorkspaceTab } from './workspaceState';
-import { isWorkspaceSingletonDestination, resolveWorkspaceDestinationScope, shouldRetainWorkspaceDestinationPreview, workspaceDestinationNavigationIdentity } from './workspaceDestinationPolicy';
-import { createWorkspaceDestinationSplit } from './workspaceSplit';
+import { createWorkspaceEmptyTab, sameDestinationRef, type WorkspaceAction, type WorkspaceState, type WorkspaceTab } from './workspaceState';
+export { sameDestinationRef } from './workspaceState';
+import { isWorkspaceSingletonDestination, resolveWorkspaceDestinationScope, workspaceDestinationNavigationIdentity } from './workspaceDestinationPolicy';
+import { createWorkspaceDestinationSplit, createWorkspaceSplit } from './workspaceSplit';
 import type { ServerAccountScope } from '@/sync/domains/scope/serverAccountScope';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
 import { matchWorkspaceDestinationRoute } from './workspaceRoutes';
@@ -17,6 +18,8 @@ export type WorkspaceOpenOptions = Readonly<{
     beforeTabId?: string | null;
     reuseExisting?: boolean;
     replace?: boolean;
+    /** Explicit app-section activation. Ordinary item opens retain the selected section. */
+    section?: boolean;
     availableSizePx?: number;
     minimumFirstSizePx?: number;
     minimumSecondSizePx?: number;
@@ -34,11 +37,6 @@ export type WorkspaceUrlTransport = Readonly<{
     /** The browser retains entry positions across reloads; native transports use the local history. */
     canTraverse?: (direction: -1 | 1) => boolean | undefined;
 }>;
-
-export function sameDestinationRef(a: DestinationRef, b: DestinationRef): boolean {
-    return a.kind === b.kind && Object.keys(a.params).length === Object.keys(b.params).length
-        && Object.entries(a.params).every(([key, value]) => b.params[key] === value);
-}
 
 /** The Projects list's open: the Project at its overview with only its checkout selection. */
 const PROJECT_DEFAULT_OPEN_PARAMS = new Set(['workspaceRefId', 'serverId', 'accountId', 'pageId', 'activeRootPath', 'worktreeId']);
@@ -61,6 +59,7 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         options: WorkspaceOpenOptions) => ((opened: WorkspaceNavigationEntry) => void) | undefined;
 }>) {
     let history = createWorkspaceNavigationHistory();
+    let sectionPathname: string | null = null;
     const resolveOpenTarget = (href: string): DestinationRef | null => {
         const admitted = input.resolveOpenHref ? input.resolveOpenHref(href) : href;
         const catalog = input.getCatalog();
@@ -157,19 +156,24 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         const tab = state.tabs[group.activeTabId];
         return { tabId: tab.id, groupId: group.id, target: tab.target };
     };
-    const visit = (replace = false, projectUrl = true, forceProjection = false) => {
+    const visit = (replace = false, projectUrl = true, forceProjection = false, selectSection = false) => {
         const entry = focusedEntry();
+        const catalog = input.getCatalog();
+        const pathname = hrefForDestinationRef(catalog, entry.target)?.split(/[?#]/, 1)[0] ?? null;
+        const nextSection = selectSection || sectionPathname === null ? pathname : sectionPathname;
+        const sectionChanged = nextSection !== sectionPathname;
+        sectionPathname = nextSection;
         const next = replace && history.index >= 0
             ? { entries: history.entries.map((item, index) => index === history.index ? entry : item), index: history.index }
             : recordWorkspaceNavigation(history, entry);
         const unchanged = next === history;
-        if (unchanged && !(projectUrl && forceProjection)) return;
+        if (unchanged && !sectionChanged && !(projectUrl && forceProjection)) return;
         history = next;
         if (projectUrl) {
             const href = hrefForDestinationRef(input.getCatalog(), entry.target);
             if (href) input.transport.commit(href, entry, replace || unchanged, history.index);
         } else input.transport.adoptCurrent?.(entry, history.index);
-        if (!unchanged) input.onChange();
+        if (!unchanged || sectionChanged) input.onChange();
     };
     const singletonActions = (state: WorkspaceState, target: DestinationRef): readonly WorkspaceAction[] | null => {
         // The catalog owns admission: subpaths never change an app page's mount identity.
@@ -187,6 +191,7 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
     };
     return {
         resolveOpenTarget,
+        get sectionPathname() { return sectionPathname; },
         get history() { return history; },
         get canGoBack() { return input.transport.canTraverse?.(-1) ?? history.index > 0; },
         get canGoForward() { return input.transport.canTraverse?.(1) ?? history.index < history.entries.length - 1; },
@@ -196,6 +201,14 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
         },
         initialize(href: string) {
             const target = resolveOpenTarget(href);
+            const focusedHref = hrefForDestinationRef(input.getCatalog(), focusedEntry().target);
+            const focusedTarget = focusedHref ? resolveOpenTarget(focusedHref) : null;
+            if (target && focusedTarget && sameDestinationRef(focusedTarget, target)) {
+                // Several retained panes can have the same URL (notably New Tab).
+                // An unchanged address adopts the restored selection, not the first match.
+                visit(true, false, true);
+                return;
+            }
             const reusable = target && sessionIdentity(target) ? findOpenDestination(target) : null;
             if (target && reusable) {
                 // Cold admission addresses the Session, not a new pane. Keep its
@@ -228,36 +241,44 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 options = { ...options, tabId: sourceTab.id, reuseExisting: false };
             }
             let finishOpen: ((opened: WorkspaceNavigationEntry) => void) | undefined = undefined;
-            const keepSourcePreview = !options.replace && sourceTab?.preview
-                && shouldRetainWorkspaceDestinationPreview(sourceTab.target, target, input.getCatalog(), input.getScope?.());
-            const retainSourcePreview = () => {
-                if (keepSourcePreview) input.dispatch({ type: 'promoteTab', tabId: sourceTab.id });
-            };
             const admittedSingleton = singletonActions(state, target);
-            const resourcePreview = mode === 'preview' && options.reuseExisting !== false
-                && workspaceDestinationNavigationIdentity(target, input.getCatalog()) !== null;
-            // A bare Session address is Go to it, including Expo URL adoption.
-            // Terminal and unaddressed Details presentations keep the Session's pane scope;
-            // resource-addressed Details and explicit new-tab/split intents remain independent.
-            const sessionPreview = mode === 'preview' && target.kind === 'session' && options.reuseExisting !== false
-                && Object.keys(target.params).every(key => key === 'id' || key === 'serverId' || key === 'accountId');
             const presentationPreview = mode === 'preview' && options.reuseExisting !== false
                 && (isSessionTerminal(target) || (target.kind === 'session' && target.params.mobileSurface === 'tabs'));
-            // A mounted destination router supplies its SOURCE tabId. A bare
-            // Session address still focuses the retained resource across panes.
-            const reusable = (options.reuseExisting || sessionPreview || presentationPreview || resourcePreview) && (!options.tabId || sessionPreview || presentationPreview || resourcePreview)
-                ? (presentationPreview ? findOpenDestination(target, state, options.groupId,
+            // An ordinary open focuses a known destination, including when its
+            // router names the source tab. Only explicit new-tab/split intent
+            // creates another tab; a phone view replacement can opt out of reuse.
+            const reusable = options.reuseExisting || (mode === 'preview' && options.reuseExisting !== false)
+                // A Project can have several retained instances. An in-Project preview
+                // belongs to its source pane, including that pane's mounted File editor.
+                ? (mode === 'preview' && sourceTab && sameProjectIdentity(sourceTab.target, target)
+                    ? findOpenDestination(target, state, openingGroupId, sourceTab.id) : null)
+                    ?? (presentationPreview ? findOpenDestination(target, state, options.groupId,
                     options.tabId ?? state.groups[openingGroupId].activeTabId) : null)
                     ?? findOpenDestination(target, state, options.reuseExisting ? undefined : options.groupId) : null;
-            if (reusable && !admittedSingleton) {
-                retainSourcePreview();
+            const direction = mode === 'splitLeft' ? 'left' : mode === 'splitRight' ? 'right'
+                : mode === 'splitUp' ? 'up' : mode === 'splitDown' ? 'down' : null;
+            if (direction) {
+                if (options.availableSizePx === undefined || options.minimumFirstSizePx === undefined) return false;
+                const existing = admittedSingleton ? findOpenDestination(target, state) : reusable;
+                const split = {
+                    groupId: openingGroupId, direction, createId: input.createId,
+                    availableSizePx: options.availableSizePx, minimumExistingSizePx: options.minimumFirstSizePx,
+                } satisfies Parameters<typeof createWorkspaceSplit>[1];
+                const action = existing
+                    ? createWorkspaceSplit(state, { ...split, tabId: existing.tabId })
+                    : createWorkspaceDestinationSplit(state, { ...split,
+                        tab: { id: input.createId(), target, pinned: false, preview: false } });
+                if (!action) return false;
+                input.dispatch(action);
+                if (existing && admittedSingleton) input.dispatch({ type: 'setTarget', tabId: existing.tabId, target });
+            } else if (reusable && !admittedSingleton) {
                 const retained = state.tabs[reusable.tabId].target;
                 // Reuse retains pane state, but an explicitly selected Session
                 // address must qualify a legacy tab before it is projected again.
                 if (workspaceDestinationNavigationIdentity(target, input.getCatalog()) !== null) {
                     if (!sameDestinationRef(retained, target)) input.dispatch({ type: 'setTarget', tabId: reusable.tabId, target });
-                } else if (presentationPreview || (target.kind === 'session'
-                    && (target.params.mobileSurface !== undefined || parseSessionPaneUrlState(target.params)?.details))) {
+                } else if (target.kind === 'session'
+                    && Object.keys(target.params).some(key => key !== 'id' && key !== 'serverId' && key !== 'accountId')) {
                     const adopted = adoptSessionTarget(retained, target);
                     if (!sameDestinationRef(retained, adopted)) input.dispatch({ type: 'setTarget', tabId: reusable.tabId, target: adopted });
                 } else if (target.kind === 'project') {
@@ -278,17 +299,13 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 input.dispatch({ type: 'activateTab', groupId: reusable.groupId, tabId: reusable.tabId });
             } else if (admittedSingleton) {
                 if (admittedSingleton.length === 0) return false;
-                retainSourcePreview();
                 for (const action of admittedSingleton) input.dispatch(action);
                 if (mode === 'newTab') input.dispatch({ type: 'promoteTab', tabId: focusedEntry().tabId });
-            } else if (options.tabId && state.tabs[options.tabId] && !keepSourcePreview) {
-                const group = Object.values(state.groups).find((item) => item.tabIds.includes(options.tabId!));
-                if (!group) return false;
+            } else if (mode === 'preview' && sourceTab) {
                 finishOpen = sourceEntry
-                    ? input.prepareOpen?.(sourceEntry, { tabId: options.tabId, groupId: group.id, target }, options) : undefined;
-                input.dispatch({ type: 'setTarget', tabId: options.tabId, target });
-                if (mode === 'newTab') input.dispatch({ type: 'promoteTab', tabId: options.tabId });
-                input.dispatch({ type: 'activateTab', groupId: group.id, tabId: options.tabId });
+                    ? input.prepareOpen?.(sourceEntry, { tabId: sourceTab.id, groupId: openingGroupId, target }, options) : undefined;
+                input.dispatch({ type: 'setTarget', tabId: sourceTab.id, target });
+                input.dispatch({ type: 'activateTab', groupId: openingGroupId, tabId: sourceTab.id });
             } else {
                 const existing = mode === 'preview' || mode === 'newTab'
                     ? Object.values(state.tabs).find((tab) => sameDestinationRef(tab.target, target)
@@ -297,33 +314,18 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 if (existing) {
                     const group = Object.values(state.groups).find((item) => item.tabIds.includes(existing.id));
                     if (!group) return false;
-                    retainSourcePreview();
                     if (mode === 'newTab') input.dispatch({ type: 'promoteTab', tabId: existing.id });
                     input.dispatch({ type: 'activateTab', groupId: group.id, tabId: existing.id });
                 } else {
-                    const direction = mode === 'splitLeft' ? 'left' : mode === 'splitRight' ? 'right'
-                        : mode === 'splitUp' ? 'up' : mode === 'splitDown' ? 'down' : null;
-                    if (direction && (options.availableSizePx === undefined || options.minimumFirstSizePx === undefined)) return false;
                     const tab: WorkspaceTab = { id: input.createId(), target, pinned: false, preview: mode === 'preview' };
                     const openAction: WorkspaceAction = { type: 'openTab', groupId: openingGroupId, tab, beforeTabId: options.beforeTabId };
-                    if (direction) {
-                        const action = createWorkspaceDestinationSplit(state, {
-                            groupId: openingGroupId, tab, direction, createId: input.createId,
-                            availableSizePx: options.availableSizePx!, minimumExistingSizePx: options.minimumFirstSizePx!,
-                        });
-                        if (!action) return false;
-                        retainSourcePreview();
-                        input.dispatch(action);
-                    } else {
-                        finishOpen = sourceEntry
-                            ? input.prepareOpen?.(sourceEntry, { tabId: tab.id, groupId: openingGroupId, target }, options) : undefined;
-                        retainSourcePreview();
-                        input.dispatch(openAction);
-                    }
+                    finishOpen = sourceEntry
+                        ? input.prepareOpen?.(sourceEntry, { tabId: tab.id, groupId: openingGroupId, target }, options) : undefined;
+                    input.dispatch(openAction);
                 }
             }
             finishOpen?.(focusedEntry());
-            visit(options.replace, projectUrl, true);
+            visit(options.replace, projectUrl, true, options.section);
             options.onOpened?.();
             return true;
         },
@@ -415,6 +417,9 @@ export function createWorkspaceNavigationAdapter(input: Readonly<{
                 return true;
             }
             // Phone cockpit selection changes the current view, not its retained pane.
+            // Fullscreen tool routes and root mobileSurface URLs are views of the
+            // same Session. Adopting one must replace the current view, including
+            // when the departing route is /git rather than the Session root.
             const phoneSelection = isSessionPhoneSelection(current.target, target);
             return this.openHref(href, phoneSelection
                 ? { tabId: current.tabId, reuseExisting: false }
