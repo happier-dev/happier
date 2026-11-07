@@ -28,6 +28,8 @@ import { NOTIFICATION_CHANNELS_ROUTE_V1, NotificationChannelCatalogReadResponseV
 import { CONNECTED_PRESENTATION_ROWS_ROUTE_V1, CONNECTED_ACKNOWLEDGEMENTS_ROWS_ROUTE_V1,
     ConnectedPresentationRowReadResponseV1Schema, ConnectedAcknowledgementsRowReadResponseV1Schema } from '@happier-dev/protocol/connect/connectedAccountPresentationRowsV1';
 import { AccountSettingsV2HistoryListResponseSchema } from '@happier-dev/protocol/account/settings/accountSettingsApiV2';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { SharedSavedSecretListOutputV1Schema } from '@happier-dev/protocol/account/settings/savedSecretResourceActionsV1';
 import type { FetchedMachineRow } from '@/sync/engine/machines/syncMachines';
 import { AutomationDefinitionListResponseSchema } from '@happier-dev/protocol/automations/automationApiV3';
 import { TaskResourcesListResponseV1Schema } from '@happier-dev/protocol/actions/internalTaskActions';
@@ -41,6 +43,12 @@ export function createEmptyAccountBootstrapHttpResponse(path: string, init?: Req
     const pathname = path.split('?')[0];
     const method = (init?.method ?? 'GET').toUpperCase();
     if (method === 'GET') {
+        if (pathname === '/v1/account/saved-secrets/resources/materials') {
+            return Response.json(SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [] }));
+        }
+        if (pathname === '/v1/account/saved-secrets/resources') {
+            return Response.json(SharedSavedSecretListOutputV1Schema.parse({ resources: [] }));
+        }
         if (pathname === '/v2/cursor') return Response.json(CurrentCursorResponseSchema.parse({ cursor: 0, changesFloor: 0 }));
         if (pathname === '/v2/changes') {
             const afterHeader = new Headers(init?.headers).get(CHANGES_AFTER_CURSOR_HTTP_HEADER);

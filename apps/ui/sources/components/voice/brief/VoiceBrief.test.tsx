@@ -1,15 +1,19 @@
 import { createSessionReadBatchFetchBoundary } from '@/dev/testkit/harness/sessionReadBatchHttpBoundary';
+import { createEmptyAccountBootstrapHttpResponse } from '@/dev/testkit/fixtures/accountBootstrapHttpBoundary';
+import { createAccountSettingsHttpBoundary, installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import * as React from 'react';
 import { act } from 'react-test-renderer';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import 'fake-indexeddb/auto';
 
 import { createPlainAccountEncryptionCurrentnessFixture, renderScreen, waitForTestEvent, type RenderScreenResult } from '@/dev/testkit';
 import { AccountProfileSchema } from '@happier-dev/protocol/account/profile';
 import { AuthProvider } from '@/auth/context/AuthContext';
+import { InboxModelBoundary } from '@/hooks/inbox/useInboxModel';
 import { storage } from '@/sync/domains/state/storage';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { voiceSettingsParse } from '@/sync/domains/settings/voiceSettings';
+import { normalizeVoiceSettingsLocalDelta } from '@/sync/domains/settings/voiceSettingsPersistence';
 import { VOICE_AGENT_GLOBAL_SESSION_ID } from '@/voice/agent/voiceAgentGlobalSessionId';
 import { buildServerFeaturesResponse } from '@/hooks/server/serverFeaturesTestUtils';
 import { resetServerFeaturesClientForTests } from '@/sync/api/capabilities/serverFeaturesClient';
@@ -30,7 +34,7 @@ import { getExternalVoiceProviderRegistration } from '@/voice/registry/externalV
 import { BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES } from '@/voice/registry/generatedBundledVoiceRuntimeEntries';
 import { createBundledVoiceRecipientContract } from '@/voice/credentials/voiceRecipientContract';
 import { saveAndUseAccountVoiceCredential, applyAccountVoiceCredentialSourceSelection } from '@/voice/credentials/accountVoiceCredential';
-import { createRecipientContractDigestV1, createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol';
+import { createSessionOwnerMetadataV1, createPlainSessionOwnerMetadataEnvelopeV1, projectSessionSharedMetadataV1 } from '@happier-dev/protocol/sessions/metadata/sessionMetadataSchemasV1';
 import { SessionMessagesPageV1Schema } from '@happier-dev/protocol/sessions/messages/sessionMessagesPageV1';
 import { OPENAI_REALTIME_DEFAULT_SETTINGS } from '../../../../../../packages/plugins/openai/src/protocol/voice/settings';
 import { voiceSessionBindingStore } from '@/voice/binding/voiceConversationBindingStore';
@@ -49,7 +53,7 @@ import { sessionAddressKey } from '@/sync/domains/session/sessionAddress';
 import { Item } from '@/components/ui/lists/Item';
 import { executeVoiceBriefOperation } from './voiceBriefActionRuntime';
 import { getVoiceSessionAttemptId, getVoiceSessionPresentedAttemptId, resetVoiceSessionStoreForTests } from '@/voice/session/voiceSessionStore';
-import { useVoiceBriefHomeRequest } from './useVoiceBriefRequest';
+import { useVoiceBriefHomeRequest, useVoiceBriefRequest } from './useVoiceBriefRequest';
 import { VoiceTopBarPresence } from '@/components/voice/presence/VoiceTopBarPresence';
 import { useVoiceAttemptControl, VOICE_ATTEMPT_IDLE_TARGET_GLOBAL } from '@/components/voice/attempt/useVoiceAttemptControl';
 import { setVoiceGlanceOpen } from '@/components/voice/presence/voiceCompanionSectionReveal';
@@ -81,6 +85,10 @@ vi.mock('@/modal', async () => {
 
 const entry = BUNDLED_FIRST_PARTY_VOICE_CONVERSATION_RUNTIME_ENTRIES.find(value => value.declaration.id === 'realtime-openai')!;
 const historyId = 'brief-history';
+// Compile the real Action graph before mounted interaction deadlines begin.
+await loadSyncSingletonForTests();
+const disposeActionLoader = await installRealActionExecutorModuleLoader();
+afterAll(disposeActionLoader);
 let browser: ReturnType<typeof installVoiceWebRtcBrowserBoundary>;
 let disposeRuntime: (() => Promise<void>) | null = null;
 let observePeerCreated: (peer: TestVoiceWebRtcPeer) => void = () => {};
@@ -177,6 +185,8 @@ let screen: RenderScreenResult | null = null;
 let lifecycle: VoiceSessionLifecycleController | null = null;
 let unsubscribe: (() => void) | null = null;
 let account: Awaited<ReturnType<typeof restoreServerAccountForTest>> | null = null;
+let accountSettingsHttp: ReturnType<typeof createAccountSettingsHttpBoundary>;
+let accountSettingsVersion = 1;
 let restorePopoverGlobals: (() => void) | null = null;
 const initialState = storage.getState();
 function setActionPolicy(value: Parameters<typeof normalizeActionsSettingsV1>[0]) {
@@ -191,7 +201,6 @@ async function pressBriefControl(testID: string) {
     await screen?.pressByTestIdAsync(testID);
 }
 beforeEach(async () => {
-    await loadSyncSingletonForTests();
     resetVoiceSessionStoreForTests();
     navigation.push.mockReset();
     resetServerFeaturesClientForTests();
@@ -201,13 +210,28 @@ beforeEach(async () => {
     storage.setState({ ...initialState, settings: settingsParse({ voice: { providerId: 'off' } }) }, true);
     const purposes = createConnectedPurposeCatalogHttpBoundary();
     const sessions = createSessionMetadataHttpBoundary(() => storage.getState().sessions);
-    account = await restoreServerAccountForTest({ serverUrl: 'https://brief-account.example.test', credentialScope: 'restored-home', request: createSessionReadBatchFetchBoundary(async (url, init) => {
+    accountSettingsVersion = 1;
+    accountSettingsHttp = createAccountSettingsHttpBoundary({ serverUrl: 'https://brief-account.example.test',
+        initialAccounts: [{ accountId: 'account-a', snapshot: { version: accountSettingsVersion,
+            content: { t: 'plain', v: { voice: { providerId: 'off' } } } } }],
+    });
+    const providerFetch = vi.fn<typeof fetch>(async (url) => {
+        const path = new URL(String(url)).pathname;
+        if (path === '/v1/realtime/client_secrets') return Response.json({ value: 'ek_brief', expires_at: Math.floor(Date.now() / 1000) + 60,
+            session: { type: 'realtime', object: 'realtime.session', id: 'brief-provider', model: OPENAI_REALTIME_DEFAULT_SETTINGS.model.id } });
+        if (path === '/v1/realtime/calls') return new Response('v=0\r\na=brief-answer\r\n', { status: 201 });
+        throw new Error(`Unexpected provider HTTP request: ${path}`);
+    });
+    account = await restoreServerAccountForTest({ serverUrl: 'https://brief-account.example.test', additionalRequestOrigins: ['https://api.openai.com'],
+        credentialScope: 'restored-home', request: createSessionReadBatchFetchBoundary(async (url, init) => {
+        if (new URL(String(url)).origin === 'https://api.openai.com') return providerFetch(url, init);
         const path = new URL(String(url)).pathname;
         if (path === '/v1/features' || path === '/v1/features/authenticated') return Response.json(buildServerFeaturesResponse({ voiceEnabled: true }));
         if (path === '/v1/account/profile') return Response.json(AccountProfileSchema.parse({ id: 'account-a' }));
         if (path === '/v1/account/encryption') return Response.json({ mode: 'plain', updatedAt: 0 });
         if (path === '/v1/account/encryption/currentness') return Response.json(createPlainAccountEncryptionCurrentnessFixture());
-        if (path === '/v2/account/settings') return Response.json({ version: 1, content: { t: 'plain', v: { voice: { providerId: 'off' } } } });
+        const settingsResponse = accountSettingsHttp.handle(url, init);
+        if (settingsResponse) return settingsResponse;
         if (path.endsWith('/messages') && init?.method !== 'POST') return Response.json(SessionMessagesPageV1Schema.parse({ messages: [], hasMore: false }));
         const purposeResponse = await purposes.handle(url, init);
         if (purposeResponse) return purposeResponse;
@@ -217,6 +241,8 @@ beforeEach(async () => {
         const sessionResponse = sessions.handle(url, init);
         if (sessionResponse) return sessionResponse;
         if (path === '/health') return Response.json({ status: 'ok' });
+        const bootstrap = createEmptyAccountBootstrapHttpResponse(path, init);
+        if (bootstrap) return bootstrap;
         return new Response('{}', { status: 404 });
     }) });
     // Cold restore starts Profile sync asynchronously; observe its real publication,
@@ -226,15 +252,16 @@ beforeEach(async () => {
     const scope = getActiveServerAccountScope();
     if (!scope) throw new Error('Brief Account was not restored');
     await purposes.hydrate(scope);
+    const { sync } = await import('@/sync/sync');
+    await sync.resumeSync('manual');
+    await waitForTestEvent(storage.subscribe, storage.getState, state => state.isDataReady
+        && state.settingsVersion !== null && state.settingsScope?.serverId === scope.serverId
+        && state.settingsScope.accountId === scope.accountId);
     observePeerCreated = () => {};
     browser = installVoiceWebRtcBrowserBoundary({ onCreatePeer: peer => observePeerCreated(peer) });
-    vi.stubGlobal('fetch', vi.fn(async (url: string | URL | Request) => {
-        const path = new URL(String(url)).pathname;
-        if (path === '/v1/realtime/client_secrets') return Response.json({ value: 'ek_brief', expires_at: Math.floor(Date.now() / 1000) + 60,
-            session: { type: 'realtime', object: 'realtime.session', id: 'brief-provider', model: OPENAI_REALTIME_DEFAULT_SETTINGS.model.id } });
-        if (path === '/v1/realtime/calls') return new Response('v=0\r\na=brief-answer\r\n', { status: 201 });
-        throw new Error(`Unexpected provider HTTP request: ${path}`);
-    }));
+    // Account credential minting uses runtimeFetch; WebRTC uses global fetch.
+    // Both external HTTP ports reach the same provider boundary.
+    vi.stubGlobal('fetch', providerFetch);
     const metadata = { path: '/voice-history', host: 'test', ...buildVoiceTranscriptHistorySessionMetadata() };
     const owner = createSessionOwnerMetadataV1({ metadata });
     if (!owner.ok) throw new Error('Voice History owner metadata was not admitted');
@@ -293,16 +320,26 @@ function Presentation() {
     return <VoiceTopBarPresence voice={voice} />;
 }
 async function selectService(canApproveRequests = true) {
+    const expectedSettingsVersion = storage.getState().settingsVersion;
+    if (expectedSettingsVersion === null) throw new Error('Brief Account Settings were not hydrated');
     const recipient = createBundledVoiceRecipientContract({ pluginId: entry.pluginId, declaration: entry.declaration });
     if (!recipient) throw new Error('OpenAI recipient contract is missing');
     const voice = voiceSettingsParse({ providerId: entry.providerId, canApproveRequests, welcome: { enabled: false }, providers: { [entry.providerId]: { schemaVersion: 1, config: OPENAI_REALTIME_DEFAULT_SETTINGS } } });
-    const saved = saveAndUseAccountVoiceCredential({ settings: settingsParse({ ...storage.getState().settings, voiceSettingsV1: voice }),
+    const currentSettings = storage.getState().settings;
+    const saved = saveAndUseAccountVoiceCredential({ settings: settingsParse({ ...currentSettings,
+        ...normalizeVoiceSettingsLocalDelta({ voice }, currentSettings) }),
         contribution: { pluginId: entry.pluginId, localId: entry.declaration.id }, credentialSlotId: recipient.credentialSlot.id,
-        expectedSettingsVersion: 1, currentDeclaration: entry.declaration, value: 'sk_brief', generateId: () => 'brief-secret', now: 1,
-        expectedSecretId: null, expectedSecretUpdatedAt: null, approvedRecipientContractDigest: createRecipientContractDigestV1(recipient) });
+        expectedSettingsVersion, currentDeclaration: entry.declaration, value: 'sk_brief', generateId: () => 'brief-secret', now: 1,
+        expectedSecretId: null, expectedSecretUpdatedAt: null });
     const selected = applyAccountVoiceCredentialSourceSelection({ settings: saved.settings, connectedPurposes: { v: 1, bindings: [] }, currentDeclaration: entry.declaration,
-        mutation: { contribution: { pluginId: entry.pluginId, localId: entry.declaration.id }, credentialSlotId: recipient.credentialSlot.id, expectedSettingsVersion: 1, selection: { kind: 'savedSecret' } } });
-    await act(async () => storage.setState({ settings: { ...selected.settings, voice: { ...voice, credentialBindings: selected.settings.voice.credentialBindings } } }));
+        mutation: { contribution: { pluginId: entry.pluginId, localId: entry.declaration.id }, credentialSlotId: recipient.credentialSlot.id, expectedSettingsVersion, selection: { kind: 'savedSecret' } } });
+    accountSettingsVersion = expectedSettingsVersion + 1;
+    accountSettingsHttp.replaceAccountSettings('account-a', { version: accountSettingsVersion,
+        content: { t: 'plain', v: selected.settings } });
+    await act(async () => {
+        const { sync } = await import('@/sync/sync');
+        await sync.refreshAccountSettingsFromServer(accountSettingsVersion, storage.getState().settingsScope);
+    });
     expect(storage.getState().settings.voice.providerId).toBe(entry.providerId);
 }
 
@@ -314,6 +351,28 @@ function expectApprovalGuidance(message: string | undefined, canApproveRequests 
 }
 
 describe('mounted Voice Brief request', () => {
+    it('keeps the Brief projection stable on unrelated settings and refreshes consumed Voice preferences', async () => {
+        const projections: Array<ReturnType<typeof useVoiceBriefRequest>['brief']> = [];
+        function Probe() {
+            const { brief } = useVoiceBriefRequest();
+            React.useLayoutEffect(() => { projections.push(brief); });
+            return null;
+        }
+        screen = await renderScreen(<AuthProvider initialCredentials={account!.credentials}><InboxModelBoundary><Probe /></InboxModelBoundary></AuthProvider>);
+        const before = projections.at(-1)!;
+        await act(async () => storage.getState().applySettingsLocal({
+            terminalFontSize: storage.getState().settings.terminalFontSize + 1,
+        }));
+        expect(projections.at(-1)).toBe(before);
+        const approvalBefore = storage.getState().settings.voice.canApproveRequests;
+        await act(async () => storage.getState().applySettingsLocal(normalizeVoiceSettingsLocalDelta({ voice: {
+            ...storage.getState().settings.voice,
+            canApproveRequests: !approvalBefore,
+        } }, storage.getState().settings)));
+        expect(storage.getState().settings.voice.canApproveRequests).toBe(!approvalBefore);
+        expect(projections.at(-1)?.context).not.toBe(before.context);
+    });
+
     it('admits Home Brief me through the Action before mounting Inbox or opening the microphone', async () => {
         const speech = await installTransport();
         await selectService();
@@ -506,7 +565,9 @@ describe('mounted Voice Brief request', () => {
         const speech = await installTransport();
         await selectService();
         screen = await renderScreen(render());
+        await speech.waitForStart();
         const attemptId = getVoiceSessionAttemptId();
+        expect(attemptId).not.toBeNull();
         expect(executeVoiceBriefOperation('stop', { expectedAttemptId: 'previous-attempt' })).toEqual({ ok: false, errorCode: 'stale_voice_attempt' });
         await act(async () => {
             await lifecycle?.stop(VOICE_AGENT_GLOBAL_SESSION_ID);
