@@ -165,6 +165,24 @@ function createHarness(records: readonly Readonly<{
 }
 
 describe('ConnectedAccountConfigurationOwner', () => {
+    it('rejects discovered fields absent from the established Account schema before staging', async () => {
+        const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({
+            ...configuredMode('account'), kind: 'oauthAuthorizationCode', pkce: 'required',
+            callbackUrl: 'https://provider.example/callback',
+        });
+        const target = { kind: 'attempt' as const, attemptId: 'discovered-attempt', service, modeId: mode.id };
+        const record = { revision: 'revision-1', values: { endpoint: 'https://provider.example' },
+            secretRefs: {}, secretValues: { clientSecret: 'secret' } };
+        const { owner, replace } = createHarness([{ target, record }]);
+        const admission = await owner.admit({ intent: 'connect', service, mode, attemptId: target.attemptId, ...generation });
+        if (admission.status !== 'ready') throw new Error('Expected Account configuration admission');
+        await expect(owner.stageAccountConfiguration({ snapshot: admission.snapshot, replacement: {
+            values: { ...record.values, undeclaredAccount: 'account-1' }, secretValues: record.secretValues,
+            fields: [{ id: 'undeclaredAccount', title: 'Account', schema: { type: 'string' }, required: true, secret: false }],
+        } })).rejects.toMatchObject({ code: 'connected_account_configuration_invalid' });
+        expect(replace).not.toHaveBeenCalled();
+    });
+
     it('hides deferred fields only from initial display while preserving their validated values', async () => {
         const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({
             id: 'browser', kind: 'oauthAuthorizationCode', callbackUrl: 'https://provider.example/callback',
@@ -484,6 +502,13 @@ describe('ConnectedAccountConfigurationOwner', () => {
         await expect(admission.snapshot.getSecret('endpoint')).rejects.toMatchObject({
             code: 'connected_account_configuration_secret_field_invalid',
         });
+
+        harness.read.mockRejectedValueOnce(new Error('configuration transport offline'));
+        await expect(harness.owner.isCurrent(admission.snapshot)).rejects.toMatchObject({
+            code: 'connected_account_configuration_unavailable',
+        });
+        expect(harness.owner.currentnessSignal(admission.snapshot).aborted).toBe(false);
+        await expect(harness.owner.isCurrent(admission.snapshot)).resolves.toBe(true);
 
         harness.setGenerationCurrent(false);
         await expect(harness.owner.isCurrent(admission.snapshot)).resolves.toBe(true);

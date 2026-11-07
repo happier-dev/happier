@@ -32,6 +32,7 @@ import {
 
 vi.mock("axios", () => ({
     default: {
+        defaults: {},
         get: vi.fn(),
         patch: vi.fn(),
         post: vi.fn(),
@@ -77,6 +78,44 @@ function mockAxiosPostOnce(response: Readonly<{ status: number; data: unknown }>
 }
 
 describe("qualified Connected Account V4 API", () => {
+    it('attributes qualified-list reads through the existing request-purpose header', async () => {
+        vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { service, accounts: [] } });
+        await listQualifiedConnectedAccountsV4({ token: 'fixture', service });
+        expect(vi.mocked(axios.get).mock.calls[0]?.[1]?.headers).toMatchObject({
+            'X-Happier-Request-Purpose': 'connected-accounts:qualification',
+        });
+    });
+
+    it('attributes credential, configuration and quota reads without adding or skipping requests', async () => {
+        vi.mocked(axios.get).mockResolvedValue({ status: 404, data: {} });
+        const ref = { service, accountId: 'work' };
+        await readQualifiedConnectedAccountCredentialV4({ token: 'fixture', ref,
+            requestPurpose: 'connected-accounts:purpose-binding' });
+        await readQualifiedConnectedAccountConfigurationV4({ token: 'fixture', target: { kind: 'account', ref },
+            requestPurpose: 'connected-accounts:persistence' });
+        await readQualifiedConnectedAccountQuotaV4({ token: 'fixture', ref,
+            requestPurpose: 'connected-accounts:quota-qualification' });
+        expect(vi.mocked(axios.get).mock.calls.map(([, config]) => config?.headers?.['X-Happier-Request-Purpose']))
+            .toEqual(['connected-accounts:purpose-binding', 'connected-accounts:persistence', 'connected-accounts:quota-qualification']);
+    });
+
+    it('retains request-scoped usage authorization while attributing all usage reads', async () => {
+        const { readQualifiedProviderAccountUsageHistoryV4 } = await import('./qualifiedConnectedAccountApi');
+        vi.mocked(axios.get).mockResolvedValue({ status: 404, data: {} });
+        const recordId = buildProviderAccountUsageRecordId({ providerId: 'codex', accountSubjectId: 'account',
+            subjectKind: 'account', quotaScope: 'account' });
+        const transport = { token: 'fixture', requestPurpose: 'connected-accounts:quota-qualification' as const,
+            authorizeRequest: () => ({ Authorization: 'Bearer request-scoped-fixture', 'X-Existing-Authority': 'fixture' }) };
+        await resolveQualifiedProviderAccountUsageSourceV4({ ...transport, source: { ref: { service, accountId: 'work' }, bindingKind: 'account' } });
+        await readQualifiedProviderAccountUsageRecordV4({ ...transport, recordId });
+        await readQualifiedProviderAccountUsageHistoryV4({ ...transport, query: { recordId, history: { range: { startAtMs: 0, endAtMs: 1 }, pageSize: 1 } } });
+        expect(axios.get).toHaveBeenCalledTimes(3);
+        for (const [, config] of vi.mocked(axios.get).mock.calls) expect(config?.headers).toMatchObject({
+            Authorization: 'Bearer request-scoped-fixture', 'X-Existing-Authority': 'fixture',
+            'X-Happier-Request-Purpose': 'connected-accounts:quota-qualification',
+        });
+    });
+
     it.each(['accounts', 'groups', 'group', 'credential', 'configuration'] as const)(
         'classifies malformed %s responses without retaining their payload', async kind => {
             vi.mocked(axios.get).mockResolvedValue({ status: 200, data: { private: 'secret-payload' } });
@@ -93,6 +132,36 @@ describe("qualified Connected Account V4 API", () => {
         vi.mocked(axios.patch).mockReset();
         vi.mocked(axios.post).mockReset();
         vi.mocked(axios.delete).mockReset();
+    });
+
+    it('cancels provider usage HTTP without starting acknowledgement reconciliation', async () => {
+        const { ProviderAccountUsageSnapshotV1Schema } = await import('@happier-dev/protocol/connect/account-usage-primitives');
+        const recordKey = { providerId: 'codex', accountSubjectId: 'account', subjectKind: 'account' as const, quotaScope: 'account' as const };
+        const snapshot = ProviderAccountUsageSnapshotV1Schema.parse({ v: 1, recordId: buildProviderAccountUsageRecordId(recordKey), recordKey,
+            providerId: 'codex', accountSubject: { kind: 'providerSubject', id: 'account' }, observedAtMs: 1000, fetchedAtMs: 1000,
+            staleAfterMs: 300_000, source: 'runtimeSignal', confidence: 'confirmed', state: 'loaded_empty', meters: [] });
+        const controller = new AbortController();
+        const cancelled = new Error('quota loop stopped');
+        let release: () => void = () => {};
+        let requestAborted = false;
+        vi.mocked(axios.post).mockImplementationOnce(async (_url, _body, config) => {
+            await new Promise<void>((resolve, reject) => {
+                release = resolve;
+                config?.signal?.addEventListener?.('abort', () => { requestAborted = true; reject(cancelled); }, { once: true });
+            });
+            return { status: 200, data: { success: true, source: { status: 'linked' } } };
+        });
+        const pending = writeQualifiedProviderAccountUsageV4({ token: 'fixture', signal: controller.signal, write: {
+            source: { ref: { service, accountId: 'work' }, bindingKind: 'account' },
+            expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS', expectedConfigurationRevision: null,
+            recordId: snapshot.recordId, recordKey, status: 'ok', payloadMode: 'plain_json_v1', snapshot,
+        } }).catch(error => error);
+        controller.abort(cancelled);
+        try {
+            expect(requestAborted).toBe(true);
+            expect(await pending).toBe(cancelled);
+            expect(axios.get).not.toHaveBeenCalled();
+        } finally { release(); await pending; }
     });
 
     it.each(['plain', 'e2ee'] as const)('reconciles a lost usage write acknowledgement in %s mode without resending', async (accountMode) => {
@@ -118,6 +187,9 @@ describe("qualified Connected Account V4 API", () => {
             .resolves.toMatchObject({ success: true, source: { status: 'linked' } });
         expect(axios.post).toHaveBeenCalledTimes(1);
         expect(axios.get).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(axios.get).mock.calls[0]?.[1]?.headers).toMatchObject({
+            'X-Happier-Request-Purpose': 'connected-accounts:usage-persistence',
+        });
         expect(vi.mocked(axios.post).mock.calls[0]?.[1]).not.toHaveProperty('material');
         vi.mocked(axios.get).mockRejectedValue(new Error('reconciliation read unavailable'));
         await expect(writeQualifiedProviderAccountUsageV4({ token: 'token', write, ...(accountMode === 'e2ee' ? { material } : {}) }))
@@ -510,11 +582,13 @@ describe("qualified Connected Account V4 API", () => {
             content: { t: "plain" as const, v: { token: "opaque" } },
             metadata: { scopes: [] },
         };
-        for (const error of [
-            "connect_reconnect_provider_identity_mismatch",
-            "connect_authentication_mode_mismatch",
+        for (const body of [
+            { error: "connect_reconnect_provider_identity_mismatch" },
+            { error: "connect_authentication_mode_mismatch" },
+            { error: 'connect_credential_mutation_superseded', reason: 'credential_revision_mismatch',
+                credentialRevision: null, configurationRevision: null },
         ] as const) {
-            mockAxiosPostOnce({ status: 409, data: { error } });
+            mockAxiosPostOnce({ status: 409, data: body });
             await expect(mutateQualifiedConnectedAccountCredentialV4({
                 token: "token",
                 mutation,
@@ -525,7 +599,8 @@ describe("qualified Connected Account V4 API", () => {
                 // keep the Axios-like shape so an unmapped cause still lands on
                 // the shared 409 path instead of escaping as an unknown error.
                 response: { status: 409 },
-                code: error,
+                code: body.error,
+                ...('reason' in body ? { reason: body.reason } : {}),
             } satisfies Partial<QualifiedConnectedAccountCredentialConflictError>);
         }
 

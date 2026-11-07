@@ -1,5 +1,5 @@
 import { QualifiedConnectedAccountCredentialMetadataV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4, type QualifiedConnectedAccountCredentialHealthPatchV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountConfigurationSnapshotV4Schema, type QualifiedConnectedAccountCredentialSnapshotV4, type QualifiedConnectedAccountCredentialHealthPatchV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountCredentialPayloadV1Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { sameQualifiedConnectedAccountRef, type QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountPersistence';
@@ -36,6 +36,7 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
     readConfiguration(account: QualifiedConnectedAccountRef): Promise<ReturnType<typeof QualifiedConnectedAccountConfigurationSnapshotV4Schema.parse> | null>;
     readHttpStatus(error: unknown): number | null | undefined;
     readFailureCode(error: unknown): string | null;
+    readFailureReason?(error: unknown): unknown;
     onSettled?(input: SettledAccount): Promise<void>;
     onPublicationFailure?(): void;
     onUnknown?(input: Readonly<{ account: QualifiedConnectedAccountRef; reconciliation: boolean;
@@ -85,8 +86,45 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
             values: Object.fromEntries(Object.entries(request.stagedCredentials).filter(([key]) => !secretKeys.has(key))),
             ...(references.length ? { secretRefs: Object.fromEntries(references) } : {}),
         });
+        const reconcileCommitted = async (accountMode: AccountMode): Promise<SettlementResult | null> => {
+            const committed = await params.readCredential(account);
+            if (!committed) return null;
+            if (committed.revisionSemantics !== 'revisioned') throw new Error('connected_account_settlement_outcome_unknown');
+            if (!sameQualifiedConnectedAccountRef(committed.ref, account)
+                || committed.authenticationModeId !== request.authenticationModeId) {
+                return { status: 'conflict', code: 'connected_account_settlement_conflict' };
+            }
+            if (committed.credentialRevision === request.expectedCredentialRevision) return null;
+            const payload = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: account,
+                authenticationModeId: committed.authenticationModeId,
+                plaintext: await params.open('credential', accountMode, committed.content), metadata: committed.metadata });
+            const committedMetadata = { ...committed.metadata };
+            if (metadata.authenticationProvenance === undefined) delete committedMetadata.authenticationProvenance;
+            if (!pluginJsonValuesEqual(payload, expectedPayload) || !pluginJsonValuesEqual(committedMetadata, metadata)
+                || (stagedConfiguration === undefined && committed.configurationRevision !== request.expectedCredentialConfigurationRevision)) {
+                return { status: 'conflict', code: 'connected_account_settlement_conflict' };
+            }
+            if (stagedConfiguration !== undefined) {
+                const configuration = await params.readConfiguration(account);
+                if (!configuration || configuration.credentialRevision !== committed.credentialRevision
+                    || configuration.configurationRevision !== committed.configurationRevision) throw new Error('connected_account_settlement_outcome_unknown');
+                let content: unknown;
+                try { content = params.parseConfigurationContent(await params.open('configuration', accountMode,
+                    configuration.configurationContent), configuration.configurationRevision); }
+                catch { throw new Error('connected_account_settlement_outcome_unknown'); }
+                if (!pluginJsonValuesEqual(content, stagedConfiguration)) throw new Error('connected_account_settlement_outcome_unknown');
+            }
+            failedStage = 'credential_health';
+            return await publish({ account, accountMode, credentialRevision: committed.credentialRevision,
+                configurationRevision: committed.configurationRevision }, request);
+        };
         try {
             const accountMode = await params.resolveAccountMode('fresh-authority');
+            if (reconciliation) {
+                failedStage = 'committed_payload';
+                const committed = await reconcileCommitted(accountMode);
+                if (committed) return committed;
+            }
             if (request.intent === 'reconnect' && resources.length) {
                 failedStage = 'held_credential_read';
                 const held = await params.readCredential(account);
@@ -171,18 +209,21 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
             return await publish({ account, accountMode, credentialRevision: acknowledgement.credentialRevision,
                 configurationRevision: acknowledgement.configurationRevision }, request);
         } catch (error) {
-            switch (params.readFailureCode(error)) {
-                case 'revision_conflict':
-                    return { status: 'conflict', code: 'connected_account_settlement_conflict' };
-                case 'connect_reconnect_provider_identity_mismatch':
-                    return { status: 'conflict', code: 'connected_account_reconnect_provider_identity_mismatch' };
-                case 'connect_authentication_mode_mismatch':
-                    return { status: 'conflict', code: 'connected_account_authentication_mode_mismatch' };
+            const code = params.readFailureCode(error);
+            if (code === 'revision_conflict') return { status: 'conflict', code: 'connected_account_settlement_conflict' };
+            const reason = params.readFailureReason?.(error);
+            const refusal = QualifiedConnectedAccountCredentialErrorV4Schema.safeParse({ error: code,
+                ...(code === 'connect_credential_mutation_superseded' ? {
+                    reason: reason ?? 'concurrent_mutation', credentialRevision: null, configurationRevision: null,
+                } : code === 'managed_resources_review_required' ? { resources: [] } : {}),
+            });
+            if (refusal.success || params.readHttpStatus(error) === 409) {
+                return { status: 'conflict', code: refusal.success
+                    ? refusal.data.error === 'connect_credential_mutation_superseded' && reason != null
+                        ? `${refusal.data.error}.${refusal.data.reason}` : refusal.data.error
+                    : 'connected_account_settlement_conflict' };
             }
-            const reconciliationConflict = params.readHttpStatus(error) === 409 && reconciliation;
-            if (params.readHttpStatus(error) === 409 && !reconciliationConflict) {
-                return { status: 'conflict', code: 'connected_account_settlement_conflict' };
-            }
+            if (failedStage === 'committed_payload') throw error;
             if (failedStage === 'held_credential_read') return { status: 'unavailable', code: 'connected_account_credential_persistence_unavailable' };
             if (failedStage === 'credential_health') {
                 params.onUnknown?.({ account, reconciliation, failedStage, recoveryStage: 'health_update_not_replayed', error, recoveryError: error });
@@ -192,40 +233,12 @@ export function createConnectedAccountCredentialSettlement(params: Readonly<{
                 params.onUnknown?.({ account, reconciliation, failedStage, recoveryStage: 'resource_update_not_replayed', error, recoveryError: error });
                 throw error;
             }
-            let recoveryStage = 'account_mode';
             try {
-                const accountMode = await params.resolveAccountMode();
-                recoveryStage = 'credential_read';
-                const committed = await params.readCredential(account);
-                if (!committed || !sameQualifiedConnectedAccountRef(committed.ref, account)
-                    || committed.authenticationModeId !== request.authenticationModeId || committed.revisionSemantics !== 'revisioned') throw error;
-                recoveryStage = 'credential_verification';
-                let payload: ReturnType<typeof parseQualifiedConnectedAccountCredentialPlaintextV1>;
-                try { payload = parseQualifiedConnectedAccountCredentialPlaintextV1({ ref: account,
-                    authenticationModeId: committed.authenticationModeId,
-                    plaintext: await params.open('credential', accountMode, committed.content), metadata: committed.metadata }); }
-                catch { throw error; }
-                const committedMetadata = { ...committed.metadata };
-                if (metadata.authenticationProvenance === undefined) delete committedMetadata.authenticationProvenance;
-                if (!pluginJsonValuesEqual(payload, expectedPayload) || !pluginJsonValuesEqual(committedMetadata, metadata)
-                    || (stagedConfiguration === undefined && committed.configurationRevision !== request.expectedCredentialConfigurationRevision)) throw error;
-                if (stagedConfiguration !== undefined) {
-                    recoveryStage = 'configuration_read';
-                    const configuration = await params.readConfiguration(account);
-                    if (!configuration || configuration.credentialRevision !== committed.credentialRevision
-                        || configuration.configurationRevision !== committed.configurationRevision) throw error;
-                    recoveryStage = 'configuration_verification';
-                    let content: unknown;
-                    try { content = params.parseConfigurationContent(await params.open('configuration', accountMode,
-                        configuration.configurationContent), configuration.configurationRevision); }
-                    catch { throw error; }
-                    if (!pluginJsonValuesEqual(content, stagedConfiguration)) throw error;
-                }
-                return await publish({ account, accountMode, credentialRevision: committed.credentialRevision,
-                    configurationRevision: committed.configurationRevision }, request);
+                const committed = await reconcileCommitted(await params.resolveAccountMode());
+                if (committed) return committed;
+                throw error;
             } catch (recoveryError) {
-                if (reconciliationConflict) return { status: 'conflict', code: 'connected_account_settlement_conflict' };
-                params.onUnknown?.({ account, reconciliation, failedStage, recoveryStage, error, recoveryError });
+                params.onUnknown?.({ account, reconciliation, failedStage, recoveryStage: 'committed_payload', error, recoveryError });
                 throw error;
             }
         }

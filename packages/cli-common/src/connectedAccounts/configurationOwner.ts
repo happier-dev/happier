@@ -16,6 +16,7 @@ import type {
 } from './authenticationAttemptOwner.js';
 import { cloneStrictPluginJsonValue } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { PluginConnectedAccountAuthenticationModeV2Schema, type PluginConnectedAccountConfigurationFieldV2 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 
 type MaybePromise<T> = T | Promise<T>;
 type RuntimeIdentity = Readonly<{
@@ -329,6 +330,35 @@ function modeConfiguration(
     return 'configuration' in mode ? mode.configuration : undefined;
 }
 
+/** Provider-discovered Account choices use the same declaration and value validator. */
+export function applyConnectedAccountConfigurationFields(
+    mode: PluginConnectedAccountAuthenticationModeV2,
+    fields: readonly PluginConnectedAccountConfigurationFieldV2[],
+): PluginConnectedAccountAuthenticationModeV2 {
+    const configuration = modeConfiguration(mode);
+    if (mode.kind !== 'oauthAuthorizationCode' || configuration?.scope !== 'account') {
+        throw invalid('Provider-discovered configuration requires Account-scoped OAuth');
+    }
+    const replacements = new Map(fields.map(field => [field.id, field]));
+    if (fields.some(field => !configuration.fields.some(existing => existing.id === field.id))) {
+        throw invalid('Provider-discovered configuration must replace declared fields');
+    }
+    const descriptor = {
+        ...mode,
+        configuration: { ...configuration, fields: [
+            ...configuration.fields.map(field => replacements.get(field.id) ?? field),
+        ] },
+        ...(mode.postAuthenticationFieldIds === undefined ? {} : {
+            postAuthenticationFieldIds: mode.postAuthenticationFieldIds.filter(id => !replacements.has(id)),
+        }),
+    };
+    const parsed = PluginConnectedAccountAuthenticationModeV2Schema.safeParse(descriptor);
+    if (!parsed.success || replacements.size !== fields.length) {
+        throw invalid('Provider-discovered configuration fields are invalid');
+    }
+    return Object.freeze(parsed.data);
+}
+
 function cloneOwnRecord<T>(
     value: Readonly<Record<string, unknown>>,
     clone: (entry: unknown, key: string) => T,
@@ -448,6 +478,7 @@ export type ConnectedAccountConfigurationOwner = Readonly<{
         replacement: Readonly<{
             values: Readonly<Record<string, unknown>>;
             secretValues?: Readonly<Record<string, string>>;
+            fields?: readonly PluginConnectedAccountConfigurationFieldV2[];
         }>;
     }>): Promise<Omit<ConnectedAccountConfigurationRecord, 'revision'>>;
     inspect(input: Readonly<{
@@ -791,10 +822,11 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             replacement: Readonly<{
                 values: Readonly<Record<string, unknown>>;
                 secretValues?: Readonly<Record<string, string>>;
+                fields?: readonly PluginConnectedAccountConfigurationFieldV2[];
             }>;
         }>): Promise<Omit<ConnectedAccountConfigurationRecord, 'revision'>> {
             const metadata = snapshotMetadata.get(input.snapshot);
-            if (!metadata || metadata.runtimeIdentity.sourceCustody.kind !== 'host'
+            if (!metadata
                 || metadata.target.kind === 'service'
                 || modeConfiguration(metadata.mode)?.scope !== 'account') {
                 throw invalid('Built-in discovery requires an admitted Account configuration');
@@ -809,7 +841,9 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
             };
             await assertCurrent();
             const normalized = await normalize({
-                target: metadata.target, mode: metadata.mode, record: null,
+                target: metadata.target, mode: input.replacement.fields
+                    ? applyConnectedAccountConfigurationFields(metadata.mode, input.replacement.fields)
+                    : metadata.mode, record: null,
                 replacement: {
                     values: input.replacement.values,
                     secretRefs: Object.freeze({}),
@@ -1238,8 +1272,10 @@ export function createConnectedAccountConfigurationOwner(params: Readonly<{
                 if (!current) revokeCurrentnessFence(metadata.target, metadata.revision);
                 return current;
             } catch {
-                revokeCurrentnessFence(metadata.target, metadata.revision);
-                return false;
+                throw new ConnectedAccountConfigurationError(
+                    'connected_account_configuration_unavailable',
+                    'Configuration persistence is unavailable',
+                );
             }
         },
 

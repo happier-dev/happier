@@ -1,6 +1,6 @@
 import * as z from 'zod/mini';
 import { buildCurrentAccountStoredContentCompatibilityHttpHeaders } from '@/api/clientCompatibility/cliClientCompatibility';
-import axios from "axios";
+import axios from '@/api/client/credentialAxios';
 import { classifyActionTransportFailure } from './classifyServerEndpointError';
 import { classifyHomeDomainHttpMutationFailureV1 } from '@happier-dev/protocol/actions/homeDomainHttpBinding';
 import { QualifiedProviderAccountUsageHistoryRequestV4Schema, QualifiedProviderAccountUsageHistoryResponseV4Schema, openProviderAccountUsageRecordV4 } from '@happier-dev/protocol/connect/providerAccountUsageHistory';
@@ -10,10 +10,11 @@ import { mergeProviderAccountSubscription } from '@happier-dev/protocol/connect/
 import type { AccountScopedCryptoMaterial } from '@happier-dev/protocol/crypto/accountScopedCipher';
 import { QualifiedConnectedAccountCredentialDeleteResponseV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol';
-import { BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID } from '@happier-dev/protocol/connect/generatedBuiltInLegacyConnectedAccountCompatibility';
+import type { QualifiedConnectedAccountLegacyPeerClass } from '@happier-dev/protocol/connect/connected-service-bindings';
 import { QualifiedConnectedAccountConfigurationPatchV4Schema, QualifiedConnectedAccountCredentialDeleteV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema, QualifiedConnectedAccountCredentialErrorV4Schema, QualifiedConnectedAccountCredentialMutationSuccessV4Schema, QualifiedConnectedAccountCredentialMutationV4Schema, QualifiedConnectedAccountGroupActiveAccountV4Schema, QualifiedConnectedAccountGroupListResponseV4Schema, QualifiedConnectedAccountGroupMemberMutationV4Schema, QualifiedConnectedAccountGroupResponseV4Schema, QualifiedConnectedAccountGroupRuntimeStatePatchV4Schema, QualifiedConnectedAccountQuotaResponseV4Schema, QualifiedConnectedAccountRefreshLeaseResponseV4Schema, QualifiedConnectedAccountRefreshLeaseV4Schema, QualifiedConnectedAccountSuccessV4Schema, QualifiedConnectedServiceUsageSourceResolveV4Schema, QualifiedConnectedServiceUsageSourceResolutionV4Schema, QualifiedProviderAccountUsageRecordQueryV4Schema, QualifiedProviderAccountUsageReadErrorV4Schema, QualifiedProviderAccountUsageRecordResponseV4Schema, QualifiedProviderAccountUsageWriteSuccessV4Schema, QualifiedProviderAccountUsageWriteV4Schema, sameQualifiedConnectedAccountGroupRef } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import { QualifiedConnectedAccountConfigurationSnapshotV4Schema, QualifiedConnectedAccountConfigurationTargetV4Schema, QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountGroupRefSchema, QualifiedConnectedAccountListResponseV4Schema, QualifiedConnectedAccountServiceRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { QualifiedConnectedAccountRefSchema } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
+import { QualifiedConnectedAccountServiceListV4Schema, QualifiedConnectedAccountMultiServiceListResponseV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
 import { encodeQualifiedConnectedAccountV4StructuredQueryValue } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4QueryCodec';
 import type { BuiltInLegacyConnectedAccountOperation, BuiltInLegacyConnectedServiceId, QualifiedConnectedAccountConfigurationTargetV4, QualifiedConnectedAccountGroupRef, QualifiedConnectedAccountRef, QualifiedConnectedAccountServiceRef, QualifiedConnectedServiceUsageSourceV4, ProviderAccountUsageRecordId } from '@happier-dev/protocol';
 
@@ -27,19 +28,21 @@ import type {
 import { resolveConnectedServicesServerApiTimeoutMs } from "./connectedServicesServerApiTimeout";
 import { resolveServerHttpBaseUrl } from "./serverHttpBaseUrl";
 
-function requestHeaders(token: string): Readonly<Record<string, string>> {
+function requestHeaders(token: string, requestPurpose?: QualifiedConnectedAccountReadRequestPurpose): Readonly<Record<string, string>> {
     return {
         ...buildCurrentAccountStoredContentCompatibilityHttpHeaders(),
         Authorization: `Bearer ${token}`,
+        ...(requestPurpose ? { 'X-Happier-Request-Purpose': requestPurpose } : {}),
     };
 }
 
 export type QualifiedProviderAccountUsageReadAuthorization = (request: Readonly<{ method: 'GET'; path: string }>) => Readonly<Record<string, string>> | null;
-function providerUsageReadHeaders(params: Readonly<{ token: string; authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization }>, path: string) {
-    if (!params.authorizeRequest) return requestHeaders(params.token);
+function providerUsageReadHeaders(params: Readonly<{ token: string; requestPurpose?: QualifiedConnectedAccountReadRequestPurpose; authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization }>, path: string) {
+    const requestPurpose = params.requestPurpose ?? 'connected-accounts:quota-qualification';
+    if (!params.authorizeRequest) return requestHeaders(params.token, requestPurpose);
     const headers = params.authorizeRequest({ method: 'GET', path });
     if (!headers) throw new Error('provider_account_usage_request_authority_unavailable');
-    return headers;
+    return { ...headers, 'X-Happier-Request-Purpose': requestPurpose };
 }
 
 export type QualifiedConnectedAccountCompatibilityErrorCode =
@@ -86,12 +89,14 @@ export class QualifiedConnectedAccountCredentialConflictError extends HttpStatus
     readonly status = 409;
     readonly code: QualifiedConnectedAccountCredentialConflictCode;
     readonly resources: readonly ManagedResourceDependencyV1[] | undefined;
+    readonly reason?: Extract<ReturnType<typeof QualifiedConnectedAccountCredentialErrorV4Schema.parse>, { error: 'connect_credential_mutation_superseded' }>['reason'];
 
-    constructor(code: QualifiedConnectedAccountCredentialConflictCode, resources?: readonly ManagedResourceDependencyV1[]) {
+    constructor(code: QualifiedConnectedAccountCredentialConflictCode, resources?: readonly ManagedResourceDependencyV1[], reason?: QualifiedConnectedAccountCredentialConflictError['reason']) {
         super(409, code);
         this.name = "QualifiedConnectedAccountCredentialConflictError";
         this.code = code;
         this.resources = resources;
+        this.reason = reason;
     }
 }
 
@@ -103,6 +108,7 @@ function throwQualifiedConnectedAccountCredentialConflict(data: unknown): never 
             ? parsed.data.error
             : "connected_account_credential_conflict_response_invalid",
         parsed.success && parsed.data.error === 'managed_resources_review_required' ? parsed.data.resources : undefined,
+        parsed.success && parsed.data.error === 'connect_credential_mutation_superseded' ? parsed.data.reason : undefined,
     );
 }
 
@@ -235,10 +241,6 @@ function isExactLegacyUnfencedServer(
         && serverContract.socket.connected === true;
 }
 
-export type QualifiedConnectedAccountLegacyPeerClass =
-    | "exact_v0_2_1"
-    | "revisioned_v2_v3";
-
 export type QualifiedConnectedAccountPeerClass =
     | "advertised_v4"
     | QualifiedConnectedAccountLegacyPeerClass
@@ -260,25 +262,6 @@ export function resolveQualifiedConnectedAccountPeerClass(
     // Retained 0.2 credential content is opened by the current V4 reader.
     // Old-server wire evidence does not authorize a scalar transport.
     return "indeterminate";
-}
-
-export function isBuiltInLegacyConnectedAccountPeerOperationSupported(
-    params: Readonly<{
-        serviceId: string;
-        peerClass: QualifiedConnectedAccountLegacyPeerClass;
-        operation: BuiltInLegacyConnectedAccountOperation;
-    }>,
-): boolean {
-    const compatibility =
-        BUNDLED_LEGACY_CONNECTED_ACCOUNT_COMPATIBILITY_BY_SERVICE_ID[
-            params.serviceId as BuiltInLegacyConnectedServiceId
-        ];
-    if (!compatibility) return false;
-    const operations: readonly BuiltInLegacyConnectedAccountOperation[] =
-        params.peerClass === "exact_v0_2_1"
-            ? compatibility.peerOperations.exactV0_2_1
-            : compatibility.peerOperations.revisionedV2V3;
-    return operations.includes(params.operation);
 }
 
 export type QualifiedConnectedAccountPeerOperationTransport =
@@ -392,23 +375,56 @@ export async function executeQualifiedConnectedAccountNegotiatedOperation<
     }
 }
 
-export async function listQualifiedConnectedAccountsV4(params: Readonly<{
+type QualifiedConnectedAccountReadRequestPurpose =
+    | 'connected-accounts:qualification'
+    | 'connected-accounts:daemon-coordinator'
+    | 'connected-accounts:requester-coordinator'
+    | 'connected-accounts:requester-qualification'
+    | 'connected-accounts:purpose-binding'
+    | 'connected-accounts:startup-hydration'
+    | 'connected-accounts:quota-qualification'
+    | 'connected-accounts:usage-persistence'
+    | 'connected-accounts:request-auth-replacement'
+    | 'connected-accounts:auth-group'
+    | 'connected-accounts:team-reconciliation'
+    | 'connected-accounts:spawn'
+    | 'connected-accounts:persistence';
+
+type QualifiedConnectedAccountListRequest = Readonly<{
     token: string;
-    service: QualifiedConnectedAccountServiceRef;
     signal?: AbortSignal;
-}>) {
-    const service =
-        QualifiedConnectedAccountServiceRefSchema.parse(params.service);
-    const query = new URLSearchParams({
-        service: encodeQualifiedConnectedAccountV4StructuredQueryValue(
-            QualifiedConnectedAccountServiceRefSchema,
-            service,
-        ),
+    requestPurpose?: QualifiedConnectedAccountReadRequestPurpose;
+}>;
+
+export function listQualifiedConnectedAccountsV4(params: QualifiedConnectedAccountListRequest & Readonly<{
+    services: readonly QualifiedConnectedAccountServiceRef[];
+    service?: never;
+}>): Promise<ReturnType<typeof QualifiedConnectedAccountMultiServiceListResponseV4Schema.parse>>;
+export function listQualifiedConnectedAccountsV4(params: QualifiedConnectedAccountListRequest & Readonly<{
+    service: QualifiedConnectedAccountServiceRef;
+    services?: never;
+}>): Promise<ReturnType<typeof QualifiedConnectedAccountListResponseV4Schema.parse>>;
+export async function listQualifiedConnectedAccountsV4(params: QualifiedConnectedAccountListRequest & (
+    Readonly<{ service: QualifiedConnectedAccountServiceRef; services?: never }>
+    | Readonly<{ services: readonly QualifiedConnectedAccountServiceRef[]; service?: never }>
+)) {
+    const services = params.services === undefined ? undefined : QualifiedConnectedAccountServiceListV4Schema.parse(params.services);
+    if (services?.length === 0) return { services, accounts: [] };
+    // A scoped coordinator demand keeps the exact single-service wire contract.
+    if (services?.length === 1) {
+        const result = await listQualifiedConnectedAccountsV4({ token: params.token, service: services[0],
+            signal: params.signal, requestPurpose: params.requestPurpose });
+        return { services: [result.service], accounts: result.accounts };
+    }
+    const query = new URLSearchParams(services ? {
+        services: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceListV4Schema, services),
+    } : {
+        service: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedConnectedAccountServiceRefSchema, params.service),
     });
     const response = await axios.get(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/accounts?${query.toString()}`,
         {
-            headers: requestHeaders(params.token),
+            headers: requestHeaders(params.token, params.requestPurpose ?? 'connected-accounts:qualification'),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             ...(params.signal ? { signal: params.signal } : {}),
         },
@@ -418,7 +434,9 @@ export async function listQualifiedConnectedAccountsV4(params: Readonly<{
             `Qualified Connected Account list returned ${response.status}`,
         );
     }
-    return parseQualifiedConnectedAccountReadResponse(QualifiedConnectedAccountListResponseV4Schema, response.data);
+    return services
+        ? parseQualifiedConnectedAccountReadResponse(QualifiedConnectedAccountMultiServiceListResponseV4Schema, response.data)
+        : parseQualifiedConnectedAccountReadResponse(QualifiedConnectedAccountListResponseV4Schema, response.data);
 }
 
 export async function listQualifiedConnectedAccountGroupsV4(
@@ -592,6 +610,7 @@ export async function updateQualifiedConnectedAccountGroupMemberV4(
 export async function mutateQualifiedConnectedAccountCredentialV4(
     params: Readonly<{
         token: string;
+        signal?: AbortSignal;
         mutation: unknown;
     }>,
 ) {
@@ -603,6 +622,7 @@ export async function mutateQualifiedConnectedAccountCredentialV4(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/credential`,
         mutation,
         {
+            ...(params.signal ? { signal: params.signal } : {}),
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) => status === 200 || status === 409,
@@ -625,6 +645,7 @@ export async function readQualifiedConnectedAccountCredentialV4(
     params: Readonly<{
         token: string;
         ref: QualifiedConnectedAccountRef;
+        requestPurpose?: QualifiedConnectedAccountReadRequestPurpose;
         signal?: AbortSignal;
     }>,
 ) {
@@ -638,7 +659,7 @@ export async function readQualifiedConnectedAccountCredentialV4(
     const response = await axios.get(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/credential?${query.toString()}`,
         {
-            headers: requestHeaders(params.token),
+            headers: requestHeaders(params.token, params.requestPurpose ?? 'connected-accounts:qualification'),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) => status === 200 || status === 404,
             ...(params.signal ? { signal: params.signal } : {}),
@@ -659,6 +680,7 @@ export async function readQualifiedConnectedAccountConfigurationV4(
     params: Readonly<{
         token: string;
         target: QualifiedConnectedAccountConfigurationTargetV4;
+        requestPurpose?: QualifiedConnectedAccountReadRequestPurpose;
         signal?: AbortSignal;
     }>,
 ) {
@@ -675,7 +697,7 @@ export async function readQualifiedConnectedAccountConfigurationV4(
     const response = await axios.get(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/configuration?${query.toString()}`,
         {
-            headers: requestHeaders(params.token),
+            headers: requestHeaders(params.token, params.requestPurpose ?? 'connected-accounts:qualification'),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) => status === 200 || status === 404,
             ...(params.signal ? { signal: params.signal } : {}),
@@ -723,6 +745,7 @@ export async function mutateQualifiedConnectedAccountConfigurationV4(
 export async function mutateQualifiedConnectedAccountCredentialHealthV4(
     params: Readonly<{
         token: string;
+        signal?: AbortSignal;
         patch: unknown;
     }>,
 ) {
@@ -734,6 +757,7 @@ export async function mutateQualifiedConnectedAccountCredentialHealthV4(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/credential/health`,
         patch,
         {
+            ...(params.signal ? { signal: params.signal } : {}),
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
         },
@@ -806,6 +830,7 @@ export async function deleteQualifiedConnectedAccountCredentialV4(
 export async function acquireQualifiedConnectedAccountRefreshLeaseV4(
     params: Readonly<{
         token: string;
+        signal?: AbortSignal;
         lease: unknown;
     }>,
 ) {
@@ -815,6 +840,7 @@ export async function acquireQualifiedConnectedAccountRefreshLeaseV4(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/credential/refresh-lease`,
         lease,
         {
+            ...(params.signal ? { signal: params.signal } : {}),
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
         },
@@ -842,6 +868,7 @@ export async function readQualifiedConnectedAccountQuotaV4(
     params: Readonly<{
         token: string;
         ref: QualifiedConnectedAccountRef;
+        requestPurpose?: QualifiedConnectedAccountReadRequestPurpose;
         signal?: AbortSignal;
     }>,
 ) {
@@ -849,7 +876,7 @@ export async function readQualifiedConnectedAccountQuotaV4(
     const response = await axios.get(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/quotas?${qualifiedRefQuery(ref)}`,
         {
-            headers: requestHeaders(params.token),
+            headers: requestHeaders(params.token, params.requestPurpose ?? 'connected-accounts:quota-qualification'),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
             validateStatus: (status) =>
                 status === 200 || status === 404 || status === 409,
@@ -927,6 +954,7 @@ export async function writeQualifiedProviderAccountUsageV4(
     params: Readonly<{
         token: string;
         write: unknown;
+        signal?: AbortSignal;
         /** Local opening material only; never part of the HTTP write. */
         material?: AccountScopedCryptoMaterial;
     }>,
@@ -934,14 +962,17 @@ export async function writeQualifiedProviderAccountUsageV4(
     const write = QualifiedProviderAccountUsageWriteV4Schema.parse(
         params.write,
     );
+    params.signal?.throwIfAborted();
     const response = await axios.post(
         `${resolveServerHttpBaseUrl()}/v4/connect/qualified/provider-account-usage`,
         write,
         {
             headers: requestHeaders(params.token),
             timeout: resolveConnectedServicesServerApiTimeoutMs(),
+            ...(params.signal ? { signal: params.signal } : {}),
         },
     ).catch(async (error: unknown) => {
+        params.signal?.throwIfAborted();
         const response = error && typeof error === 'object' && 'response' in error ? error.response : null;
         const data = response && typeof response === 'object' && 'data' in response ? response.data : null;
         const conflictExhausted = readHttpStatus(error) === 503
@@ -953,7 +984,12 @@ export async function writeQualifiedProviderAccountUsageV4(
         // All daemon producers share this writer. Re-read after confirmed
         // rollback exhaustion or a lost acknowledgement, under the same Home.
         // A failed reconciliation must preserve the original write failure.
-        const record = await readQualifiedProviderAccountUsageRecordV4({ token: params.token, recordId: write.recordId }).catch(() => null);
+        const record = await readQualifiedProviderAccountUsageRecordV4({ token: params.token, recordId: write.recordId,
+            requestPurpose: 'connected-accounts:usage-persistence', signal: params.signal }).catch(error => {
+                params.signal?.throwIfAborted();
+                return null;
+            });
+        params.signal?.throwIfAborted();
         if (!record || !record.sources.some(source => JSON.stringify(source) === JSON.stringify(write.source))) throw error;
         const snapshot = write.snapshot ?? (write.sealedPayload && params.material
             ? openSealedProviderAccountUsageSnapshot({ material: params.material, sealed: write.sealedPayload }) : null);
@@ -979,6 +1015,7 @@ export async function resolveQualifiedProviderAccountUsageSourceV4(
     params: Readonly<{
         token: string;
         source: QualifiedConnectedServiceUsageSourceV4;
+        requestPurpose?: QualifiedConnectedAccountReadRequestPurpose;
         authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization;
         signal?: AbortSignal;
     }>,
@@ -1016,6 +1053,7 @@ export async function readQualifiedProviderAccountUsageRecordV4(
     params: Readonly<{
         token: string;
         recordId: ProviderAccountUsageRecordId;
+        requestPurpose?: QualifiedConnectedAccountReadRequestPurpose;
         authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization;
         signal?: AbortSignal;
     }>,
@@ -1048,7 +1086,7 @@ export async function readQualifiedProviderAccountUsageRecordV4(
     );
 }
 
-export async function readQualifiedProviderAccountUsageHistoryV4(params: Readonly<{ token: string; query: ReturnType<typeof QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>; signal?: AbortSignal; authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization }>) {
+export async function readQualifiedProviderAccountUsageHistoryV4(params: Readonly<{ token: string; query: ReturnType<typeof QualifiedProviderAccountUsageHistoryRequestV4Schema.parse>; signal?: AbortSignal; requestPurpose?: QualifiedConnectedAccountReadRequestPurpose; authorizeRequest?: QualifiedProviderAccountUsageReadAuthorization }>) {
     const query = QualifiedProviderAccountUsageHistoryRequestV4Schema.parse(params.query);
     const path = `/v4/connect/qualified/provider-account-usage/history?${new URLSearchParams({ query: encodeQualifiedConnectedAccountV4StructuredQueryValue(QualifiedProviderAccountUsageHistoryRequestV4Schema, query) }).toString()}`;
     const response = await axios.get(`${resolveServerHttpBaseUrl()}${path}`, { headers: providerUsageReadHeaders(params, path), timeout: resolveConnectedServicesServerApiTimeoutMs(), validateStatus: status => status === 200 || status === 404 || status === 409, ...(params.signal ? { signal: params.signal } : {}) });

@@ -1,5 +1,5 @@
 import { HappyError } from '@/utils/errors/errors';
-import { QualifiedConnectedAccountCredentialErrorV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
+import { QualifiedConnectedAccountCredentialErrorV4Schema, type QualifiedConnectedAccountCredentialMutationSupersededV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 import type { ManagedResourceDependencyV1 } from '@happier-dev/protocol/machines/managed/managedDependencyV1';
 
 export type ConnectedServiceApiErrorPayload = Readonly<{
@@ -10,7 +10,7 @@ export type ConnectedServiceApiErrorPayload = Readonly<{
     resetAtMs?: number;
     canTryAgain?: boolean;
     credentialRevision?: string | null;
-    reason?: 'revision_mismatch' | 'refresh_lease_lost';
+    reason?: 'revision_mismatch' | ReturnType<typeof QualifiedConnectedAccountCredentialMutationSupersededV4Schema.parse>['reason'];
     resources?: ManagedResourceDependencyV1[];
 }>;
 
@@ -19,7 +19,7 @@ export class ConnectedServiceApiError extends HappyError {
     readonly runtimeStateRevision?: number | null;
     readonly resetAtMs?: number;
     readonly credentialRevision?: string | null;
-    readonly reason?: 'revision_mismatch' | 'refresh_lease_lost';
+    readonly reason?: ConnectedServiceApiErrorPayload['reason'];
     readonly resources?: ManagedResourceDependencyV1[];
 
     constructor(payload: ConnectedServiceApiErrorPayload) {
@@ -73,7 +73,8 @@ export function createConnectedServiceApiError(
         credentialRevision: typeof record.credentialRevision === 'string' || record.credentialRevision === null
             ? record.credentialRevision
             : undefined,
-        reason: record.reason === 'revision_mismatch' || record.reason === 'refresh_lease_lost'
+        reason: credentialError.success && credentialError.data.error === 'connect_credential_mutation_superseded'
+            ? credentialError.data.reason : record.reason === 'revision_mismatch' || record.reason === 'refresh_lease_lost'
             ? record.reason
             : undefined,
     });

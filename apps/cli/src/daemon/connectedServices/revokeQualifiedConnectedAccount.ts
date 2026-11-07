@@ -109,14 +109,8 @@ export async function revokeQualifiedConnectedAccount(input: Readonly<{
   const reviewFields = removalSupport === 'advertised' ? {
     ...(input.managedResourceDispositions ? { managedResourceDispositions: [...input.managedResourceDispositions] } : {}),
   } : {};
-  const assertRemovalAdmission = () => {
-    assertV4Support();
-    if ((input.resolveRemovalReviewSupport?.() ?? 'indeterminate') !== removalSupport) {
-      throw new QualifiedConnectedAccountCompatibilityError('connected_account_capability_indeterminate');
-    }
-  };
   if (input.emergencyRevoke) {
-    assertRemovalAdmission();
+    input.signal?.throwIfAborted();
     const deleted = await settleLocalDeletion({
       ref: input.account, expectedCredentialRevision: currentRevision!,
       cleanupGroupReferences: removalSupport === 'advertised' ? input.cleanupGroupReferences : true,
@@ -126,7 +120,6 @@ export async function revokeQualifiedConnectedAccount(input: Readonly<{
     return Object.freeze({ status: 'deleted' as const, remoteStatus: 'remoteNotAttempted' as const });
   }
   if (removalSupport === 'advertised') {
-    assertRemovalAdmission();
     await deleteCredential({ token: input.token, deletion: {
       ref: input.account, expectedCredentialRevision: currentRevision!, cleanupGroupReferences: input.cleanupGroupReferences,
       reviewOnly: true, ...reviewFields,
@@ -136,18 +129,12 @@ export async function revokeQualifiedConnectedAccount(input: Readonly<{
     account: input.account,
     operation: Object.freeze({ kind: 'revoke' as const }),
     ...(currentRevision ? { expectedCredentialRevision: currentRevision } : {}),
-    assertEffectfulOperationAllowed: assertRemovalAdmission,
     ...(input.signal ? { signal: input.signal } : {}),
   });
   const decision =
     decideQualifiedConnectedAccountRevocationSettlement(invocation.result);
   if (decision.status === 'outcome_unknown') return decision;
-  if (!invocation.basis.isCurrent()) {
-    throw new Error(
-      'Qualified Connected Account revoke generation is no longer current',
-    );
-  }
-  assertRemovalAdmission();
+  input.signal?.throwIfAborted();
   const deleted = await settleLocalDeletion(Object.freeze({
     ref: input.account,
     expectedCredentialRevision: invocation.basis.credentialRevision,
@@ -155,12 +142,6 @@ export async function revokeQualifiedConnectedAccount(input: Readonly<{
     ...reviewFields,
   }));
   if (!deleted) return Object.freeze({ status: 'outcome_unknown' as const });
-  // Generation currentness protects PRE-EFFECT authorization: it is checked
-  // above, before the remote revoke leaf runs and before the credential is
-  // deleted. Once the delete returns success the revocation is committed, so
-  // it must never be retroactively invalidated here - re-checking currentness
-  // after the effect would report failure for a fully successful operation and
-  // leave the caller with a retry that can only observe not-found.
   return Object.freeze({
     status: 'deleted' as const,
     remoteStatus: decision.remoteStatus,

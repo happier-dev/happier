@@ -15,7 +15,7 @@ let connection: Awaited<ReturnType<typeof restoreServerAccountForTest>> | undefi
 
 afterEach(async () => { await connection?.dispose(); connection = undefined; await homes.reset(); vi.restoreAllMocks(); });
 
-it.each(['plain', 'e2ee'] as const)('settles recovered health through the captured Account HTTP adapter (%s)', async mode => {
+it.each([['plain', 'healthy'], ['e2ee', 'healthy'], ['e2ee', 'lost-ack'], ['plain', 'conflict']] as const)('settles through the captured Account HTTP adapter (%s, %s)', async (mode, outcome) => {
     const { captureLazyActionAccountContext } = await import('@/sync/ops/actions/actionAccountContext');
     const { createUiConnectedAccountCredentialPersistence } = await import('./connectedAccountCredentialPersistence');
     const accountId = `reconnect-${mode}`;
@@ -29,9 +29,11 @@ it.each(['plain', 'e2ee'] as const)('settles recovered health through the captur
     }
     const ref = { service: { pluginId: 'acme.cloud', localId: 'api' }, accountId: 'selected' };
     const nextRevision = 'csr_123456789ABCDEFGHJKMNPQRST';
-    const configurationRevision = 'configuration-1';
+    const configurationRevision = outcome === 'lost-ack' ? null : 'configuration-1';
     let saved: ReturnType<typeof QualifiedConnectedAccountCredentialSnapshotV4Schema.parse> | undefined;
     let healthWrites = 0;
+    let credentialWrites = 0;
+    let transportRecovered = false;
     connection = await restoreServerAccountForTest({ serverUrl: url, accountId, credentials,
         configureSocket: configureConnectedServerSocketBoundary,
         // HTTP and persistence are the boundaries; Account capture, encryption,
@@ -40,12 +42,20 @@ it.each(['plain', 'e2ee'] as const)('settles recovered health through the captur
             const incoming = new URL(String(input));
             if (incoming.pathname.startsWith('/v1/machines')) return Response.json([]);
             if (incoming.pathname === '/v4/connect/qualified/credential' && init?.method === 'POST') {
+                credentialWrites++;
+                if (outcome === 'conflict') return Response.json({ error: 'connect_credential_mutation_superseded',
+                    reason: 'credential_revision_mismatch', credentialRevision: nextRevision, configurationRevision }, { status: 409 });
                 const mutation = QualifiedConnectedAccountCredentialMutationV4Schema.parse(await new Response(init.body).json());
                 saved = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ref: mutation.ref,
                     authenticationModeId: mutation.authenticationModeId, revisionSemantics: 'revisioned', credentialRevision: nextRevision,
                     configurationRevision, content: mutation.content, metadata: mutation.metadata,
                     health: { v: 1, status: 'needs_reauth', reconnectRequired: true, providerErrorCode: 'login_failed' } });
+                if (outcome === 'lost-ack') throw new Error('credential acknowledgement lost');
                 return Response.json({ success: true, credentialRevision: nextRevision, configurationRevision });
+            }
+            if (incoming.pathname === '/v4/connect/qualified/credential' && init?.method === 'GET') {
+                if (!transportRecovered) throw new Error('credential read unavailable');
+                return Response.json(saved);
             }
             if (incoming.pathname === '/v4/connect/qualified/credential/health' && init?.method === 'PATCH') {
                 const patch = QualifiedConnectedAccountCredentialHealthPatchV4Schema.parse(await new Response(init.body).json());
@@ -61,11 +71,28 @@ it.each(['plain', 'e2ee'] as const)('settles recovered health through the captur
     const account = await captureLazyActionAccountContext(serverId);
     try {
         const persistence = createUiConnectedAccountCredentialPersistence(account);
-        await expect(persistence.settlement.settle({ intent: 'reconnect', service: ref.service, accountId: ref.accountId,
-            authenticationModeId: 'api-key', expectedCredentialRevision: 'csr_0123456789ABCDEFGHJKMNPQRS',
+        const request = { intent: outcome === 'lost-ack' ? 'connect' as const : 'reconnect' as const, service: ref.service, accountId: ref.accountId,
+            authenticationModeId: 'api-key', expectedCredentialRevision: outcome === 'lost-ack' ? null : 'csr_0123456789ABCDEFGHJKMNPQRS',
             expectedCredentialConfigurationRevision: configurationRevision, expectedConfigurationRevision: 'unconfigured',
-            sourceCustody: { kind: 'managed', immutableGenerationId: 'fixture-1', installSource: 'archive' },
-            stagedCredentials: { token: 'verified-new' }, displayName: 'Cloud', scopes: [] })).resolves.toEqual({ status: 'connected', account: ref });
+            sourceCustody: { kind: 'managed' as const, immutableGenerationId: 'fixture-1', installSource: 'archive' as const },
+            stagedCredentials: { token: 'verified-new' }, displayName: 'Cloud', scopes: [] };
+        if (outcome === 'lost-ack') {
+            await expect(persistence.settlement.settle(request)).rejects.toThrow('credential acknowledgement lost');
+            transportRecovered = true;
+            expect(await persistence.settlement.reconcile(request)).toEqual({ status: 'connected', account: ref });
+            expect(saved?.content.t).toBe('encrypted');
+            expect(credentialWrites).toBe(1);
+            return;
+        }
+        const result = await persistence.settlement.settle(request);
+        if (outcome === 'conflict') {
+            const { readConnectedServiceSettingsErrorDetailsCode } = await import('@/components/settings/connectedServices/connectedServiceSettingsErrors');
+            expect(result.status).toBe('conflict');
+            expect(readConnectedServiceSettingsErrorDetailsCode(result)).toBe('connect_credential_mutation_superseded.credential_revision_mismatch');
+            expect(healthWrites).toBe(0);
+            return;
+        }
+        expect(result).toEqual({ status: 'connected', account: ref });
         expect(saved?.health).toEqual({ v: 1, status: 'connected', reconnectRequired: false });
         expect(saved?.content.t).toBe(mode === 'plain' ? 'plain' : 'encrypted');
         expect(healthWrites).toBe(1);

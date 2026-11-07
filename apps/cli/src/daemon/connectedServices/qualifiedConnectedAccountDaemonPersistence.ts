@@ -1,20 +1,19 @@
 import type { TargetSecretSourcesV1 } from '@/plugins/runtime/lifecycle/contributions/targetSecretSources';
-import { acquireSavedSecretMaterializerForOperation, readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
+import { PluginError } from '@happier-dev/plugin-sdk/errors';
 import {
   randomBytes as nodeRandomBytes,
   randomUUID,
 } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
-import { z } from 'zod/mini';
+import { createConnectedAccountCredentialSettlement } from '@happier-dev/cli-common/connectedAccounts';
+import { promoteConnectedAccountCredentialSecrets } from '@/settings/secrets/promoteConnectedAccountCredentialSecrets';
 
 import { ConnectedConfigurationCatalogV1Schema, openConnectedAccountCatalogContentV1,
   type ConnectedAccountCatalogRecordV1 } from '@happier-dev/protocol/connect/connectedAccountConfigurationRowsV1';
 import { replaceConnectedServiceConfigurationCatalogV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
-import { QualifiedConnectedAccountCredentialMetadataV4Schema } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import { QualifiedConnectedAccountCredentialPayloadV1Schema, openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
+import { openQualifiedConnectedAccountContentEnvelope, sealQualifiedConnectedAccountContentEnvelope } from '@happier-dev/protocol/connect/qualifiedConnectedAccountContentEnvelope';
 import { SavedSecretSchema } from '@happier-dev/protocol/profiles/backendProfileSchema';
 import { sameQualifiedConnectedAccountRef } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
-import { parseQualifiedConnectedAccountCredentialPlaintextV1, projectQualifiedConnectedAccountCredentialPlaintextV1 } from '@happier-dev/protocol/connect/legacyConnectedServiceCompatibility';
 import { connectedAccountSourceCustodyV1Equal } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { isStoredJsonContentEnvelopeModeCompatible } from '@happier-dev/protocol/storage/storedJsonContentEnvelope';
 import type { AccountScopedCryptoMaterial, ConnectedServiceCredentialRecordV1, QualifiedConnectedAccountRef } from '@happier-dev/protocol';
@@ -28,6 +27,7 @@ import {
   resolveQualifiedConnectedAccountOperationTransport,
   mutateQualifiedConnectedAccountConfigurationV4,
   mutateQualifiedConnectedAccountCredentialV4,
+  mutateQualifiedConnectedAccountCredentialHealthV4,
   listQualifiedConnectedAccountsV4,
   readQualifiedConnectedAccountConfigurationV4,
   readQualifiedConnectedAccountCredentialV4,
@@ -38,7 +38,6 @@ import type { CliServerFeaturesSnapshot } from '@/features/serverFeaturesClient'
 import type {
   SessionSyncPendingInputServerContractResult,
 } from '@/api/clientCompatibility/sessionSyncPendingInputServerContract';
-import { generatePkceCodes } from '@/cloud/pkce';
 import { logger } from '@/ui/logger';
 import type { StoredCredentials } from '@/persistence';
 import {
@@ -49,20 +48,22 @@ import {
 import { resolveAccountSettingsScopeKey } from '@/settings/accountSettings/accountSettingsScopeKey';
 import { readActiveConnectedAccountCatalog } from '@/settings/connectedAccounts/hydrateConnectedAccountCatalog';
 import { createCliConnectedAccountCatalogStore } from '@/settings/connectedAccounts/connectedAccountCatalogStore';
-import { promoteSavedSecretsWithConnectedAccountCatalog, refreshSavedSecretCatalogForOperation } from "@/settings/secrets/hydrateSavedSecretCatalog";
+import { promoteSavedSecretsWithConnectedAccountCatalog } from "@/settings/secrets/hydrateSavedSecretCatalog";
+import { acquireSavedSecretMaterializerForOperation, readSavedSecretMaterializerForOperation } from '@/settings/secrets/savedSecretCatalogRead';
 import { type SavedSecretOperationContextV1 } from "@/settings/secrets/savedSecretOperationContext";
 import {
   createSavedSecretMaterializerFromSnapshotV1,
   type SavedSecretMaterializerV1,
 } from '@/settings/secrets/savedSecretCatalog';
 import {
+  createConnectedAccountAttemptConfigurationStore,
   parseConnectedAccountConfigurationRecordContent,
+  resolveConnectedAccountPublicOAuthClient,
 } from '@happier-dev/cli-common/connectedAccounts';
 import type {
+  ConnectedAccountAttemptAddressOwner,
   ConnectedAccountDeviceTransactionOwner,
-  ConnectedAccountOAuthTransaction,
   ConnectedAccountOAuthTransactionOwner,
-  ConnectedAccountOAuthTransactionSnapshot,
 } from '@happier-dev/cli-common/connectedAccounts';
 import type { PendingConnectedAccountAttemptTransaction } from '@/api/client/connectedAccountAttemptTransactionApi';
 
@@ -71,8 +72,9 @@ import type { ConnectedAccountDaemonPersistence } from './ConnectedAccountDaemon
 type CredentialReader = typeof readQualifiedConnectedAccountCredentialV4;
 type ConfigurationReader = typeof readQualifiedConnectedAccountConfigurationV4;
 type CredentialMutator = typeof mutateQualifiedConnectedAccountCredentialV4;
+type CredentialHealthMutator = typeof mutateQualifiedConnectedAccountCredentialHealthV4;
 type ConfigurationMutator = typeof mutateQualifiedConnectedAccountConfigurationV4;
-type ProfileLister = typeof listQualifiedConnectedAccountsV4;
+type ProfileLister = (params: Parameters<typeof listQualifiedConnectedAccountsV4>[0]) => ReturnType<typeof listQualifiedConnectedAccountsV4>;
 type ConfigurationReadTarget = Parameters<
   ConnectedAccountDaemonPersistence['configuration']['read']
 >[0];
@@ -85,40 +87,8 @@ type ConfigurationReplaceForControlInput = Parameters<NonNullable<
 type ExactAccount = Parameters<
   ConnectedAccountDaemonPersistence['attempts']['accounts']['readExact']
 >[0];
-type OAuthTransaction = Awaited<ReturnType<
-  ConnectedAccountDaemonPersistence['attempts']['oauth']['create']
->>;
-type OAuthCompletion = Parameters<OAuthTransaction['acceptCompletion']>[0];
-/**
- * Projects the server's named credential-refusal cause onto the settlement
- * contract. Only the causes that mean something different to the caller are
- * named here; an ordinary CAS race stays on the shared settlement-conflict path
- * so the existing reconciliation read-back still runs.
- */
-function readQualifiedConnectedAccountCredentialSettlementCause(
-  error: unknown,
-): Readonly<{ status: 'conflict' | 'rejected'; code: string }> | null {
-  if (!(error instanceof QualifiedConnectedAccountCredentialConflictError)) return null;
-  switch (error.code) {
-    case 'connect_reconnect_provider_identity_mismatch':
-      return Object.freeze({
-        status: 'conflict' as const,
-        code: 'connected_account_reconnect_provider_identity_mismatch',
-      });
-    case 'connect_authentication_mode_mismatch':
-      return Object.freeze({
-        status: 'conflict' as const,
-        code: 'connected_account_authentication_mode_mismatch',
-      });
-    default:
-      return null;
-  }
-}
-
-type SettlementRequest = Parameters<
-  ConnectedAccountDaemonPersistence['attempts']['settlement']['settle']
->[0];
 export type QualifiedConnectedAccountAttemptTransactionAdapters = Readonly<{
+  address?: ConnectedAccountAttemptAddressOwner;
   oauth?: ConnectedAccountOAuthTransactionOwner;
   device?: ConnectedAccountDeviceTransactionOwner;
   listPending?(service: Readonly<{ pluginId: string; localId: string }>): Promise<readonly PendingConnectedAccountAttemptTransaction[]>;
@@ -128,15 +98,6 @@ type ConfigurationRecord = ReturnType<
   typeof parseConnectedAccountConfigurationRecordContent
 >;
 type ConfigurationContent = Omit<ConfigurationRecord, 'revision'>;
-type AttemptConfigurationTarget = Extract<
-  ConfigurationReadTarget,
-  { kind: 'attempt' }
->;
-type AttemptConfigurationEntry = Readonly<{
-  target: AttemptConfigurationTarget;
-  record: ConfigurationRecord;
-}>;
-
 function configurationContent(record: ConfigurationRecord): ConfigurationContent {
   return Object.freeze({
     values: record.values,
@@ -152,24 +113,11 @@ function parsePhysicalConfigurationRecord(input: Readonly<{
   revision: string;
   scope: 'service' | 'account' | 'attempt';
 }>): ConfigurationRecord {
-  const record = parseConnectedAccountConfigurationRecordContent(
+  return parseConnectedAccountConfigurationRecordContent(
     input.content,
     input.revision,
+    input.scope,
   );
-  if (input.scope === 'service' && record.secretValues !== undefined) {
-    throw new Error(
-      'Connected-account service configuration cannot contain inline secret bytes',
-    );
-  }
-  if (
-    input.scope !== 'service'
-    && Object.keys(record.secretRefs).length > 0
-  ) {
-    throw new Error(
-      'Connected-account account and attempt configuration cannot contain SavedSecret references',
-    );
-  }
-  return record;
 }
 
 function cryptoMaterial(
@@ -232,6 +180,11 @@ export function createAccountSettingsConnectedAccountSecrets(input: Readonly<{
     const readMaterial: NonNullable<ConnectedAccountDaemonPersistence['configuration']['secrets']['readMaterial']> = async (secretId, options) => {
       options?.signal?.throwIfAborted();
       const resolved = materializer.resolve(secretId);
+      if (resolved.status !== 'ready' && resolved.sourceFailure) {
+        throw new PluginError({ code: 'secret_missing', message: 'Account secret material is unavailable',
+          details: { materialStatus: resolved.status, sourceFailure: resolved.sourceFailure },
+          retryable: resolved.status === 'temporarily_unavailable' });
+      }
       return resolved.status === 'ready' ? Object.freeze({ value: resolved.value, fingerprint: resolved.fingerprint }) : null;
     };
     return Object.freeze({ readMaterial, read: async (secretId: string, options?: Readonly<{ signal?: AbortSignal }>) =>
@@ -328,6 +281,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
     readCredential?: CredentialReader;
     readConfiguration?: ConfigurationReader;
     mutateCredential?: CredentialMutator;
+    mutateCredentialHealth?: CredentialHealthMutator;
     mutateConfiguration?: ConfigurationMutator;
     listProfiles?: ProfileLister;
     resolveServerFeaturesSnapshot?: (
@@ -355,6 +309,8 @@ export function createQualifiedConnectedAccountDaemonPersistence(
     params.readConfiguration ?? readQualifiedConnectedAccountConfigurationV4;
   const mutateCredential =
     params.mutateCredential ?? mutateQualifiedConnectedAccountCredentialV4;
+  const mutateCredentialHealth =
+    params.mutateCredentialHealth ?? mutateQualifiedConnectedAccountCredentialHealthV4;
   const mutateConfiguration =
     params.mutateConfiguration ?? mutateQualifiedConnectedAccountConfigurationV4;
   const listProfiles =
@@ -368,167 +324,10 @@ export function createQualifiedConnectedAccountDaemonPersistence(
     params.createSecretId
     ?? (() => `connected-account-secret-${randomUUID()}`);
   const now = params.now ?? Date.now;
-  const attemptConfigurations = new Map<string, AttemptConfigurationEntry>();
-  const oauthTransactions = new Map<string, {
-    snapshot: ConnectedAccountOAuthTransactionSnapshot;
-    state: string;
-    challenge: string;
-    verifier: string;
-    callbackUrl: string;
-    consumed: boolean;
-    closed: boolean;
-  }>();
-
-  function sameOAuthSnapshotIdentity(
-    left: ConnectedAccountOAuthTransactionSnapshot,
-    right: ConnectedAccountOAuthTransactionSnapshot,
-  ): boolean {
-    return left.attemptId === right.attemptId
-      && left.createdAtMs === right.createdAtMs
-      && left.intent === right.intent
-      && sameService(left.service, right.service)
-      && (
-        left.account === undefined
-          ? right.account === undefined
-          : right.account !== undefined && sameQualifiedConnectedAccountRef(left.account, right.account)
-      )
-      && left.modeId === right.modeId
-      && connectedAccountSourceCustodyV1Equal(left.sourceCustody, right.sourceCustody)
-      && left.expectedCredentialRevision === right.expectedCredentialRevision
-      && left.expectedCredentialConfigurationRevision
-        === right.expectedCredentialConfigurationRevision
-      && left.expectedConfigurationRevision === right.expectedConfigurationRevision
-      && (isDeepStrictEqual(
-        left.stagedAccountConfigurationContent,
-        right.stagedAccountConfigurationContent,
-      ) || (left.sourceCustody.kind === 'host' && left.phase === 'starting'));
-  }
-
-  function createLocalOAuthTransactionHandle(
-    record: NonNullable<ReturnType<typeof oauthTransactions.get>>,
-  ): ConnectedAccountOAuthTransaction & Readonly<{
-    snapshot: ConnectedAccountOAuthTransactionSnapshot;
-  }> {
-    return Object.freeze({
-      get expiresAtMs() {
-        return record.snapshot.expiresAtMs;
-      },
-      get snapshot() {
-        return record.snapshot;
-      },
-      request: Object.freeze({
-        callbackUrl: record.callbackUrl,
-        state: record.state,
-        pkce: Object.freeze({
-          challenge: record.challenge,
-          method: 'S256' as const,
-        }),
-      }),
-      acknowledge(snapshot) {
-        if (
-          record.closed
-          || !sameOAuthSnapshotIdentity(record.snapshot, snapshot)
-          || (record.snapshot.issuer !== undefined && record.snapshot.issuer !== snapshot.issuer)
-          || (record.snapshot.issuerResponseParameterRequired !== undefined
-            && record.snapshot.issuerResponseParameterRequired !== snapshot.issuerResponseParameterRequired)
-          || (
-            record.snapshot.phase === 'outcomeUnknown'
-            && snapshot.phase !== 'outcomeUnknown'
-          )
-          || (
-            record.snapshot.phase === 'awaitingOAuth'
-            && snapshot.phase === 'starting'
-          )
-        ) {
-          throw new Error('Connected-account OAuth transaction acknowledgement is invalid');
-        }
-        record.snapshot = snapshot;
-      },
-      acceptCompletion(completion: OAuthCompletion) {
-        if (
-          record.closed
-          || record.consumed
-          || completion.state !== record.state
-          || completion.callbackUrl !== record.callbackUrl
-        ) {
-          throw new Error('Connected-account OAuth completion does not match its transaction');
-        }
-        record.consumed = true;
-        return Object.freeze({
-          ...completion,
-          pkceVerifier: record.verifier,
-        });
-      },
-      close() {
-        record.closed = true;
-        if (oauthTransactions.get(record.snapshot.attemptId) === record) {
-          oauthTransactions.delete(record.snapshot.attemptId);
-        }
-      },
-    });
-  }
-
-  const localOAuthTransactionOwner: ConnectedAccountOAuthTransactionOwner =
-    Object.freeze({
-      async create(input) {
-        if (
-          input.attemptId !== input.snapshot.attemptId
-          || !sameService(input.service, input.snapshot.service)
-          || oauthTransactions.has(input.attemptId)
-        ) {
-          throw new Error('Connected-account OAuth transaction identity is unavailable');
-        }
-        const pkce = await generatePkceCodes();
-        const record = {
-          snapshot: input.snapshot,
-          state: `${input.attemptId}.${Buffer.from(randomBytes(32)).toString('base64url')}`,
-          challenge: pkce.challenge,
-          verifier: pkce.verifier,
-          callbackUrl: z.url().parse(input.callbackUrl),
-          consumed: false,
-          closed: false,
-        };
-        oauthTransactions.set(input.attemptId, record);
-        return createLocalOAuthTransactionHandle(record);
-      },
-      read(attemptId) {
-        const record = oauthTransactions.get(attemptId);
-        return !record || record.closed
-          ? null
-          : createLocalOAuthTransactionHandle(record);
-      },
-    });
-
-  async function readDurableAttemptConfiguration(
-    target: Extract<ConfigurationReadTarget, { kind: 'attempt' }>,
-  ): Promise<
-    ReturnType<typeof parseConnectedAccountConfigurationRecordContent>
-    | null
-  > {
-    const [oauthTransaction, deviceTransaction] = await Promise.all([
-      params.attemptTransactions?.oauth?.read?.(target.attemptId) ?? null,
-      params.attemptTransactions?.device?.read(target.attemptId) ?? null,
-    ]);
-    const snapshots = [
-      oauthTransaction?.snapshot ?? null,
-      deviceTransaction,
-    ].filter((snapshot) => snapshot !== null);
-    if (snapshots.length !== 1) return null;
-    const snapshot = snapshots[0]!;
-    if (
-      snapshot.attemptId !== target.attemptId
-      || !sameService(snapshot.service, target.service)
-      || snapshot.modeId !== target.modeId
-      || snapshot.stagedAccountConfigurationContent === undefined
-    ) {
-      return null;
-    }
-    return parsePhysicalConfigurationRecord({
-      content: snapshot.stagedAccountConfigurationContent,
-      revision: snapshot.expectedConfigurationRevision,
-      scope: 'attempt',
-    });
-  }
+  const attemptConfigurations = createConnectedAccountAttemptConfigurationStore({
+    createRevision: createConfigurationRevision,
+    transactions: params.attemptTransactions,
+  });
 
   async function replaceServiceConfiguration(input: Readonly<{
     target: Extract<ConfigurationReadTarget, { kind: 'service' }>;
@@ -649,6 +448,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           executeV4: async () => await listProfiles({
             token: params.credentials.token,
             service,
+            requestPurpose: 'connected-accounts:persistence',
           }),
         });
         if (!sameService(result.service, service)) {
@@ -660,6 +460,19 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       },
     }),
     configuration: Object.freeze({
+      async readPublicOAuthClient(...[input, options]: Parameters<NonNullable<
+        ConnectedAccountDaemonPersistence['configuration']['readPublicOAuthClient']
+      >>) {
+        options?.signal?.throwIfAborted();
+        const snapshot = params.resolveServerFeaturesSnapshot?.();
+        return resolveConnectedAccountPublicOAuthClient({
+          clients: snapshot?.status === 'ready'
+            ? snapshot.features.capabilities.connectedServices.publicOAuthClients
+            : undefined,
+          service: input.service,
+          modeId: input.modeId,
+        });
+      },
       async replaceForControl(input: ConfigurationReplaceForControlInput) {
         if (input.target.kind !== 'service') {
           return Object.freeze({
@@ -673,14 +486,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       },
       async read(target: ConfigurationReadTarget) {
         if (target.kind === 'attempt') {
-          const staged = attemptConfigurations.get(target.attemptId);
-          if (staged) {
-            return sameService(staged.target.service, target.service)
-              && staged.target.modeId === target.modeId
-              ? staged.record
-              : null;
-          }
-          return await readDurableAttemptConfiguration(target);
+          return attemptConfigurations.read(target);
         }
         if (target.kind === 'service') {
           const catalog = await readActiveConnectedAccountCatalog({ credentials: params.credentials,
@@ -701,6 +507,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
           executeV4: async () => await readConfiguration({
             token: params.credentials.token,
             target: accountTarget(target.account),
+            requestPurpose: 'connected-accounts:persistence',
           }),
         });
         if (
@@ -735,52 +542,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
       },
       async replace(input: ConfigurationReplaceInput) {
         if (input.target.kind === 'attempt') {
-          const currentEntry =
-            attemptConfigurations.get(input.target.attemptId) ?? null;
-          if (
-            currentEntry
-            && (
-              !sameService(currentEntry.target.service, input.target.service)
-              || currentEntry.target.modeId !== input.target.modeId
-            )
-          ) {
-            return Object.freeze({
-              status: 'conflict' as const,
-              code: 'connected_account_configuration_changed',
-            });
-          }
-          const current = currentEntry?.record ?? null;
-          if ((current?.revision ?? null) !== input.expectedRevision) {
-            return Object.freeze({
-              status: 'conflict' as const,
-              code: 'connected_account_configuration_changed',
-            });
-          }
-          try {
-            const record = parsePhysicalConfigurationRecord({
-              content: input.replacement,
-              revision: createConfigurationRevision(),
-              scope: 'attempt',
-            });
-            attemptConfigurations.set(input.target.attemptId, Object.freeze({
-              target: Object.freeze({
-                kind: 'attempt',
-                attemptId: input.target.attemptId,
-                service: Object.freeze({ ...input.target.service }),
-                modeId: input.target.modeId,
-              }),
-              record,
-            }));
-            return Object.freeze({
-              status: 'committed' as const,
-              record,
-            });
-          } catch {
-            return Object.freeze({
-              status: 'unavailable' as const,
-              code: 'connected_account_configuration_persistence_unavailable',
-            });
-          }
+          return attemptConfigurations.replace({ ...input, target: input.target });
         }
         if (input.target.kind === 'service') {
           return replaceServiceConfiguration({ target: input.target, expectedRevision: input.expectedRevision,
@@ -801,6 +563,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
               const credential = await readCredential({
                 token: params.credentials.token,
                 ref: exactAccountTarget.account,
+                requestPurpose: 'connected-accounts:persistence',
               });
               if (
                 !credential
@@ -856,7 +619,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
         }
       },
       async destroyAttempt(attemptId: string) {
-        attemptConfigurations.delete(attemptId);
+        await attemptConfigurations.destroy(attemptId);
       },
       secrets: params.secrets,
     }),
@@ -910,6 +673,7 @@ export function createQualifiedConnectedAccountDaemonPersistence(
             executeV4: async () => await readCredential({
               token: params.credentials.token,
               ref: account,
+              requestPurpose: 'connected-accounts:persistence',
             }),
           });
           if (
@@ -932,337 +696,71 @@ export function createQualifiedConnectedAccountDaemonPersistence(
         },
       }),
       oauth:
-        params.attemptTransactions?.oauth ?? localOAuthTransactionOwner,
+        params.attemptTransactions?.oauth ?? Object.freeze({
+          async create() {
+            throw Object.assign(
+              new Error('Connected-account durable OAuth transaction support is unavailable'),
+              { code: 'connected_account_oauth_transaction_unavailable' as const },
+            );
+          },
+        }),
+      attemptAddresses: params.attemptTransactions?.address,
       ...(params.attemptTransactions?.device
         ? { deviceTransactions: params.attemptTransactions.device }
         : {}),
       listPending: params.attemptTransactions?.listPending ?? (async () => {
         throw new Error('Connected-account pending attempt discovery is unavailable');
       }),
-      settlement: (() => {
-        function transportFailureCode(error: unknown) {
-          if (typeof error !== 'object' || error === null) return null;
+      settlement: createConnectedAccountCredentialSettlement({
+        now,
+        promoteCredentialSecrets: input => promoteConnectedAccountCredentialSecrets({ credentials: params.credentials, ...input,
+          ...(params.operationContext ? { operationContext: params.operationContext } : {}) }),
+        rotateCredentialSecrets: async ({ secrets }) => {
+          const { updateOwnedSavedSecretResourceForOperation } = await import('@/settings/secrets/personalSavedSecretActionHost');
+          for (const secret of secrets) await updateOwnedSavedSecretResourceForOperation({ credentials: params.credentials,
+            resourceId: secret.resourceId, nextValue: secret.value,
+            ...(params.operationContext ? { operationContext: params.operationContext } : {}) });
+          return 'applied';
+        },
+        resolveAccountMode: usage => resolveAccountMode(usage ? { usage } : undefined),
+        seal: (kind, accountMode, payload) => sealContent({ kind, accountMode, credentials: params.credentials, material, payload, randomBytes }),
+        open: (kind, accountMode, envelope) => openContent({ kind, accountMode, credentials: params.credentials, material, envelope }),
+        parseConfigurationContent: (content, revision) => configurationContent(parsePhysicalConfigurationRecord({ content, revision, scope: 'account' })),
+        mutateCredential: (mutation, request) => executeNegotiatedOperation({
+          service: mutation.ref.service,
+          operation: { kind: 'credential_write', configurationState: request.expectedConfigurationRevision === 'unconfigured'
+            && request.stagedAccountConfigurationContent === undefined ? 'unconfigured' : 'configured' },
+          executeV4: () => mutateCredential({ token: params.credentials.token, mutation }),
+        }),
+        mutateCredentialHealth: async patch => {
+          await mutateCredentialHealth({ token: params.credentials.token, patch });
+        },
+        readCredential: ref => readCredential({ token: params.credentials.token, ref, requestPurpose: 'connected-accounts:persistence' }),
+        readConfiguration: ref => readConfiguration({ token: params.credentials.token, target: accountTarget(ref), requestPurpose: 'connected-accounts:persistence' }),
+        readHttpStatus,
+        readFailureReason: error => error instanceof QualifiedConnectedAccountCredentialConflictError ? error.reason : null,
+        readFailureCode: error => {
+          if (error instanceof QualifiedConnectedAccountCredentialConflictError) return error.code;
+          if (!error || typeof error !== 'object') return null;
           const code: unknown = Object.getOwnPropertyDescriptor(error, 'code')?.value;
-          switch (code) {
-            case 'ECONNABORTED':
-            case 'ETIMEDOUT':
-            case 'ECONNRESET':
-            case 'ECONNREFUSED':
-            case 'ERR_NETWORK':
-              return code;
-            default:
-              return null;
-          }
-        }
-        async function publishSettledAccount(
-          input: Parameters<NonNullable<typeof params.onAccountSettled>>[0],
-        ) {
-          try {
-            await params.onAccountSettled?.(input);
-          } catch {
-            // Credentials are already committed. Preserve connection settlement;
-            // the canonical quota poll retries source initialization before provider work.
-            logger.debug('[DAEMON] Qualified Connected Account quota source initialization failed (non-fatal)');
-          }
-          return Object.freeze({ status: 'connected' as const, account: input.account });
-        }
-        const settle = async (
-          request: SettlementRequest,
-          reconciliation: boolean,
-        ) => {
-          const account = Object.freeze({
-            service: Object.freeze({ ...request.service }),
-            accountId: request.accountId,
+          return typeof code === 'string' ? code : null;
+        },
+        onSettled: params.onAccountSettled,
+        onPublicationFailure: () => logger.debug('[DAEMON] Qualified Connected Account quota source initialization failed (non-fatal)'),
+        onUnknown: ({ account, reconciliation, failedStage, recoveryStage, error, recoveryError }) => {
+          const transportFailureCode = (cause: unknown) => {
+            if (typeof cause !== 'object' || cause === null) return null;
+            const code: unknown = Object.getOwnPropertyDescriptor(cause, 'code')?.value;
+            return code === 'ECONNABORTED' || code === 'ETIMEDOUT' || code === 'ECONNRESET'
+              || code === 'ECONNREFUSED' || code === 'ERR_NETWORK' ? code : null;
+          };
+          logger.warn('[DAEMON] Qualified Connected Account settlement remains unknown', {
+            account, reconciliation, failedStage, recoveryStage,
+            failureCode: transportFailureCode(error), failureHttpStatus: readHttpStatus(error) ?? null,
+            recoveryCode: transportFailureCode(recoveryError), recoveryHttpStatus: readHttpStatus(recoveryError) ?? null,
           });
-          const preparedCredentialMetadata =
-            QualifiedConnectedAccountCredentialMetadataV4Schema.parse({
-              ...(request.providerIdentity
-                ? { providerIdentity: request.providerIdentity }
-                : {}),
-              displayName: request.displayName,
-              scopes: request.scopes,
-            });
-          let settledBasis: Parameters<NonNullable<typeof params.onAccountSettled>>[0] | undefined;
-          let stagedAccountConfigurationContent:
-            ConfigurationContent
-            | undefined;
-          if (request.stagedAccountConfigurationContent !== undefined) {
-            if (
-              request.intent !== 'connect'
-              || request.expectedCredentialRevision !== null
-              || request.expectedCredentialConfigurationRevision !== null
-            ) {
-              return Object.freeze({
-                status: 'unavailable' as const,
-                code: 'connected_account_settlement_configuration_invalid',
-              });
-            }
-            try {
-              stagedAccountConfigurationContent = configurationContent(
-                parsePhysicalConfigurationRecord({
-                  content: request.stagedAccountConfigurationContent,
-                  revision: request.expectedConfigurationRevision,
-                  scope: 'account',
-                }),
-              );
-            } catch {
-              return Object.freeze({
-                status: 'unavailable' as const,
-                code: 'connected_account_settlement_configuration_invalid',
-              });
-            }
-          }
-          let failedStage = 'transport_negotiation';
-          try {
-            await executeNegotiatedOperation({
-              service: account.service,
-              operation: {
-                kind: 'credential_write',
-                configurationState:
-                  request.expectedConfigurationRevision === 'unconfigured'
-                  && stagedAccountConfigurationContent === undefined
-                    ? 'unconfigured'
-                    : 'configured',
-              },
-              executeV4: async () => {
-                failedStage = 'account_mode';
-                const accountMode = await resolveAccountMode({ usage: 'fresh-authority' });
-                failedStage = 'credential_materialization';
-                const payload =
-                  QualifiedConnectedAccountCredentialPayloadV1Schema.parse({
-                    v: 1,
-                    values: request.stagedCredentials,
-                  });
-                const content = sealContent({
-                  kind: 'credential',
-                  accountMode,
-                  credentials: params.credentials,
-                  material,
-                  payload:
-                    projectQualifiedConnectedAccountCredentialPlaintextV1({
-                      ref: account,
-                      authenticationModeId: request.authenticationModeId,
-                      payload,
-                      metadata: {
-                        ...(preparedCredentialMetadata.providerIdentity
-                          ? {
-                              providerIdentity:
-                                preparedCredentialMetadata.providerIdentity,
-                            }
-                          : {}),
-                        scopes: preparedCredentialMetadata.scopes,
-                      },
-                      now: now(),
-                    }),
-                  randomBytes,
-                });
-                const initialConfiguration =
-                  request.expectedCredentialRevision === null
-                  && stagedAccountConfigurationContent !== undefined
-                    ? {
-                        expectedConfigurationRevision: null,
-                        replacementContentEnvelope: sealContent({
-                          kind: 'configuration',
-                          accountMode,
-                          credentials: params.credentials,
-                          material,
-                          payload: stagedAccountConfigurationContent,
-                          randomBytes,
-                        }),
-                      }
-                    : undefined;
-                failedStage = 'credential_write';
-                const settled = await mutateCredential({
-                  token: params.credentials.token,
-                  mutation: {
-                    ref: account,
-                    authenticationModeId: request.authenticationModeId,
-                    directExportContract: request.directExportContract ?? null,
-                    ...(request.contributionContractVersion
-                      ? { contributionContractVersion: request.contributionContractVersion }
-                      : {}),
-                    content,
-                    metadata: preparedCredentialMetadata,
-                    expectedCredentialRevision:
-                      request.expectedCredentialRevision,
-                    ...(request.expectedCredentialRevision === null
-                      ? (initialConfiguration
-                          ? { initialConfiguration }
-                          : {})
-                      : {
-                          expectedConfigurationRevision:
-                            request.expectedCredentialConfigurationRevision,
-                        }),
-                  },
-                });
-                failedStage = 'credential_receipt';
-                const configurationSettled =
-                  initialConfiguration !== undefined
-                    ? settled.configurationRevision !== null
-                    : settled.configurationRevision
-                      === request.expectedCredentialConfigurationRevision;
-                if (!configurationSettled) {
-                  throw new Error(
-                    'Qualified Connected Account settlement did not commit the exact configuration basis',
-                  );
-                }
-                settledBasis = {
-                  account,
-                  accountMode,
-                  credentialRevision: settled.credentialRevision,
-                  configurationRevision: settled.configurationRevision,
-                };
-              },
-            });
-            if (!settledBasis) {
-              throw new Error('Qualified Connected Account settlement basis is unavailable');
-            }
-            return await publishSettledAccount(settledBasis);
-          } catch (error) {
-            const namedCause = readQualifiedConnectedAccountCredentialSettlementCause(error);
-            if (namedCause) return namedCause;
-            const reconciliationConflict =
-              readHttpStatus(error) === 409
-              && reconciliation;
-            if (
-              readHttpStatus(error) === 409
-              && !reconciliationConflict
-            ) {
-              return Object.freeze({
-                status: 'conflict' as const,
-                code: 'connected_account_settlement_conflict',
-              });
-            }
-            let recoveryStage = 'account_mode';
-            try {
-              const accountMode = await resolveAccountMode();
-              recoveryStage = 'credential_read';
-              const committed = await readCredential({
-                token: params.credentials.token,
-                ref: account,
-              });
-              if (
-                !committed
-                || !sameQualifiedConnectedAccountRef(committed.ref, account)
-                || committed.authenticationModeId !== request.authenticationModeId
-                || committed.revisionSemantics !== 'revisioned'
-              ) {
-                throw error;
-              }
-              recoveryStage = 'credential_verification';
-              const opened = openContent({
-                kind: 'credential',
-                accountMode,
-                credentials: params.credentials,
-                material,
-                envelope: committed.content,
-              });
-              let payload:
-                ReturnType<
-                  typeof parseQualifiedConnectedAccountCredentialPlaintextV1
-                >;
-              try {
-                payload =
-                  parseQualifiedConnectedAccountCredentialPlaintextV1({
-                    ref: account,
-                    authenticationModeId: committed.authenticationModeId,
-                    plaintext: opened,
-                    metadata: committed.metadata,
-                  });
-              } catch {
-                throw error;
-              }
-              if (
-                !isDeepStrictEqual(payload.values, request.stagedCredentials)
-                || !isDeepStrictEqual(
-                  committed.metadata,
-                  preparedCredentialMetadata,
-                )
-                || (
-                  stagedAccountConfigurationContent === undefined
-                  && committed.configurationRevision
-                    !== request.expectedCredentialConfigurationRevision
-                )
-              ) {
-                throw error;
-              }
-              if (stagedAccountConfigurationContent !== undefined) {
-                recoveryStage = 'configuration_read';
-                const configuration = await readConfiguration({
-                  token: params.credentials.token,
-                  target: accountTarget(account),
-                });
-                if (
-                  !configuration
-                  || configuration.credentialRevision !== committed.credentialRevision
-                  || configuration.configurationRevision
-                    !== committed.configurationRevision
-                ) {
-                  throw error;
-                }
-                recoveryStage = 'configuration_verification';
-                const openedConfigurationContent = openContent({
-                  kind: 'configuration',
-                  accountMode,
-                  credentials: params.credentials,
-                  material,
-                  envelope: configuration.configurationContent,
-                });
-                let committedConfigurationContent: ConfigurationContent;
-                try {
-                  committedConfigurationContent = configurationContent(
-                    parsePhysicalConfigurationRecord({
-                      content: openedConfigurationContent,
-                      revision: configuration.configurationRevision,
-                      scope: 'account',
-                    }),
-                  );
-                } catch {
-                  throw error;
-                }
-                if (!isDeepStrictEqual(
-                  committedConfigurationContent,
-                  stagedAccountConfigurationContent,
-                )) {
-                  throw error;
-                }
-              }
-              return await publishSettledAccount({
-                account,
-                accountMode,
-                credentialRevision: committed.credentialRevision,
-                configurationRevision: committed.configurationRevision,
-              });
-            } catch (recoveryError) {
-              if (reconciliationConflict) {
-                return Object.freeze({
-                  status: 'conflict' as const,
-                  code: 'connected_account_settlement_conflict',
-                });
-              }
-              // Exceptions can contain OAuth tokens, URLs and decrypted payloads.
-              // Log only owner stages and bounded transport metadata for lost-ack diagnosis.
-              logger.warn('[DAEMON] Qualified Connected Account settlement remains unknown', {
-                account,
-                reconciliation,
-                failedStage,
-                recoveryStage,
-                failureCode: transportFailureCode(error),
-                failureHttpStatus: readHttpStatus(error) ?? null,
-                recoveryCode: transportFailureCode(recoveryError),
-                recoveryHttpStatus: readHttpStatus(recoveryError) ?? null,
-              });
-              throw error;
-            }
-          }
-        };
-        return Object.freeze({
-          settle: async (request: SettlementRequest) =>
-            await settle(request, false),
-          reconcile: async (request: SettlementRequest) =>
-            await settle(request, true),
-        });
-      })(),
+        },
+      }),
       }),
   });
   return persistence;

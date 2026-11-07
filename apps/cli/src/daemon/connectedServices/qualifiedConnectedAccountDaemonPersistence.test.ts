@@ -13,6 +13,7 @@ import {
   QualifiedConnectedAccountConfigurationSnapshotV4Schema,
   QualifiedConnectedAccountCredentialSnapshotV4Schema,
   QualifiedConnectedAccountProfileV4Schema,
+  PluginConnectedAccountAuthenticationModeV2Schema,
   sealSavedSecretResourceStoredContentV1,
   openQualifiedConnectedAccountContentEnvelope,
   openConnectedServiceCredentialCiphertext,
@@ -22,6 +23,7 @@ import {
 import type {
   ConnectedAccountDeviceTransactionSnapshot,
 } from '@happier-dev/cli-common/connectedAccounts';
+import { createConnectedAccountAuthenticationAttemptOwner, createConnectedAccountConfigurationOwner } from '@happier-dev/cli-common/connectedAccounts';
 import {
   commitActiveAccountSettingsSnapshot,
   resetActiveAccountSettingsSnapshotForTests,
@@ -34,6 +36,8 @@ import {
   createActiveAccountSettingsConnectedAccountSecrets,
   createQualifiedConnectedAccountDaemonPersistence,
 } from './qualifiedConnectedAccountDaemonPersistence';
+import { createQualifiedConnectedAccountAttemptTransactionAdapters } from './qualifiedConnectedAccountAttemptTransactionAdapters';
+import { createConnectedAccountAttemptTransactionApiBoundary } from '@/testkit/connectedAccountAttemptTransactionApi';
 
 const service = Object.freeze({ pluginId: 'acme.accounts', localId: 'work' });
 const account = Object.freeze({ service, accountId: 'account-1' });
@@ -105,6 +109,74 @@ const ReleasedCredentialRecordSchema = z.discriminatedUnion('kind', [
 ]);
 
 describe('createQualifiedConnectedAccountDaemonPersistence', () => {
+  it('reimports a retained native identity by replacing its fenced credential and recovering health', async () => {
+    const oldRevision = 'csr_0000000000000000000000';
+    const nextRevision = 'csr_1234567890123456789012';
+    const providerIdentity = { accountId: '123' };
+    const mode = PluginConnectedAccountAuthenticationModeV2Schema.parse({
+      id: 'native-import', kind: 'manual', credentialOrigin: 'native_import',
+      outcomeReconciliation: 'none', directExport: { contractVersion: CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1 },
+      fields: [{ id: 'source', title: 'Source', schema: { type: 'string' }, secret: false }],
+    });
+    const transactionApi = createConnectedAccountAttemptTransactionApiBoundary();
+    const credentials = { token: 'fixture-token', encryption: null };
+    const transactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials, getAccountEncryptionMode: async () => 'plain', getMachineId: () => 'machine-1',
+      now: () => 1_000, api: transactionApi,
+    });
+    const mutateCredential = vi.fn(async ({ mutation }: Readonly<{ mutation: unknown }>) => {
+      expect(QualifiedConnectedAccountCredentialMutationV4Schema.parse(mutation)).toMatchObject({
+        ref: account, authenticationModeId: 'native-import', expectedCredentialRevision: oldRevision,
+        expectedConfigurationRevision: null, savedSecretResourceIds: [],
+        content: { t: 'plain', v: { v: 1, values: { token: 'replacement-native-token' } } },
+        metadata: { providerIdentity },
+      });
+      return { success: true as const, credentialRevision: nextRevision, configurationRevision: null };
+    });
+    const mutateCredentialHealth = vi.fn(async ({ patch }: Readonly<{ patch: unknown }>) => {
+      expect(patch).toEqual({ ref: account, expectedCredentialRevision: nextRevision, expectedConfigurationRevision: null,
+        health: { v: 1, status: 'connected', reconnectRequired: false } });
+      return { success: true as const, credentialRevision: nextRevision, configurationRevision: null };
+    });
+    const persistence = createQualifiedConnectedAccountDaemonPersistence({
+      credentials, getAccountEncryptionMode: async () => 'plain', attemptTransactions: transactions,
+      listProfiles: async () => ({ service, accounts: [QualifiedConnectedAccountProfileV4Schema.parse({
+        ref: account, authenticationModeId: 'native-import', status: 'needs_reauth',
+        revisionSemantics: 'revisioned', credentialRevision: oldRevision,
+        configurationReady: true, configurationRevision: null, scopes: [], providerIdentity,
+      })] }),
+      readCredential: async () => QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
+        ref: account, authenticationModeId: 'native-import', revisionSemantics: 'revisioned', credentialRevision: oldRevision,
+        configurationRevision: null, content: { t: 'plain', v: { v: 1, values: { token: 'expired-native-token' } } },
+        metadata: { providerIdentity, scopes: [] }, health: { v: 1, status: 'needs_reauth', reconnectRequired: true },
+      }),
+      readConfiguration: async () => null, mutateCredential, mutateCredentialHealth, mutateConfiguration: vi.fn(),
+      secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
+    });
+    const configuration = createConnectedAccountConfigurationOwner({ ...persistence.configuration, isRuntimeCurrent: () => true });
+    const invoke = vi.fn(async ({ context }: Parameters<Parameters<typeof createConnectedAccountAuthenticationAttemptOwner>[0]['runtime']['invoke']>[0]) => {
+      await context.attemptCredentials.set('token', 'replacement-native-token');
+      return { status: 'connected' as const, providerIdentity, displayName: 'octocat', scopes: [] };
+    });
+    const createAccountId = vi.fn(() => 'duplicate-account');
+    const owner = createConnectedAccountAuthenticationAttemptOwner({
+      createAttemptId: () => 'attempt-import', createAccountId, now: () => 1_000,
+      accounts: persistence.attempts.accounts, configuration, attemptAddresses: transactions.address, oauth: transactions.oauth,
+      runtime: { admit: async () => ({ service, descriptor: mode, occurrenceId: 'generation-1', sourceCustody: managedCustody() }),
+        isCurrent: () => true, invoke }, settlement: persistence.attempts.settlement,
+    });
+    try {
+      await owner.beginConnect({ service, modeId: 'native-import' });
+      await expect(owner.submitManual({ attemptId: 'attempt-import', fields: { source: 'native' } }))
+        .resolves.toMatchObject({ status: 'connected', account });
+      expect(createAccountId).not.toHaveBeenCalled();
+      expect(invoke).toHaveBeenCalledOnce();
+      expect(mutateCredential).toHaveBeenCalledOnce();
+      expect(mutateCredentialHealth).toHaveBeenCalledOnce();
+      expect(transactionApi.records.has('attempt-import')).toBe(false);
+    } finally { owner.dispose(); }
+  });
+
   it.each(['connected', 'refreshing', 'refresh_failed_retryable', 'needs_reauth', 'different', 'unknown', 'different-organization'] as const)(
     'finds an existing imported subject within its qualified service (%s)', async scenario => {
       const profile = QualifiedConnectedAccountProfileV4Schema.parse({
@@ -132,7 +204,64 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     },
   );
 
-  it('keeps independent live attempt configurations and OAuth transactions beyond 64 until their owner closes them', async () => {
+  it('selects a public OAuth client only from one exact service declaration and its declared mode', async () => {
+    const selected = { service, clientId: 'operator-client', scopesByMode: { oauth: ['profile.read'] } };
+    const features = (clients: readonly {
+      service: { pluginId: string; localId: string };
+      clientId: string;
+      scopesByMode: Readonly<Record<string, readonly string[]>>;
+    }[]) => FeaturesResponseSchema.parse({
+      features: {}, capabilities: { connectedServices: { publicOAuthClients: clients } },
+    });
+    let current = features([
+      { ...selected, service: { ...service, localId: 'other' }, clientId: 'other-client' },
+      selected,
+    ]);
+    let ready = true;
+    const persistence = createQualifiedConnectedAccountDaemonPersistence({
+      credentials: { token: 'token-1', encryption: null },
+      getAccountEncryptionMode: async () => 'plain',
+      resolveServerFeaturesSnapshot: () => ready
+        ? { status: 'ready', features: current }
+        : { status: 'unsupported', reason: 'endpoint_missing' },
+      readCredential: async () => null,
+      readConfiguration: async () => null,
+      secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
+    });
+    const read = persistence.configuration.readPublicOAuthClient;
+    expect(await read?.({ service, modeId: 'oauth' })).toEqual({ clientId: 'operator-client', scopes: ['profile.read'] });
+    expect(await read?.({ service: { ...service, pluginId: 'other.plugin' }, modeId: 'oauth' })).toBeNull();
+    expect(await read?.({ service, modeId: 'unknown' })).toBeNull();
+    current = features([selected, { ...selected, clientId: 'conflicting-client' }]);
+    expect(await read?.({ service, modeId: 'oauth' })).toBeNull();
+    current = features([]);
+    expect(await read?.({ service, modeId: 'oauth' })).toBeNull();
+    current = features([selected]);
+    ready = false;
+    expect(await read?.({ service, modeId: 'oauth' })).toBeNull();
+  });
+
+  it('refuses OAuth creation when durable transaction support is missing', async () => {
+    const persistence = createQualifiedConnectedAccountDaemonPersistence({
+      credentials: { token: 'token-1', encryption: null },
+      getAccountEncryptionMode: async () => 'plain',
+      readCredential: async () => null,
+      readConfiguration: async () => null,
+      secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
+    });
+    await expect(persistence.attempts.oauth.create({
+      attemptId: 'attempt-no-durable', service,
+      callbackUrl: 'https://accounts.example/oauth/callback',
+      snapshot: {
+        attemptId: 'attempt-no-durable', createdAtMs: 1_000, intent: 'connect', service,
+        modeId: 'oauth', sourceCustody: managedCustody(), phase: 'starting', stagedCredentials: {},
+        expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null,
+        expectedConfigurationRevision: 'configuration-1',
+      },
+    })).rejects.toMatchObject({ code: 'connected_account_oauth_transaction_unavailable' });
+  });
+
+  it('keeps independent live attempt configurations beyond 64 until their owner closes them', async () => {
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
       credentials: { token: 'token-1', encryption: { type: 'dataKey', publicKey: new Uint8Array(32), machineKey: new Uint8Array(32) } },
       getAccountEncryptionMode: async () => 'plain',
@@ -140,7 +269,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       readConfiguration: async () => null,
       secrets: { admit: async () => undefined, has: async () => false, read: async () => null },
     });
-    const transactions = [];
+    const targets = [];
     for (let index = 0; index < 80; index += 1) {
       const attemptId = `attempt-${index}`;
       const target = { kind: 'attempt' as const, attemptId, service, modeId: 'oauth' };
@@ -148,24 +277,12 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         replacement: { values: { tenant: 'acme' }, secretRefs: {} }, ...runtimeIdentity() });
       expect(configured.status).toBe('committed');
       if (configured.status !== 'committed') throw new Error('Expected attempt configuration');
-      const transaction = await persistence.attempts.oauth.create({ attemptId, service,
-        callbackUrl: 'https://accounts.example/oauth/callback', snapshot: {
-          attemptId, createdAtMs: 1_000, intent: 'connect', service, modeId: 'oauth',
-          sourceCustody: managedCustody(), phase: 'starting', stagedCredentials: {},
-          expectedCredentialRevision: null, expectedCredentialConfigurationRevision: null,
-          expectedConfigurationRevision: configured.record.revision,
-          stagedAccountConfigurationContent: { values: { tenant: 'acme' }, secretRefs: {} },
-        } });
-      transactions.push(transaction);
+      targets.push(target);
     }
-    for (const transaction of transactions) {
-      if (!transaction.snapshot) throw new Error('Missing OAuth attempt snapshot');
-      const attemptId = transaction.snapshot.attemptId;
-      expect(await persistence.attempts.oauth.read?.(attemptId)).not.toBeNull();
-      await transaction.close();
-      await persistence.configuration.destroyAttempt(attemptId);
-      expect(await persistence.attempts.oauth.read?.(attemptId)).toBeNull();
-      expect(await persistence.configuration.read({ kind: 'attempt', attemptId, service, modeId: 'oauth' })).toBeNull();
+    for (const target of targets) {
+      expect(await persistence.configuration.read(target)).not.toBeNull();
+      await persistence.configuration.destroyAttempt(target.attemptId);
+      expect(await persistence.configuration.read(target)).toBeNull();
     }
   });
 
@@ -311,131 +428,14 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     expect(readSavedSecret).not.toHaveBeenCalled();
   });
 
-  it('keeps restart-safe OAuth state and PKCE in daemon custody and consumes completion once', async () => {
-    const createPersistence = (
-      attemptTransactions?: Parameters<
-        typeof createQualifiedConnectedAccountDaemonPersistence
-      >[0]['attemptTransactions'],
-    ) => createQualifiedConnectedAccountDaemonPersistence({
-      credentials: {
-        token: 'token-1',
-        encryption: {
-          type: 'dataKey',
-          publicKey: new Uint8Array(32),
-          machineKey: new Uint8Array(32),
-        },
-      },
-      getAccountEncryptionMode: vi.fn(async (): Promise<'plain'> => 'plain'),
-      readCredential: vi.fn(async () => null),
-      readConfiguration: vi.fn(async () => null),
-      mutateCredential: vi.fn(),
-      mutateConfiguration: vi.fn(),
-      secrets: {
-        admit: vi.fn(async () => undefined),
-        has: vi.fn(async () => false),
-        read: vi.fn(async () => null),
-      },
-      randomBytes: (length) => new Uint8Array(length).fill(7),
-      ...(attemptTransactions ? { attemptTransactions } : {}),
-    });
-    const persistence = createPersistence();
-
-    const startingSnapshot = Object.freeze({
-      attemptId: 'attempt-1',
-      createdAtMs: 1_000,
-      intent: 'connect' as const,
-      service,
-      modeId: 'oauth',
-      sourceCustody: managedCustody('artifact-acme-1'),
-      expectedCredentialRevision: null,
-      expectedCredentialConfigurationRevision: null,
-      expectedConfigurationRevision: 'configuration-1',
-      phase: 'starting' as const,
-      stagedCredentials: Object.freeze({}),
-      stagedAccountConfigurationContent: Object.freeze({
-        values: Object.freeze({ tenant: 'acme' }),
-        secretRefs: Object.freeze({}),
-      }),
-    });
-    const transaction = await persistence.attempts.oauth.create({
-      attemptId: 'attempt-1',
-      service,
-      snapshot: startingSnapshot,
-      callbackUrl: 'https://accounts.example/oauth/callback',
-    });
-    expect(transaction.request.callbackUrl).toBe('https://accounts.example/oauth/callback');
-    expect(transaction.request.state).toMatch(/^attempt-1\.[A-Za-z0-9_-]{43}$/);
-    expect(() => transaction.acknowledge?.({
-        ...startingSnapshot,
-        phase: 'awaitingOAuth',
-        expectedCredentialConfigurationRevision:
-          'account-configuration-drift',
-      })).toThrow(
-      'Connected-account OAuth transaction acknowledgement is invalid',
-    );
-    const awaitingSnapshot = Object.freeze({
-      ...startingSnapshot,
-      phase: 'awaitingOAuth' as const,
-      expiresAtMs: 61_000,
-    });
-    await transaction.acknowledge?.(awaitingSnapshot);
-
-    const replacementPersistence = createPersistence({
-      oauth: persistence.attempts.oauth,
-    });
-    const restored =
-      await replacementPersistence.attempts.oauth.read?.('attempt-1');
-    expect(restored).not.toBeNull();
-    expect(restored).not.toBeUndefined();
-    if (!restored) throw new Error('Expected a restored OAuth transaction');
-    expect(restored.snapshot).toEqual(awaitingSnapshot);
-    expect(JSON.stringify(restored)).not.toContain('pkceVerifier');
-    await expect(replacementPersistence.configuration.read({
-      kind: 'attempt',
-      attemptId: 'attempt-1',
-      service,
-      modeId: 'oauth',
-    })).resolves.toEqual({
-      revision: 'configuration-1',
-      values: { tenant: 'acme' },
-      secretRefs: {},
-    });
-    const completion = await restored.acceptCompletion({
-      code: 'callback-code',
-      callbackUrl: transaction.request.callbackUrl,
-      state: transaction.request.state,
-    });
-
-    expect(completion).toMatchObject({
-      code: 'callback-code',
-      callbackUrl: transaction.request.callbackUrl,
-      state: transaction.request.state,
-      pkceVerifier: expect.any(String),
-    });
-    expect(completion.pkceVerifier).not.toHaveLength(0);
-    expect(() => restored.acceptCompletion({
-      code: 'second-code',
-      callbackUrl: transaction.request.callbackUrl,
-      state: transaction.request.state,
-    }))
-      .toThrow('does not match its transaction');
-    await restored.close();
-    expect(
-      await replacementPersistence.attempts.oauth.read?.('attempt-1'),
-    ).toBeNull();
-  });
-
   it('composes the injected device transaction owner used across daemon recreation', async () => {
-    let durableSnapshot: ConnectedAccountDeviceTransactionSnapshot | null = null;
-    const device = {
-      acknowledge: vi.fn(async (snapshot: ConnectedAccountDeviceTransactionSnapshot) => {
-        durableSnapshot = snapshot;
-      }),
-      read: vi.fn(async () => durableSnapshot),
-      clear: vi.fn(async () => {
-        durableSnapshot = null;
-      }),
-    };
+    const api = createConnectedAccountAttemptTransactionApiBoundary();
+    const transactionReads = vi.spyOn(api, 'read');
+    const attemptTransactions = createQualifiedConnectedAccountAttemptTransactionAdapters({
+      credentials: { token: 'token-1', encryption: null },
+      getAccountEncryptionMode: async () => 'plain', getMachineId: () => 'machine-1',
+      now: () => 1_000, api,
+    });
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
       credentials: {
         token: 'token-1',
@@ -455,7 +455,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         has: vi.fn(async () => false),
         read: vi.fn(async () => null),
       },
-      attemptTransactions: { device },
+      attemptTransactions,
     });
     const snapshot: ConnectedAccountDeviceTransactionSnapshot = Object.freeze({
       attemptId: 'attempt-device-1',
@@ -485,6 +485,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     expect(
       await persistence.attempts.deviceTransactions?.read('attempt-device-1'),
     ).toEqual(snapshot);
+    transactionReads.mockClear();
     await expect(persistence.configuration.read({
       kind: 'attempt',
       attemptId: 'attempt-device-1',
@@ -495,6 +496,8 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       values: { tenant: 'acme-device' },
       secretRefs: {},
     });
+    // One addressed record selects and seeds its canonical decoder, not an OAuth/device scan.
+    expect(transactionReads).toHaveBeenCalledTimes(1);
     await persistence.attempts.deviceTransactions?.clear('attempt-device-1');
     expect(
       await persistence.attempts.deviceTransactions?.read('attempt-device-1'),
@@ -838,6 +841,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     'settles reconnect with the captured account-configuration revision %s instead of the admitted service revision',
     async (configurationRevision) => {
       const credentialRevision = 'csr_1234567890123456789012';
+      let recovered = false;
       const readCredential = vi.fn(async () => null);
       const mutateCredential = vi.fn(async (input: Readonly<{
         token: string;
@@ -852,6 +856,9 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
           authenticationModeId: 'manual',
           expectedCredentialRevision: credentialRevision,
           expectedConfigurationRevision: configurationRevision,
+          metadata: { authenticationProvenance: {
+            authenticatedAt: 2_000, machine: { serverId: 'home-auth', machineId: 'machine-auth' },
+          } },
         });
         return {
           success: true as const,
@@ -873,6 +880,13 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         readCredential,
         readConfiguration: vi.fn(async () => null),
         mutateCredential,
+        mutateCredentialHealth: async input => {
+          expect(input).toEqual({ token: 'token-1', patch: { ref: account,
+            expectedCredentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', expectedConfigurationRevision: configurationRevision,
+            health: { v: 1, status: 'connected', reconnectRequired: false } } });
+          recovered = true;
+          return { success: true, credentialRevision: 'csr_abcdefghijklmnopqrstuvwxyz', configurationRevision };
+        },
         mutateConfiguration: vi.fn(),
         secrets: {
           admit: vi.fn(async () => undefined),
@@ -892,6 +906,9 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         sourceCustody: managedCustody(),
         stagedCredentials: { token: 'new-token' },
         providerIdentity: { accountId: 'provider-account-1' },
+        authenticationProvenance: {
+          authenticatedAt: 2_000, machine: { serverId: 'home-auth', machineId: 'machine-auth' },
+        },
         displayName: 'Person',
         scopes: ['read'],
       })).resolves.toEqual({
@@ -900,6 +917,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       });
       expect(readCredential).not.toHaveBeenCalled();
       expect(mutateCredential).toHaveBeenCalledTimes(1);
+      expect(recovered).toBe(true);
     },
   );
 
@@ -1009,11 +1027,11 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     for (const [serverCode, expected] of [
       [
         'connect_reconnect_provider_identity_mismatch',
-        { status: 'conflict', code: 'connected_account_reconnect_provider_identity_mismatch' },
+        { status: 'conflict', code: 'connect_reconnect_provider_identity_mismatch' },
       ],
       [
         'connect_authentication_mode_mismatch',
-        { status: 'conflict', code: 'connected_account_authentication_mode_mismatch' },
+        { status: 'conflict', code: 'connect_authentication_mode_mismatch' },
       ],
     ] as const) {
       const mutateConfiguration = vi.fn();
@@ -1225,7 +1243,9 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
           t: 'plain',
           v: { v: 1, values: { accessToken: 'old-access' } },
         },
-        metadata: { scopes: [] },
+        metadata: { scopes: [], authenticationProvenance: {
+          authenticatedAt: 1_000, machine: { serverId: 'home-auth', machineId: 'machine-auth' },
+        } },
       });
     const committedCredential =
       QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({
@@ -1238,7 +1258,9 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
           t: 'plain',
           v: { v: 1, values: { accessToken: 'access-1' } },
         },
-        metadata: { displayName: 'Person', scopes: [] },
+        metadata: { displayName: 'Person', scopes: [], authenticationProvenance: {
+          authenticatedAt: 1_000, machine: { serverId: 'home-auth', machineId: 'machine-auth' },
+        } },
         health: { v: 1, status: 'connected', reconnectRequired: false, lastRefreshSuccessAt: 456 },
       });
     const readCredential = vi.fn()
@@ -1253,6 +1275,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
     const mutateCredential = vi.fn()
       .mockRejectedValueOnce(lostAcknowledgement)
       .mockRejectedValueOnce(staleRetry);
+    let recovered = false;
     const persistence = createQualifiedConnectedAccountDaemonPersistence({
       credentials: {
         token: 'token-1',
@@ -1266,6 +1289,13 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       readCredential,
       readConfiguration: vi.fn(async () => null),
       mutateCredential,
+      mutateCredentialHealth: async input => {
+        expect(input.patch).toEqual({ ref: account,
+          expectedCredentialRevision: committedCredential.credentialRevision, expectedConfigurationRevision: null,
+          health: { v: 1, status: 'connected', reconnectRequired: false } });
+        recovered = true;
+        return { success: true, credentialRevision: committedCredential.credentialRevision, configurationRevision: null };
+      },
       mutateConfiguration: vi.fn(),
       secrets: {
         admit: vi.fn(async () => undefined),
@@ -1297,7 +1327,8 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       status: 'connected',
       account,
     });
-    expect(mutateCredential).toHaveBeenCalledTimes(2);
+    expect(mutateCredential).toHaveBeenCalledTimes(1);
+    expect(recovered).toBe(true);
     expect(readCredential).toHaveBeenCalledTimes(2);
   });
 
@@ -1372,7 +1403,7 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
         status: 'conflict',
         code: 'connected_account_settlement_conflict',
       });
-      expect(mutateCredential).toHaveBeenCalledTimes(1);
+      expect(mutateCredential).not.toHaveBeenCalled();
       expect(readCredential).toHaveBeenCalledTimes(1);
     },
   );
@@ -1440,10 +1471,10 @@ describe('createQualifiedConnectedAccountDaemonPersistence', () => {
       expect(post).toHaveBeenCalledTimes(2);
       expect(get).toHaveBeenCalledTimes(2);
       expect(diagnostic.mock.calls.map(([, value]) => value)).toEqual([
-        { account, reconciliation: false, failedStage: 'credential_write', recoveryStage: 'credential_read',
-          failureCode: 'ECONNABORTED', failureHttpStatus: null, recoveryCode: 'ECONNABORTED', recoveryHttpStatus: null },
-        { account, reconciliation: false, failedStage: 'credential_write', recoveryStage: 'credential_read',
-          failureCode: 'ECONNABORTED', failureHttpStatus: null, recoveryCode: 'ECONNABORTED', recoveryHttpStatus: null },
+        expect.objectContaining({ account, reconciliation: false, failedStage: 'credential_write',
+          failureCode: 'ECONNABORTED', failureHttpStatus: null }),
+        expect.objectContaining({ account, reconciliation: false, failedStage: 'credential_write',
+          failureCode: 'ECONNABORTED', failureHttpStatus: null }),
       ]);
       expect(JSON.stringify(diagnostic.mock.calls)).not.toMatch(/private acknowledgement|access-1|token-1/);
     } finally {

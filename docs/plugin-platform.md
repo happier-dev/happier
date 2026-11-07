@@ -721,6 +721,16 @@ visible and deliberately retried; an uncertain resource update is not blindly
 replayed. Account/app authentication construction consumes the same settlement
 ports, including selected-secret acquisition and resource-ID production.
 
+Authentication settlement retains its admitted configuration and credential
+basis; the server credential compare-and-set decides write currentness. Lost
+acknowledgements stay retryable: the shared settlement owner opens the committed
+payload and completes reconnect health before considering another write. This
+also avoids comparing freshly sealed ciphertext with an earlier create. Remove
+settles the admitted remote outcome using the captured credential revision even
+if its runtime retires meanwhile. Cancellation, Account-mode validation and
+Saved Secret promotion keep their existing owners. Credential refusals retain
+the server's closed error and revision reason in the existing UI Details code.
+
 For finite native HTTP invocations, the purpose host captures the first admitted
 materialization per invocation seed and exact purpose/origin/header tuple. Later
 fragments spend that capture; unlinking refuses the next invocation rather than
@@ -3619,9 +3629,11 @@ guest after that awaited command remains a typed terminal bootstrap refusal.
 
 In unreleased 0.3, Lume projects the host-wide native inventory through one
 macOS capacity owner. A stopped macOS guest at the platform's two-running-guest
-limit settles Start, accepted-start readiness and bootstrap retry with
+limit settles Start and bootstrap retry with
 `native_macos_vm_limit_reached`; macOS image choices disclose the running count
 before Create. Linux and already-running guests do not consume a new macOS slot.
+Generic Inspect preserves the target's observed power, including stopped power
+while sibling guests fill capacity, so retained Stop intent can settle.
 The limit follows [Apple's macOS licence §2B(iii)](https://www.apple.com/legal/sla/docs/macOSTahoe.pdf)
 and [Cua's platform documentation](https://cua.ai/docs/spaces/guides/add-a-computer).
 Lume 0.6.1 returns HTTP202 before boot and logs detached start failures without
@@ -4813,6 +4825,15 @@ digest check, and a new version receives its own preparation. Write ingress
 continues to validate new declarations. This shares static schema work, not
 Account admission or row content.
 
+In 0.3 development source, the direct UI Collection client still reads
+`/v1/plugins/data/contract` once per operation to admit the exact ref and learn
+its current access. A contract is immutable per digest, so once a server answer
+has delivered the contract for a digest, later reads send `omitContract: true`
+and the server answers `{ access }` only, after the same exact-ref admission.
+Refusals are unchanged. A new digest (plugin upgrade or reinstall) is not held
+and receives the full contract. Before this, every operation re-downloaded and
+re-compared the whole contract (about 0.5 MB for Channels `channel-state`).
+
 Constructing a dormant Account storage binding does not prepare retained rows.
 A real Collection operation promotes its provisional declaration refusal through
 the same Account Data claim owner; concurrent operations share its preparation.
@@ -4992,6 +5013,25 @@ finalizing candidates; healthy rows have no due key and their bodies stay
 unopened by delete finalization. The finalizer still rereads current lifecycle
 and execution placement before cleanup, and resumes retained work after a
 conflict or restart through the existing outward wake.
+
+In unreleased 0.3 source, Channels `channel-deliveries` V6 adds the
+`by-terminal-updated-at` index through an identity V5→V6 migration. Retention
+selects expired terminal rows in the Collection query and reads one future row
+to schedule its exact 30-day deadline. Ordinary delivery writes preserve that
+deadline; an empty terminal history reopens only on a terminal-index change.
+Unresolved partial and unknown outcomes remain in terminal history and are
+never retired; a future one can cause one deadline wake before the next anchor.
+Paginated retention keeps its cutoff fixed for the Collection cursor; the
+existing retry index continues to own live delivery discovery. The bundled
+manifest and UI reader declarations publish V6 with the writer; a V5 stored
+row keeps its payload and physical revision through candidate promotion.
+
+The Channels connections Resource owns its observed projection through the
+existing context-producer lifecycle. It watches each connection's attention
+bucket; healthy delivery writes do not invalidate it. Attention changes read
+only the affected connection ids through one paged set-prefix query, while
+connection metadata changes retain their existing structural observation.
+Unobserved reads remain fresh and producer disposal releases its watches.
 
 V15→V16 preserves each logical row while preparing the optional nested PR
 fix-resolution evidence added by Channels Protocol. That state-schema union

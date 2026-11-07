@@ -97,6 +97,7 @@ export function createUiConnectedAccountCredentialPersistence(account: LazyActio
             },
             readHttpStatus: error => error instanceof ConnectedServiceApiError ? error.status : null,
             readFailureCode: error => error instanceof ConnectedServiceApiError ? error.code ?? null : null,
+            readFailureReason: error => error instanceof ConnectedServiceApiError ? error.reason : null,
         }),
     };
 }

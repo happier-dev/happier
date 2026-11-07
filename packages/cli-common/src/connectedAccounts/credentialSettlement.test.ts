@@ -6,7 +6,7 @@ import { createConnectedAccountCredentialSettlement } from './credentialSettleme
 import { QualifiedConnectedAccountCredentialSnapshotV4Schema, QualifiedConnectedAccountCredentialHealthPatchV4Schema } from '@happier-dev/protocol/connect/qualifiedConnectedAccountsV4';
 
 describe('Connected Account credential settlement', () => {
-    it.each(['acknowledged', 'reconciled', 'health-conflict', 'health-unknown'] as const)('settles reconnect health before reporting a recovered Account (%s)', async outcome => {
+    it.each(['acknowledged', 'reconciled', 'health-conflict', 'health-unknown', 'credential-conflict'] as const)('settles reconnect health before reporting a recovered Account (%s)', async outcome => {
         const service = { pluginId: 'acme.cloud', localId: 'api' };
         const account = { service, accountId: 'selected' };
         const beforeRevision = 'csr_0123456789ABCDEFGHJKMNPQRS';
@@ -29,6 +29,9 @@ describe('Connected Account credential settlement', () => {
                 openQualifiedConnectedAccountContentEnvelope({ kind, accountMode: 'plain', envelope }),
             parseConfigurationContent: (value: unknown) => value,
             mutateCredential: async (mutation: Parameters<Parameters<typeof createConnectedAccountCredentialSettlement>[0]['mutateCredential']>[0]) => {
+                if (outcome === 'credential-conflict') throw Object.assign(new Error('private response body'), {
+                    status: 409, code: 'connect_credential_mutation_superseded', reason: 'credential_revision_mismatch',
+                });
                 credential = QualifiedConnectedAccountCredentialSnapshotV4Schema.parse({ ...credential,
                     credentialRevision: afterRevision, content: mutation.content, metadata: mutation.metadata });
                 if (outcome === 'reconciled') throw new Error('credential_ack_lost');
@@ -43,7 +46,8 @@ describe('Connected Account credential settlement', () => {
                 credential = { ...credential, health: patch.health };
             },
             readCredential: async () => { reads += 1; return credential; }, readConfiguration: async () => null,
-            readHttpStatus: () => null,
+            readHttpStatus: (error: unknown) => error && typeof error === 'object' && 'status' in error && typeof error.status === 'number' ? error.status : null,
+            readFailureReason: (error: unknown) => error && typeof error === 'object' && 'reason' in error ? error.reason : null,
             readFailureCode: (error: unknown) => error && typeof error === 'object' && 'code' in error && typeof error.code === 'string' ? error.code : null,
             onSettled: async () => { expect(credential.health?.status).toBe('connected'); published = true; },
         };
@@ -56,6 +60,12 @@ describe('Connected Account credential settlement', () => {
             await expect(settlement).rejects.toThrow('health_ack_lost');
             expect(healthPatches).toHaveLength(1);
             expect(reads).toBe(0);
+            expect(published).toBe(false);
+            return;
+        }
+        if (outcome === 'credential-conflict') {
+            expect(await settlement).toEqual({ status: 'conflict', code: 'connect_credential_mutation_superseded.credential_revision_mismatch' });
+            expect(healthPatches).toEqual([]);
             expect(published).toBe(false);
             return;
         }

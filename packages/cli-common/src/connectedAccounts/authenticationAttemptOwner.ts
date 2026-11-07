@@ -13,18 +13,19 @@ import type {
     ConnectedAccountStageAccountConfiguration,
     ConnectedAccountManualInput,
 } from './authenticationTypes.js';
-import type { ConnectedAccountConfigurationOwner } from './configurationOwner.js';
+import { applyConnectedAccountConfigurationFields, type ConnectedAccountConfigurationOwner } from './configurationOwner.js';
 import type { ConnectedAccountAttemptTransactionRecord, PendingConnectedAccountAttemptTransaction } from './attemptTransactionApi.js';
 import { CONNECTED_ACCOUNT_DIRECT_EXPORT_CONTRACT_V1, listConnectedAccountSecretCredentialKeysV1 } from '@happier-dev/protocol/connect/plugin-connected-account-authentication-v2';
 import { QualifiedConnectedAccountIdSchema, sameQualifiedConnectedAccountRef,
     connectedAccountSourceCustodyV1Equal, type ConnectedAccountSourceCustodyV1 } from '@happier-dev/protocol/connect/qualified-connected-account-persistence';
 import { isQualifiedConnectedAccountProfileActiveV4 } from '@happier-dev/protocol/connect/qualified-connected-account-projections';
-import type { PluginConnectedAccountAuthenticationModeV2, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
+import type { PluginConnectedAccountAuthenticationModeV2, PluginConnectedAccountConfigurationFieldV2, QualifiedConnectedAccountCredentialSnapshotV4, QualifiedConnectedAccountProfileV4 } from '@happier-dev/protocol';
 import type { MachineTargetV1 } from '@happier-dev/protocol/machines/machineAccessV1';
 import { areConnectedAccountManualFieldsValidV1 } from '@happier-dev/protocol/connect/execute-configuration-action';
 
 import { ConnectedAccountRuntimeInvocationNotStartedError } from './runtimeInvocationError.js';
 import type { SharedSavedSecretReferenceSelectionV1 } from '@happier-dev/protocol/account/settings/savedSecretReferenceV1';
+import type { ConnectedAccountManualAttemptBasis } from './manualAttemptDraft.js';
 
 type MaybePromise<T> = T | Promise<T>;
 type PluginConnectedAccountCredentialStore =
@@ -168,7 +169,9 @@ export type ConnectedAccountOAuthTransactionSnapshot = Readonly<{
     expectedCredentialRevision: string | null;
     expectedCredentialConfigurationRevision: string | null;
     expectedConfigurationRevision: string;
-    phase: 'starting' | 'awaitingOAuth' | 'outcomeUnknown';
+    phase: 'starting' | 'awaitingOAuth' | 'configurationRequired' | 'outcomeUnknown';
+    configurationFields?: readonly PluginConnectedAccountConfigurationFieldV2[];
+    authenticationProvenance?: ConnectedAccountAttemptSettlementRequest['authenticationProvenance'];
     authorizationUrl?: string;
     issuer?: string;
     issuerResponseParameterRequired?: boolean;
@@ -218,16 +221,18 @@ export type ConnectedAccountDeviceTransactionOwner = Readonly<{
 export type ConnectedAccountAttemptAddressSnapshot = Readonly<{
     attemptId: string;
     kind: 'manual' | 'oauth' | 'device';
-    phase: 'configurationRequired' | 'awaitingManual';
+    phase: 'configurationRequired' | 'awaitingManual' | 'starting';
     createdAtMs: number;
     intent: 'connect' | 'reconnect';
     service: PluginContributionRef;
     modeId: string;
+    manual?: ConnectedAccountManualAttemptBasis;
 }>;
 
 export type ConnectedAccountAttemptAddressOwner = Readonly<{
     acknowledge(snapshot: ConnectedAccountAttemptAddressSnapshot): Promise<Readonly<{ expiresAtMs: number }>>;
     read(attemptId: string): Promise<ConnectedAccountAttemptTransactionRecord | null>;
+    readManualDraft?(record: ConnectedAccountAttemptTransactionRecord): Promise<ConnectedAccountManualAttemptBasis | null>;
     clear(attemptId: string): MaybePromise<void>;
 }>;
 
@@ -235,9 +240,9 @@ function hasRestorableTransaction(input: Readonly<{
     kind: ConnectedAccountAttemptTransactionRecord['kind'];
     phase: ConnectedAccountAttemptTransactionRecord['scope']['phase'];
 }>): boolean {
-    // Manual forms and unfinished configuration retain their draft only in
-    // their host. OAuth/device transactions carry the content needed to resume.
-    return input.kind !== 'manual' && input.phase !== 'configurationRequired';
+    return input.kind === 'manual'
+        ? input.phase === 'awaitingManual' || input.phase === 'configurationRequired'
+        : input.kind === 'oauth' || (input.kind === 'device' && input.phase !== 'configurationRequired');
 }
 
 export type ConnectedAccountAttemptResponse =
@@ -316,6 +321,8 @@ type ActiveStoredAttempt = {
     oauthAuthorizationUrl: string | null;
     oauthIssuer?: string;
     oauthIssuerResponseParameterRequired?: boolean;
+    configurationFields?: readonly PluginConnectedAccountConfigurationFieldV2[];
+    authenticationProvenance?: ConnectedAccountAttemptSettlementRequest['authenticationProvenance'];
     device: {
         expiresAtMs: number;
         pollIntervalMs: number;
@@ -340,6 +347,16 @@ type ActiveStoredAttempt = {
     cleanupTerminalResponse: null;
     terminalResponseCustody?: { released: boolean };
 };
+
+type AttemptTarget = Readonly<{
+    intent: 'connect' | 'reconnect';
+    service: PluginContributionRef;
+    account: PluginConnectedAccountRef | null;
+    modeId: string;
+    expectedCredentialRevision: string | null;
+    expectedCredentialConfigurationRevision: string | null;
+    expectedConfigurationRevision?: string;
+}>;
 
 type RestoringStoredAttempt = {
     id: string;
@@ -567,7 +584,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         }>>;
     }>;
 }>): Readonly<{
-    selectResumableAttempts(attempts: readonly PendingConnectedAccountAttemptTransaction[]): readonly PendingConnectedAccountAttemptTransaction[];
+    selectResumableAttempts(attempts: readonly PendingConnectedAccountAttemptTransaction[]): Promise<readonly PendingConnectedAccountAttemptTransaction[]>;
     ensureRestored(input: Readonly<{
         attemptId: string;
         record?: ConnectedAccountAttemptTransactionRecord;
@@ -652,6 +669,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         options?: Readonly<{
             skipOAuthTransactionCleanup?: boolean;
             skipDeviceTransactionCleanup?: boolean;
+            skipAddressTransactionCleanup?: boolean;
             skipConfigurationCleanup?: boolean;
             retainTerminalResponse?: boolean;
         }>,
@@ -693,7 +711,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 deviceTransaction: options?.skipDeviceTransactionCleanup !== true
                     && (('device' in attempt && attempt.device !== null)
                         || (attempt.phase === 'restoring' && attempt.oauthTransaction === null)),
-                addressTransaction: 'addressExpiresAtMs' in attempt
+                addressTransaction: options?.skipAddressTransactionCleanup !== true && 'addressExpiresAtMs' in attempt
                     && attempt.addressExpiresAtMs !== undefined
                     && attempt.oauthTransaction === null
                     && (!('device' in attempt) || attempt.device === null),
@@ -959,14 +977,40 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         return true;
     }
 
-    async function begin(input: Readonly<{
-        intent: 'connect' | 'reconnect';
-        service: PluginContributionRef;
-        account: PluginConnectedAccountRef | null;
-        modeId: string;
-        expectedCredentialRevision: string | null;
-        expectedCredentialConfigurationRevision: string | null;
-        expectedConfigurationRevision?: string;
+    async function prepareReconnectTarget(account: PluginConnectedAccountRef) {
+        const exact = await params.accounts.readExact(account);
+        if (!exact || !sameQualifiedConnectedAccountRef(exact.account, account)) return null;
+        return {
+            intent: 'reconnect' as const,
+            service: exact.account.service,
+            account: exact.account,
+            modeId: exact.authenticationModeId,
+            expectedCredentialRevision: exact.credentialRevision,
+            expectedCredentialConfigurationRevision: exact.configurationRevision,
+        };
+    }
+
+    async function admitTargetConfiguration(
+        target: AttemptTarget,
+        admission: ConnectedAccountAttemptModeAdmission,
+        attemptId?: string,
+    ) {
+        return await params.configuration.admit({
+            intent: target.intent,
+            service: target.service,
+            ...(target.account ? { account: target.account } : {}),
+            mode: admission.descriptor,
+            occurrenceId: admission.occurrenceId,
+            sourceCustody: admission.sourceCustody,
+            ...(attemptId ? { attemptId } : {}),
+            ...(target.expectedConfigurationRevision
+                ? { expectedConfigurationRevision: target.expectedConfigurationRevision }
+                : {}),
+        });
+    }
+
+    async function begin(input: AttemptTarget, restored?: Readonly<{
+        attemptId: string; createdAtMs: number; expiresAtMs: number; sourceCustody: ConnectedAccountSourceCustodyV1;
     }>): Promise<AttemptResponse> {
         if (disposed) return unavailable();
         let admitted: ConnectedAccountAttemptModeAdmission;
@@ -990,40 +1034,37 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 code: 'connected_account_authentication_mode_mismatch',
             };
         }
+        if (restored && (admitted.descriptor.kind !== 'manual'
+            || !connectedAccountSourceCustodyV1Equal(admitted.sourceCustody, restored.sourceCustody))) {
+            return { status: 'conflict', attemptId: restored.attemptId, code: 'connected_account_runtime_generation_changed' };
+        }
 
         const needsAttemptTarget = (
             'configuration' in admitted.descriptor
             && admitted.descriptor.configuration?.scope === 'account'
         )
             && input.intent === 'connect';
-        const reservedAttemptId = needsAttemptTarget
+        if (restored && (attempts.has(restored.attemptId) || reservedAttemptIds.has(restored.attemptId))) {
+            return { status: 'conflict', attemptId: restored.attemptId, code: 'connected_account_attempt_in_progress' };
+        }
+        const reservedAttemptId = restored?.attemptId ?? (needsAttemptTarget
             ? await reserveAttemptId()
-            : null;
+            : null);
+        if (restored) reservedAttemptIds.add(restored.attemptId);
         let configuration: ConnectedAccountAttemptConfigurationAdmission;
         try {
-            configuration = await params.configuration.admit({
-                intent: input.intent,
-                service: input.service,
-                ...(input.account ? { account: input.account } : {}),
-                mode: admitted.descriptor,
-                occurrenceId: admitted.occurrenceId,
-                sourceCustody: admitted.sourceCustody,
-                ...(reservedAttemptId ? { attemptId: reservedAttemptId } : {}),
-                ...(input.expectedConfigurationRevision
-                    ? { expectedConfigurationRevision: input.expectedConfigurationRevision }
-                    : {}),
-            });
+            configuration = await admitTargetConfiguration(input, admitted, reservedAttemptId ?? undefined);
         } catch (error) {
             if (reservedAttemptId) {
                 reservedAttemptIds.delete(reservedAttemptId);
-                await params.configuration.destroyAttempt?.(reservedAttemptId);
+                if (!restored) await params.configuration.destroyAttempt?.(reservedAttemptId);
             }
             throw error;
         }
         if (disposed) {
             if (reservedAttemptId) {
                 reservedAttemptIds.delete(reservedAttemptId);
-                await params.configuration.destroyAttempt?.(reservedAttemptId);
+                if (!restored) await params.configuration.destroyAttempt?.(reservedAttemptId);
             }
             return unavailable();
         }
@@ -1040,7 +1081,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     const attempt: ActiveStoredAttempt = {
                         id: reservedAttemptId,
                         active: true,
-                        createdAtMs: params.now(),
+                        createdAtMs: restored?.createdAtMs ?? params.now(),
+                        ...(restored ? { addressExpiresAtMs: restored.expiresAtMs } : {}),
                         intent: input.intent,
                         account: input.account,
                         expectedCredentialRevision: input.expectedCredentialRevision,
@@ -1066,7 +1108,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     };
                     attempts.set(reservedAttemptId, attempt);
                     custodyTransferred = true;
-                    const addressFailure = await acknowledgeAttemptAddress(attempt, 'configurationRequired');
+                    const addressFailure = restored ? null : await acknowledgeAttemptAddress(attempt, 'configurationRequired');
                     if (addressFailure) return addressFailure;
                     attempt.phase = 'configurationRequired';
                     attempt.lastResponse = response;
@@ -1076,7 +1118,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             }
             if (reservedAttemptId) {
                 reservedAttemptIds.delete(reservedAttemptId);
-                await params.configuration.destroyAttempt?.(reservedAttemptId);
+                if (!restored) await params.configuration.destroyAttempt?.(reservedAttemptId);
             }
             return {
                 status: configuration.status,
@@ -1089,7 +1131,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         ) {
             if (reservedAttemptId) {
                 reservedAttemptIds.delete(reservedAttemptId);
-                await params.configuration.destroyAttempt?.(reservedAttemptId);
+                if (!restored) await params.configuration.destroyAttempt?.(reservedAttemptId);
             }
             return {
                 status: 'conflict',
@@ -1100,7 +1142,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         const attemptId = reservedAttemptId ?? await reserveAttemptId();
         if (disposed) {
             reservedAttemptIds.delete(attemptId);
-            if (reservedAttemptId) await params.configuration.destroyAttempt?.(reservedAttemptId);
+            if (reservedAttemptId && !restored) await params.configuration.destroyAttempt?.(reservedAttemptId);
             return unavailable();
         }
         const phase = admitted.descriptor.kind === 'manual'
@@ -1111,7 +1153,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         const attempt: ActiveStoredAttempt = {
             id: attemptId,
             active: true,
-            createdAtMs: params.now(),
+            createdAtMs: restored?.createdAtMs ?? params.now(),
+            ...(restored ? { addressExpiresAtMs: restored.expiresAtMs } : {}),
             intent: input.intent,
             account: input.account,
             expectedCredentialRevision: input.expectedCredentialRevision,
@@ -1147,7 +1190,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             : { status: 'starting', attemptId };
         if (phase === 'awaitingManual') {
             attempt.phase = 'inFlight';
-            const addressFailure = await acknowledgeAttemptAddress(attempt, 'awaitingManual');
+            const addressFailure = restored ? null : await acknowledgeAttemptAddress(attempt, 'awaitingManual');
             if (addressFailure) return addressFailure;
             attempt.phase = 'awaitingManual';
         }
@@ -1221,6 +1264,12 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 intent: attempt.intent,
                 service: attempt.admission.service,
                 modeId: attempt.admission.modeId,
+                ...(attempt.admission.descriptor.kind === 'manual' && phase !== 'starting' ? { manual: {
+                    account: attempt.account, sourceCustody: attempt.admission.sourceCustody,
+                    expectedCredentialRevision: attempt.expectedCredentialRevision,
+                    expectedCredentialConfigurationRevision: attempt.expectedCredentialConfigurationRevision,
+                    expectedConfigurationRevision: attempt.configuration?.snapshot.revision ?? null,
+                } } : {}),
             });
             attempt.addressExpiresAtMs = acknowledgement.expiresAtMs;
             const ownershipFailure = attemptOwnershipFailure(attempt);
@@ -1236,7 +1285,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 status: 'unavailable', attemptId: attempt.id,
                 code: 'connected_account_attempt_internal_unavailable',
             };
-            await destroyAttempt(attempt, response);
+            await destroyAttempt(attempt, response, phase === 'starting'
+                ? { skipAddressTransactionCleanup: true, skipConfigurationCleanup: true } : undefined);
             return response;
         } finally {
             finishDurableOperation();
@@ -1258,22 +1308,28 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 }),
             configuration: attempt.configuration.snapshot,
             attemptCredentials: attempt.credentials,
-            ...(attempt.admission.sourceCustody.kind === 'host' ? {
+            ...(attempt.admission.descriptor.kind === 'oauthAuthorizationCode'
+                && attempt.admission.descriptor.configuration?.scope === 'account' ? {
                 async stageAccountConfiguration(replacement: Parameters<ConnectedAccountStageAccountConfiguration>[0]) {
-                    if (!params.configuration.stageAccountConfiguration || !attempt.configuration || operation?.kind !== 'beginOAuth') {
+                    if (!params.configuration.stageAccountConfiguration || !attempt.configuration
+                        || (operation?.kind !== 'beginOAuth' && operation?.kind !== 'completeOAuth' && operation?.kind !== 'reconcile')) {
                         throw new Error('connected_account_host_staging_unavailable');
                     }
-                    const before = await checkCurrentness(attempt, true);
+                    const before = await checkAttemptActive(attempt);
                     if (before) throw new Error('connected_account_host_staging_stale');
                     const content = await params.configuration.stageAccountConfiguration({
                         snapshot: attempt.configuration.snapshot, replacement,
                     });
-                    const after = await checkCurrentness(attempt, true);
+                    const after = await checkAttemptActive(attempt);
                     if (after || !attempt.configuration) throw new Error('connected_account_host_staging_stale');
+                    if (replacement.fields) {
+                        applyConnectedAccountConfigurationFields(attempt.admission.descriptor, replacement.fields);
+                        attempt.configurationFields = replacement.fields;
+                    }
                     attempt.configuration = Object.freeze({ ...attempt.configuration, stagedAccountConfigurationContent: content });
                     // Registration metadata stays under the same sealed attempt,
                     // before its redirect becomes actionable or credentials settle.
-                    await acknowledgeOAuthTransaction(attempt, 'starting');
+                    await acknowledgeOAuthTransaction(attempt, operation.kind === 'beginOAuth' ? 'starting' : 'outcomeUnknown');
                 },
             } : {}),
         });
@@ -1356,6 +1412,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 attempt.expectedCredentialConfigurationRevision,
             expectedConfigurationRevision: attempt.configuration.snapshot.revision,
             phase,
+            ...(attempt.configurationFields ? { configurationFields: attempt.configurationFields } : {}),
+            ...(attempt.authenticationProvenance ? { authenticationProvenance: attempt.authenticationProvenance } : {}),
             ...(attempt.oauthAuthorizationUrl === null
                 ? {}
                 : { authorizationUrl: attempt.oauthAuthorizationUrl }),
@@ -1403,9 +1461,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         }
     }
 
-    async function checkCurrentness(
+    async function checkAttemptActive(
         attempt: ActiveStoredAttempt,
-        _beforeProviderEntry = false,
     ): Promise<AttemptResponse | null> {
         const before = attemptOwnershipFailure(attempt);
         if (before) return before;
@@ -1423,54 +1480,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 code: 'connected_account_configuration_required',
             };
         }
-        let configurationCurrent: boolean;
-        try {
-            configurationCurrent =
-                await params.configuration.isCurrent(attempt.configuration.snapshot);
-        } catch {
-            return attemptOwnershipFailure(attempt) ?? {
-                status: 'unavailable',
-                attemptId: attempt.id,
-                code: 'connected_account_attempt_internal_unavailable',
-            };
-        }
-        if (!configurationCurrent) {
-            return {
-                status: 'conflict',
-                attemptId: attempt.id,
-                code: 'connected_account_configuration_changed',
-            };
-        }
-        const afterConfiguration = attemptOwnershipFailure(attempt);
-        if (afterConfiguration) return afterConfiguration;
-        if (attempt.account) {
-            let exact: Awaited<ReturnType<typeof params.accounts.readExact>>;
-            try {
-                exact = await params.accounts.readExact(attempt.account);
-            } catch {
-                return attemptOwnershipFailure(attempt) ?? {
-                    status: 'unavailable',
-                    attemptId: attempt.id,
-                    code: 'connected_account_attempt_internal_unavailable',
-                };
-            }
-            const afterAccountRead = attemptOwnershipFailure(attempt);
-            if (afterAccountRead) return afterAccountRead;
-            if (
-                !exact
-                || !sameQualifiedConnectedAccountRef(exact.account, attempt.account)
-                || exact.authenticationModeId !== attempt.admission.modeId
-                || exact.credentialRevision !== attempt.expectedCredentialRevision
-                || exact.configurationRevision
-                    !== attempt.expectedCredentialConfigurationRevision
-            ) {
-                return {
-                    status: 'conflict',
-                    attemptId: attempt.id,
-                    code: 'connected_account_credential_changed',
-                };
-            }
-        }
+        // Admission captured the configuration and credential basis. The server
+        // CAS owns write currentness; subsequent steps retain local cancellation.
         return attemptOwnershipFailure(attempt);
     }
 
@@ -1567,34 +1578,6 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         if (uncertain) return uncertain;
         await destroyAttempt(attempt, currentness);
         return currentness;
-    }
-
-    async function resolveSettlementReconciliationCurrentness(
-        attempt: ActiveStoredAttempt,
-        currentness: AttemptResponse,
-        outcomeUnknownResponse: AttemptResponse,
-    ): Promise<AttemptResponse> {
-        const ownershipFailure = attemptOwnershipFailure(attempt);
-        if (ownershipFailure) return ownershipFailure;
-        if (
-            currentness.status === 'unavailable'
-                && currentness.code
-                    === 'connected_account_attempt_internal_unavailable'
-        ) {
-            attempt.phase = 'outcomeUnknown';
-            attempt.lastResponse = outcomeUnknownResponse;
-            return outcomeUnknownResponse;
-        }
-        const response: AttemptResponse = {
-            status: 'reconnectRequired',
-            attemptId: attempt.id,
-            code:
-                'connected_account_authentication_reconciliation_unavailable',
-        };
-        attempt.phase = 'reconnectRequired';
-        attempt.lastResponse = response;
-        await destroyAttempt(attempt, response);
-        return response;
     }
 
     async function cleanUpAfterDeviceAcknowledgementDrift(
@@ -1795,7 +1778,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             return response;
         }
         attempt.preparedSettlementAcknowledged = true;
-        const currentness = await checkCurrentness(attempt);
+        const currentness = await checkAttemptActive(attempt);
         if (!currentness) return null;
         return await resolvePreparedAcknowledgementCurrentness(
             attempt,
@@ -1828,26 +1811,28 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         try {
             settlement = await operation(request);
         } catch {
-            const currentness = await checkCurrentness(attempt);
-            if (currentness) {
-                return await resolveSettlementReconciliationCurrentness(
-                    attempt,
-                    currentness,
-                    outcomeUnknownResponse,
-                );
-            }
+            const ownershipFailure = attemptOwnershipFailure(attempt);
+            if (ownershipFailure) return ownershipFailure;
             attempt.phase = 'outcomeUnknown';
+            attempt.lastResponse = outcomeUnknownResponse;
             return outcomeUnknownResponse;
         }
         const afterSettlement = attemptOwnershipFailure(attempt);
         if (afterSettlement) return afterSettlement;
         if (settlement.status !== 'connected') {
+            if (reconciliationOnly && settlement.status === 'unavailable'
+                && settlement.code !== 'connected_account_authentication_reconciliation_unavailable') {
+                attempt.phase = 'outcomeUnknown';
+                const response: AttemptResponse = { status: 'outcomeUnknown', attemptId: attempt.id,
+                    diagnostic: { code: settlement.code } };
+                attempt.lastResponse = response;
+                return response;
+            }
             const response: AttemptResponse = reconciliationOnly
                 ? {
                     status: 'reconnectRequired',
                     attemptId: attempt.id,
-                    code:
-                        'connected_account_authentication_reconciliation_unavailable',
+                    code: settlement.code,
                 }
                 : {
                     status: settlement.status,
@@ -1908,27 +1893,10 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         }
         const acknowledgement = await acknowledgePreparedSettlement(attempt);
         if (acknowledgement) return acknowledgement;
-        const drift = await checkCurrentness(attempt);
+        const drift = await checkAttemptActive(attempt);
         if (drift) {
-            if (reconciliationOnly) {
-                return await resolveSettlementReconciliationCurrentness(
-                    attempt,
-                    drift,
-                    attempt.lastResponse ?? {
-                        status: 'outcomeUnknown',
-                        attemptId: attempt.id,
-                        diagnostic: {
-                            code:
-                                'connected_account_settlement_outcome_unknown',
-                        },
-                    },
-                );
-            }
             return await resolveReconciliationCurrentness(attempt, drift);
         }
-        const admissionFailure =
-            await rejectAttemptWhenEffectfulOperationIsDisallowed(attempt);
-        if (admissionFailure) return admissionFailure;
         const beforeSettlement = attemptOwnershipFailure(attempt);
         if (beforeSettlement) return beforeSettlement;
         const outcomeUnknownResponse: AttemptResponse = {
@@ -1974,7 +1942,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         if (attempt.preparedSettlement) {
             return await settlePrepared(attempt, true);
         }
-        const drift = await checkCurrentness(attempt);
+        const drift = await checkAttemptActive(attempt);
         if (drift) {
             return await resolveReconciliationCurrentness(attempt, drift);
         }
@@ -2010,6 +1978,30 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     await destroyAttempt(attempt, response);
                     return response;
                 }
+                const target = await prepareReconnectTarget(existing.ref);
+                const afterTarget = attemptOwnershipFailure(attempt);
+                if (afterTarget) return afterTarget;
+                if (!target || target.modeId !== attempt.admission.modeId) {
+                    const response: AttemptResponse = { status: 'conflict', attemptId: attempt.id,
+                        code: target ? 'connected_account_authentication_mode_mismatch' : 'connected_account_credential_changed' };
+                    await destroyAttempt(attempt, response);
+                    return response;
+                }
+                const configuration = await admitTargetConfiguration(target, attempt.admission);
+                const afterConfiguration = attemptOwnershipFailure(attempt);
+                if (afterConfiguration) return afterConfiguration;
+                if (configuration.status !== 'ready') {
+                    const response: AttemptResponse = configuration.status === 'configurationRequired'
+                        ? { status: 'configurationRequired', target: configuration.target, missingFieldIds: configuration.missingFieldIds }
+                        : { status: configuration.status, attemptId: attempt.id, code: configuration.code };
+                    await destroyAttempt(attempt, response);
+                    return response;
+                }
+                attempt.intent = target.intent;
+                attempt.account = target.account;
+                attempt.expectedCredentialRevision = target.expectedCredentialRevision;
+                attempt.expectedCredentialConfigurationRevision = target.expectedCredentialConfigurationRevision;
+                attempt.configuration = configuration;
             }
         }
         let accountId: string;
@@ -2100,22 +2092,63 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         result: ValidatedProviderResult,
         successfulAuthentication: boolean,
     ): Promise<AttemptResponse> {
+        // A later configuration choice does not change when or where OAuth succeeded.
+        const executionMachine = successfulAuthentication
+            && (result.status === 'connected' || result.status === 'configurationRequired')
+            && (attempt.admission.descriptor.kind !== 'manual'
+                || attempt.admission.descriptor.credentialOrigin === 'authentication')
+            ? params.resolveExecutionMachine?.() : null;
+        const authenticationProvenance = executionMachine
+            ? Object.freeze({ authenticatedAt: params.now(), machine: Object.freeze({ ...executionMachine }) })
+            : attempt.authenticationProvenance;
+        if (result.status === 'configurationRequired') {
+            const mode = applyConnectedAccountConfigurationFields(attempt.admission.descriptor, result.fields);
+            const configuration = await params.configuration.admit({
+                intent: attempt.intent, service: attempt.admission.service,
+                ...(attempt.account ? { account: attempt.account } : {}),
+                mode, attemptId: attempt.id, occurrenceId: attempt.admission.occurrenceId,
+                sourceCustody: attempt.admission.sourceCustody,
+            });
+            const ownershipFailure = attemptOwnershipFailure(attempt);
+            if (ownershipFailure) return ownershipFailure;
+            if (configuration.status !== 'ready' && configuration.status !== 'configurationRequired') {
+                const response: AttemptResponse = { status: configuration.status, attemptId: attempt.id, code: configuration.code };
+                await destroyAttempt(attempt, response);
+                return response;
+            }
+            attempt.configurationFields = result.fields;
+            attempt.authenticationProvenance = authenticationProvenance;
+            try {
+                await acknowledgeOAuthTransaction(attempt, 'configurationRequired');
+            } catch {
+                const ownershipFailure = attemptOwnershipFailure(attempt);
+                if (ownershipFailure) {
+                    await compensateLateDurableWrite(attempt, 'oauth');
+                    return ownershipFailure;
+                }
+                const unavailableResponse: AttemptResponse = {
+                    status: 'unavailable', attemptId: attempt.id,
+                    code: 'connected_account_oauth_transaction_unavailable',
+                };
+                await destroyAttempt(attempt, unavailableResponse);
+                return unavailableResponse;
+            }
+            const afterPersistence = attemptOwnershipFailure(attempt);
+            if (afterPersistence) return afterPersistence;
+            const response: AttemptResponse = {
+                status: 'configurationRequired', attemptId: attempt.id,
+                target: configuration.status === 'ready' ? configuration.snapshot.target : configuration.target,
+                missingFieldIds: configuration.status === 'ready' ? [] : configuration.missingFieldIds,
+            };
+            attempt.phase = 'configurationRequired';
+            attempt.lastResponse = response;
+            return response;
+        }
         if (result.status === 'connected') {
-            // Capture observed authentication before awaited currentness/settlement.
-            // Reconciliation and imported or unclassified manual credentials do
-            // not establish the original sign-in time.
-            const executionMachine = successfulAuthentication
-                && (attempt.admission.descriptor.kind !== 'manual'
-                    || attempt.admission.descriptor.credentialOrigin === 'authentication')
-                ? params.resolveExecutionMachine?.()
-                : null;
-            const authenticationProvenance = executionMachine
-                ? Object.freeze({ authenticatedAt: params.now(), machine: Object.freeze({ ...executionMachine }) })
-                : undefined;
             return await settleConnected(attempt, result, authenticationProvenance);
         }
         if (result.status === 'outcomeUnknown') {
-            const drift = await checkCurrentness(attempt);
+            const drift = await checkAttemptActive(attempt);
             if (drift) {
                 const uncertain = preservePossibleProviderOutcome(
                     attempt,
@@ -2160,7 +2193,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     attempt.lastResponse = response;
                     return response;
                 }
-                const afterAcknowledge = await checkCurrentness(attempt);
+                const afterAcknowledge = await checkAttemptActive(attempt);
                 if (afterAcknowledge) {
                     const uncertain = preservePossibleProviderOutcome(
                         attempt,
@@ -2188,7 +2221,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             attempt.lastResponse = response;
             return response;
         }
-        const drift = await checkCurrentness(attempt);
+        const drift = await checkAttemptActive(attempt);
         if (drift) {
             const uncertain = preservePossibleProviderOutcome(attempt, drift);
             if (uncertain) return uncertain;
@@ -2233,7 +2266,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 await destroyAttempt(attempt, unavailableResponse);
                 return unavailableResponse;
             }
-            const afterAcknowledge = await checkCurrentness(attempt);
+            const afterAcknowledge = await checkAttemptActive(attempt);
             if (afterAcknowledge) {
                 const uncertain = preservePossibleProviderOutcome(
                     attempt,
@@ -2282,7 +2315,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 await destroyAttempt(attempt, response);
                 return response;
             }
-            const afterAcknowledge = await checkCurrentness(attempt);
+            const afterAcknowledge = await checkAttemptActive(attempt);
             if (afterAcknowledge) {
                 const uncertain = preservePossibleProviderOutcome(
                     attempt,
@@ -2324,7 +2357,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     attempt.lastResponse = response;
                     return response;
                 }
-                const afterAcknowledge = await checkCurrentness(attempt);
+                const afterAcknowledge = await checkAttemptActive(attempt);
                 if (afterAcknowledge) {
                     const uncertain = preservePossibleProviderOutcome(
                         attempt,
@@ -2362,7 +2395,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     await destroyAttempt(attempt, response);
                     return response;
                 }
-                const afterAcknowledge = await checkCurrentness(attempt);
+                const afterAcknowledge = await checkAttemptActive(attempt);
                 if (afterAcknowledge) {
                     const uncertain = preservePossibleProviderOutcome(
                         attempt,
@@ -2415,7 +2448,12 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
     ): Promise<AttemptResponse> {
         if (isAttemptExpired(attempt)) return (await expireAttemptIfNeeded(attempt))!;
         attempt.phase = 'inFlight';
-        const before = await checkCurrentness(attempt, true);
+        if (operation.kind === 'submitManual') {
+            // Retain the address while removing the draft before provider work.
+            const addressFailure = await acknowledgeAttemptAddress(attempt, 'starting');
+            if (addressFailure) return addressFailure;
+        }
+        const before = await checkAttemptActive(attempt);
         if (before) {
             attempt.phase = 'rejected';
             attempt.lastResponse = before;
@@ -2425,7 +2463,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
         const admissionFailure =
             await rejectAttemptWhenEffectfulOperationIsDisallowed(attempt);
         if (admissionFailure) return admissionFailure;
-        const afterAdmissionCurrentness = await checkCurrentness(attempt, true);
+        const afterAdmissionCurrentness = await checkAttemptActive(attempt);
         if (afterAdmissionCurrentness) {
             const ownershipFailure = attemptOwnershipFailure(attempt);
             if (ownershipFailure) return ownershipFailure;
@@ -2530,7 +2568,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             return await invoke(attempt, { kind: 'beginDevice' });
         }
         attempt.phase = 'inFlight';
-        const before = await checkCurrentness(attempt, true);
+        const before = await checkAttemptActive(attempt);
         if (before) {
             await destroyAttempt(attempt, before);
             return before;
@@ -2574,7 +2612,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             return ownershipFailure;
         }
         finishDurableOperation();
-        const afterTransaction = await checkCurrentness(attempt, true);
+        const afterTransaction = await checkAttemptActive(attempt);
         if (afterTransaction) {
             if (attemptOwnershipFailure(attempt)) {
                 await compensateLateDurableWrite(attempt, 'oauth');
@@ -2825,7 +2863,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     code: 'connected_account_runtime_generation_changed',
                 });
             }
-            if (snapshot.intent === 'reconnect') {
+            if (snapshot.intent === 'reconnect' && !snapshot.preparedSettlement) {
                 let exact: Awaited<ReturnType<typeof params.accounts.readExact>>;
                 try {
                     exact = await params.accounts.readExact(snapshot.account!);
@@ -2935,7 +2973,25 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     code: 'connected_account_oauth_transaction_invalid',
                 });
             }
-            const response: AttemptResponse = snapshot.phase === 'awaitingOAuth'
+            let deferredConfiguration: ConnectedAccountAttemptConfigurationAdmission | undefined;
+            if (snapshot.phase === 'configurationRequired' && snapshot.configurationFields) {
+                deferredConfiguration = await params.configuration.admit({
+                    intent: snapshot.intent, service: snapshot.service,
+                    ...(snapshot.account ? { account: snapshot.account } : {}),
+                    mode: applyConnectedAccountConfigurationFields(admitted.descriptor, snapshot.configurationFields),
+                    attemptId: snapshot.attemptId, occurrenceId: admitted.occurrenceId, sourceCustody: admitted.sourceCustody,
+                });
+                const ownershipFailure = attemptOwnershipFailure(restoration);
+                if (ownershipFailure) return { response: ownershipFailure };
+            }
+            const response: AttemptResponse = snapshot.phase === 'configurationRequired'
+                ? {
+                    status: 'configurationRequired', attemptId,
+                    target: configuration.snapshot.target,
+                    missingFieldIds: deferredConfiguration?.status === 'configurationRequired'
+                        ? deferredConfiguration.missingFieldIds : [],
+                }
+                : snapshot.phase === 'awaitingOAuth'
                 ? {
                     status: 'awaitingOAuth',
                     attemptId,
@@ -2978,6 +3034,8 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 oauthTransaction: transaction,
                 oauthExpiresAtMs: snapshot.expiresAtMs ?? null,
                 oauthAuthorizationUrl: snapshot.authorizationUrl ?? null,
+                ...(snapshot.configurationFields ? { configurationFields: snapshot.configurationFields } : {}),
+                ...(snapshot.authenticationProvenance ? { authenticationProvenance: snapshot.authenticationProvenance } : {}),
                 ...(snapshot.issuer === undefined ? {} : { oauthIssuer: snapshot.issuer }),
                 ...(snapshot.issuerResponseParameterRequired === undefined ? {}
                     : { oauthIssuerResponseParameterRequired: snapshot.issuerResponseParameterRequired }),
@@ -2994,9 +3052,16 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
     }
 
     const owner: ReturnType<typeof createConnectedAccountAuthenticationAttemptOwner> = Object.freeze({
-        selectResumableAttempts(pending) {
-            return pending.filter(candidate => attempts.has(candidate.attemptId)
-                || hasRestorableTransaction(candidate));
+        async selectResumableAttempts(pending) {
+            const candidates = await Promise.all(pending.map(async candidate => {
+                if (attempts.has(candidate.attemptId)) return candidate;
+                if (candidate.kind === 'oauth' && candidate.phase === 'configurationRequired') {
+                    const transaction = await params.oauth.read?.(candidate.attemptId);
+                    return transaction?.snapshot.configurationFields ? candidate : null;
+                }
+                return hasRestorableTransaction(candidate) ? candidate : null;
+            }));
+            return candidates.filter(candidate => candidate !== null);
         },
         async ensureRestored(input) {
             input.signal?.throwIfAborted();
@@ -3009,8 +3074,29 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     code: 'connected_account_attempt_internal_unavailable' };
             }
             input.signal?.throwIfAborted();
+            if (record?.kind === 'manual' && record.scope.phase === 'starting') {
+                return { status: 'reconnectRequired', attemptId: input.attemptId,
+                    code: 'connected_account_authentication_outcome_unknown' };
+            }
             if (!record || !hasRestorableTransaction({ kind: record.kind, phase: record.scope.phase })) {
                 return unavailable(input.attemptId);
+            }
+            if (record.kind === 'manual') {
+                let manual: ConnectedAccountManualAttemptBasis | null;
+                try { manual = await params.attemptAddresses?.readManualDraft?.(record) ?? null; }
+                catch { return { status: 'unavailable', attemptId: input.attemptId,
+                    code: 'connected_account_attempt_internal_unavailable' }; }
+                input.signal?.throwIfAborted();
+                if (!manual) return unavailable(input.attemptId);
+                const response = await begin({ intent: record.scope.intent, service: record.scope.service,
+                    modeId: record.scope.modeId, account: manual.account,
+                    expectedCredentialRevision: manual.expectedCredentialRevision,
+                    expectedCredentialConfigurationRevision: manual.expectedCredentialConfigurationRevision,
+                    ...(manual.expectedConfigurationRevision === null ? {}
+                        : { expectedConfigurationRevision: manual.expectedConfigurationRevision }),
+                }, { attemptId: input.attemptId, createdAtMs: record.scope.createdAtMs,
+                    expiresAtMs: record.expiresAtMs, sourceCustody: manual.sourceCustody });
+                return response.status === 'awaitingManual' || response.status === 'configurationRequired' ? null : response;
             }
             if (record.kind === 'oauth') {
                 const restored = await restoreOAuthAttempt(input.attemptId, record);
@@ -3066,21 +3152,15 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             });
         },
         async beginReconnect(input) {
-            const exact = await params.accounts.readExact(input.account);
-            if (!exact || !sameQualifiedConnectedAccountRef(exact.account, input.account)) {
+            const target = await prepareReconnectTarget(input.account);
+            if (!target) {
                 return {
                     status: 'unavailable',
                     code: 'connected_account_not_found',
                 };
             }
             return await begin({
-                intent: 'reconnect',
-                service: exact.account.service,
-                account: exact.account,
-                modeId: exact.authenticationModeId,
-                expectedCredentialRevision: exact.credentialRevision,
-                expectedCredentialConfigurationRevision:
-                    exact.configurationRevision,
+                ...target,
                 ...(input.expectedConfigurationRevision
                     ? { expectedConfigurationRevision: input.expectedConfigurationRevision }
                 : {}),
@@ -3120,7 +3200,9 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             if (!runtimeCurrent) return null;
             return Object.freeze({
                 target,
-                mode: attempt.admission.descriptor,
+                mode: attempt.configurationFields
+                    ? applyConnectedAccountConfigurationFields(attempt.admission.descriptor, attempt.configurationFields)
+                    : attempt.admission.descriptor,
                 occurrenceId: attempt.admission.occurrenceId,
                 sourceCustody: attempt.admission.sourceCustody,
             });
@@ -3309,7 +3391,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         code: 'connected_account_runtime_generation_changed',
                     });
                 }
-                if (snapshot.intent === 'reconnect') {
+                if (snapshot.intent === 'reconnect' && !snapshot.preparedSettlement) {
                     if (!snapshot.account) {
                         return await cleanUpTerminal({
                             status: 'conflict',
@@ -3510,7 +3592,9 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 configuration = await params.configuration.admit({
                     intent: 'connect',
                     service: attempt.admission.service,
-                    mode: attempt.admission.descriptor,
+                    mode: attempt.configurationFields
+                        ? applyConnectedAccountConfigurationFields(attempt.admission.descriptor, attempt.configurationFields)
+                        : attempt.admission.descriptor,
                     attemptId: attempt.id,
                     occurrenceId: attempt.admission.occurrenceId,
                     sourceCustody: attempt.admission.sourceCustody,
@@ -3577,6 +3661,9 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 return response;
             }
             attempt.configuration = configuration;
+            if (attempt.configurationFields && attempt.oauthTransaction) {
+                return await invoke(attempt, { kind: 'reconcile' });
+            }
             const operationAdmissionFailure =
                 await rejectAttemptWhenEffectfulOperationIsDisallowed(attempt);
             if (operationAdmissionFailure) return operationAdmissionFailure;
@@ -3673,7 +3760,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                     };
             }
             attempt.phase = 'inFlight';
-            const beforeCompletion = await checkCurrentness(attempt, true);
+            const beforeCompletion = await checkAttemptActive(attempt);
             if (beforeCompletion) {
                 attempt.phase = 'rejected';
                 attempt.lastResponse = beforeCompletion;
@@ -3739,7 +3826,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 await destroyAttempt(attempt, response);
                 return response;
             }
-            const afterAcknowledge = await checkCurrentness(attempt, true);
+            const afterAcknowledge = await checkAttemptActive(attempt);
             if (afterAcknowledge) {
                 const uncertain = preservePossibleProviderOutcome(
                     attempt,
@@ -3818,7 +3905,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
             }
             if (attempt.admission.descriptor.outcomeReconciliation === 'providerCheck') {
                 attempt.phase = 'inFlight';
-                const before = await checkCurrentness(attempt);
+                const before = await checkAttemptActive(attempt);
                 if (before) {
                     return await resolveReconciliationCurrentness(
                         attempt,
@@ -3832,7 +3919,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                 && params.lateEvidence
             ) {
                 attempt.phase = 'inFlight';
-                const before = await checkCurrentness(attempt);
+                const before = await checkAttemptActive(attempt);
                 if (before) {
                     return await resolveReconciliationCurrentness(
                         attempt,
@@ -3856,7 +3943,7 @@ export function createConnectedAccountAuthenticationAttemptOwner(params: Readonl
                         ...(attempt.account ? { account: attempt.account } : {}),
                     });
                 } catch {
-                    const currentness = await checkCurrentness(attempt);
+                    const currentness = await checkAttemptActive(attempt);
                     if (currentness) {
                         return await resolveReconciliationCurrentness(
                             attempt,
