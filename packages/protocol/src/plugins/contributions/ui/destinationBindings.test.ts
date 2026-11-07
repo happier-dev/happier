@@ -215,7 +215,7 @@ describe('plugin UI destination binding normalization', () => {
       ...binding!,
       platforms: ['desktop'],
     }).success).toBe(true);
-    expect(schema?.safeParse({ ...binding!, platforms: ['ios'] }).success).toBe(false);
+    expect(schema?.safeParse({ ...binding!, platforms: ['ios'] }).success).toBe(true);
     expect(schema?.safeParse({ ...binding!, methodCeiling: ['context'] }).success).toBe(false);
     expect(schema?.safeParse({ ...binding!, platforms: ['desktop', 'desktop'] }).success).toBe(false);
     expect(schema?.safeParse({ ...binding!, platforms: [] }).success).toBe(false);
@@ -324,7 +324,7 @@ describe('plugin UI destination binding normalization', () => {
       destinationId: 'wrong-target',
       rendererId: 'shared-renderer',
       container: 'appPage',
-      target: { kind: 'project', projectIdPath: '/project/id' },
+      target: { kind: 'services' },
       instancePolicy: 'singleton',
     });
 
@@ -527,24 +527,34 @@ describe('plugin UI destination binding normalization', () => {
     })).toBe(false);
   });
 
-  it('admits a phone File viewer without widening ordinary destination slots or platform masks', () => {
+  it('admits phone details tabs without widening pane slots or conservative predecessor masks', () => {
     const binding = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.viewer', destinationId: 'file', rendererId: 'body',
       container: 'detailsTab', target: { kind: 'project' }, instancePolicy: 'singleton' });
+    const sessionBinding = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.viewer', destinationId: 'entry', rendererId: 'body',
+      container: 'detailsTab', target: { kind: 'session' }, instancePolicy: 'multiple' });
     const pane = normalizePluginUiDestinationBindingV1({ pluginId: 'acme.viewer', destinationId: 'panel', rendererId: 'body',
       container: 'detailsPane', target: { kind: 'project' } });
-    if (!binding || !pane) throw new Error('Destination fixture must normalize');
+    if (!binding || !sessionBinding || !pane) throw new Error('Destination fixture must normalize');
     const runtime = { platform: 'web' as const, formFactor: 'phone' as const };
-    expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding, ...runtime })).toBe(false);
+    for (const detailsTab of [binding, sessionBinding]) {
+      expect(detailsTab.platforms).toEqual(expect.arrayContaining(['desktop', 'web', 'ios', 'android']));
+      expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: detailsTab, ...runtime })).toBe(true);
+      expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: detailsTab,
+        platform: 'ios', formFactor: 'phone' })).toBe(true);
+      expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: detailsTab,
+        platform: 'android', formFactor: 'phone' })).toBe(true);
+    }
     expect(surfaceRegistry.isPluginUiSurfaceBindingAdmittedAtRuntimeV1({ binding, ...runtime, hostPurpose: 'openableContentViewer' })).toBe(true);
     expect(surfaceRegistry.isPluginUiSurfaceBindingAdmittedAtRuntimeV1({ binding, ...runtime, platform: 'ios', hostPurpose: 'openableContentViewer' })).toBe(true);
     expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: pane, ...runtime, hostPurpose: 'openableContentViewer' })).toBe(false);
-    expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: { ...binding, instancePolicy: 'multiple' },
-      ...runtime, hostPurpose: 'openableContentViewer' })).toBe(false);
     expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: { ...binding, platforms: ['desktop'] },
       ...runtime, hostPurpose: 'openableContentViewer' })).toBe(false);
-    const { instancePolicy: _instancePolicy, ...legacyInput } = binding;
-    expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: legacyInput, platform: 'web', formFactor: 'tablet' })).toBe(true);
-    expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: legacyInput, ...runtime, hostPurpose: 'openableContentViewer' })).toBe(false);
+    const predecessor = { ...binding, platforms: ['desktop', 'web'] as const };
+    expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: predecessor, ...runtime })).toBe(true);
+    expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: predecessor,
+      platform: 'ios', formFactor: 'phone' })).toBe(false);
+    expect(surfaceRegistry.isPluginUiDestinationBindingAdmittedAtRuntimeV1({ binding: predecessor,
+      platform: 'ios', formFactor: 'tablet' })).toBe(true);
   });
 
   it('admits desktop/tablet pane bindings only at the observed tablet form factor', () => {
@@ -675,7 +685,7 @@ describe('V2 destination declarations', () => {
     expect(PluginUiViewV2Schema.safeParse({
       ...sessionView,
       container: 'appPage',
-      target: { kind: 'project', projectIdPath: '/project/id' },
+      target: { kind: 'services' },
     }).success).toBe(false);
   });
 
@@ -842,6 +852,13 @@ describe('embedded widget role', () => {
 });
 
 describe('Registry-derived inline role vocabulary', () => {
+  it.each(['session', 'app'] as const)('admits SCM PR content for an exact %s context without destination semantics', (kind) => {
+    const view = PluginUiViewV2Schema.safeParse({ id: 'pull-request', renderer: 'pr-renderer', container: 'scmPullRequest', target: { kind } });
+    expect(view.success ? null : view.error.issues).toBeNull();
+    expect(surfaceRegistry.resolvePluginUiInlineSurfaceSlotV1('scmPullRequest', 'content', kind)?.targetKind).toBe(kind);
+    expect(surfaceRegistry.resolvePluginUiInlineSurfaceSlotV1('scmPullRequest', 'fill', kind)).toBeNull();
+    expect(surfaceRegistry.resolvePluginUiDestinationBindingSlotV1('scmPullRequest', kind)).toBeNull();
+  });
   it('derives the inline role enum from the one slot table instead of a parallel list', () => {
     expect([...surfaceRegistry.PluginUiInlineSurfaceRoleV1Schema.options].sort())
       .toEqual(Object.keys(surfaceRegistry.PLUGIN_UI_INLINE_SURFACE_SLOTS_V1).sort());
@@ -859,6 +876,7 @@ describe('Registry-derived inline role vocabulary', () => {
     expect(surfaceRegistry.isPluginUiAuthoredViewInlineSurfaceRoleV1('widget')).toBe(true);
     expect(surfaceRegistry.isPluginUiAuthoredViewInlineSurfaceRoleV1('sessionSubagentLaunch')).toBe(true);
     expect(surfaceRegistry.isPluginUiAuthoredViewInlineSurfaceRoleV1('sessionSubagentDetails')).toBe(true);
+    expect(surfaceRegistry.isPluginUiAuthoredViewInlineSurfaceRoleV1('scmPullRequest')).toBe(true);
     // Session info sections are their own contribution family, never `ui.views`.
     expect(surfaceRegistry.isPluginUiAuthoredViewInlineSurfaceRoleV1('sessionInfoSection')).toBe(false);
     expect(surfaceRegistry.isPluginUiAuthoredViewInlineSurfaceRoleV1('detailsTab')).toBe(false);

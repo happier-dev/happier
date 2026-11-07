@@ -10604,61 +10604,60 @@ describe('PluginSurfacePlacementHost', () => {
         expect(phone.getTextContent()).not.toContain('destination_platform_unavailable');
     });
 
-    it('re-admits a destination binding when the physical form factor changes at the mount', async () => {
+    it('keeps a details tab mounted when the physical form factor changes to phone', async () => {
         // The physical host owns the reactive form-factor fact. With no
-        // explicit host prop, the same tablet-only destination must flip from
-        // rendered to unavailable when the existing device-type observation
-        // moves tablet → phone, without any remount.
+        // explicit host prop, a details tab must remain admitted when the
+        // existing device-type observation moves tablet → phone without a remount.
         const { PluginSurfacePlacementHost } = await import('./PluginSurfaceHost');
-        const tabletPlacement = surfacePlacementFixture({
+        const detailsPlacement = surfacePlacementFixture({
             binding: {
-                pluginId: 'acme.tablet',
-                destinationId: 'tablet-panel',
-                rendererId: 'tablet-renderer',
-                container: 'rightPane',
+                pluginId: 'acme.details',
+                destinationId: 'details-tab',
+                rendererId: 'details-renderer',
+                container: 'detailsTab',
                 target: { kind: 'session', sessionIdPath: '/session/id' },
             },
             renderer: {
                 kind: 'declarative',
-                contributionId: 'tablet-renderer',
+                contributionId: 'details-renderer',
                 model: admittedDeclarativeModelFixture({
                     identity: {
-                        pluginId: 'acme.tablet',
-                        localId: 'tablet-renderer',
-                        qualifiedId: 'acme.tablet/tablet-renderer',
-                        occurrenceId: 'tablet-generation',
+                        pluginId: 'acme.details',
+                        localId: 'details-renderer',
+                        qualifiedId: 'acme.details/details-renderer',
+                        occurrenceId: 'details-generation',
                     },
                     visible: true,
                     requiredHostMethods: [],
                     nodes: [],
-                    root: { kind: 'text', path: 'root', order: 0, text: 'Tablet panel' },
+                    root: { kind: 'text', path: 'root', order: 0, text: 'Details tab' },
                 }),
             },
-            display: { label: 'Tablet panel' },
+            display: { label: 'Details tab' },
         });
         pluginSurfaceDeviceTypeState.value = 'tablet';
         try {
             const screen = await renderScreen(
                 <PluginSurfacePlacementHost
-                    placement={tabletPlacement}
+                    placement={detailsPlacement}
                     sessionId="session-1"
                     pluginUiProjection={EMPTY_PLUGIN_UI_PROJECTION}
                     platform="ios"
                 />,
             );
-            expect(screen.getTextContent()).toContain('Tablet panel');
+            expect(screen.getTextContent()).toContain('Details tab');
 
             pluginSurfaceDeviceTypeState.value = 'phone';
             await screen.update(
                 <PluginSurfacePlacementHost
-                    placement={tabletPlacement}
+                    placement={detailsPlacement}
                     sessionId="session-1"
                     pluginUiProjection={EMPTY_PLUGIN_UI_PROJECTION}
                     platform="ios"
                 />,
             );
-            expect(screen.getTextContent()).not.toContain('Tablet panel');
-            expect(screen.findByTestId('plugin-surface-unavailable')).toBeTruthy();
+            expect(screen.getTextContent()).toContain('Details tab');
+            expect(screen.findByTestId('plugin-surface-unavailable')).toBeNull();
         } finally {
             pluginSurfaceDeviceTypeState.value = 'tablet';
         }

@@ -39,18 +39,20 @@ function triageResourceProjection() {
 }
 
 describe('open resource intent', () => {
-  it.each(['happier', 'github'] as const)('agent workspace open matches the person resolver with the %s preference', async preference => {
+  it.each(['happier', 'github', 'unavailable'] as const)('phone person and agent report the %s destination outcome', async scenario => {
+    const preference = scenario === 'github' ? 'github' : 'happier';
     storage.setState({ settings: { ...initialSettings, scmResourceOpenLocation: preference } });
     const projection = triageResourceProjection();
     const opened: unknown[] = [];
     const external: string[] = [];
     const navigation = createPluginSurfaceDestinationNavigationBinding({
       placements: selectPluginDestinationSurfacePlacements(projection), projection, targetKind: 'session',
+      runtimeAdmission: { platform: 'web', formFactor: 'phone' },
       scopedLaunchFacts: { serverId: 'home', machineId: 'machine', interactionEnabled: true },
       accountLifetime: { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true,
         onRetire: () => ({ dispose() {} }) },
     });
-    navigation.registerOwner({ container: 'detailsTab', handler: resolution => {
+    if (scenario !== 'unavailable') navigation.registerOwner({ container: 'detailsTab', handler: resolution => {
       opened.push(resolution.request); return { ok: true };
     } });
     const resource = { kind: 'pullRequest' as const, url: 'https://github.com/happier-dev/triage-qa-sandbox/pull/54' };
@@ -64,10 +66,29 @@ describe('open resource intent', () => {
       transport: { commit: () => {} }, createId: () => 'new', onChange: () => {} });
     const execute = createWorkspaceActionAdapter({ getState: () => state, navigation: workspace,
       readCanvas: () => null, createId: () => 'new', readResourceContext: () => context });
-    expect(await execute('workspace.tabs.open', { resource })).toEqual({ ok: true });
+    expect(await execute('workspace.tabs.open', { resource })).toEqual(scenario === 'happier'
+      ? { ok: true }
+      : { ok: false, errorCode: 'workspace_resource_opened_external', error: 'workspace_resource_opened_external' });
     expect(opened).toEqual(personOpened);
     expect(external).toEqual(personExternal);
-    expect(preference === 'happier' ? opened : external).toHaveLength(1);
+    expect(scenario === 'happier' ? opened : external).toHaveLength(1);
+  });
+
+  it('does not turn a refused resource handoff into an external open', async () => {
+    storage.setState({ settings: { ...initialSettings, scmResourceOpenLocation: 'happier' } });
+    const projection = triageResourceProjection();
+    const navigation = createPluginSurfaceDestinationNavigationBinding({
+      placements: selectPluginDestinationSurfacePlacements(projection), projection, targetKind: 'session',
+      accountLifetime: { scope: { serverId: 'home', accountId: 'account' }, isCurrent: () => true,
+        onRetire: () => ({ dispose() {} }) },
+      scopedLaunchFacts: { serverId: 'home', machineId: 'machine', interactionEnabled: true },
+    });
+    navigation.registerOwner({ container: 'detailsTab', handler: () => ({ ok: false, code: 'denied', reason: 'navigation_cancelled' }) });
+    const external: string[] = [];
+    expect(await requestOpenResource({ kind: 'pullRequest', url: 'https://github.com/happier-dev/triage-qa-sandbox/pull/54' }, {
+      navigation, openExternal: async url => { external.push(url); return true; },
+    })).toBe(false);
+    expect(external).toEqual([]);
   });
 
   it('prefers the real Triage Session handler over the app-only catalog with the happier preference', async () => {
@@ -184,7 +205,7 @@ describe('open resource intent', () => {
     let launches = 0;
     const resource = { kind: 'pullRequest' as const, url: 'https://forge.example/acme/repo/pull/42' };
     const context = { projection: createPluginUiResourceProjection(), navigation: { targetKind: 'session' as const,
-      openSurface: () => { launches++; return { ok: false as const, reason: 'unavailable' as const, diagnostics: [] }; } },
+      openSurface: () => { launches++; return { ok: false as const, code: 'unavailable' as const, reason: 'unavailable' }; } },
       openExternal: async (url: string) => { external.push(url); return true; } };
     storage.setState({ settings: { ...initialSettings, scmResourceOpenLocation: 'github' } });
     await requestOpenResource(resource, context);

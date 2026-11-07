@@ -11,7 +11,7 @@ import { buildWorkspaceFileLink } from '@/utils/url/sessionFileDeepLink';
 import { parseSessionPaneUrlState } from '@/components/sessions/panes/url/sessionPaneUrlState';
 import { readProjectFileRouteTarget } from '@/components/projects/detail/projectRouteState';
 import { readDestinationSessionAddress } from '../destinations/compactAppDestinationCatalog';
-import { requestOpenResource, type OpenResourceContext } from '@/utils/url/openResource';
+import { requestOpenResourceOutcome, type OpenResourceContext } from '@/utils/url/openResource';
 import type { getDesktopAppWindowTabPresentations, getDesktopAppWindowWorkspaceLayouts } from '@/desktop/window/appWindowRuntime';
 
 type WorkspaceActionOwner = Readonly<Pick<WorkspaceTabAddress, 'serverId' | 'accountId' | 'layoutId'>>;
@@ -196,8 +196,10 @@ export function createWorkspaceActionAdapter(input: Readonly<{
         if (!parsed.success) return null;
         const request = { actionId, data: parsed.data } as ParsedWorkspaceRequest;
         if (request.actionId === 'workspace.tabs.open' && request.data.resource) {
-            return requestOpenResource(request.data.resource, input.readResourceContext?.()).then(opened =>
-                opened ? { ok: true as const } : workspaceActionFailure('workspace_destination_unavailable'));
+            return requestOpenResourceOutcome(request.data.resource, input.readResourceContext?.()).then(outcome =>
+                outcome.status === 'inApp' ? { ok: true as const }
+                    : workspaceActionFailure(outcome.status === 'external'
+                        ? 'workspace_resource_opened_external' : 'workspace_destination_unavailable'));
         }
         if (!windows && !input.panes) return null;
         if (request.actionId === 'workspace.tabs.open' && request.data.href) return windows?.openHref?.(request.data.href) ?? null;

@@ -50,6 +50,21 @@ const ALL_UI_SURFACE_PLATFORMS: readonly PluginUiPlatformV1[] = Object.freeze([
  * sections keep their own `contributes.sessionInfoSections` family.
  */
 export const PLUGIN_UI_INLINE_SURFACE_SLOTS_V1 = Object.freeze({
+  agentSettings: Object.freeze({
+    role: 'agentSettings' as const,
+    targets: Object.freeze({ app: 'appSurface' as const }),
+    presentations: Object.freeze(['content'] as const),
+    platforms: ALL_UI_SURFACE_PLATFORMS,
+    authoredIn: 'ui.views' as const,
+  }),
+  /** SCM supplies branch-discovery input; the Session contribution owns linked status. */
+  scmPullRequest: Object.freeze({
+    role: 'scmPullRequest' as const,
+    targets: Object.freeze({ session: 'sessionPane' as const, app: 'appSurface' as const }),
+    presentations: Object.freeze(['content'] as const),
+    platforms: ALL_UI_SURFACE_PLATFORMS,
+    authoredIn: 'ui.views' as const,
+  }),
   sessionSubagentLaunch: Object.freeze({
     role: 'sessionSubagentLaunch' as const,
     targets: Object.freeze({ session: 'sessionPane' as const }),
@@ -72,7 +87,7 @@ export const PLUGIN_UI_INLINE_SURFACE_SLOTS_V1 = Object.freeze({
     authoredIn: 'contributes.sessionInfoSections' as const,
   }),
   /**
-   * Universal configured content. Session/App name executable data contexts,
+   * Universal configured content. Session/App/Project name executable data contexts,
    * while the hosting surface owns placement. `content` covers a framed card whose host
    * owns bounds and scrolling; `fill` covers the expanded/focused host where
    * the surface owns its own content scroll. Compactness is measured host
@@ -81,7 +96,7 @@ export const PLUGIN_UI_INLINE_SURFACE_SLOTS_V1 = Object.freeze({
    */
   widget: Object.freeze({
     role: 'widget' as const,
-    targets: Object.freeze({ session: 'sessionPane' as const, app: 'appSurface' as const }),
+    targets: Object.freeze({ session: 'sessionPane' as const, app: 'appSurface' as const, project: 'projectSurface' as const }),
     presentations: Object.freeze(['content', 'fill'] as const),
     platforms: ALL_UI_SURFACE_PLATFORMS,
     authoredIn: 'ui.views' as const,
@@ -191,17 +206,17 @@ export function resolvePluginUiInlineSurfaceSlotV1(
   targetKind: unknown = 'session',
 ): Readonly<{
   role: PluginUiInlineSurfaceRoleV1;
-  targetKind: 'session' | 'app';
+  targetKind: 'session' | 'app' | 'project';
   presentation: PluginUiInlineSurfacePresentationV1;
-  surfaceContextPlacement: 'sessionPane' | 'appSurface';
+  surfaceContextPlacement: 'sessionPane' | 'appSurface' | 'projectSurface';
   platforms: readonly PluginUiPlatformV1[];
 }> | null {
   const parsedRole = PluginUiInlineSurfaceRoleV1Schema.safeParse(role);
   if (!parsedRole.success || (presentation !== 'content' && presentation !== 'fill')) return null;
-  if (targetKind !== 'session' && targetKind !== 'app') return null;
+  if (targetKind !== 'session' && targetKind !== 'app' && targetKind !== 'project') return null;
   const slot = PLUGIN_UI_INLINE_SURFACE_SLOTS_V1[parsedRole.data];
   if (!(slot.presentations as readonly string[]).includes(presentation)) return null;
-  const placement = (slot.targets as Partial<Record<'session' | 'app', 'sessionPane' | 'appSurface'>>)[targetKind];
+  const placement = (slot.targets as Partial<Record<'session' | 'app' | 'project', 'sessionPane' | 'appSurface' | 'projectSurface'>>)[targetKind];
   if (!placement) return null;
   return Object.freeze({
     role: slot.role,
@@ -357,6 +372,11 @@ export const PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1 = Object.freeze([
     ),
     defineDestinationBindingSlot(
       'appPage',
+      'project',
+      ALL_DESTINATION_PLATFORMS,
+    ),
+    defineDestinationBindingSlot(
+      'appPage',
       'machine',
       ALL_DESTINATION_PLATFORMS,
     ),
@@ -400,14 +420,14 @@ export const PLUGIN_UI_DESTINATION_BINDING_SLOTS_V1 = Object.freeze([
     defineDestinationBindingSlot(
       'detailsTab',
       'session',
-      DESKTOP_DESTINATION_PLATFORMS,
+      ALL_DESTINATION_PLATFORMS,
       undefined,
       INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
     ),
     defineDestinationBindingSlot(
       'detailsTab',
       'project',
-      DESKTOP_DESTINATION_PLATFORMS,
+      ALL_DESTINATION_PLATFORMS,
       undefined,
       INSTANCE_KEYED_DESTINATION_INSTANCE_POLICIES,
     ),
@@ -796,8 +816,8 @@ export type PluginUiInlineSurfaceBindingV1 = Readonly<{
   rendererChain: readonly PluginContributionIdentityV1[];
   renderer: PluginContributionIdentityV1;
   target: PluginSurfaceTargetV1;
-  targetKind: 'session' | 'app';
-  surfaceContextPlacement: 'sessionPane' | 'appSurface';
+  targetKind: 'session' | 'app' | 'project';
+  surfaceContextPlacement: 'sessionPane' | 'appSurface' | 'projectSurface';
   platforms: readonly PluginUiPlatformV1[];
 }>;
 
@@ -826,8 +846,8 @@ export function normalizePluginUiInlineSurfaceBindingV1(
     rendererChain,
     renderer: rendererChain[0]!,
     target: Object.freeze({ ...parsed.data.target }),
-    targetKind: parsed.data.target.kind as 'session' | 'app',
-    surfaceContextPlacement: placement as 'sessionPane' | 'appSurface',
+    targetKind: parsed.data.target.kind as 'session' | 'app' | 'project',
+    surfaceContextPlacement: placement as 'sessionPane' | 'appSurface' | 'projectSurface',
     platforms: slot.platforms,
   });
 }
@@ -839,8 +859,8 @@ export const PluginUiInlineSurfaceBindingV1Schema = lazyZodSchema(() => z.strict
   rendererChain: z.array(asProtocolZod(PluginContributionIdentityV1Schema)).check(z.minLength(1)),
   renderer: asProtocolZod(PluginContributionIdentityV1Schema),
   target: PluginSurfaceTargetV1Schema,
-  targetKind: z.enum(['session', 'app']),
-  surfaceContextPlacement: z.enum(['sessionPane', 'appSurface']),
+  targetKind: z.enum(['session', 'app', 'project']),
+  surfaceContextPlacement: z.enum(['sessionPane', 'appSurface', 'projectSurface']),
   platforms: z.array(PluginUiPlatformV1Schema).check(z.minLength(1)),
 }).check(z.superRefine((binding, ctx) => {
   const slot = PLUGIN_UI_INLINE_SURFACE_SLOTS_V1[binding.role];

@@ -1,10 +1,10 @@
-import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
 import * as React from 'react';
 import { act } from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { normalizePluginUiDestinationBindingV1 } from '@happier-dev/protocol/plugins/ui';
 import { PluginMachineExecutionOriginV1Schema } from '@happier-dev/protocol/machines/administration/pluginMachineExecutionOriginV1';
+import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 
 import {
     createPluginSurfaceLaunchAuthority,
@@ -12,12 +12,13 @@ import {
     resolveSelectedPluginSurfaceLaunchAuthority,
 } from '@/components/plugins/surfaces/pluginSurfaceLaunchAuthority';
 import type { DetailsSurfaceRenderInputV1 } from '@/components/appShell/panes/details/surfaces';
-import { resolveMinimumInteractiveTargetSize } from '@/components/ui/interactiveTargetSize';
+import { HappierPressable } from '@happier-dev/plugin-ui/presentation';
+import { createLayoutChangeEvent } from '@/dev/testkit/fixtures/nativeEventFixtures';
+import { hitAreaOverlap, readHitArea } from '@/dev/testkit/harness/hitFrameReach';
 import { createMachineFixture, renderHook, renderScreen as renderPanelScreen } from '@/dev/testkit';
 import { createPluginDeclarativeModelFixture } from '@/dev/testkit/fixtures/pluginDeclarativeModelFixture';
 import { storage } from '@/sync/domains/state/storageStore';
 import { captureActiveServerAccountScopeLifetime } from '@/sync/domains/scope/activeServerAccountScope';
-import { installSessionPaneRuntimeTestHarness } from '@/components/sessions/panes/sessionPaneRuntimeTestHarness';
 import { installSessionDetailsPanelCommonModuleMocks } from '@/components/sessions/panes/sessionDetailsPanelTestHelpers';
 import type { DetailsTabState } from '../workspace/detailsWorkspaceTypes';
 import {
@@ -26,6 +27,8 @@ import {
     type PluginUiSurfacePlacementProjection,
 } from '@/sync/domains/plugins/ui/projection';
 import type { BoundPluginSurfaceBinding } from '@/components/plugins/surfaces/boundPluginSurfaceController';
+import type { PluginUiProjectionPhase } from '@/sync/domains/plugins/ui/usePluginUiProjectionCurrentness';
+import { PluginSurfacePlacementHost } from '@/components/plugins/surfaces';
 import { createPluginSurfaceDestinationNavigationBinding } from '@/components/plugins/surfaces/pluginSurfaceDestinationNavigation';
 
 import {
@@ -197,107 +200,6 @@ function createDetailsRenderInput(): DetailsSurfaceRenderInputV1 {
 }
 
 describe('pluginDetailsDestination', () => {
-    it('delivers a pane open after the destination projection establishes, without lending it to a replacement occurrence', async () => {
-        const { panePlacement, projection } = createDetailsPaneProjection();
-        const mount = { sessionId: 'session-1', machineId: 'machine-1', serverId: runtime.serverId,
-            platform: 'web' as const, projectionPhase: 'current' as const, projectionInteractionEnabled: true };
-        let staging: ReturnType<typeof usePluginDetailsPaneLaunchStaging> = null;
-        let delivered: ReturnType<typeof usePluginDetailsPaneLaunch> = null;
-        function Launcher() { staging = usePluginDetailsPaneLaunchStaging(); return null; }
-        function Destination(props: Readonly<{ placement: PluginUiSurfacePlacementProjection | null; phase: 'establishing' | 'current' }>) {
-            delivered = usePluginDetailsPaneLaunch({ placement: props.placement,
-                projection: props.placement ? projection : EMPTY_PLUGIN_UI_PROJECTION,
-                mount: { ...mount, projectionPhase: props.phase, projectionInteractionEnabled: props.phase === 'current' },
-                targetKind: 'session', destination: panePlacement.binding.destination, instanceKey: 'activity:run-1' });
-            return null;
-        }
-        const view = (destination: PluginUiSurfacePlacementProjection | null | undefined, phase: 'establishing' | 'current' = 'current') => React.createElement(
-            PluginDetailsDestinationLaunchScope, null, React.createElement(Launcher),
-            destination === undefined ? null : React.createElement(Destination, { placement: destination, phase }));
-        const screen = await renderScreen(view(undefined));
-        await act(async () => {
-            expect(staging?.stage({ placement: panePlacement, targetKind: 'session',
-                instanceKey: 'activity:run-1', input: { seed: { workflowPath: '.github/workflows/test.yml' } },
-                scopedLaunchFacts: { serverId: runtime.serverId, machineId: 'machine-1', interactionEnabled: true } })).not.toBeNull();
-        });
-        await screen.update(view(null, 'establishing'));
-        expect(delivered).toBeNull();
-        await screen.update(view(panePlacement));
-        expect(delivered).toMatchObject({ input: { seed: { workflowPath: '.github/workflows/test.yml' } } });
-        await screen.update(view({ ...panePlacement, occurrenceId: 'replacement-occurrence' }));
-        expect(delivered).toBeNull();
-        await screen.update(view(panePlacement));
-        expect(delivered, 'A replacement retires the original handoff').toBeNull();
-        await screen.update(view(undefined));
-        await act(async () => {
-            expect(staging?.stage({ placement: panePlacement, targetKind: 'session',
-                instanceKey: 'activity:run-1', input: { seed: { workflowPath: '.github/workflows/second.yml' } },
-                scopedLaunchFacts: { serverId: runtime.serverId, machineId: 'machine-1', interactionEnabled: true } })).not.toBeNull();
-        });
-        await screen.update(view(null));
-        await screen.update(view(panePlacement));
-        expect(delivered, 'A settled current miss retires input before the original destination returns').toBeNull();
-        await screen.unmount();
-    });
-
-    it('keeps a staged phone File holder while its tab projection establishes', async () => {
-        const original = createDetailsTabProjection().placement;
-        const binding = normalizePluginUiDestinationBindingV1({ pluginId: original.pluginId, destinationId: original.descriptorId,
-            rendererId: original.renderer.contributionId, container: 'detailsTab', target: original.binding.target, instancePolicy: 'singleton' });
-        if (!binding) throw new Error('File viewer needs a singleton destination');
-        const placement = { ...original, binding, renderer: { kind: 'declarative' as const, contributionId: original.renderer.contributionId,
-            model: createPluginDeclarativeModelFixture({ pluginId: original.pluginId, localId: original.renderer.contributionId,
-                occurrenceId: original.occurrenceId, document: { version: 1, root: { kind: 'text', text: 'Staged phone File body' } } }) } };
-        const details = { ...createDetailsRenderInput(), tab: { ...createPluginDetailsDestinationTab({
-            destination: binding.destination, title: 'Workspace file viewer' }), isPinned: true, isPreview: false } };
-        let stage: ReturnType<typeof usePluginDetailsDestinationLaunchStaging> | null = null;
-        function Launcher() { stage = usePluginDetailsDestinationLaunchStaging(); return null; }
-        function Destination(props: Readonly<{ phase: 'establishing' | 'current' }>) {
-            const renderer = createPluginDetailsDestinationSurfaceRenderer({ targetKind: 'session',
-                projection: props.phase === 'establishing' ? EMPTY_PLUGIN_UI_PROJECTION
-                    : { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 4, surfacePlacementsById: { [placement.id]: placement } },
-                mount: { sessionId: 'session-1', machineId: 'machine-1', serverId: runtime.serverId,
-                    platform: 'web', formFactor: 'phone', projectionPhase: props.phase, projectionInteractionEnabled: props.phase === 'current' },
-                renderFallback: () => null });
-            return renderer.render(details);
-        }
-        const view = (phase?: 'establishing' | 'current') => React.createElement(PluginDetailsDestinationLaunchScope, null,
-            React.createElement(Launcher), phase ? React.createElement(Destination, { phase }) : null);
-        const screen = await renderScreen(view());
-        await act(async () => {
-            if (!stage) throw new Error('Expected scoped Details launcher');
-            expect(stage({ placement, targetKind: 'session', input: { openableContent: 'viewer-ref-1' }, binding: createPrivateBinding() })).not.toBeNull();
-        });
-        await screen.update(view('establishing'));
-        expect(screen.getTextContent()).not.toContain('Staged phone File body');
-        await screen.update(view('current'));
-        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Staged phone File body'));
-        await screen.unmount();
-    });
-
-    it('retains selected-machine launch authority for an originless app placement', () => {
-        const { placement } = createDetailsTabProjection();
-        const originlessPlacement = {
-            ...placement,
-            occurrenceId: 'com-example-viewer-originless-occurrence',
-            hostOrigin: {
-                ...placement.hostOrigin,
-                executionOrigin: null,
-            },
-        } satisfies PluginUiSurfacePlacementProjection;
-
-        expect(resolveSelectedPluginSurfaceLaunchAuthority({
-            placement: originlessPlacement,
-            accountLifetime: null,
-        })).toEqual({
-            serverId: runtime.serverId,
-            machineId: 'machine-1',
-            occurrenceId: 'com-example-viewer-originless-occurrence',
-            accountLifetime: null,
-            executionOrigin: null,
-        });
-    });
-
     it('retains a pane seed through unavailable authority, but retires it for a known replacement occurrence', async () => {
         const { panePlacement, projection } = createDetailsPaneProjection();
         const mount = { sessionId: 'session-1', machineId: 'machine-1', serverId: runtime.serverId,
@@ -362,6 +264,68 @@ describe('pluginDetailsDestination', () => {
         await screen.unmount();
     });
 
+    it('keeps a staged phone File holder while its tab projection establishes', async () => {
+        const original = createDetailsTabProjection().placement;
+        const binding = normalizePluginUiDestinationBindingV1({ pluginId: original.pluginId, destinationId: original.descriptorId,
+            rendererId: original.renderer.contributionId, container: 'detailsTab', target: original.binding.target, instancePolicy: 'singleton' });
+        if (!binding) throw new Error('File viewer needs a singleton destination');
+        const placement = { ...original, binding, renderer: { kind: 'declarative' as const, contributionId: original.renderer.contributionId,
+            model: createPluginDeclarativeModelFixture({ pluginId: original.pluginId, localId: original.renderer.contributionId,
+                occurrenceId: original.occurrenceId, document: { version: 1, root: { kind: 'text', text: 'Staged phone File body' } } }) } };
+        const details = { ...createDetailsRenderInput(), tab: { ...createPluginDetailsDestinationTab({
+            destination: binding.destination, title: 'Workspace file viewer' }), isPinned: true, isPreview: false } };
+        let stage: ReturnType<typeof usePluginDetailsDestinationLaunchStaging> | null = null;
+        function Launcher() { stage = usePluginDetailsDestinationLaunchStaging(); return null; }
+        function Destination(props: Readonly<{ phase: 'establishing' | 'current' }>) {
+            const renderer = createPluginDetailsDestinationSurfaceRenderer({ targetKind: 'session',
+                projection: props.phase === 'establishing' ? EMPTY_PLUGIN_UI_PROJECTION
+                    : { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 4, surfacePlacementsById: { [placement.id]: placement } },
+                mount: { sessionId: 'session-1', machineId: 'machine-1', serverId: runtime.serverId,
+                    platform: 'web', formFactor: 'phone', projectionPhase: props.phase, projectionInteractionEnabled: props.phase === 'current' },
+                renderFallback: () => null });
+            return renderer.render(details);
+        }
+        const view = (phase?: 'establishing' | 'current') => React.createElement(PluginDetailsDestinationLaunchScope, null,
+            React.createElement(Launcher), phase ? React.createElement(Destination, { phase }) : null);
+        const screen = await renderScreen(view());
+        await act(async () => {
+            if (!stage) throw new Error('Expected scoped Details launcher');
+            expect(stage({ placement, targetKind: 'session', input: { openableContent: 'viewer-ref-1' }, binding: createPrivateBinding() })).not.toBeNull();
+        });
+        await screen.update(view('establishing'));
+        expect(screen.getTextContent()).not.toContain('Staged phone File body');
+        await screen.update(view('current'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Staged phone File body'));
+        expect(screen.root.findByType(PluginSurfacePlacementHost).props.launchInput).toEqual({ openableContent: 'viewer-ref-1' });
+        await screen.update(view('establishing'));
+        await screen.update(view('current'));
+        await vi.waitFor(() => expect(screen.getTextContent()).toContain('Staged phone File body'));
+        expect(screen.root.findByType(PluginSurfacePlacementHost).props.launchInput).toEqual({ openableContent: 'viewer-ref-1' });
+        await screen.unmount();
+    });
+
+    it('retains selected-machine launch authority for an originless app placement', () => {
+        const { placement } = createDetailsTabProjection();
+        const originlessPlacement = {
+            ...placement,
+            occurrenceId: 'com-example-viewer-originless-occurrence',
+            hostOrigin: {
+                ...placement.hostOrigin,
+                executionOrigin: null,
+            },
+        } satisfies PluginUiSurfacePlacementProjection;
+
+        expect(resolveSelectedPluginSurfaceLaunchAuthority({
+            placement: originlessPlacement,
+            accountLifetime: null,
+        })).toEqual({
+            serverId: runtime.serverId,
+            machineId: 'machine-1',
+            occurrenceId: 'com-example-viewer-originless-occurrence',
+            accountLifetime: null,
+            executionOrigin: null,
+        });
+    });
 
     it('creates one durable tab resource from a qualified destination and optional instance identity', async () => {
         const module = await import('./pluginDetailsDestination');
@@ -489,7 +453,7 @@ describe('pluginDetailsDestination', () => {
         expect(openRight).toHaveBeenCalledTimes(1);
     });
 
-    it('keeps a desktop/tablet details tab as a phone tombstone while admitting it on tablet', () => {
+    it('admits the same details tab on phone and tablet presentations', () => {
         const { placement, projection } = createDetailsTabProjection();
         const resource = createPluginDetailsDestinationResource({
             destination: placement.binding.destination,
@@ -502,10 +466,10 @@ describe('pluginDetailsDestination', () => {
             projection,
             projectionPhase: 'current',
             runtimeAdmission: { platform: 'ios', formFactor: 'phone' },
-        })).toEqual({
-            kind: 'unavailable',
+        })).toMatchObject({
+            kind: 'available',
             resource,
-            reason: 'details_destination_platform_unavailable',
+            placement,
         });
 
         expect(resolvePluginDetailsDestinationPlacement({
@@ -521,7 +485,7 @@ describe('pluginDetailsDestination', () => {
         });
     });
 
-    it('admits a phone File viewer only through its exact current private holder', async () => {
+    it('keeps phone File launch input scoped to its exact occurrence and origin', async () => {
         const initial = createDetailsTabProjection().placement;
         const binding = normalizePluginUiDestinationBindingV1({ pluginId: initial.pluginId, destinationId: initial.descriptorId,
             rendererId: initial.renderer.contributionId, container: 'detailsTab', target: initial.binding.target, instancePolicy: 'singleton' });
@@ -531,41 +495,39 @@ describe('pluginDetailsDestination', () => {
                 document: { version: 1, root: { kind: 'text', text: 'Private phone File body' } } }) } };
         const details = { ...createDetailsRenderInput(), tab: { ...createPluginDetailsDestinationTab({
             destination: binding.destination, title: 'Workspace file viewer' }), isPinned: true, isPreview: false } };
-        const privateBinding = createPrivateBinding();
         const stagedReceipts: Array<ReturnType<ReturnType<typeof usePluginDetailsDestinationLaunchStaging>>> = [];
-        function Scene(props: Readonly<{ current: PluginUiSurfacePlacementProjection; staged?: PluginUiSurfacePlacementProjection; withHolder: boolean }>) {
+        function Scene(props: Readonly<{ current: PluginUiSurfacePlacementProjection; staged?: PluginUiSurfacePlacementProjection }>) {
             const stage = usePluginDetailsDestinationLaunchStaging();
             React.useEffect(() => {
-                if (props.staged) stagedReceipts.push(stage({ placement: props.staged, targetKind: 'session', input: { openableContent: 'viewer-ref-1' },
-                    ...(props.withHolder ? { binding: privateBinding } : {}) }));
-            }, [stage, props.staged, props.withHolder]);
+                if (props.staged) stagedReceipts.push(stage({ placement: props.staged, targetKind: 'session',
+                    input: { openableContent: 'viewer-ref-1' } }));
+            }, [stage, props.staged]);
             const renderer = createPluginDetailsDestinationSurfaceRenderer({ targetKind: 'session',
                 projection: { ...EMPTY_PLUGIN_UI_PROJECTION, generation: 4, surfacePlacementsById: { [props.current.id]: props.current } },
                 mount: { sessionId: 'session-1', machineId: 'machine-1', serverId: runtime.serverId, platform: 'web', formFactor: 'phone',
                     projectionPhase: 'current', projectionInteractionEnabled: true } });
             return renderer.render(details);
         }
-        const view = (current: PluginUiSurfacePlacementProjection, staged: PluginUiSurfacePlacementProjection | undefined, withHolder: boolean) => (
-            React.createElement(PluginDetailsDestinationLaunchScope, null, React.createElement(Scene, { current, staged, withHolder }))
+        const view = (current: PluginUiSurfacePlacementProjection, staged?: PluginUiSurfacePlacementProjection) => (
+            React.createElement(PluginDetailsDestinationLaunchScope, null, React.createElement(Scene, { current, staged }))
         );
-        const screen = await renderScreen(view(placement, placement, false));
+        const screen = await renderScreen(view(placement, placement));
         try {
             expect(stagedReceipts.at(-1)).not.toBeNull();
-            expect(screen.getTextContent()).not.toContain('Private phone File body');
-            await screen.update(view(placement, placement, true));
-            await vi.waitFor(() => expect(screen.getTextContent()).toContain('Private phone File body'));
+            expect(screen.getTextContent()).toContain('Private phone File body');
+            expect(screen.root.findByType(PluginSurfacePlacementHost).props.launchInput).toEqual({ openableContent: 'viewer-ref-1' });
             const renewed = { ...placement, occurrenceId: 'new-viewer-occurrence', renderer: { ...placement.renderer,
                 model: createPluginDeclarativeModelFixture({ pluginId: placement.pluginId, localId: placement.renderer.contributionId,
                     occurrenceId: 'new-viewer-occurrence', document: { version: 1, root: { kind: 'text', text: 'Private phone File body' } } }) } };
-            await screen.update(view(renewed, undefined, true));
-            expect(screen.getTextContent()).not.toContain('Private phone File body');
+            await screen.update(view(renewed));
+            expect(screen.root.findByType(PluginSurfacePlacementHost).props.launchInput).toBeUndefined();
             const foreign = { ...placement, hostOrigin: { ...placement.hostOrigin, machineId: 'machine-other',
                 executionOrigin: PluginMachineExecutionOriginV1Schema.parse({ ...placement.hostOrigin.executionOrigin,
                     materializationRef: { ...placement.hostOrigin.executionOrigin.materializationRef,
                         machineId: 'machine-other', materializationId: 'other-viewer-install' } }) } };
-            await screen.update(view(placement, foreign, true));
+            await screen.update(view(placement, foreign));
             expect(stagedReceipts.at(-1)).not.toBeNull();
-            expect(screen.getTextContent()).not.toContain('Private phone File body');
+            expect(screen.root.findByType(PluginSurfacePlacementHost).props.launchInput).toBeUndefined();
         } finally { await screen.unmount(); }
     });
 
@@ -631,12 +593,8 @@ describe('pluginDetailsDestination', () => {
         await expect(phoneHandler({
             destination: placement.binding.destination,
             instanceKey: 'file-instance-2',
-        })).resolves.toEqual({
-            ok: false,
-            code: 'unavailable',
-            reason: 'plugin_surface_open_destination_platform_unavailable',
-        });
-        expect(openTab).toHaveBeenCalledTimes(1);
+        })).resolves.toEqual({ ok: true });
+        expect(openTab).toHaveBeenCalledTimes(2);
 
         await hook.unmount();
     });
@@ -1035,6 +993,7 @@ describe('pluginDetailsDestination', () => {
             reason: 'plugin_surface_open_sub_path_unsupported',
         });
         expect(openOverlay).toHaveBeenCalledTimes(1);
+
     });
 
     it('returns a delivered opaque launch to its original host fallback when its placement disappears', async () => {
@@ -1138,15 +1097,12 @@ describe('pluginDetailsDestination', () => {
             },
         }));
 
-        const builtin = screen.findByTestId('plugin-details-viewer-choice:builtin');
-        const markdown = screen.findByTestId('plugin-details-viewer-choice:openableContentViewer:com.example.viewer:markdown');
-        const unavailable = screen.findByTestId('plugin-details-viewer-choice:openableContentViewer:com.example.viewer:unavailable');
-        expect(builtin?.props.accessibilityState).toEqual({ selected: true, disabled: false });
-        expect(markdown?.props.accessibilityState).toEqual({ selected: false, disabled: false });
-        expect(unavailable?.props.accessibilityState).toEqual({ selected: false, disabled: true });
-        expect(markdown?.props.style({ pressed: false, focused: false })).toEqual(expect.arrayContaining([
-            expect.objectContaining({ minHeight: resolveMinimumInteractiveTargetSize((await import('react-native')).Platform.OS) }),
-        ]));
+        const builtin = screen.findHostByTestId('plugin-details-viewer-choice:builtin');
+        const markdown = screen.findHostByTestId('plugin-details-viewer-choice:openableContentViewer:com.example.viewer:markdown');
+        const unavailable = screen.findHostByTestId('plugin-details-viewer-choice:openableContentViewer:com.example.viewer:unavailable');
+        expect(builtin?.props.accessibilityState).toMatchObject({ selected: true, disabled: false });
+        expect(markdown?.props.accessibilityState).toMatchObject({ selected: false, disabled: false });
+        expect(unavailable?.props.accessibilityState).toMatchObject({ selected: false, disabled: true });
 
         await act(async () => {
             markdown?.props.onPress();
@@ -1154,48 +1110,59 @@ describe('pluginDetailsDestination', () => {
 
         expect(selectCandidate).toHaveBeenCalledTimes(1);
         expect(selectCandidate).toHaveBeenCalledWith('openableContentViewer:com.example.viewer:markdown');
-        expect(builtin?.props.accessibilityState).toEqual({ selected: true, disabled: true });
-        expect(markdown?.props.accessibilityState).toEqual({ selected: false, disabled: true });
+        expect(builtin?.props.accessibilityState).toMatchObject({ selected: true, disabled: true });
+        expect(markdown?.props.accessibilityState).toMatchObject({ selected: false, disabled: true });
 
         await act(async () => {
             settleSelection?.();
             await selection;
         });
 
-        expect(builtin?.props.accessibilityState).toEqual({ selected: true, disabled: false });
-        expect(markdown?.props.accessibilityState).toEqual({ selected: false, disabled: false });
+        expect(builtin?.props.accessibilityState).toMatchObject({ selected: true, disabled: false });
+        expect(markdown?.props.accessibilityState).toMatchObject({ selected: false, disabled: false });
     });
 
-    it('uses the canonical interactive target for every chooser choice platform', async () => {
+    // Choices are drawn at their own band; the hit area reaches half the gap to a neighbour and never
+    // into it.
+    it('draws each chooser choice at its own size and keeps neighbouring hit areas apart', async () => {
         const { Platform } = await import('react-native');
         const previousPlatform = Platform.OS;
+        (Platform as { OS: string }).OS = 'android';
         try {
             const module = await import('./pluginDetailsDestination');
             const ViewerChoiceChrome = Reflect.get(module, 'PluginDetailsViewerChoiceChrome');
-
             expect(typeof ViewerChoiceChrome).toBe('function');
             if (typeof ViewerChoiceChrome !== 'function') return;
-            // A finger gets the platform floor; a precise web pointer keeps the dense pointer floor (owner contract).
-            expect(resolveMinimumInteractiveTargetSize('android')).toBe(48);
-            expect(resolveMinimumInteractiveTargetSize('ios')).toBe(44);
-
-            for (const platform of ['android', 'ios', 'web'] as const) {
-                (Platform as { OS: string }).OS = platform;
-                const screen = await renderScreen(React.createElement(ViewerChoiceChrome, {
+            const { HappierUiPlatformProvider } = await import('@happier-dev/plugin-ui/environment');
+            const screen = await renderScreen(React.createElement(HappierUiPlatformProvider, {
+                platform: { platform: 'android', colorScheme: 'light' },
+                children: React.createElement(ViewerChoiceChrome, {
                     model: {
-                        candidates: [{ id: 'builtin', label: 'Built-in', selected: true }],
+                        candidates: [
+                            { id: 'builtin', label: 'Built-in', selected: true },
+                            { id: 'markdown', label: 'Markdown viewer', selected: false },
+                        ],
                         selectCandidate: async () => undefined,
                     },
-                }));
-                try {
-                    const choice = screen.findByTestId('plugin-details-viewer-choice:builtin');
-                    const targetSize = resolveMinimumInteractiveTargetSize(platform);
-                    const style = flattenStyle(choice?.props.style);
-                    expect(style.minHeight).toBe(targetSize);
-                    expect(style.minWidth).toBe(targetSize);
-                } finally {
-                    await screen.unmount();
+                }),
+            }));
+            try {
+                const drawn = { width: 40, height: 30 };
+                for (const id of ['builtin', 'markdown']) {
+                    const node = screen.findHostByTestId(`plugin-details-viewer-choice:${id}`)!;
+                    await act(async () => { node.props.onLayout(createLayoutChangeEvent({ x: 0, y: 0, ...drawn })); });
+                    const style = flattenStyle(node.props.style);
+                    expect(style.minHeight).toBeUndefined();
+                    expect(style.minWidth).toBeUndefined();
                 }
+                const first = readHitArea(screen.findHostByTestId('plugin-details-viewer-choice:builtin')!, drawn);
+                const second = readHitArea(screen.findHostByTestId('plugin-details-viewer-choice:markdown')!, drawn);
+                // Free space on the sides is half the gap; above and below it is the band's padding inside the scroller.
+                expect(first.height).toBeGreaterThan(drawn.height);
+                expect(first.width).toBeGreaterThan(drawn.width);
+                expect(hitAreaOverlap(first, second, { axis: 'horizontal', gap: 8 })).toBe(0);
+            } finally {
+                await screen.unmount();
             }
         } finally {
             (Platform as { OS: string }).OS = previousPlatform;
@@ -1236,9 +1203,9 @@ describe('pluginDetailsDestination', () => {
                 },
             }));
 
-            const builtin = screen.findByTestId('plugin-details-viewer-choice:builtin');
-            const markdown = screen.findByTestId('plugin-details-viewer-choice:openableContentViewer:com.example.viewer:markdown');
-            const unavailable = screen.findByTestId('plugin-details-viewer-choice:openableContentViewer:com.example.viewer:unavailable');
+            const builtin = screen.findHostByTestId('plugin-details-viewer-choice:builtin');
+            const markdown = screen.findHostByTestId('plugin-details-viewer-choice:openableContentViewer:com.example.viewer:markdown');
+            const unavailable = screen.findHostByTestId('plugin-details-viewer-choice:openableContentViewer:com.example.viewer:unavailable');
             expect(builtin?.props.tabIndex).toBe(0);
             expect(markdown?.props.tabIndex).toBe(-1);
             expect(markdown?.props.accessibilityLabel).toBe('Markdown viewer · com.example.viewer');
@@ -1248,12 +1215,18 @@ describe('pluginDetailsDestination', () => {
             expect(screen.findByTestId('plugin-details-viewer-choice-detail:openableContentViewer:com.example.viewer:unavailable')?.props.children)
                 .toBe('Unavailable');
 
-            const preventDefault = vi.fn();
+            // The shared pressable consumes the key event when the tab owner reports it handled it.
+            const tabKeyHandler = screen.root.find((node) => (
+                node.props.testID === 'plugin-details-viewer-choice:builtin'
+                && node.type === HappierPressable
+            )).props.onKeyDown as (key: string) => boolean;
+            let handled = false;
             await act(async () => {
-                builtin?.props.onKeyDown({ nativeEvent: { key: 'ArrowRight' }, preventDefault });
+                handled = tabKeyHandler('ArrowRight');
             });
 
-            expect(preventDefault).toHaveBeenCalledTimes(1);
+            expect(handled).toBe(true);
+            expect(tabKeyHandler('a')).toBe(false);
             expect(selectCandidate).toHaveBeenCalledWith('openableContentViewer:com.example.viewer:markdown');
         } finally {
             (Platform as { OS: string }).OS = previousPlatform;

@@ -23,8 +23,13 @@ export function hasInAppResourceHandler(projection: PluginUiProjectionModel | nu
   return projection !== null && selectRenderablePluginResourceLinkPlacements(projection).length > 0;
 }
 
-async function openResourceUrl(url: string, kind: PluginUiResourceIntentV1['kind'] | undefined, context?: OpenResourceContext): Promise<boolean> {
-  const external = () => context?.openExternal ? context.openExternal(url) : requestOpenExternalUrl(url);
+export type OpenResourceOutcome = Readonly<{ status: 'inApp' | 'external' | 'unavailable' }>;
+
+async function openResourceUrl(url: string, kind: PluginUiResourceIntentV1['kind'] | undefined, context?: OpenResourceContext): Promise<OpenResourceOutcome> {
+  const external = async (): Promise<OpenResourceOutcome> => {
+    const opened = await (context?.openExternal ? context.openExternal(url) : requestOpenExternalUrl(url));
+    return { status: opened ? 'external' : 'unavailable' };
+  };
   if (storage.getState().settings.scmResourceOpenLocation === 'github' || !context?.navigation) return external();
   const scopedProjection = context.projection === undefined ? context.navigation.projection : context.projection;
   const projection = scopedProjection === undefined ? readCurrentAppShellPluginUiProjection() : scopedProjection;
@@ -54,18 +59,25 @@ async function openResourceUrl(url: string, kind: PluginUiResourceIntentV1['kind
       ...(placements[0]!.binding.instancePolicy === 'multiple' ? { instanceKey: url } : {}),
       input: { resource },
     });
-    if (result.ok) return true;
+    if (result.ok) return { status: 'inApp' };
+    // A refusal (for example a cancelled handoff) is not an unavailable renderer.
+    if (result.code !== 'unavailable') return { status: 'unavailable' };
   } catch {
-    // Opening the original resource externally is the visible recovery when its in-app destination cannot open.
+    return { status: 'unavailable' };
   }
   return external();
 }
 
 export async function requestOpenResourceUrl(url: string, context?: OpenResourceContext): Promise<boolean> {
-  return openResourceUrl(url, undefined, context);
+  return (await openResourceUrl(url, undefined, context)).status !== 'unavailable';
 }
 
 export async function requestOpenResource(resource: PluginUiResourceIntentV1, context?: OpenResourceContext): Promise<boolean> {
+  return (await requestOpenResourceOutcome(resource, context)).status !== 'unavailable';
+}
+
+/** Preserve the actual destination for Actions; an external recovery did not open a workspace tab. */
+export function requestOpenResourceOutcome(resource: PluginUiResourceIntentV1, context?: OpenResourceContext): Promise<OpenResourceOutcome> {
   return openResourceUrl(resource.url, resource.kind, context);
 }
 

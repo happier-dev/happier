@@ -88,13 +88,20 @@ composer rather than the contextual Start pane.
 Unreleased 0.3 `workspace.tabs.open` also accepts `{ resource: { kind, url } }`,
 using the existing closed `PluginUiResourceIntentV1` SCM intent. It is exclusive
 with `href`, `file`, and tab placement controls. Agents call the same
-`requestOpenResource` resolver as card/glance Open: the focused pane driver's
+`openResource.ts` resolver as card/glance Open: the focused pane driver's
 current navigation binding selects its Session handler, then the registered app
 destination, according to the person's SCM resource preference. With no focused
 pane binding, the app binding is used. Resource placement and any dirty-departure
 decision remain with the selected destination owner; a resource opening beside
 an editor does not ask to discard that editor. External preference or an
-unavailable in-app handler retains the resolver's existing external-URL recovery.
+unavailable in-app handler retains the resolver's external-URL recovery. The
+resolver preserves an in-app, external, or unavailable outcome; the Action
+reports `workspace_resource_opened_external` when recovery opened the original
+URL, rather than claiming a workspace tab opened. Refused handoffs remain refused.
+Session and Project `detailsTab` views use the existing pushed detail host on
+phones; the Registry admits them on web, iOS and Android as well as desktop.
+Multi-pane-only destinations keep their form-factor restrictions. Conservative
+serialized platform masks remain authoritative until the producer republishes.
 The Action and nested resource remain closed. New readers accept old href/file
 inputs; older strict development readers reject `resource`, so Protocol and UI
 reload together. No route, persisted shape, wire epoch or capability gate changes.
