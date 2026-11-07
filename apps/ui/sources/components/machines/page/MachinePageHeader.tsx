@@ -23,7 +23,8 @@ import { PageHeaderMenu, type PageHeaderMenuAction } from '@/components/ui/layou
 import { PageHeaderMarkSlot } from '@/components/ui/layout/PageHeaderMarkSlot';
 import { Modal, type CustomModalInjectedProps } from '@/modal';
 import { areServerProfileIdentifiersEquivalent } from '@/sync/domains/server/serverProfiles';
-import { canAttemptMachineSpawn } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { canAttemptMachineSpawn, resolveMachineSpawnReadiness } from '@/sync/domains/machines/identity/resolveMachineSpawnReadiness';
+import { describeMachineStartUnavailable } from './machineStartAvailability';
 import { useMachineListForServer, useMachineListForServerSelection } from '@/sync/domains/state/storage';
 import type { Machine } from '@/sync/domains/state/storageTypes';
 import { useActiveServerAccountScope } from '@/sync/store/hooks';
@@ -191,6 +192,11 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
         () => target.online === true && canAttemptMachineSpawn({ machine: machine ?? undefined, selectedMachineId: target.machineId, scope: machineAccountScope }),
         [machine, target.machineId, target.online, machineAccountScope],
     );
+    // Why Start session is disabled, said at the button (MR6), from the same readiness owner that disabled it.
+    const startUnavailableReason = machineCanSpawn || !machine ? undefined : describeMachineStartUnavailable(
+        target.online === false ? { status: 'offline', machineId: machine.id }
+            : resolveMachineSpawnReadiness({ machine, selectedMachineId: target.machineId, scope: machineAccountScope }),
+        target.machineSentenceName);
     const encryptionMode = useAccountEncryptionMode({
         enabled: !target.isServerSwitching && areServerProfileIdentifiersEquivalent(target.activeServerId, target.serverId),
     });
@@ -315,6 +321,7 @@ export const MachinePageHeader = React.memo(function MachinePageHeader(props: Re
                         display={needsYouAction || !target.online ? 'secondary' : undefined}
                         title={t('machineDetailPage.startAction')}
                         disabled={!machineCanSpawn}
+                        disabledReason={startUnavailableReason}
                         onPress={handleStartSession}
                     />
                     {canOpenTerminal && !terminalInMenu ? (

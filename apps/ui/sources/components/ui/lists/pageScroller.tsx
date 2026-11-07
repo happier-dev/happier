@@ -227,6 +227,9 @@ export function usePageScroller(input: PageScrollerInput): PageScroller {
       paintedAuthoredBackground
         ? { backgroundColor: paintedAuthoredBackground }
         : null,
+      // Whatever the page scrolls into view (a focused control, an opened review's footer) stops above the floating
+      // bar, not under it: the browser's scroll snapping to focus honours this inset.
+      isWeb && bottomChromeHeight > 0 ? ({ scrollPaddingBottom: bottomChromeHeight } as ViewStyle) : null,
     ],
     contained,
     bottomChromeHeight,

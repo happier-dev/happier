@@ -16,6 +16,7 @@ import { happierMaterialGradient, useHappierMaterialColorResolver } from '@happi
 import { readSurfaceStyleProperty } from '@/components/ui/surfaces/surfaceStyle';
 import { parseThemeColor } from '@/theme/parseThemeColor';
 import { GlassBackedInkContext, glassThemeInkWebStyle, useGlassOwnFillOnPicture } from '@/components/ui/glass/glassBackedInk';
+import { DeferredAnchoredTooltip } from '@/components/ui/overlays/DeferredAnchoredTooltip';
 
 
 /** How much of the primary shows while it cannot act (unified-work lab `.uwr-dis`, opacity .38). */
@@ -101,6 +102,14 @@ function resolveRoundButtonTextRole(role: HappierTypeRole, compactInline: boolea
 export type RoundButtonDisplay = 'default' | 'secondary' | 'destructive' | 'inverted' | 'quietDestructive';
 
 const stylesheet = StyleSheet.create((theme) => ({
+    reasonAnchor: {
+        position: 'absolute',
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+        pointerEvents: 'none',
+    },
     pill: {
         flexGrow: 1,
         justifyContent: 'center',
@@ -258,6 +267,11 @@ export const RoundButton = React.memo((props: {
      * action with no explanation.
      */
     accessibilityHint?: string,
+    /**
+     * Why a disabled button cannot be pressed, said at the button: its accessibility hint, and a tooltip on hover,
+     * keyboard focus or a touch press (the press shows the reason instead of acting). Ignored while enabled.
+     */
+    disabledReason?: string,
     /** Exposes the canonical focus handle to recovery surfaces without a raw Pressable ref. */
     controlRef?: HappierPressableProps['controlRef'],
     /** Disclosure state for buttons that reveal inline detail. */
@@ -319,6 +333,14 @@ export const RoundButton = React.memo((props: {
     }
 
     const pressFeedback = usePressFeedback();
+    // A disabled button with a reason stays reachable: a pointer gets it on hover, the keyboard on focus, and a finger,
+    // which can only press, on a press. Leaving or blurring the button puts it away again.
+    const hasDisabledReason = props.disabled === true && Boolean(props.disabledReason);
+    const [reasonRevealed, setReasonRevealed] = React.useState(false);
+    const reasonAnchorRef = React.useRef<View | null>(null);
+    const revealReason = React.useCallback(() => setReasonRevealed(true), []);
+    const hideReasonWhenLeft = React.useCallback((active: boolean) => { if (!active) setReasonRevealed(false); }, []);
+    React.useEffect(() => { if (!hasDisabledReason) setReasonRevealed(false); }, [hasDisabledReason]);
     // A caller fill (for example a destructive tone) belongs to the pill that moves,
     // not to the static layout box behind it.
     const callerBackgroundColor = readSurfaceStyleProperty(props.style, 'backgroundColor');
@@ -353,6 +375,7 @@ export const RoundButton = React.memo((props: {
     // A words-only or mark-only button has nothing to trade, so its spinner covers it at the same width.
     const busyTradesMark = props.leading != null && props.title != null && props.title !== '';
     const titleLines = props.titleNumberOfLines ?? 1;
+    const disabledReason = props.disabled === true && props.disabledReason ? props.disabledReason : undefined;
     // `undefined` is React Native's "as many lines as it takes"; `0` is not portable
     // across the platforms this primitive renders on.
     const titleNumberOfLines = titleLines === 'complete' ? undefined : titleLines;
@@ -360,7 +383,17 @@ export const RoundButton = React.memo((props: {
         <HappierPressable
             testID={props.testID}
             accessibilityLabel={props.accessibilityLabel}
-            accessibilityHint={props.accessibilityHint}
+            accessibilityHint={disabledReason ?? props.accessibilityHint}
+            onDisabledPress={disabledReason ? revealReason : undefined}
+            onHoverChange={disabledReason ? hideReasonWhenLeft : undefined}
+            onFocusChange={disabledReason ? hideReasonWhenLeft : undefined}
+            overlay={disabledReason ? (state) => (reasonRevealed || state.hovered || state.focused) ? (
+                <>
+                    <View ref={reasonAnchorRef} style={styles.reasonAnchor} />
+                    <DeferredAnchoredTooltip activationKey={`${state.hovered}:${state.focused}:${reasonRevealed}`} anchorRef={reasonAnchorRef}
+                        label={disabledReason} testID={props.testID ? `${props.testID}-tooltip` : undefined} />
+                </>
+            ) : null : undefined}
             controlRef={props.controlRef}
             expanded={props.expanded}
             disabled={props.disabled}

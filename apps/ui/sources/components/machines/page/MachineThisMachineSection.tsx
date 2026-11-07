@@ -22,6 +22,7 @@ import {
     describeMachineAgentsReady,
     describeMachineComputerUse,
     describeMachineDoctorSummary,
+    describeMachineDetailsSummary,
     describeMachineTerminalHost,
 } from './machineThisMachineSummaries';
 import { MACHINE_THIS_MACHINE_PAGES, MACHINE_SUB_PAGE_TITLE_KEYS, type MachineThisMachinePageId } from './machineSubPages';
@@ -74,7 +75,7 @@ export const MachineThisMachineSection = React.memo(function MachineThisMachineS
         computer: describeMachineComputerUse(readComputerUseSettingsForMachine({ computerUseByMachineId }, machineId)),
         connection,
         doctor: describeMachineDoctorSummary(doctor),
-        details: [host, platform].filter(Boolean).join(' · ') || undefined,
+        details: describeMachineDetailsSummary({ host, platform, managed: props.machine.managedMachineRef != null }),
     };
 
     const open = (page: MachineThisMachinePageId) => {

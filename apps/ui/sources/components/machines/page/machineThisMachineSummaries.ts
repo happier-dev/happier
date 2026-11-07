@@ -1,7 +1,8 @@
 import type { resolveTerminalHost } from '@/sync/domains/settings/terminalSettings';
+import type { InstallablesSummary } from '@/capabilities/installablesSummary';
 import { t } from '@/text';
-import { COMPUTER_PROVIDER_DISPLAY_NAMES } from '@/sync/domains/computer/computerProviderSettings';
 import type { ComputerUseSettingsV1 } from '@happier-dev/protocol/computer/v1';
+import { COMPUTER_PROVIDER_DISPLAY_NAMES } from '@/sync/domains/computer/computerProviderSettings';
 
 /** "Claude and Codex are ready": the agents the last inventory read found ready, from what the app holds. */
 export function describeMachineAgentsReady(titles: readonly string[]): string | null {
@@ -34,9 +35,23 @@ export function describeMachineTerminalHost(host: ReturnType<typeof resolveTermi
     return t('machineDetailPage.summaries.terminalDirect');
 }
 
+/** "3 installed · 2 ready" from the inventory the Tools page already read; anything not yet observed leaves the row's title alone. */
+export function describeMachineToolsSummary(summary: InstallablesSummary): string | undefined {
+    if (summary.status !== 'ready') return undefined;
+    return t('machineDetailPage.summaries.toolsInstalledReady', { installed: summary.installed, ready: summary.ready });
+}
+
 /** Computer control's row names the providers agents may use, the default first ("Cua", "Cua and Agent Desktop"). */
 export function describeMachineComputerUse(settings: ComputerUseSettingsV1): string {
     const names = [settings.defaultProvider, ...settings.enabledProviders.filter((provider) => provider !== settings.defaultProvider)]
         .map((provider) => COMPUTER_PROVIDER_DISPLAY_NAMES[provider]);
     return names.length === 2 ? t('computerUse.providers.summaryPair', { first: names[0]!, second: names[1]! }) : names[0]!;
+}
+
+/**
+ * Details' row: the host name and platform. A machine Happier created is named by its provider with a generated
+ * instance id, so its row says the platform alone; the Details page keeps every fact (copy rule: no raw ids).
+ */
+export function describeMachineDetailsSummary(input: Readonly<{ host: string | undefined; platform: string | undefined; managed: boolean }>): string | undefined {
+    return [input.managed ? undefined : input.host, input.platform].filter(Boolean).join(' · ') || undefined;
 }

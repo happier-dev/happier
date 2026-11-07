@@ -16,4 +16,21 @@ describe('Sharing row summary', () => {
         expect(describeMachineDoctorSummary(null)).toBeUndefined();
         expect(describeMachineDoctorSummary({ cachedAt: 1_700_000_000_000 })).toContain('doctorChecked');
     });
+
+    it('says installed and ready tools only once the inventory is held: no spinner, no zero from an unobserved registry', async () => {
+        const { describeMachineToolsSummary } = await import('./machineThisMachineSummaries');
+        expect(describeMachineToolsSummary({ status: 'ready', installed: 3, ready: 2, held: false })).toContain('toolsInstalledReady');
+        // A refresh that failed keeps the inventory it already held; a settled zero is a reading.
+        expect(describeMachineToolsSummary({ status: 'ready', installed: 0, ready: 0, held: true })).toContain('toolsInstalledReady');
+        for (const status of ['unknown', 'loading', 'unavailable'] as const) {
+            expect(describeMachineToolsSummary({ status })).toBeUndefined();
+        }
+    });
+
+    it('keeps a Happier-created machine’s provider instance name out of the Details row: platform only', async () => {
+        const { describeMachineDetailsSummary } = await import('./machineThisMachineSummaries');
+        expect(describeMachineDetailsSummary({ host: 'studio', platform: 'Linux', managed: false })).toBe('studio · Linux');
+        expect(describeMachineDetailsSummary({ host: 'lima-happier-5bi1h6q00rlp5zjoh5njd664', platform: 'Linux', managed: true })).toBe('Linux');
+        expect(describeMachineDetailsSummary({ host: undefined, platform: undefined, managed: false })).toBeUndefined();
+    });
 });
