@@ -11,6 +11,19 @@ import { readActionApprovalReview } from './actionApprovalReview';
 afterEach(() => setPreferredLanguageFromSettings('en'));
 
 describe('the shared Action approval presentation owner', () => {
+    it('names the operation-read Action before its Machine subject', () => {
+        const spec = getActionSpec('action.operations.get');
+        const presentation = presentActionApproval({ actionId: spec.id, subject: 'NLDW6-3-11-20',
+            authoredTitle: 'NLDW6-3-11-20', actionArgs: {
+                serverId: 'home', machineId: 'machine', operationId: 'session-creation', waitForTerminal: true,
+            } });
+        expect(presentation.title).toContain(spec.title);
+        expect(presentation.title).toContain('NLDW6-3-11-20');
+    });
+    it('names an unrecognized approval by its Action identifier when no authored title exists', () => {
+        const actionId = 'example.plugin.action';
+        expect(presentActionApproval({ actionId, subject: 'NLDW6-3-11-20' }).title).toBe(actionId);
+    });
     it.each(['en', 'fr'] as const)('presents registry removal consequences and its specific verb in %s', async language => {
         await preloadTranslations(language);
         setPreferredLanguageFromSettings(language);

@@ -90,7 +90,7 @@ export function readActionApprovalConfirmLabel(actionId: string): string | null 
 export function presentActionApproval(input: ActionApprovalPresentationInput): Readonly<{ title: string | null; summary: string | null; confirmLabel: string | null; destructive?: boolean }> {
     const serviceControl = presentLocalServiceControlApproval({ actionId: input.actionId, actionArgs: input.actionArgs, subject: input.subject });
     const parsed = ActionIdSchema.safeParse(input.actionId);
-    if (!parsed.success) return { title: input.authoredTitle?.trim() || null, summary: input.authoredSummary?.trim() || null, confirmLabel: null };
+    if (!parsed.success) return { title: input.authoredTitle?.trim() || input.actionId.trim() || null, summary: input.authoredSummary?.trim() || null, confirmLabel: null };
     const spec = getActionSpec(parsed.data);
     // Create names a new machine, not its routing Home. The review owner projects the same name for pending and retained asks.
     const createdMachineName = spec.id === 'machines.managed.acquire'

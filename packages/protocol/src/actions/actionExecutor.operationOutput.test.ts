@@ -1,12 +1,99 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createActionExecutor, type ActionExecutorDeps } from './actionExecutor.js';
+import { completeActionResult, createActionExecutor, settleActionOutput, type ActionExecutorDeps } from './actionExecutor.js';
+import type { ActionOperationCredentialUseV1 } from './actionExecutionResult.js';
 import { getActionSpec } from './actionSpecs.js';
 import { ActionIdSchema } from './actionIds.js';
 import { resolveActionApprovalRouting } from './actionApprovalPolicy.js';
 import { normalizeActionsSettingsV1, setActionApprovalOverride } from './actionSettings.js';
 import { executeActionOperationActionV1 } from './executor/actionOperationActions.js';
+import { ACTION_OPERATION_ACTION_IDS_V1 } from './operations/actionIdsV1.js';
 
 describe('operation and retained output Actions', () => {
+  it('admits operation observation directly while retaining cancellation and explicit surface settings', () => {
+    for (const actionId of ACTION_OPERATION_ACTION_IDS_V1) {
+      const spec = getActionSpec(actionId);
+      const context = { surface: 'ui', authority: 'present_user', actionCaller: { kind: 'host' } } as const;
+      const consequence = spec.sideEffectClass === 'write';
+      expect(resolveActionApprovalRouting({ actionId, spec, context }).required, actionId).toBe(consequence);
+      for (const surface of ['agent', 'mcp'] as const) {
+        expect(resolveActionApprovalRouting({ actionId, spec,
+          context: { surface, authority: 'account_automation' } }).required, `${surface}:${actionId}`).toBe(consequence);
+      }
+      for (const approvalRequired of [false, true]) {
+        const settings = setActionApprovalOverride({ settings: normalizeActionsSettingsV1(null),
+          actionId, surface: 'ui', approvalRequired });
+        expect(resolveActionApprovalRouting({ actionId, spec, context, settings }).required, actionId).toBe(approvalRequired);
+      }
+    }
+  });
+  it('observes the pending New Session operation without confirming the person’s own read', async () => {
+    const transport = vi.fn(async () => ({ kind: 'not_found' }));
+    const confirm = vi.fn(async () => false);
+    const executor = createActionExecutor({
+      presentUserActionConfirmation: confirm,
+      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport }),
+    } as ActionExecutorDeps);
+    expect(await executor.execute('action.operations.get', {
+      serverId: 'home', machineId: 'machine', operationId: 'session-creation', waitForTerminal: true,
+    }, { surface: 'ui', serverId: 'home', authority: 'present_user', actionCaller: { kind: 'host' } }))
+      .toEqual({ ok: true, result: { kind: 'not_found' } });
+    expect(confirm).not.toHaveBeenCalled();
+    expect(transport).toHaveBeenCalledTimes(1);
+    expect(transport).toHaveBeenCalledWith(expect.objectContaining({
+      machineId: 'machine', payload: { operationId: 'session-creation', waitForTerminal: true },
+    }));
+  });
+
+  it('shares strict terminal projection, pending custody and credential facts with native Action hosts', () => {
+    const operationCredentialUses = [{ v: 1, kind: 'connected_account', label: null,
+      owner: { kind: 'account', accountId: 'owner' }, service: { pluginId: 'example.service', localId: 'git' },
+      why: { kind: 'purpose_binding', purpose: { consumer: { pluginId: 'example.worker', localId: 'publish' }, purpose: 'repository-write' }, target: 'account' },
+      currentness: { kind: 'current_at_materialization' } }] satisfies readonly ActionOperationCredentialUseV1[];
+    expect(settleActionOutput('action.operations.get', { ok: true, result: { kind: 'not_found' }, operationCredentialUses }))
+      .toEqual({ ok: true, result: { kind: 'not_found' }, operationCredentialUses });
+    expect(settleActionOutput('action.operations.get', completeActionResult({ kind: 'not_found', privateTransport: 'not public' })))
+      .toEqual({ ok: false, errorCode: 'invalid_action_output', error: 'invalid_action_output' });
+    const pending = { ok: true as const, result: {
+      kind: 'approval_request_created', artifactId: 'update-approval', actionId: 'artifact.update',
+    }, operationCredentialUses };
+    expect(settleActionOutput('artifact.public_link.create', pending)).toBe(pending);
+    const failure = { ok: false as const, errorCode: 'outcome_unknown', error: 'outcome_unknown',
+      effectAttempted: true, privateTransport: 'not public', operationCredentialUses };
+    // Uncertainty remains a failure for ordinary Actions; only Project Open has its existing domain result.
+    expect(settleActionOutput('action.operations.get', failure)).toEqual({ ok: false,
+      errorCode: 'outcome_unknown', error: 'outcome_unknown', effectAttempted: true, operationCredentialUses });
+  });
+
+  it('routes a qualified selected copy through public UI, agent, MCP and CLI Action admission', async () => {
+    const input = { serverId: 'home', machineId: 'machine', operationId: 'operation', byteOffset: 1,
+      selection: { kind: 'bytes', endByteOffset: 3 } };
+    // Machine RPC is the system boundary; Action schemas, dispatch and output projection stay real.
+    const transport = vi.fn(async ({ method }: { method: string }) => method === 'actionOperation.get.v2'
+      ? { kind: 'found', operation: { version: 1, operationId: 'operation', revision: 1,
+        actionId: 'projects.script.run', state: 'succeeded', scope: { accountId: 'account', machineId: 'machine' },
+        title: 'Build', createdAt: 1, startedAt: 1, settledAt: 2, cancellation: 'supported', domainRef: { kind: 'projectCommand', purpose: 'script',
+          serverId: 'home', machineId: 'machine', workspaceRefId: 'workspace', cwd: '/project', terminalId: 'terminal' } } }
+      : { ok: true, terminalId: 'terminal', frames: [{ t: 'bytes', terminalId: 'terminal', seq: 1,
+        byteOffset: 1, byteLength: 2, encoding: 'base64', data: 'YmM=' }],
+        nextByteOffset: 3, availableByteOffset: 4, droppedBeforeByteOffset: 0, done: false });
+    const executor = createActionExecutor({
+      actionOperationAction: args => executeActionOperationActionV1({ ...args, transport }),
+    } as ActionExecutorDeps);
+    for (const surface of ['ui', 'agent', 'mcp', 'cli'] as const) {
+      const result = await executor.execute('projects.execution.output.copy', input,
+        { surface, serverId: 'home', bypassApprovals: true });
+      expect(result, JSON.stringify({ surface, result })).toMatchObject({ ok: true, result: { kind: 'bytes',
+          selection: { request: input, text: 'bc', coverage: { complete: true, gaps: [] } } } });
+    }
+  });
+
+  it('keeps managed Action routing scope out of the unchanged ordinary operation RPC input', async () => {
+    const transport = vi.fn(async () => ({ kind: 'not_found' }));
+    expect(await executeActionOperationActionV1({ actionId: 'action.operations.get', input: {
+      serverId: 'home', machineId: 'controller', operationId: 'operation', managed: { homeId: 'home', managedId: 'managed' },
+    }, transport })).toEqual({ kind: 'not_found' });
+    expect(transport).toHaveBeenCalledWith(expect.objectContaining({ payload: { operationId: 'operation' } }));
+  });
   it.each(['action.operations.get', 'action.operations.cancel'] as const)('admits %s through the existing portable Home scope owner', async actionId => {
     const transport = vi.fn(async () => actionId === 'action.operations.cancel' ? { kind: 'requested' } : { kind: 'not_found' });
     const executor = createActionExecutor({

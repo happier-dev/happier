@@ -16,7 +16,7 @@ import { ManagedGetInputV1Schema } from '../../machines/managed/actionsV1.js';
 import { DeploymentIdentifierV1Schema } from '../../deployments/deploymentIdentifiersV1.js';
 export { ActionOperationAddressV1Schema } from '../operations/addressV1.js';
 
-import { ACTION_OPERATION_ACTION_IDS_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
+import { ACTION_OPERATION_ACTION_IDS_V1, ACTION_OPERATION_CANCEL_ACTION_ID_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
 export { ACTION_OPERATION_ACTION_IDS_V1, type ActionOperationActionIdV1 } from '../operations/actionIdsV1.js';
 export const ActionOperationActionIdV1Schema = lazyZodSchema(() => z.enum(ACTION_OPERATION_ACTION_IDS_V1));
 
@@ -148,13 +148,13 @@ const inputFields = {
 function createActionOperationActionSpecs() {
   return ACTION_OPERATION_ACTION_IDS_V1.map((id): PreNormalizedActionSpec => ({
   invocationServerIdForInput: actionInputServerId(ActionOperationActionInputSchemasV1[id], input => input.serverId),
-  id, approval: { result: 'required' }, approvalPolicy: { uiConfirmation: 'policy' }, title: titles[id], description: summaries[id],
-  safety: id === 'action.operations.cancel' ? 'danger' : 'safe',
-  sideEffectClass: id === 'action.operations.cancel' ? 'write' : 'read',
+  id, approval: { result: 'required' }, approvalPolicy: { uiConfirmation: id === ACTION_OPERATION_CANCEL_ACTION_ID_V1 ? 'policy' : 'direct' }, title: titles[id], description: summaries[id],
+  safety: id === ACTION_OPERATION_CANCEL_ACTION_ID_V1 ? 'danger' : 'safe',
+  sideEffectClass: id === ACTION_OPERATION_CANCEL_ACTION_ID_V1 ? 'write' : 'read',
   executionPlacement: id === 'projects.execution.output.open' ? 'client' : 'machine', placements: [],
   surfaces: { ui: true, voice: true, agent: true, mcp: true, cli: true, rpc: false },
   bindings: { mcpToolName: id.replaceAll('.', '_'), voiceClientToolName: id.replaceAll('.', '_'),
-    ...(id === 'action.operations.cancel' ? { rpcMethod: ACTION_OPERATION_RPC_METHODS_V1.cancel } : {}) },
+    ...(id === ACTION_OPERATION_CANCEL_ACTION_ID_V1 ? { rpcMethod: ACTION_OPERATION_RPC_METHODS_V1.cancel } : {}) },
   cli: { commands: [{ path: id.split('.'), visibility: 'canonical' }] },
   inputHints: { title: titles[id], fields: inputFields[id] },
   inputSchema: ActionOperationActionInputSchemasV1[id], outputSchema: ActionOperationActionOutputSchemasV1[id],
