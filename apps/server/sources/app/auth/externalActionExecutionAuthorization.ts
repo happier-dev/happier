@@ -10,7 +10,7 @@ import { MachineReadBatchRequestV1Schema } from '@happier-dev/protocol/machines/
 import { isBotTemplateRetainedExecutionRootActionIdV1, isBotTemplateRestrictedPatHttpPurposeRootActionIdV1 } from '@happier-dev/protocol/bots/templates/botTemplateActionIdsV1';
 import { isDeploymentReadActionIdV1, isDeploymentPreparationActionIdV1,
     deploymentPreparationOperationForActionV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { readDeploymentReadAuthorizationInTx, readRegistryAppUpdateAuthorizationInTx } from '@/app/deployments/deploymentReadAuthorization';
+import { readDeploymentReadAuthorizationInTx, readAdmittedRegistryAppUpdateScopeInTx } from '@/app/deployments/deploymentReadAuthorization';
 import { loadDeploymentEnvironmentInTx } from '@/app/deployments/deploymentEnvironmentService';
 import { readDeploymentLinkReviewedSetupHttpPurpose } from '@/app/deployments/deploymentLinkReviewedChildAuthorization';
 import { admitDeploymentMachineInTx, canDeployDeploymentEnvironment } from '@/app/deployments/deploymentAdmission';
@@ -886,6 +886,8 @@ export type VerifiedExternalActionExecutionRequest = Readonly<{
     deploymentChildAdmission?: DeploymentChildAdmission;
     /** The receipt owner accepted this exact root and installed controller. */
     acceptedDeploymentReceipt?: Readonly<{ read?: Readonly<{ environmentId?: string; deploymentId?: string }> }>;
+    /** Exact Environment selected by an admitted finite registry update check. */
+    registryAppUpdateRead?: Readonly<{ environmentId: string }>;
     deploymentChildArtifactRead?: Readonly<{ content: import('@happier-dev/protocol').DeploymentArtifactContentReferenceV1; requesterAccountId: string }>;
     deploymentDomainPurpose?: DomainHttpPurpose;
     /** One signed create-purpose result; consumers never infer scope from a raw header. */
@@ -1557,6 +1559,15 @@ async function verifyCommon(
         ...(proof.reviewedChild ? { reviewedChildAdmission: proof.reviewedChild } : {}),
         ...(linkReviewedSetupRead ? { deploymentLinkReviewedSetupRead: true as const } : {}),
     };
+
+    // The exact submitted purchase already admitted its requester. Its signed
+    // native result must remain recordable after that credential is withdrawn.
+    if (purpose?.kind === 'issued-managed-acquire-native-fact') {
+        const principal = projectAcceptedDeploymentPrincipal(binding);
+        return principal ? { binding, signedChildPurpose, effectActionId: effectActionId.data, target, principal,
+            effectiveAuthority: principal.authority, ...reviewedAdmission }
+            : refuseExternalActionExecutionRequest('principal', proof);
+    }
 
     // Native member work has no Home receipt job: mint admitted its exact target.
     // The signed root and installation proof retain that finite admission;
@@ -3004,6 +3015,7 @@ export async function verifyExternalActionDomainExecutionRequest(
     let managedGuestActivity: VerifiedExternalActionExecutionRequest['managedGuestActivity'];
     let deploymentChildMachineRead: DeploymentChildMachineRead | undefined;
     let deploymentChildArtifactRead: VerifiedExternalActionExecutionRequest['deploymentChildArtifactRead'];
+    let registryAppUpdateRead: VerifiedExternalActionExecutionRequest['registryAppUpdateRead'];
     if (verified.acceptedDeploymentReceipt && verified.binding.actionId === 'deployments.teardown'
         && verified.effectActionId === verified.binding.actionId) {
         const artifactId = readArtifactGetHttpPurpose(proof);
@@ -3084,19 +3096,21 @@ export async function verifyExternalActionDomainExecutionRequest(
             }
         }
     } else if (verified.binding.registryAppUpdateAdmission) {
-        const current = await readRegistryAppUpdateAuthorizationInTx(db, verified.binding, {
-            authenticationAuthority: verified.effectiveAuthority, authenticationEvidence: verified.principal.authenticationEvidence,
-        });
-        if (!current) return refuseExternalActionExecutionRequest('deployment_registry_current', proof);
-        const metadata = verified.effectActionId === 'deployments.environments.get'
+        const current = await readAdmittedRegistryAppUpdateScopeInTx(db, verified.binding.registryAppUpdateAdmission);
+        const environmentId = verified.effectActionId === 'deployments.environments.get'
             && isAccountActionHttpOperation('deployments.environments.get', proof)
-            && current.environmentIds.some(environmentId => sameManagedInput(proof.routeInput,
-                { serverId: verified.binding.serverIdentityId, environmentId }));
+            ? current.environmentIds.find(environmentId => sameManagedInput(proof.routeInput,
+                { serverId: verified.binding.serverIdentityId, environmentId })) : undefined;
         const artifact = /^\/v1\/artifacts\/([^/?#]+)$/u.exec(proof.path);
+        const artifactContent = artifact === null ? undefined
+            : current.artifactContents.find(reference => encodeURIComponent(reference.contentArtifactId) === artifact[1]);
         const content = verified.effectActionId === verified.binding.actionId && isReadOnlyArtifactHttpPurpose(proof)
-            && (isAccountEncryptionCurrentnessHttpRead(proof)
-                || artifact !== null && current.artifactIds.some(id => encodeURIComponent(id) === artifact[1]));
-        if (!isAdmittedRootRelay && !readsExecutionMachine && !metadata && !content) return refuseExternalActionExecutionRequest('deployment_registry_purpose', proof);
+            && (isAccountEncryptionCurrentnessHttpRead(proof) || artifactContent !== undefined);
+        if (!isAdmittedRootRelay && !readsExecutionMachine && !environmentId && !content) return refuseExternalActionExecutionRequest('deployment_registry_purpose', proof);
+        if (environmentId) registryAppUpdateRead = { environmentId };
+        if (content && artifactContent) deploymentChildArtifactRead = {
+            content: artifactContent, requesterAccountId: verified.binding.accountId,
+        };
     } else if (verified.binding.actionId === 'deployments.backups.restore' || isDeploymentBackupActionIdV1(verified.binding.actionId)) {
         if (!isAdmittedRootRelay && !readsExecutionMachine && !await isDeploymentBackupHttpPurpose(verified, proof)) return refuseExternalActionExecutionRequest('deployment_restore_purpose', proof);
     } else if (verified.binding.actionId === 'deployments.restart') {
@@ -3433,6 +3447,7 @@ export async function verifyExternalActionDomainExecutionRequest(
             ? readExternalActionSessionProposalSurface(verified.binding) : undefined }).ok) return null;
     const { signedChildPurpose: _signedChildPurpose, ...publicVerified } = verified;
     const result = { ...publicVerified, ...(deploymentChildMachineRead ? { deploymentChildMachineRead } : {}),
+        ...(registryAppUpdateRead ? { registryAppUpdateRead } : {}),
         ...(deploymentChildArtifactRead ? { deploymentChildArtifactRead } : {}) };
     return snapshotBatch ? { ...result, sessionSnapshotBatchAdmitted: true,
         ...(managedGuestActivity ? { managedGuestActivity } : {}) }

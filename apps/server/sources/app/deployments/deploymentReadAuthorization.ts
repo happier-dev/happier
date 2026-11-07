@@ -3,8 +3,10 @@ import type { DeploymentReadAdmissionV1 } from '@happier-dev/protocol/actions/ex
 import type { DeploymentRestartNativeAdmissionV1, DeploymentRestoreNativeAdmissionV1, DeploymentBackupNativeAdmissionV1 } from '@happier-dev/protocol/deployments/deploymentCandidatePublicationV1';
 import { isDeploymentBackupActionIdV1 } from '@happier-dev/protocol/deployments/deploymentActionIdsV1';
 import type { Tx } from '@/storage/inTx';
+import { portableQueryChunks } from '@/storage/portableQueryChunks';
 import { loadDeploymentEnvironmentInTx } from './deploymentEnvironmentService';
 import type { DeploymentAuthentication } from './deploymentAdmission';
+import type { DeploymentContentReference } from './deploymentStoredContent';
 
 /** Registry demand selects current metadata only; the Environment remains its private-content authority. */
 export async function readRegistryAppUpdateAuthorizationInTx(tx: Tx, binding: ExternalActionExecutionAuthorizationBindingV1,
@@ -21,6 +23,19 @@ export async function readRegistryAppUpdateAuthorizationInTx(tx: Tx, binding: Ex
     if (rows.some(row => row === null)) return null;
     return { environmentIds: rows.flatMap(row => row ? [row.id] : []),
         artifactIds: rows.flatMap(row => row ? [row.contentArtifactId] : []) };
+}
+
+/** Finite registry work keeps its admitted Environments; only their current Artifact membership is selected here. */
+export async function readAdmittedRegistryAppUpdateScopeInTx(tx: Tx,
+    admission: NonNullable<ExternalActionExecutionAuthorizationBindingV1['registryAppUpdateAdmission']>,
+): Promise<Readonly<{ environmentIds: readonly string[]; artifactContents: readonly DeploymentContentReference[] }>> {
+    const environmentIds = admission.environments.map(demand => demand.environmentId);
+    const artifactContents: DeploymentContentReference[] = [];
+    for (const ids of portableQueryChunks({ values: environmentIds, bindingsPerValue: 1 })) {
+        artifactContents.push(...await tx.deploymentEnvironment.findMany({ where: { id: { in: [...ids] } },
+            select: { contentArtifactId: true, contentHeaderVersion: true, contentBodyVersion: true } }));
+    }
+    return { environmentIds, artifactContents };
 }
 
 /** Resource reads remain Source-authorized. Native occurrence and private builder custody stay with the installed owner. */

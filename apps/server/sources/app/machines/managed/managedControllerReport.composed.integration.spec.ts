@@ -4,10 +4,13 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { serializerCompiler, validatorCompiler, type ZodTypeProvider } from 'fastify-type-provider-zod';
 import tweetnacl from 'tweetnacl';
 import type { LimaExecutor } from '@happier-dev/cli-common/machineLima';
-import { MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol';
+import { API_TOKEN_FULL_GRANT_V1, MACHINE_PLAIN_DATA_KEY_MARKER, encodePlainMachineStoredContent, MachineOperationProtocolCapabilitiesV1Schema } from '@happier-dev/protocol';
 import { decodeBase64 } from 'privacy-kit';
 import { ExternalActionExecutionAuthorizationV1Schema, bindExternalActionExecutionAuthorizationHttpPathV1 } from '@happier-dev/protocol/actions/externalActionApi';
-import { ManagedAdmissionOutputV1Schema, ManagedControllerSubmitOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { ManagedAdmissionOutputV1Schema, ManagedControllerSubmitOutputV1Schema, ManagedControllerMachineOutputV1Schema } from '@happier-dev/protocol/machines/managed/actionsV1';
+import { buildManagedConfigurationFactsV1 } from '@happier-dev/protocol/machines/managed/managedConfigurationV1';
+import { MachineProvisionerOptionsResultV1Schema, projectMachineProvisionerSelectionV1, readMachineProvisionerSelectionForLaunchV1 } from '@happier-dev/protocol/plugins/contributions/machineProvisioners';
+import { createPluginJsonSchemaZodValueAdapter } from '@happier-dev/protocol/plugins/actions/json-schema-validation';
 import type { ManagedMachineV1 } from '@happier-dev/protocol/machines/managed/managedMachineV1';
 import { AcquireResultV1Schema, type AcquireResultV1 } from '@happier-dev/protocol/machines/managed/providerFactsV1';
 import { db, initDbPostgres } from '@/storage/db';
@@ -24,9 +27,9 @@ import { managedQb56Input } from '@/app/api/routes/actions/managedQb56Input.test
 // Runtime-loaded cross-package ports keep server compilation inside its root;
 // implementations and their own alias/source resolution stay real.
 interface ControllerClient {
-    post(path: string, body: unknown, schema: typeof ManagedAdmissionOutputV1Schema): Promise<ReturnType<typeof ManagedAdmissionOutputV1Schema.parse>>;
+    post<T>(path: string, body: unknown, schema: Readonly<{ parse(value: unknown): T }>): Promise<T>;
     submit(machine: ManagedMachineV1): Promise<ReturnType<typeof ManagedControllerSubmitOutputV1Schema.parse>>;
-    reportIssuedAcquireFact(machine: ManagedMachineV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>): Promise<ManagedMachineV1>;
+    reportIssuedAcquireFact(machine: ManagedMachineV1, fact: Extract<AcquireResultV1, { kind: 'bound' | 'pending' }>, configurationFacts?: ManagedMachineV1['reviewedFacts']): Promise<ManagedMachineV1>;
 }
 
 describe('managed native report through CLI, HTTP and disposable storage', () => {
@@ -53,7 +56,7 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
         finally { restoreEnv(initialEnv); }
     });
 
-    it('persists the real Lima Acquire result before enrollment, replays admission and reports to shared recipients', async () => {
+    it.each(['signed-credential', 'api-token', 'api-token-grant'] as const)('persists a signed submitted Lima result after %s withdrawal, rejects fresh admission and tampering, and replays reports', async (withdrawal) => {
         const account = await db.account.create({ data: { encryptionMode: 'plain' } });
         const viewer = await db.account.create({ data: { encryptionMode: 'plain' } });
         const controller = { machineId: randomUUID(), installationId: randomUUID() };
@@ -71,11 +74,19 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
         const definition = manifest.contributes?.machineProvisioners?.find(entry => entry.id === 'lima');
         if (!definition) throw new Error('Bundled Lima provisioner missing');
         const requestId = randomUUID();
+        const { createProtocolStoredReadSchema } = await vi.importActual<typeof import('@happier-dev/protocol/plugins/actions/protocol-composable-schema')>('@happier-dev/protocol/plugins/actions/protocol-composable-schema');
+        const { LimaLaunchSchema } = await vi.importActual<typeof import('../../../../../../packages/plugins/machine-lima/src/machine/schemas')>('../../../../../../packages/plugins/machine-lima/src/machine/schemas');
+        // QB56 is a preserved historical capture. The current producer owns
+        // its nameless launch projection and allocation-derived native name.
+        const choices = createProtocolStoredReadSchema(LimaLaunchSchema).parse(managedQb56Input.selection.launch.choices);
         const launch = { ...managedQb56Input.selection.launch, name: 'happier-qb79-defaults',
-            choices: { ...managedQb56Input.selection.launch.choices, instance: 'happier-qb79-defaults' } };
-        const input = { ...managedQb56Input, selection: { ...managedQb56Input.selection, controller, launch },
-            reviewedFacts: { ...managedQb56Input.reviewedFacts, controller, launch } };
-        const token = await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
+            choices };
+        const { reviewedFacts: _reviewedFacts, ...unreviewedInput } = managedQb56Input;
+        const input = { ...unreviewedInput, selection: { ...managedQb56Input.selection, controller, launch } };
+        const apiToken = withdrawal === 'signed-credential' ? undefined : await auth.createApiToken({
+            accountId: account.id, tokenId: randomUUID(), label: 'Acquire completion',
+        });
+        const token = apiToken?.token ?? await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' });
         const app = fastify({ logger: false }).withTypeProvider<ZodTypeProvider>();
         app.setValidatorCompiler(validatorCompiler);
         app.setSerializerCompiler(serializerCompiler);
@@ -114,40 +125,108 @@ describe('managed native report through CLI, HTTP and disposable storage', () =>
                 .toMatchObject({ replayed: true, machine: { id: admitted.machine.id } });
             expect(await client.submit(admitted.machine)).toMatchObject({ submitted: true, machine: { allocation: 'may-exist' } });
 
+            if (!apiToken) await auth.signOutEverywhere(account.id);
+            else if (withdrawal === 'api-token') await auth.revokeApiToken({ accountId: account.id, tokenId: apiToken.tokenId });
+            else await auth.updateApiToken({ accountId: account.id, tokenId: apiToken.tokenId,
+                grant: { ...API_TOKEN_FULL_GRANT_V1, actions: { families: [], ids: ['machines.managed.get'] } } });
+            const freshAcquire = await app.inject({ method: 'POST', url: bindExternalActionExecutionAuthorizationHttpPathV1('machines.managed.acquire'),
+                headers: { authorization: `Bearer ${token}` }, payload: { v: 1, machineId: controller.machineId,
+                    envelope: { v: 1, requestId: randomUUID(), target: { kind: 'machine', machineId: controller.machineId }, input } } });
+            expect(freshAcquire.statusCode, freshAcquire.body).toBe(withdrawal === 'api-token-grant' ? 403 : 401);
+
             // Only native process execution is substituted; the actual Lima leaf
             // produces the resource consumed by the CLI and declared server schema.
             const { createLimaProvider } = await vi.importActual<{
                 createLimaProvider(executor: LimaExecutor, observedAt: number, qemuAvailable: () => Promise<boolean>): {
-                    acquire(launch: unknown): Promise<unknown>;
+                    acquire(input: unknown): Promise<unknown>;
+                    options(input: unknown): Promise<unknown>;
                 };
             }>('../../../../../../packages/plugins/machine-lima/src/machine/provider');
             let present = false;
-            const native = { name: launch.choices.instance, dir: `${launch.choices.store}/${launch.choices.instance}`, status: 'Running',
+            let nativeName = '';
+            const native = () => ({ name: nativeName, dir: `${launch.choices.store}/${nativeName}`, status: 'Running',
                 vmType: 'qemu', arch: 'x86_64', cpus: 1, memory: 1_073_741_824, disk: 4_294_967_296,
                 config: { images: [{ location: launch.choices.image, arch: 'x86_64' }], mounts: [],
-                    ssh: { forwardAgent: false }, containerd: { user: false, system: false } } };
+                    ssh: { forwardAgent: false }, containerd: { user: false, system: false } } });
             const capture: LimaExecutor['capture'] = async (_command, args) => ({ exitCode: 0, err: '',
-                out: args[0] === 'info' ? JSON.stringify({ hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'] })
-                    : present ? JSON.stringify(native) : '' });
+                out: args[0] === '--version' ? 'limactl version 2.1.0'
+                    : args[0] === 'info' ? JSON.stringify({ hostOS: 'linux', hostArch: 'x86_64', vmTypes: ['qemu'] })
+                    : present ? JSON.stringify(native()) : '' });
             const executor: LimaExecutor = { capture, run: async (_command, args) => {
                 if (args[0] !== 'create') throw new Error('Unexpected native effect');
+                nativeName = args[args.indexOf('--name') + 1];
                 present = true;
                 return { exitCode: 0, out: '', err: '' };
             } };
-            const fact = AcquireResultV1Schema.parse(await createLimaProvider(executor, Date.now(), async () => true).acquire(launch.choices));
+            const provider = createLimaProvider(executor, Date.now(), async () => true);
+            const options = MachineProvisionerOptionsResultV1Schema.parse(await provider.options(launch.choices));
+            const configurationFacts = buildManagedConfigurationFactsV1({
+                choicesSchema: createPluginJsonSchemaZodValueAdapter(definition.launchSchema), launch, controller,
+                provisioner: definition, optionStatus: 'current', optionProjection: projectMachineProvisionerSelectionV1({ options, launchSchema: definition.launchSchema,
+                    selection: readMachineProvisionerSelectionForLaunchV1(options, launch.choices) }),
+                prerequisites: [], billing: definition.billing, retentionCapabilities: definition.retention,
+                machineOverride: { retention: admitted.machine.retention, wakeOnAcceptedMessage: admitted.machine.wakeOnAcceptedMessage },
+            });
+            expect(configurationFacts).toMatchObject({ launch, optionStatus: 'current', nativeFacts: {
+                size: { cpuCores: launch.choices.cpus, memoryBytes: launch.choices.memoryGiB * 2 ** 30,
+                    diskBytes: launch.choices.diskGiB * 2 ** 30 }, image: { id: launch.choices.image },
+            } });
+            const fact = AcquireResultV1Schema.parse(await provider.acquire({ managedId: admitted.machine.id, launch: launch.choices }));
             if (fact.kind !== 'bound') throw new Error(`Lima did not bind: ${fact.kind}`);
+            const reportBody = { homeId, managedId: admitted.machine.id, controller,
+                expectedIntentRevision: admitted.machine.intentRevision, requestId, result: fact };
+            const { resolveExternalActionServerRequestHeaders } = await vi.importActual<{
+                resolveExternalActionServerRequestHeaders(input: unknown): { ok: true; headers: Record<string, string> } | { ok: false };
+            }>('../../../../../cli/src/api/externalActionExecutionAuthorization');
+            const reportHeaders = (body: unknown, privateKey = keys.secretKey) => {
+                const signed = resolveExternalActionServerRequestHeaders({
+                    context: { surface: 'cli', externalActionExecutionAuthorization: authorization,
+                        externalActionTarget: authorization.binding.target },
+                    effectActionId: 'machines.managed.acquire', method: 'POST', path: '/v1/machines/managed/controller/report', body,
+                    daemonToken: token, serverIdentityId: homeId, installationId: controller.installationId, privateKey,
+                });
+                if (!signed.ok) throw new Error('Report signing unavailable');
+                return signed.headers;
+            };
+            const tampered = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report', payload: reportBody,
+                headers: reportHeaders(reportBody, tweetnacl.sign.keyPair().secretKey) });
+            expect(tampered.statusCode, tampered.body).toBe(401);
+            expect(tampered.json()).toMatchObject({ error: 'invalid_token', authorizationRefusal: 'machine_signature' });
+            const wrongJob = { ...reportBody, requestId: randomUUID() };
+            const mismatched = await app.inject({ method: 'POST', url: '/v1/machines/managed/controller/report', payload: wrongJob,
+                headers: reportHeaders(wrongJob) });
+            expect(mismatched.statusCode, mismatched.body).toBe(401);
+            expect(await db.managedMachine.findUniqueOrThrow({ where: { id: admitted.machine.id } }))
+                .toMatchObject({ allocation: 'may-exist', resource: null });
             const before = await db.account.findMany({ where: { id: { in: [account.id, viewer.id] } }, select: { id: true, seq: true } });
-            const reported = await client.reportIssuedAcquireFact(admitted.machine, fact);
+            const reported = await client.reportIssuedAcquireFact(admitted.machine, fact, configurationFacts);
+            expect(reported.reviewedFacts).toEqual(configurationFacts);
+            expect((await db.managedMachine.findUniqueOrThrow({ where: { id: reported.id } })).admittedInput)
+                .not.toHaveProperty('computeInput.reviewedFacts');
             expect(reported).toMatchObject({ id: admitted.machine.id, allocation: 'bound', resource: fact.resource });
             expect(reported.enrolledMachineId).toBeUndefined();
             expect(await db.managedMachine.findUniqueOrThrow({ where: { id: reported.id } }))
-                .toMatchObject({ allocation: 'bound', resource: fact.resource, enrolledMachineId: null });
+                .toMatchObject({ allocation: 'bound', resource: fact.resource, enrolledMachineId: null, reviewedFacts: configurationFacts });
             for (const recipient of before) {
                 expect(await db.account.findUniqueOrThrow({ where: { id: recipient.id }, select: { seq: true } })).toEqual({ seq: recipient.seq + 1 });
             }
             expect(await db.accountChange.findMany({ where: { entityId: reported.id }, select: { accountId: true }, orderBy: { accountId: 'asc' } }))
                 .toEqual([account.id, viewer.id].sort().map(accountId => ({ accountId })));
-            expect(await client.reportIssuedAcquireFact(admitted.machine, fact)).toMatchObject({ id: reported.id, resource: fact.resource });
+            expect(await client.reportIssuedAcquireFact(admitted.machine, fact, { ...configurationFacts, optionStatus: 'unavailable' }))
+                .toMatchObject({ id: reported.id, resource: fact.resource, reviewedFacts: configurationFacts });
+            const installedReport = { homeId, managedId: reported.id, controller, expectedIntentRevision: reported.intentRevision,
+                requestId, result: fact, bootstrapInstalled: true };
+            const installed = await client.post('/v1/machines/managed/controller/report', installedReport, ManagedControllerMachineOutputV1Schema);
+            expect(installed.machine).toMatchObject({ allocation: 'bound', bootstrapInstalled: true });
+            expect(installed.machine.enrolledMachineId).toBeUndefined();
+            const read = await app.inject({ method: 'POST', url: '/v1/machines/managed/actions/get',
+                headers: { authorization: `Bearer ${await auth.createToken(account.id, undefined, { kind: 'account', authority: 'present_user' })}` },
+                payload: { homeId, managedId: reported.id } });
+            expect(read.statusCode, read.body).toBe(200);
+            expect(read.json()).toMatchObject({ id: reported.id, bootstrapInstalled: true });
+            const installedSeq = await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } });
+            await client.post('/v1/machines/managed/controller/report', installedReport, ManagedControllerMachineOutputV1Schema);
+            expect(await db.account.findUniqueOrThrow({ where: { id: account.id }, select: { seq: true } })).toEqual(installedSeq);
             expect(await db.managedMachine.count({ where: { custodianAccountId: account.id } })).toBe(1);
             expect(await db.savedSecretResource.count({ where: { ownerAccountId: account.id } })).toBe(0);
         } finally { restoreHttp(); await app.close(); }
