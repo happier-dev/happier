@@ -8,7 +8,7 @@ import { useRouter } from 'expo-router';
 import { useAuth } from '@/auth/context/AuthContext';
 import { authGetTokenAtEndpoint, type AuthGetTokenAtEndpointParams } from '@/auth/flows/getToken';
 import { resolveHomeAuthenticationTarget } from '@/auth/flows/resolveHomeAuthenticationTarget';
-import type { AuthCredentials } from '@/auth/storage/tokenStorage';
+import { withAccountE2eeCustody, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { fetchAccountEncryptionMode } from '@/sync/api/account/apiAccountEncryptionMode';
 import { createServerFetchAtEndpoint } from '@/sync/http/client';
 import { getActiveServerHomeCarrier, getActiveServerSnapshot } from '@/sync/domains/server/serverRuntime';
@@ -130,9 +130,10 @@ const SecretKeyLoginFormBody = React.memo(function SecretKeyLoginFormBody(props:
             const { mode } = await fetchAccountEncryptionMode(authenticated, {
                 request: (path, init) => request(path, { ...init, signal: cancellation.signal }, { includeAuth: false, retry: 'none' }),
             });
-            const credentials: AuthCredentials = mode === 'plain'
-                ? { token: authenticated.token }
-                : { token: authenticated.token, secret: input.normalizedKey };
+            const credentials = withAccountE2eeCustody(
+                { token: authenticated.token, secret: input.normalizedKey },
+                mode === 'plain' ? 'historical' : 'active',
+            );
             if (mode === 'e2ee') await createEncryptionFromAuthCredentials(credentials);
             if (!isCurrent()) return { kind: 'cancelled' };
 

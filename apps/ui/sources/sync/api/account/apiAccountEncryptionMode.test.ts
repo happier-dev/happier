@@ -18,7 +18,8 @@ afterEach(async () => {
   vi.unstubAllGlobals();
 });
 
-const credentials: AuthCredentials = { token: 't', secret: 's' };
+// Plain answers below model a plain Account whose device retains historical keys.
+const credentials: AuthCredentials = { token: 't', secret: 's', custody: 'historical' };
 
 it('shares pending identity reads without retaining authority or coupling reader cancellation', async () => {
   const pending = createDeferred<Response>();
@@ -109,6 +110,153 @@ function installNetworkBoundary(respond: (input: RequestInfo | URL, init?: Reque
 }
 
 describe('apiAccountEncryptionMode', () => {
+  it('records one currentness transition and no observations for repeated unchanged reads or pushes', async () => {
+    const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+    const accountId = 'currentness-log-owner';
+    const initial = createPlainAccountEncryptionCurrentnessFixture();
+    const observation = accountEncryptionMode.createSocketAccountEncryptionObservation({
+      credentials: { token: createAccountTokenForTests(accountId) }, endpointUrl: 'https://api.example.test',
+      runtimeOrigin: 'https://api.example.test', homeCarrierEndpointId: null,
+      request: async () => Response.json(initial), isCurrent: () => true,
+    });
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const records = () => logged.mock.calls.filter(([message]) => String(message).startsWith('[accountEncryptionCurrentness]'));
+    const push = (updatedAt: number, version: number) => observation.update({ id: `identity-${version}`, seq: version,
+      createdAt: version, body: { t: 'update-account', id: accountId,
+        encryptionCurrentness: { ...initial, updatedAt, version } } });
+    try {
+      observation.connected();
+      const identity = await observation.binding.read();
+      logged.mockClear();
+      for (let index = 0; index < 20; index++) {
+        push(initial.updatedAt, initial.version + index);
+        expect(await observation.binding.read()).toBe(identity);
+      }
+      expect(records()).toHaveLength(0);
+      push(initial.updatedAt + 1, initial.version + 20);
+      const changed = await observation.binding.read();
+      expect(changed.updatedAt).toBe(initial.updatedAt + 1);
+      expect(changed).not.toBe(identity);
+      expect(records()).toHaveLength(1);
+      push(initial.updatedAt + 1, initial.version + 21);
+      expect(await observation.binding.read()).toBe(changed);
+      expect(records()).toHaveLength(1);
+    } finally { observation.dispose(); logged.mockRestore(); }
+  });
+
+  it.each(['TypeError', 'AbortError', 'credential-secret'] as const)(
+    'preserves a rejected currentness request and logs only an allowlisted class (%s)', async name => {
+      const failure = Object.assign(new Error('private request token=secret'), { name });
+      const request = vi.fn(async () => { throw failure; });
+      const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        await expect(accountEncryptionMode.fetchAccountEncryptionCurrentness(credentials, { request })).rejects.toBe(failure);
+        expect(logged).toHaveBeenCalledWith('[accountEncryptionCurrentness] observation ' + JSON.stringify({
+          event: 'http_rejected', errorClass: name === 'credential-secret' ? 'unknown' : name,
+        }));
+        expect(JSON.stringify(logged.mock.calls)).not.toContain('secret');
+        expect(request).toHaveBeenCalledTimes(1);
+      } finally { logged.mockRestore(); }
+    });
+
+  it.each([
+    { status: 503, body: { error: 'token-secret' }, step: 'http_response' },
+    { status: 403, body: { error: 'token-secret' }, step: 'http_response' },
+    { status: 200, body: { mode: 'plain', private: 'token-secret' }, step: 'invalid_response' },
+    { status: 400, body: { error: 'migration-required',
+      recipientEnvelopeReadiness: { status: 'unavailable', reason: 'encryption_setup_required' } }, step: 'readiness_response' },
+  ])('logs safe currentness refusal facts for $step HTTP $status', async ({ status, body, step }) => {
+    const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+    const request = vi.fn(async () => Response.json(body, { status }));
+    try {
+      await expect(accountEncryptionMode.fetchAccountEncryptionCurrentness(credentials, { request }))
+        .rejects.toMatchObject({ code: 'account-encryption-currentness-unavailable' });
+      expect(logged).toHaveBeenCalledWith('[accountEncryptionCurrentness] refusal ' + JSON.stringify({
+        code: 'account-encryption-currentness-unavailable', step, errorClass: 'HappyError',
+      }));
+      expect(logged).toHaveBeenCalledWith('[accountEncryptionCurrentness] observation ' + JSON.stringify({ event: 'http_response', status }));
+      if (step === 'readiness_response') expect(logged).toHaveBeenCalledWith(
+        '[accountEncryptionCurrentness] observation ' + JSON.stringify({ event: 'http_readiness', code: 'encryption_setup_required' }));
+      expect(JSON.stringify(logged.mock.calls)).not.toContain('secret');
+      expect(request).toHaveBeenCalledTimes(1);
+    } finally { logged.mockRestore(); }
+  });
+
+  it.each(['socket_observation', 'socket_binding_before_read', 'socket_binding_after_read'] as const)(
+    'logs the safe unavailable socket sub-step %s', async step => {
+      const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+      const { createPlainAccountEncryptionCurrentnessFixture } = await import('@/dev/testkit/fixtures/accountEncryptionCurrentness');
+      const { createDeferred } = await import('@/dev/testkit');
+      const response = createDeferred<Response>();
+      let current = step !== 'socket_binding_before_read';
+      const request = vi.fn(async () => response.promise);
+      const observation = accountEncryptionMode.createSocketAccountEncryptionObservation({
+        credentials: { token: createAccountTokenForTests('private-account') }, endpointUrl: 'https://private.example.test',
+        runtimeOrigin: 'https://private.example.test', homeCarrierEndpointId: null, request, isCurrent: () => current,
+      });
+      const logged = vi.spyOn(console, 'log').mockImplementation(() => {});
+      try {
+        if (step === 'socket_binding_after_read') observation.connected();
+        const reading = observation.binding.read();
+        if (step === 'socket_binding_after_read') {
+          current = false;
+          response.resolve(Response.json(createPlainAccountEncryptionCurrentnessFixture()));
+        }
+        await expect(reading).rejects.toMatchObject({ code: 'account-encryption-currentness-unavailable' });
+        expect(logged.mock.calls.some(([message]) => typeof message === 'string'
+          && message.startsWith('[accountEncryptionCurrentness] observation ')
+          && JSON.parse(message.slice('[accountEncryptionCurrentness] observation '.length)).event === 'observation_refused')).toBe(true);
+        expect(logged).toHaveBeenCalledWith('[accountEncryptionCurrentness] refusal ' + JSON.stringify({
+          code: 'account-encryption-currentness-unavailable', step, errorClass: 'HappyError',
+        }));
+        expect(JSON.stringify(logged.mock.calls)).not.toContain('private');
+        expect(request).toHaveBeenCalledTimes(step === 'socket_binding_after_read' ? 1 : 0);
+      } finally { observation.dispose(); logged.mockRestore(); }
+    });
+
+  it.each([404, 503, 200])('preserves a predecessor mode read only when currentness is unsupported (%s)', async status => {
+    const { createAccountTokenForTests } = await import('@/dev/testkit/harness/homeGovernanceHarness');
+    const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
+    const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+    const captured = { token: createAccountTokenForTests('mode-predecessor') };
+    const serverId = getActiveServerSnapshot().serverId;
+    const reads: string[] = [];
+    installNetworkBoundary(async input => {
+      const path = new URL(String(input)).pathname;
+      reads.push(path);
+      return path.endsWith('/currentness') ? Response.json({ error: 'unavailable' }, { status })
+        : Response.json({ mode: 'e2ee', updatedAt: 42 });
+    });
+    const observation = accountEncryptionMode.createSocketAccountEncryptionObservation({
+      credentials: captured, serverId, endpointUrl: 'https://api.example.test', runtimeOrigin: 'https://api.example.test',
+      homeCarrierEndpointId: null, isCurrent: () => true,
+      request: createServerFetchAtEndpoint({ endpointUrl: 'https://api.example.test', serverId, credentials: captured }),
+    });
+    const request = createServerFetchAtEndpoint({ endpointUrl: 'https://api.example.test', serverId, credentials: captured,
+      accountEncryptionObservation: observation.binding });
+    try {
+      observation.connected();
+      const reading = accountEncryptionMode.fetchAccountEncryptionMode(captured, { request, usage: 'identity' });
+      if (status === 404) {
+        await expect(reading).resolves.toEqual({ mode: 'e2ee', updatedAt: 42 });
+        expect(reads).toEqual(['/v1/account/encryption/currentness', '/v1/account/encryption']);
+        await expect(accountEncryptionMode.fetchAccountEncryptionMode(captured, { request, usage: 'identity' }))
+          .resolves.toEqual({ mode: 'e2ee', updatedAt: 42 });
+        expect(reads.filter(path => path.endsWith('/currentness'))).toHaveLength(1);
+        expect(reads.filter(path => path.endsWith('/encryption'))).toHaveLength(2);
+      } else {
+        await expect(reading).rejects.toMatchObject({ status, code: 'account-encryption-currentness-unavailable' });
+        expect(reads).toEqual(['/v1/account/encryption/currentness']);
+        if (status === 200) {
+          await expect(accountEncryptionMode.fetchAccountEncryptionMode(captured, { request, usage: 'identity' }))
+            .rejects.toMatchObject({ status: 200, canTryAgain: false });
+          expect(reads).toEqual(['/v1/account/encryption/currentness']);
+        }
+      }
+    } finally { observation.dispose(); }
+  });
+
   it.each([{ status: 503, canTryAgain: true }, { status: 400, canTryAgain: false }])(
     'preserves currentness HTTP $status retryability through its error consumer', async ({ status, canTryAgain }) => {
       const { isExplicitlyRetryableError, shouldRetryError } = await import('@/sync/runtime/connectivity/transientConnectivityErrors');
@@ -364,10 +512,12 @@ describe('apiAccountEncryptionMode', () => {
     const first = fetchAccountEncryptionMode({
       token: 'shared-bearer-token',
       secret: 'account-a-secret',
+      custody: 'historical',
     });
     const second = fetchAccountEncryptionMode({
       token: 'shared-bearer-token',
       secret: 'account-b-secret',
+      custody: 'historical',
     });
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
 

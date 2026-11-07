@@ -6,7 +6,7 @@ import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
 import { createDirectoryHttpFixture } from '@/sync/ops/accountDirectory/accountDirectoryTestFixtures';
 import { createRootLayoutFeaturesResponse } from '@/dev/testkit/fixtures/featureFixtures';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { adoptHomeProfile, getActiveServerId, setActiveServerId } from '@/sync/domains/server/serverProfiles';
 import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { AuthProvider, getCurrentAuth } from '@/auth/context/AuthContext';
@@ -156,7 +156,8 @@ it.each(['plain', 'e2ee'] as const)('commits exact Home B %s credentials before 
         expect(getActiveServerId()).toBe(activeHomeA);
         expect(await TokenStorage.getCredentialsForServerUrl(homeB.serverUrl, { serverId: 'srv_home_b' })).toBeNull();
     } finally { await act(async () => { release(); await submission; }); }
-    await vi.waitFor(() => expect(completed).toEqual(mode === 'plain' ? { token: fixture.token } : { token: fixture.token, secret: 'A'.repeat(43) }));
+    await vi.waitFor(() => expect(completed).toEqual({ token: fixture.token, secret: 'A'.repeat(43),
+        ...(mode === 'plain' ? { custody: 'historical' } : {}) }));
     expect(getActiveServerId()).toBe(activeHomeA);
     expect(getCurrentAuth()?.credentials).toEqual(credentialsA);
     expect(await TokenStorage.getCredentialsForServerUrl(homeA.serverUrl, { serverId: 'srv_home_a' })).toEqual(credentialsA);

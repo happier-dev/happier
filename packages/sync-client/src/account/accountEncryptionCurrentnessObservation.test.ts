@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { AccountEncryptionCurrentnessResponse } from '@happier-dev/protocol/account/encryptionMode';
 import { UpdateContainerSchema } from '@happier-dev/protocol/updates';
-import { createAccountEncryptionCurrentnessObservation, projectAccountEncryptionIdentity } from './accountEncryptionCurrentnessObservation';
+import { ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, createAccountEncryptionCurrentnessObservation, projectAccountEncryptionIdentity } from './accountEncryptionCurrentnessObservation';
 
 const plain = { mode: 'plain', version: 1, settingsVersion: 1, updatedAt: 1,
     signingKeyFingerprint: null, contentKeyFingerprint: null } satisfies AccountEncryptionCurrentnessResponse;
@@ -12,11 +12,10 @@ const update = (fact: unknown, id = 'account') => ({ id: 'update', seq: 2, creat
 const unavailable = () => new Error('currentness unavailable');
 
 describe('portable Account encryption observation', () => {
-
     it('shares one fresh admission witness with retained identity readers', async () => {
         let settingsVersion = 1;
         const readFresh = vi.fn(async () => ({ ...plain, settingsVersion }));
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
         try {
             observation.connected({ refresh: false });
             for (let admissions = 1; admissions <= 3; admissions++) {
@@ -31,7 +30,7 @@ describe('portable Account encryption observation', () => {
     it('reads one fresh witness for each concurrent admission while identity borrowers stay retained', async () => {
         let admissions = 0;
         const readFresh = vi.fn(async () => ({ ...plain, settingsVersion: ++admissions }));
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
         try {
             observation.connected({ refresh: false });
             const witnesses = await Promise.all(Array.from({ length: 3 }, () => observation.readWitness(undefined, { refresh: true })));
@@ -49,7 +48,7 @@ describe('portable Account encryption observation', () => {
             const witness = { ...plain, settingsVersion: ++admissions };
             return new Promise<typeof witness>(resolve => { replies.push(() => resolve(witness)); });
         });
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
         observation.connected({ refresh: false });
         const witnesses = Promise.allSettled(Array.from({ length: 3 }, () => observation.readWitness(undefined, { refresh: true })));
         const identities = Promise.allSettled(Array.from({ length: 5 }, () => observation.read()));
@@ -65,7 +64,7 @@ describe('portable Account encryption observation', () => {
     it('refuses a failed admission witness instead of reusing an older Settings floor', async () => {
         const failure = Object.assign(new Error('Home unavailable for admission'), { canTryAgain: true });
         const readFresh = vi.fn().mockResolvedValueOnce(plain).mockRejectedValueOnce(failure);
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
         try {
             observation.connected({ refresh: false });
             const first = await observation.readWitness(undefined, { refresh: true });
@@ -83,7 +82,7 @@ describe('portable Account encryption observation', () => {
             if (!available) throw failure;
             return plain;
         });
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
         try {
             observation.connected();
             for (let index = 0; index < 171; index++) await expect(observation.read()).rejects.toBe(failure);
@@ -101,7 +100,7 @@ describe('portable Account encryption observation', () => {
     it('recovers a transient initialization failure on the next demand without an invalidation', async () => {
         const failure = Object.assign(new Error('temporary currentness failure'), { canTryAgain: true });
         const readFresh = vi.fn().mockRejectedValueOnce(failure).mockResolvedValue(plain);
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
         try {
             observation.connected();
             await expect(observation.read()).rejects.toBe(failure);
@@ -112,7 +111,7 @@ describe('portable Account encryption observation', () => {
 
     it('keeps equal Account identity publications settled while advancing the stale-push witness', async () => {
         const readFresh = vi.fn(async () => plain);
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
         try {
             observation.connected();
             const identity = await observation.read();
@@ -135,7 +134,7 @@ describe('portable Account encryption observation', () => {
         // Pass-through performance instrumentation: the real strict parser runs
         // unchanged; its invocation count is the multiplied feed cost under test.
         const validation = vi.spyOn(UpdateContainerSchema, 'safeParse');
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh: async () => plain, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh: async () => plain, unavailable });
         try {
             observation.connected();
             await observation.read();
@@ -160,7 +159,7 @@ describe('portable Account encryption observation', () => {
 
     it('uses one initialization then synchronous pushes, not per-operation identity reads or cursor witnesses', async () => {
         const readFresh = vi.fn(async () => plain);
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
         observation.connected();
         await observation.read();
         expect(await Promise.all(Array.from({ length: 20 }, () => observation.read()))).toEqual(Array(20).fill(projectAccountEncryptionIdentity(plain)));
@@ -180,7 +179,7 @@ describe('portable Account encryption observation', () => {
     it('does not resurrect a delayed HTTP fact after push or disconnect and refreshes a reconnect once', async () => {
         let finish!: (fact: AccountEncryptionCurrentnessResponse) => void;
         const readFresh = vi.fn(() => new Promise<AccountEncryptionCurrentnessResponse>(resolve => { finish = resolve; }));
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh, unavailable });
         observation.connected();
         expect(observation.getDiagnosticState()).toEqual({ connected: true, factPresent: false, pending: true, disposed: false });
         const initial = observation.read();
@@ -202,7 +201,7 @@ describe('portable Account encryption observation', () => {
     });
 
     it('ignores foreign updates and withdraws malformed matching facts before any later read', async () => {
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', readFresh: async () => plain, unavailable });
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent', readFresh: async () => plain, unavailable });
         observation.connected();
         await observation.read();
         observation.update(update(encrypted, 'other-account'));
@@ -217,7 +216,7 @@ describe('portable Account encryption observation', () => {
 
     it('supports legacy AbortSignal readers and cancels one reader without retiring its peer', async () => {
         let finish!: (fact: AccountEncryptionCurrentnessResponse) => void;
-        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account',
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'absent',
             readFresh: () => new Promise(resolve => { finish = resolve; }), unavailable });
         observation.connected();
         const controller = new AbortController();
@@ -239,5 +238,48 @@ describe('portable Account encryption observation', () => {
         observation.dispose();
         expect(observation.peek()).toBeNull();
         await expect(observation.read()).rejects.toThrow('currentness unavailable');
+    });
+});
+
+describe('Account mode downgrade pin', () => {
+    const downgrade = { code: ACCOUNT_MODE_DOWNGRADE_UNVERIFIED, canTryAgain: false };
+
+    it('refuses a pushed plain fact while this device holds active Account E2EE material', async () => {
+        const readFresh = vi.fn(async () => encrypted);
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'active', readFresh, unavailable });
+        try {
+            observation.connected();
+            await observation.read();
+            expect(observation.update(update({ ...plain, version: 3, updatedAt: 3 }))).toBe(true);
+            expect(observation.peek()).toBeNull();
+            await expect(observation.read()).rejects.toMatchObject(downgrade);
+            // Locked, not retried: the refusal settles until real invalidation.
+            await expect(observation.read()).rejects.toMatchObject(downgrade);
+            expect(readFresh).toHaveBeenCalledTimes(1);
+        } finally { observation.dispose(); }
+    });
+
+    it('refuses a refreshed plain fact while this device holds active Account E2EE material', async () => {
+        const readFresh = vi.fn(async () => plain);
+        const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => 'active', readFresh, unavailable });
+        try {
+            observation.connected();
+            await expect(observation.read()).rejects.toMatchObject(downgrade);
+            await expect(observation.read()).rejects.toMatchObject(downgrade);
+            expect(readFresh).toHaveBeenCalledTimes(1);
+        } finally { observation.dispose(); }
+    });
+
+    it('admits plain for historical custody and for a keyless device', async () => {
+        for (const accountE2eeCustody of ['historical', 'absent'] as const) {
+            const observation = createAccountEncryptionCurrentnessObservation({ accountId: 'account', accountE2eeCustody: () => accountE2eeCustody,
+                readFresh: async () => encrypted, unavailable });
+            try {
+                observation.connected();
+                await observation.read();
+                observation.update(update({ ...plain, version: 3, updatedAt: 3 }));
+                await expect(observation.read()).resolves.toMatchObject({ mode: 'plain' });
+            } finally { observation.dispose(); }
+        }
     });
 });

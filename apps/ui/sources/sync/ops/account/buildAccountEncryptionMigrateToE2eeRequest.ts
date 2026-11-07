@@ -15,6 +15,7 @@ import type { QualifiedConnectedAccountRef } from '@happier-dev/protocol/connect
 import { getRandomBytes } from '@/platform/cryptoRandom';
 import { resolveAccountScopedCryptoMaterialFromCredentials } from '@/sync/domains/connectedServices/resolveAccountScopedCryptoMaterialFromCredentials';
 import { convertAccountEncryptionMigrationTemplate } from './buildAccountEncryptionMigrationAutomations';
+import { buildAccountEncryptionSettingsHistoryDirective, type AccountEncryptionSettingsHistoryMigrationCandidate } from './buildAccountEncryptionSettingsHistoryDirective';
 
 import {
   type AccountEncryptionMigrateRequest,
@@ -69,7 +70,8 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
   }>;
   expectedSettingsVersion: number;
   settings: Settings;
-  rawSettings: Readonly<Record<string, unknown>>;
+  rawSettings: Readonly<Record<string, unknown>> | null;
+  settingsHistory?: readonly AccountEncryptionSettingsHistoryMigrationCandidate[];
   connectedServiceProfiles: ReadonlyArray<Readonly<{ serviceId: ConnectedServiceId; profileId: string }>>;
   qualifiedConnectedAccounts?: readonly QualifiedConnectedAccountProfileV4[];
   automations: ReadonlyArray<Readonly<{ id: string; templateVersion: number; templateCiphertext: string }>>;
@@ -106,16 +108,19 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
     throw new Error('Legacy crypto material is required to migrate to e2ee');
   }
 
+  const rawSettings = params.rawSettings ?? {};
   const settingsForServer = restoreAccountEncryptionAcpCatalogSettingsSource({ settings: restoreAccountEncryptionMcpServerCatalogSettingsSource({ settings: restoreAccountEncryptionPromptLibrarySettingsSources({
-    settings: normalizeVoiceSettingsServerDelta(stripLocalOnlyAccountSettings(params.settings), params.rawSettings),
-    rawSettings: params.rawSettings,
-  }), rawSettings: params.rawSettings }), rawSettings: params.rawSettings });
-  const settingsCiphertext = sealAccountScopedBlobCiphertext({
+    settings: normalizeVoiceSettingsServerDelta(stripLocalOnlyAccountSettings(params.settings), rawSettings),
+    rawSettings,
+  }), rawSettings }), rawSettings });
+  const settingsCiphertext = params.rawSettings === null ? null : sealAccountScopedBlobCiphertext({
     kind: 'account_settings',
     material,
     payload: settingsForServer,
     randomBytes: getRandomBytes,
   });
+  const settingsHistory = buildAccountEncryptionSettingsHistoryDirective({ candidates: params.settingsHistory ?? [],
+    target: { mode: 'e2ee', material, randomBytes: getRandomBytes } });
 
   const connectedServices = await (async () => {
     const qualifiedAccounts = params.qualifiedConnectedAccounts ?? [];
@@ -268,7 +273,8 @@ export async function buildAccountEncryptionMigrateToE2eeRequest(params: Readonl
       expectedContentKeyFingerprint:
         params.expectedContentKeyFingerprint,
       expectedSettingsVersion: params.expectedSettingsVersion,
-      settingsContent: { t: 'encrypted', c: settingsCiphertext },
+      settingsContent: settingsCiphertext === null ? null : { t: 'encrypted', c: settingsCiphertext },
+      ...(settingsHistory ? { settingsHistory } : {}),
       connectedServices,
       automations,
       keyProof: {

@@ -1,4 +1,4 @@
-import { TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
+import { readAccountE2eeCustody, TokenStorage, type AuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import { parseToken } from '@/utils/auth/parseToken';
 import { resolveAuthCredentialsScopeKey } from '@/auth/storage/resolveAuthCredentialsScopeKey';
@@ -8,9 +8,9 @@ import { backoff, backoffForever } from '@/utils/timing/time';
 import type { ApiChangeEntry } from '@/sync/api/types/apiTypes';
 import { createServerFetchForActiveServer, serverFetch, type ServerFetch, type ServerFetchOptions } from '@/sync/http/client';
 import { sync } from '@/sync/sync';
-import { readAccountEncryptionObservationBinding, type AccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
+import { readAccountEncryptionObservationBinding, recordAccountEncryptionCurrentnessRefusal, recordAccountEncryptionCurrentnessObservation, type AccountEncryptionObservationBinding } from '@/sync/http/accountEncryptionObservationBinding';
 import { createScopedResolutionSingleFlight } from '@/sync/runtime/orchestration/serverScopedRpc/scopedResolutionSingleFlight';
-import { createAccountEncryptionCurrentnessObservation, projectAccountEncryptionIdentity, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
+import { admitReportedAccountMode, createAccountEncryptionCurrentnessObservation, projectAccountEncryptionIdentity, type AccountEncryptionIdentity } from '@happier-dev/sync-client';
 import {
     getActiveServerSnapshot,
     getActiveServerHomeCarrier,
@@ -54,6 +54,7 @@ type AccountEncryptionHomeBinding = Readonly<{ profileId: string; portableIdenti
 type AccountEncryptionInvalidationEvent = AccountEncryptionInvalidation & Readonly<{
     home: AccountEncryptionHomeBinding | null;
     source?: object;
+    observation?: AccountEncryptionObservationBinding;
 }>;
 const accountEncryptionModeCacheInvalidationListeners = new Set<(invalidation: AccountEncryptionInvalidationEvent) => void>();
 let accountEncryptionModeCacheRevision = 0;
@@ -63,7 +64,6 @@ const accountEncryptionModeHomeRevisions = new Map<string, {
     home: AccountEncryptionHomeBinding;
     revision: number;
 }>();
-
 
 function readAccountEncryptionHomeBinding(serverId?: string | null): AccountEncryptionHomeBinding | null {
     const profile = getServerProfileById(serverId ?? '');
@@ -114,9 +114,11 @@ export function invalidateAccountEncryptionModeCache(options: AccountEncryptionI
     publishAccountEncryptionInvalidation(options);
 }
 
-function publishAccountEncryptionInvalidation(options: AccountEncryptionInvalidation, source?: object): void {
+function publishAccountEncryptionInvalidation(options: AccountEncryptionInvalidation, source?: object,
+    observation?: AccountEncryptionObservationBinding): void {
     accountEncryptionModeCacheRevision += 1;
-    const event: AccountEncryptionInvalidationEvent = { ...options, home: readAccountEncryptionHomeBinding(options.serverId), source };
+    const event: AccountEncryptionInvalidationEvent = { ...options, home: readAccountEncryptionHomeBinding(options.serverId), source,
+        ...(observation ? { observation } : {}) };
     if (event.home) accountEncryptionModeReads.invalidate(event.home.profileId);
     else accountEncryptionModeReads.reset();
     for (const projection of accountEncryptionModeHomeRevisions.values()) {
@@ -149,11 +151,16 @@ export function createSocketAccountEncryptionObservation(options: Readonly<{
     request: ServerFetch;
     isCurrent: () => boolean;
 }>) {
-    const unavailable = () => new HappyError('Account encryption observation unavailable', false, {
-        kind: 'config', code: 'account-encryption-currentness-unavailable',
-    });
+    const unavailable = (step: 'socket_observation' | 'socket_binding_before_read' | 'socket_binding_after_read' = 'socket_observation') => {
+        recordAccountEncryptionCurrentnessObservation({ event: 'observation_refused', ...observation.getDiagnosticState() });
+        recordAccountEncryptionCurrentnessRefusal(step);
+        return new HappyError('Account encryption observation unavailable', false, {
+            kind: 'config', code: 'account-encryption-currentness-unavailable',
+        });
+    };
     const observation = createAccountEncryptionCurrentnessObservation({
         accountId: parseToken(options.credentials.token),
+        accountE2eeCustody: () => readAccountE2eeCustody(options.credentials),
         readFresh: signal => readAccountEncryptionCurrentness(options.credentials, { request: options.request, signal }),
         unavailable,
     });
@@ -165,7 +172,7 @@ export function createSocketAccountEncryptionObservation(options: Readonly<{
     };
     accountEncryptionModeCacheInvalidationListeners.add(invalidate);
     const notify = (reason?: AccountEncryptionInvalidation['reason']) =>
-        publishAccountEncryptionInvalidation({ serverId: options.serverId, reason }, observation);
+        publishAccountEncryptionInvalidation({ serverId: options.serverId, reason }, observation, binding);
     const binding: AccountEncryptionObservationBinding = {
         credentials: options.credentials,
         credentialScopeKey: resolveAuthCredentialsScopeKey(options.credentials),
@@ -175,9 +182,9 @@ export function createSocketAccountEncryptionObservation(options: Readonly<{
         homeCarrierEndpointId: options.homeCarrierEndpointId,
         isCurrent: options.isCurrent,
         read: async signal => {
-            if (!options.isCurrent()) throw unavailable();
+            if (!options.isCurrent()) throw unavailable('socket_binding_before_read');
             const identity = await observation.read(signal);
-            if (!options.isCurrent()) throw unavailable();
+            if (!options.isCurrent()) throw unavailable('socket_binding_after_read');
             return identity;
         },
         peek: () => options.isCurrent() ? observation.peek() : null,
@@ -187,17 +194,21 @@ export function createSocketAccountEncryptionObservation(options: Readonly<{
         connected: () => { if (options.isCurrent()) { observation.connected(); notify('transport-withdrawal'); } },
         disconnected: () => { observation.disconnected(); notify('transport-withdrawal'); },
         update: (raw: unknown) => {
-            if (options.isCurrent() && observation.update(raw)) notify();
+            if (options.isCurrent() && observation.update(raw)) {
+                recordAccountEncryptionCurrentnessObservation({ event: 'observation_changed', ...observation.getDiagnosticState() });
+                notify();
+            }
         },
-        dispose: (reason?: AccountEncryptionInvalidation['reason']) => {
+        /** `retainAdmitted`: an intentional visibility pause keeps the admitted mode for the next transport to revalidate. */
+        dispose: (reason?: AccountEncryptionInvalidation['reason'], options?: Readonly<{ retainAdmitted?: boolean }>) => {
             accountEncryptionModeCacheInvalidationListeners.delete(invalidate);
             observation.dispose();
-            notify(reason);
+            if (!options?.retainAdmitted) notify(reason);
         },
     };
 }
 
-/** Account settings and Connected Service notifications do not change persisted Account mode. */
+/** Presentation, settings and linked-service writes do not change persisted Account mode. */
 export function invalidateAccountEncryptionModeCacheForChanges(
     changes: readonly Pick<ApiChangeEntry, 'kind' | 'entityId' | 'hint'>[],
     target?: Readonly<{ serverId?: string | null }>,
@@ -211,6 +222,9 @@ export function invalidateAccountEncryptionModeCacheForChanges(
         // withdraw disclosure. Only these exact known unrelated writes retain it.
         return entries.length === 0 || !entries.every(([key, value]) => (
             key === 'connectedServices' && value === true
+            || key === 'linkedProviders' && value === true
+            || key === 'name' && value === true
+            || key === 'username' && (typeof value === 'string' || value === null)
             || key === 'settingsVersion' && typeof value === 'number'
                 && Number.isSafeInteger(value) && value >= 0
         ));
@@ -218,7 +232,7 @@ export function invalidateAccountEncryptionModeCacheForChanges(
     if (requiresModeRead) invalidateAccountEncryptionModeCache(target);
 }
 
-/** Owner-local revision for consumers that must withdraw stale disclosures. */
+/** Exact-Home disclosures observe only their own withdrawals; omitted scope observes all Homes. */
 export function getAccountEncryptionModeCacheRevision(serverId?: string | null): number {
     if (serverId == null) return accountEncryptionModeCacheRevision;
     const home = readAccountEncryptionHomeBinding(serverId);
@@ -293,9 +307,14 @@ export async function fetchAccountEncryptionCurrentness(
 
 export async function fetchAccountEncryptionIdentity(
     credentials: AuthCredentials,
-    options: AccountEncryptionCurrentnessReadOptions & Readonly<{ usage: AccountEncryptionReadUsage }>,
+    options: AccountEncryptionCurrentnessReadOptions & Readonly<{
+        usage: AccountEncryptionReadUsage;
+        /** The containing finite operation already owns this identity admission. */
+        readIdentity?: () => Promise<AccountEncryptionIdentity>;
+    }>,
 ): Promise<AccountEncryptionIdentity> {
     throwIfAborted(options.signal);
+    if (options.usage === 'identity' && options.readIdentity) return await options.readIdentity();
     const binding = options.usage === 'identity' ? options.request
         ? readAccountEncryptionObservationBinding(options.request, credentials)
         : sync?.getAccountEncryptionObservationBinding(credentials) ?? null : null;
@@ -311,23 +330,68 @@ export async function fetchAccountEncryptionIdentity(
     return projectAccountEncryptionIdentity(await fetchAccountEncryptionCurrentness(credentials, options));
 }
 
+/**
+ * A finite Session read borrows the settled socket identity. The Home reports both
+ * facts and enforces persisted mode on each read and write CAS, so a fresh GET adds
+ * no boundary here; the local downgrade admission stays. An unsettled observation
+ * shares its one pending read, so a reconnect costs one read however many operations
+ * arrive during it. A withdrawn observation or a failed read re-admits over the
+ * operation's own HTTP request and credential.
+ */
+export async function fetchOperationAccountEncryptionIdentity(
+    credentials: AuthCredentials,
+    options: AccountEncryptionCurrentnessReadOptions,
+): Promise<AccountEncryptionIdentity> {
+    throwIfAborted(options.signal);
+    const binding = options.request ? readAccountEncryptionObservationBinding(options.request, credentials) : null;
+    const settled = binding && (binding.peek() ?? await binding.read(options.signal).catch(() => {
+        throwIfAborted(options.signal);
+        return null;
+    }));
+    if (!settled) return projectAccountEncryptionIdentity(await fetchAccountEncryptionCurrentness(credentials, options));
+    admitReportedAccountMode({ reported: settled.mode, custody: readAccountE2eeCustody(credentials) });
+    return settled;
+}
+
 async function readAccountEncryptionCurrentness(
+    credentials: AuthCredentials,
+    options: AccountEncryptionCurrentnessReadOptions,
+): Promise<AccountEncryptionCurrentnessResponse> {
+    const currentness = await readReportedAccountEncryptionCurrentness(credentials, options);
+    admitReportedAccountMode({ reported: currentness.mode, custody: readAccountE2eeCustody(credentials) });
+    return currentness;
+}
+
+async function readReportedAccountEncryptionCurrentness(
     credentials: AuthCredentials,
     options: AccountEncryptionCurrentnessReadOptions,
 ): Promise<AccountEncryptionCurrentnessResponse> {
     const request: NonNullable<AccountEncryptionCurrentnessReadOptions['request']> = options.request ?? ((path: string, init?: RequestInit) =>
         serverFetch(path, init, { includeAuth: false }));
-    const readCurrentness = async () => await request('/v1/account/encryption/currentness', {
-        method: 'GET',
-        headers: {
-            Authorization: `Bearer ${credentials.token}`,
-            'Content-Type': 'application/json',
-        },
-        signal: options.signal,
-    }, { includeAuth: false, retry: 'none' });
+    const readCurrentness = async () => {
+        let response: Response;
+        try {
+            response = await request('/v1/account/encryption/currentness', {
+                method: 'GET',
+                headers: {
+                    Authorization: `Bearer ${credentials.token}`,
+                    'Content-Type': 'application/json',
+                },
+                signal: options.signal,
+            }, { includeAuth: false, retry: 'none' });
+        } catch (error) {
+            const name = error && typeof error === 'object' && 'name' in error ? error.name : null;
+            recordAccountEncryptionCurrentnessObservation({ event: 'http_rejected',
+                errorClass: name === 'Error' || name === 'TypeError' || name === 'AbortError' ? name : 'unknown' });
+            throw error;
+        }
+        if (!response.ok) recordAccountEncryptionCurrentnessObservation({ event: 'http_response', status: response.status });
+        return response;
+    };
     let response = await readCurrentness();
     if (!response.ok) {
         if (response.status === 408 || response.status === 429 || response.status >= 500) {
+            recordAccountEncryptionCurrentnessRefusal('http_response');
             throw new HappyError('Account encryption currentness is temporarily unavailable', true, {
                 status: response.status, kind: 'server', code: 'account-encryption-currentness-unavailable',
             });
@@ -396,11 +460,16 @@ async function readAccountEncryptionCurrentness(
                     const repaired = AccountEncryptionCurrentnessResponseSchema.safeParse(
                         await response.json().catch(() => null),
                     );
-                    if (repaired.success) return repaired.data;
+                    if (repaired.success) {
+                        return repaired.data;
+                    }
                 }
+                recordAccountEncryptionCurrentnessObservation({ event: 'http_readiness', code: recovery.data.recipientEnvelopeReadiness.reason });
+                recordAccountEncryptionCurrentnessRefusal('readiness_response');
                 throw new AccountEncryptionCurrentnessReadinessError(recovery.data.recipientEnvelopeReadiness);
             }
         }
+        recordAccountEncryptionCurrentnessRefusal('http_response');
         throw new HappyError(
             'This server must be upgraded before changing account encryption',
             false,
@@ -416,6 +485,8 @@ async function readAccountEncryptionCurrentness(
             await response.json().catch(() => null),
         );
     if (!parsed.success) {
+        recordAccountEncryptionCurrentnessObservation({ event: 'http_response', status: response.status });
+        recordAccountEncryptionCurrentnessRefusal('invalid_response');
         throw new HappyError(
             'This server returned incomplete account encryption currentness',
             false,
@@ -455,9 +526,18 @@ export async function fetchAccountEncryptionMode(
             const identity = await binding.read(opts.signal);
             return { mode: identity.mode, updatedAt: identity.updatedAt };
         };
-        return !opts.request && !opts.signal && opts.retry !== 'none'
-            ? await readSharedAccountEncryptionMode(credentials, read)
-            : await read();
+        try {
+            return !opts.request && !opts.signal && opts.retry !== 'none'
+                ? await readSharedAccountEncryptionMode(credentials, read)
+                : await read();
+        } catch (error) {
+            throwIfAborted(opts.signal);
+            // 0.2 has the mode endpoint but no currentness push/read contract.
+            // Preserve its direct mode admission; never downgrade an actual
+            // unavailable, denied or malformed currentness observation.
+            if (!(error instanceof HappyError && error.status === 404
+                && error.code === 'account-encryption-currentness-unavailable')) throw error;
+        }
     }
     const request = opts.request ?? (() => {
         const focusedRequest = createServerFetchForActiveServer();
@@ -495,16 +575,23 @@ export async function fetchAccountEncryptionMode(
                         : undefined,
                 });
             }
-            throw new Error(`Failed to load account encryption mode: ${response.status}`);
+            throw new HappyError(`Failed to load account encryption mode: ${response.status}`, true, {
+                status: response.status, kind: 'server', code: 'account-encryption-mode-unavailable',
+            });
         }
 
-        const data: unknown = await response.json();
+        const data: unknown = await response.json().catch(() => null);
         const parsed = AccountEncryptionModeResponseSchema.safeParse(data);
         if (!parsed.success) {
-            throw new Error('Failed to parse account encryption mode response');
+            throw new HappyError('Failed to parse account encryption mode response', false, {
+                status: response.status, kind: 'server', code: 'account-encryption-mode-unavailable',
+            });
         }
         return {
-            mode: normalizeAccountEncryptionMode(parsed.data.mode),
+            mode: admitReportedAccountMode({
+                reported: normalizeAccountEncryptionMode(parsed.data.mode),
+                custody: readAccountE2eeCustody(credentials),
+            }),
             updatedAt: normalizeUpdatedAt(parsed.data.updatedAt),
         };
     };

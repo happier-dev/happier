@@ -11,6 +11,12 @@ import {
 import { ServerScopedTransportUnavailableError } from './serverScopedRpc/resolveServerScopedTransport';
 import { sync, syncHydrateLocalState, syncRestore, syncSwitchServer } from '@/sync/sync';
 import { abortServerFetches } from '@/sync/http/client';
+import {
+    invalidateAllServerReachabilitySupervisors,
+    startServerReachabilitySupervisor,
+    stopServerReachabilitySupervisor,
+    subscribeServerReachabilityState,
+} from '@/sync/runtime/connectivity/serverReachabilitySupervisorPool';
 import { getIrohHomeTunnelRuntime } from '@/sync/runtime/nativeIrohTunnels/runtime';
 import {
     acquireEligibleHomeCarrier,
@@ -46,6 +52,21 @@ let activeSwitchPromise: Promise<AuthCredentials | null> | null = null;
 // run, so the UI can ask for a switch, retry or disconnect while the carrier is
 // still pending; those wait here instead of racing a second bootstrap.
 let coldRestorePromise: Promise<void> | null = null;
+const coldRestoreListeners = new Set<() => void>();
+
+/** First-paint consumers wait only while the connection owner's cold restore is active. */
+export function isColdActiveServerRestorePending(): boolean {
+    return coldRestorePromise !== null;
+}
+
+export function subscribeColdActiveServerRestore(listener: () => void): () => void {
+    coldRestoreListeners.add(listener);
+    return () => { coldRestoreListeners.delete(listener); };
+}
+
+function notifyColdRestoreListeners(): void {
+    for (const listener of coldRestoreListeners) listener();
+}
 
 /** Persist this device's carrier choice and ask the existing connection owner to apply it. */
 export function commitHomeApplicationCarrierEligibility(
@@ -70,6 +91,47 @@ let requestedGeneration = -1;
 let activeRecoveryPromise: Promise<void> | null = null;
 let recoveryRuntime: IrohHomeTunnelRuntime | null = null;
 let recoveryUnsubscribe: (() => void) | null = null;
+
+let stopFailedApplyRecovery: (() => void) | null = null;
+
+/**
+ * A failed apply has no socket, so nothing else is watching this Home. The reachability
+ * owner's probe and backoff decide when to try again, and a foreground reprobe supersedes
+ * that wait. Only a new `online` publication retries: a Home that answers its probe while
+ * the apply keeps failing gets no loop, and the visible Retry stays available.
+ */
+function recoverFailedApplyWhenHomeAnswers(
+    snapshot: Readonly<ReturnType<typeof getActiveServerSnapshot>>,
+    credentials: AuthCredentials | null,
+): void {
+    stopFailedApplyRecovery?.();
+    stopFailedApplyRecovery = null;
+    const token = credentials?.token?.trim();
+    if (!token || isAppliedActiveServerRuntimeAvailable() || !capturePublicationTargetForSnapshot(snapshot)) return;
+    let subscribed = false;
+    const stop = (): void => {
+        if (stopFailedApplyRecovery === stop) stopFailedApplyRecovery = null;
+        unsubscribe();
+        fireAndForget(stopServerReachabilitySupervisor(snapshot.serverUrl, credentials?.token ?? null), {
+            tag: 'connectionManager.failedApplyRecovery.stop',
+        });
+    };
+    const unsubscribe = subscribeServerReachabilityState(snapshot.serverUrl, (state) => {
+        if (!subscribed || state.phase !== 'online') return;
+        // The socket owner joins this entry during the retry, so its verdict stays valid.
+        fireAndForget(retryActiveServerConnection().finally(stop), {
+            tag: 'connectionManager.failedApplyRecovery.retry',
+        });
+    }, credentials?.token ?? null);
+    subscribed = true;
+    stopFailedApplyRecovery = stop;
+    fireAndForget(startServerReachabilitySupervisor({
+        serverUrl: snapshot.serverUrl,
+        token: credentials?.token ?? null,
+        ...(snapshot.runtimeOrigin ? { runtimeOrigin: snapshot.runtimeOrigin } : {}),
+        homeCarrier: getActiveServerHomeCarrier(),
+    }), { tag: 'connectionManager.failedApplyRecovery.start' });
+}
 
 function readCredentialScopeKey(credentials: AuthCredentials | null): string | null {
     return credentials ? resolveAuthCredentialsScopeKey(credentials) : null;
@@ -214,7 +276,6 @@ async function ensureIrohHomeTunnelForActiveSwitch(
     snapshot: Readonly<ReturnType<typeof getActiveServerSnapshot>>,
     credentials: AuthCredentials | null,
     publicationTarget: ReturnType<typeof captureActiveServerRuntimeTarget>,
-    mode: 'initial_selection' | 'pinned_recovery',
 ): Promise<void> {
     const token = credentials?.token?.trim() ?? '';
     const profile = getServerProfileById(snapshot.serverId);
@@ -236,7 +297,6 @@ async function ensureIrohHomeTunnelForActiveSwitch(
     }
 
     const acquired = await acquireEligibleHomeCarrier({
-        mode: readHomeApplicationCarrierEligibility() === 'standard_only' ? 'initial_selection' : mode,
         descriptor,
         verification: { kind: 'authenticated', token },
         credentials,
@@ -305,6 +365,12 @@ export async function retryActiveServerConnection(): Promise<void> {
             // A failed staged switch has no applied socket for this target to
             // retry. Re-enter the serialized switch owner so credentials,
             // carrier and Sync are prepared as one exact target transaction.
+            // A cold restore parked on a silent read or a long reachability
+            // backoff must not hold this Retry.
+            abortServerFetches();
+            fireAndForget(invalidateAllServerReachabilitySupervisors(), {
+                tag: 'connectionManager.retryActiveServerConnection.reachability',
+            });
             await switchConnectionToActiveServer();
             return;
         }
@@ -312,14 +378,7 @@ export async function retryActiveServerConnection(): Promise<void> {
         const credentials = await resolveCredentialsForActiveServer(snapshot);
         const publicationTarget = capturePublicationTargetForSnapshot(snapshot);
         if (!publicationTarget) return;
-        await ensureIrohHomeTunnelForActiveSwitch(
-            snapshot,
-            credentials,
-            publicationTarget,
-            snapshot.carrier === 'iroh' && readHomeApplicationCarrierEligibility() !== 'standard_only'
-                ? 'pinned_recovery'
-                : 'initial_selection',
-        );
+        await ensureIrohHomeTunnelForActiveSwitch(snapshot, credentials, publicationTarget);
         if (!isPublicationTargetCurrent(publicationTarget)) return;
         sync.retryNow();
     })();
@@ -354,7 +413,7 @@ async function applyPendingServerSwitches(): Promise<AuthCredentials | null> {
         abortServerFetches();
         const publicationTarget = capturePublicationTargetForSnapshot(snapshot);
         if (!publicationTarget) continue;
-        await ensureIrohHomeTunnelForActiveSwitch(snapshot, credentials, publicationTarget, 'initial_selection');
+        await ensureIrohHomeTunnelForActiveSwitch(snapshot, credentials, publicationTarget);
         if (!isActiveSwitchTargetCurrent(snapshot, targetGeneration)) continue;
         const syncTarget = capturePreparedSyncTarget(snapshot);
         if (!syncTarget) continue;
@@ -369,11 +428,16 @@ async function applyPendingServerSwitches(): Promise<AuthCredentials | null> {
             // awaiting its own target-bound setup. Keep the singleton fenced
             // and continue the serialized owner with that newer target.
             if (!isActiveSwitchTargetCurrent(snapshot, targetGeneration)) continue;
+            // A same-Home sign-out or credential replacement also supersedes
+            // the captured bootstrap without changing the Home generation.
+            const currentCredentials = await resolveCredentialsForActiveServer(snapshot);
+            if (readCredentialScopeKey(currentCredentials) !== readCredentialScopeKey(credentials)) continue;
             throw error;
         }
         lastAppliedGeneration = targetGeneration;
         appliedCredentialScopeKey = readCredentialScopeKey(credentials);
         publishAppliedActiveServerSnapshot(syncTarget);
+        stopFailedApplyRecovery?.();
     }
 }
 
@@ -386,6 +450,10 @@ export async function switchConnectionToActiveServer(): Promise<AuthCredentials 
 
     try {
         return await activeSwitchPromise;
+    } catch (error) {
+        const failed = getActiveServerSnapshot();
+        recoverFailedApplyWhenHomeAnswers(failed, await resolveCredentialsForActiveServer(failed).catch(() => null));
+        throw error;
     } finally {
         activeSwitchPromise = null;
     }
@@ -401,13 +469,14 @@ export async function disconnectActiveServerConnection(): Promise<void> {
     if (activeSwitchPromise) {
         await activeSwitchPromise.catch(() => null);
     }
+    stopFailedApplyRecovery?.();
     const snapshot = getActiveServerSnapshot();
     const publicationTarget = capturePublicationTargetForSnapshot(snapshot);
     if (!publicationTarget) return;
     requestedGeneration = Math.max(requestedGeneration, snapshot.generation);
     publishAppliedActiveServerRuntimeAvailability(false);
     abortServerFetches();
-    await ensureIrohHomeTunnelForActiveSwitch(snapshot, null, publicationTarget, 'initial_selection');
+    await ensureIrohHomeTunnelForActiveSwitch(snapshot, null, publicationTarget);
     await syncSwitchServer(null);
     lastAppliedGeneration = Math.max(lastAppliedGeneration, snapshot.generation);
     appliedCredentialScopeKey = null;
@@ -455,10 +524,16 @@ export function restoreConnectionToActiveServer(credentials: AuthCredentials): P
     });
     const transport = restoreTransportToActiveServer(credentials, snapshot);
     const clearColdRestore = (): void => {
-        if (coldRestorePromise === transport) coldRestorePromise = null;
+        if (coldRestorePromise !== transport) return;
+        coldRestorePromise = null;
+        notifyColdRestoreListeners();
     };
     coldRestorePromise = transport;
-    void transport.then(clearColdRestore, clearColdRestore);
+    notifyColdRestoreListeners();
+    void transport.then(clearColdRestore, () => {
+        clearColdRestore();
+        recoverFailedApplyWhenHomeAnswers(getActiveServerSnapshot(), credentials);
+    });
     return transport;
 }
 
@@ -469,7 +544,7 @@ async function restoreTransportToActiveServer(
     const publicationTarget = capturePublicationTargetForSnapshot(snapshot);
     if (!publicationTarget) throw new ServerScopedTransportUnavailableError();
     abortServerFetches();
-    await ensureIrohHomeTunnelForActiveSwitch(snapshot, credentials, publicationTarget, 'initial_selection');
+    await ensureIrohHomeTunnelForActiveSwitch(snapshot, credentials, publicationTarget);
     const syncTarget = capturePreparedSyncTarget(snapshot);
     if (!syncTarget) throw new ServerScopedTransportUnavailableError();
     publishApplyingActiveServerId(syncTarget.serverId, syncTarget.generation);
@@ -477,4 +552,5 @@ async function restoreTransportToActiveServer(
     lastAppliedGeneration = Math.max(lastAppliedGeneration, snapshot.generation);
     appliedCredentialScopeKey = readCredentialScopeKey(credentials);
     publishAppliedActiveServerSnapshot(syncTarget);
+    stopFailedApplyRecovery?.();
 }

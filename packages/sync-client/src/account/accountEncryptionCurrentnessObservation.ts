@@ -17,6 +17,83 @@ export function sameAccountEncryptionIdentity(a: AccountEncryptionIdentity, b: A
         && a.signingKeyFingerprint === b.signingKeyFingerprint && a.contentKeyFingerprint === b.contentKeyFingerprint;
 }
 
+export const ACCOUNT_MODE_DOWNGRADE_UNVERIFIED = 'account_mode_downgrade_unverified' as const;
+
+/**
+ * This device's own custody of Account E2EE material. Historical custody is
+ * retained predecessor material (encrypted history on a plain Account), not
+ * authority; only this device, never a Home, reclassifies active material.
+ */
+export type AccountE2eeCustody = 'active' | 'historical' | 'absent';
+
+/** Locked and non-retryable until this device reclassifies its material. */
+export class AccountModeDowngradeUnverifiedError extends Error {
+    readonly code = ACCOUNT_MODE_DOWNGRADE_UNVERIFIED;
+    readonly canTryAgain = false;
+    readonly retryable = false;
+
+    constructor(message = 'The Home reports this Account as unencrypted while this device holds its active encryption keys') {
+        super(message);
+        this.name = 'AccountModeDowngradeUnverifiedError';
+    }
+}
+
+export function isAccountModeDowngradeUnverifiedError(error: unknown): boolean {
+    return typeof error === 'object' && error !== null && 'code' in error
+        && error.code === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED;
+}
+
+/**
+ * The one Account mode admission decision for every Home-reported mode. An
+ * E2EE→plain transition carries no proof another device can verify, so a
+ * reported `plain` is admitted only when this device's Account E2EE material
+ * is historical or absent; never write plaintext on a Home's word alone.
+ */
+export function admitReportedAccountMode<Mode extends 'plain' | 'e2ee'>(input: Readonly<{
+    reported: Mode;
+    custody: AccountE2eeCustody;
+}>): Mode {
+    if (input.reported === 'plain' && input.custody === 'active') throw new AccountModeDowngradeUnverifiedError();
+    return input.reported;
+}
+
+/**
+ * Persisted Session mode never transitions. A Home-reported `plain` is refused
+ * when this device has admitted the Session as E2EE, or when the row itself
+ * carries an E2EE data-key envelope. Genuinely plain Sessions stay plain.
+ */
+export function admitReportedSessionMode<Mode extends 'plain' | 'e2ee'>(input: Readonly<{
+    reported: Mode;
+    dataEncryptionKey: unknown;
+    admittedE2ee: boolean;
+}>): Mode {
+    if (input.reported === 'plain' && (input.admittedE2ee
+        || (typeof input.dataEncryptionKey === 'string' && input.dataEncryptionKey.length > 0))) {
+        throw new AccountModeDowngradeUnverifiedError('The Home reports this end-to-end encrypted Session as unencrypted');
+    }
+    return input.reported;
+}
+
+/**
+ * Own-Account Machine rows migrate with the Account, so a row the Home reports
+ * plain carries a Home-reported Account mode and takes the same admission.
+ * A foreign custodian's row keeps that custodian's resource mode.
+ */
+export function admitMachineRowPlainMode(input: Readonly<{
+    access: unknown;
+    viewerAccountId: string | undefined;
+    custody: AccountE2eeCustody;
+}>): void {
+    if (input.access !== undefined && readMachineRowCustodianAccountId(input.access) !== input.viewerAccountId) return;
+    admitReportedAccountMode({ reported: 'plain', custody: input.custody });
+}
+
+function readMachineRowCustodianAccountId(access: unknown): unknown {
+    if (typeof access !== 'object' || access === null || !('custodian' in access)) return undefined;
+    const custodian = access.custodian;
+    return typeof custodian === 'object' && custodian !== null && 'accountId' in custodian ? custodian.accountId : undefined;
+}
+
 /** Reader cancellation does not retire another holder's shared subscription. */
 export function waitForAccountEncryptionObservation<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
     return new Promise<T>((resolve, reject) => {
@@ -41,6 +118,8 @@ function abortReason(signal: AbortSignal): unknown {
  */
 export function createAccountEncryptionCurrentnessObservation(options: Readonly<{
     accountId: string;
+    /** Custody of the credential this observation is bound to, read at each decision. */
+    accountE2eeCustody: () => AccountE2eeCustody;
     readFresh: (signal: AbortSignal) => Promise<AccountEncryptionCurrentnessResponse>;
     unavailable: () => Error;
 }>) {
@@ -64,6 +143,7 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
         if (hasTerminalReadFailure()) throw readError;
         const next = await waitForAccountEncryptionObservation(options.readFresh(captured.signal), captured.signal);
         const witness = AccountEncryptionCurrentnessResponseSchema.parse(next);
+        admitReportedAccountMode({ reported: witness.mode, custody: options.accountE2eeCustody() });
         if (connected && !disposed && lifetime === captured) {
             fact = { witness, identity: fact && sameAccountEncryptionIdentity(witness, fact.identity)
                 ? fact.identity : projectAccountEncryptionIdentity(witness) };
@@ -120,6 +200,16 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
                 || !('encryptionCurrentness' in parsed.data.body)) return false;
             const next = parsed.data.body.encryptionCurrentness;
             if (next && fact && next.version < fact.witness.version) return false;
+            if (next) {
+                try {
+                    admitReportedAccountMode({ reported: next.mode, custody: options.accountE2eeCustody() });
+                } catch (error) {
+                    // Settled like any non-retryable verdict until real invalidation.
+                    invalidate();
+                    readError = error;
+                    return true;
+                }
+            }
             if (next && fact && sameAccountEncryptionIdentity(next, fact.identity)) {
                 // Cursor advances still fence stale pushes without retiring an
                 // unchanged encryption identity or its consumers' live work.
@@ -158,47 +248,4 @@ export function createAccountEncryptionCurrentnessObservation(options: Readonly<
         },
         dispose() { disposed = true; connected = false; retirement.abort(); invalidate(); },
     };
-}
-
-export class AccountModeDowngradeUnverifiedError extends Error {
-    readonly code = ACCOUNT_MODE_DOWNGRADE_UNVERIFIED;
-    readonly canTryAgain = false;
-    readonly retryable = false;
-
-    constructor(message = 'The Home reports this Account as unencrypted while this device holds its active encryption keys') {
-        super(message);
-        this.name = 'AccountModeDowngradeUnverifiedError';
-    }
-}
-
-export function isAccountModeDowngradeUnverifiedError(error: unknown): boolean {
-    return typeof error === 'object' && error !== null && 'code' in error
-        && error.code === ACCOUNT_MODE_DOWNGRADE_UNVERIFIED;
-}
-
-export const ACCOUNT_MODE_DOWNGRADE_UNVERIFIED = 'account_mode_downgrade_unverified' as const;
-
-export function admitMachineRowPlainMode(input: Readonly<{
-    access: unknown;
-    viewerAccountId: string | undefined;
-    custody: AccountE2eeCustody;
-}>): void {
-    if (input.access !== undefined && readMachineRowCustodianAccountId(input.access) !== input.viewerAccountId) return;
-    admitReportedAccountMode({ reported: 'plain', custody: input.custody });
-}
-
-export type AccountE2eeCustody = 'active' | 'historical' | 'absent';
-
-function readMachineRowCustodianAccountId(access: unknown): unknown {
-    if (typeof access !== 'object' || access === null || !('custodian' in access)) return undefined;
-    const custodian = access.custodian;
-    return typeof custodian === 'object' && custodian !== null && 'accountId' in custodian ? custodian.accountId : undefined;
-}
-
-export function admitReportedAccountMode<Mode extends 'plain' | 'e2ee'>(input: Readonly<{
-    reported: Mode;
-    custody: AccountE2eeCustody;
-}>): Mode {
-    if (input.reported === 'plain' && input.custody === 'active') throw new AccountModeDowngradeUnverifiedError();
-    return input.reported;
 }

@@ -22,6 +22,10 @@ export const en = {
     forgetEncryptionKeyEmpty: 'No encrypted history was found.',
     forgetEncryptionKeyComplete: 'The old encryption key was forgotten on this device.',
     forgetEncryptionKeyFailed: 'Could not forget the key. Reconnect and try again; encrypted history must be listed before the key can be forgotten.',
+    keepEncryptionKeyTitle: 'Switched to unencrypted on another device',
+    keepEncryptionKeyDescription: 'Keep this device\'s keys for your older encrypted history and continue unencrypted. If no one on your account made this change, don\'t continue.',
+    keepEncryptionKeyAction: 'Keep keys and continue',
+    keepEncryptionKeyFailed: 'Could not update this device. Try again.',
 };
 
 

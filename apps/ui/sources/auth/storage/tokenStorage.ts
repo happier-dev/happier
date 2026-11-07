@@ -8,7 +8,8 @@ import type { AccountContinuationIntent } from '@happier-dev/cli-common/accountS
 import { AccountEncryptionMigrateRequestBindingDigestV1Schema } from '@happier-dev/protocol/account/encryptionMigrate';
 import { AuthEntryProviderPresentationV1Schema } from '@happier-dev/protocol/auth/entry';
 import { TeamInvitationPostAuthContinuationV1Schema } from '@happier-dev/protocol/teams/invitation';
-import type { AuthEntryProviderPresentationV1, TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol';
+import type { AuthEntryProviderPresentationV1} from '@happier-dev/protocol/auth/entry';
+import type { TeamInvitationPostAuthContinuationV1 } from '@happier-dev/protocol/teams/invitation';
 import { readStorageScopeFromEnv, scopedStorageId } from '@/utils/system/storageScope';
 import { normalizeInternalReturnPath } from '@/utils/path/routeUtils';
 import { desktopHostKind } from '@/utils/platform/desktopHost';
@@ -25,6 +26,7 @@ import { retireIrohHomeTransportDiagnostics } from '@/sync/runtime/irohHomeTrans
 import { withHomeMutationAuthority, type HomeMutationAuthority } from '@/sync/domains/server/homeMutationLock';
 import { digest } from '@/platform/digest';
 import { decodeBase64, encodeBase64 } from '@/encryption/base64';
+import type { AccountE2eeCustody } from '@happier-dev/sync-client';
 import {
     readDeviceLocalStorageString,
     removeDeviceLocalStorageString,
@@ -843,10 +845,18 @@ export type TokenOnlyAuthCredentials = Readonly<{
     token: string;
 }>;
 
+/**
+ * This device's own classification of the Account E2EE material it holds.
+ * Absent means active: older stored shapes keep the downgrade pin. Only this
+ * device writes `historical` (its own conversion, or the person's explicit
+ * reclassification); a Home's reported mode never does.
+ */
+export type AccountE2eeMaterialCustody = Readonly<{ custody?: 'historical' }>;
+
 export type LegacyAuthCredentials = Readonly<{
     token: string;
     secret: string;
-}>;
+}> & AccountE2eeMaterialCustody;
 
 export type DataKeyAuthCredentials = Readonly<{
     token: string;
@@ -854,7 +864,7 @@ export type DataKeyAuthCredentials = Readonly<{
         publicKey: string;
         machineKey: string;
     }>;
-}>;
+}> & AccountE2eeMaterialCustody;
 
 export type AuthCredentials =
     | TokenOnlyAuthCredentials
@@ -866,18 +876,24 @@ const AuthCredentialsSchema = z.pipe(z.strictObject({
     token: CredentialStringSchema,
     secret: z.optional(CredentialStringSchema),
     encryption: z.optional(z.strictObject({ publicKey: CredentialStringSchema, machineKey: CredentialStringSchema })),
+    custody: z.optional(z.literal('historical')),
 }).check(z.superRefine((record, context) => {
     // Known material fields select the credential shape; dropping additive
     // fields must never reinterpret E2EE or conflicting material as keyless.
     if ((Object.hasOwn(record, 'secret') && record.secret === undefined)
         || (Object.hasOwn(record, 'encryption') && record.encryption === undefined)
-        || (Object.hasOwn(record, 'secret') && Object.hasOwn(record, 'encryption'))) {
+        || (Object.hasOwn(record, 'secret') && Object.hasOwn(record, 'encryption'))
+        || (Object.hasOwn(record, 'custody') && (record.custody === undefined
+            || (record.secret === undefined && record.encryption === undefined)))) {
         context.addIssue({ code: 'custom', message: 'Invalid credential material shape' });
     }
-})), z.transform((record): AuthCredentials => record.secret !== undefined
-    ? { token: record.token, secret: record.secret }
-    : record.encryption !== undefined ? { token: record.token, encryption: record.encryption }
-        : { token: record.token }));
+})), z.transform((record): AuthCredentials => {
+    const custody = record.custody ? { custody: record.custody } : {};
+    return record.secret !== undefined
+        ? { token: record.token, secret: record.secret, ...custody }
+        : record.encryption !== undefined ? { token: record.token, encryption: record.encryption, ...custody }
+            : { token: record.token };
+}));
 const StoredAuthCredentialsSchema = createStoredReadSchema(AuthCredentialsSchema);
 
 /** Strict credential admission; stored reads derive their projection from this same schema. */
@@ -1012,6 +1028,21 @@ export function isTokenOnlyAuthCredentials(
     credentials: AuthCredentials,
 ): credentials is TokenOnlyAuthCredentials {
     return !isLegacyAuthCredentials(credentials) && !isDataKeyAuthCredentials(credentials);
+}
+
+/** The custody input to the shared Account mode admission decision. */
+export function readAccountE2eeCustody(credentials: AuthCredentials): AccountE2eeCustody {
+    if (!isLegacyAuthCredentials(credentials) && !isDataKeyAuthCredentials(credentials)) return 'absent';
+    return credentials.custody === 'historical' ? 'historical' : 'active';
+}
+
+/** Same material, reclassified by this device; never changes the key bytes. */
+export function withAccountE2eeCustody(
+    credentials: LegacyAuthCredentials | DataKeyAuthCredentials,
+    custody: 'active' | 'historical',
+): LegacyAuthCredentials | DataKeyAuthCredentials {
+    const { custody: _previous, ...material } = credentials;
+    return custody === 'historical' ? { ...material, custody } : material;
 }
 
 export interface PendingExternalAuth {
@@ -1916,6 +1947,7 @@ function parseCredentialsRaw(raw: string | null): AuthCredentials | null {
 
 export function areCredentialsEqual(left: AuthCredentials | null, right: AuthCredentials): boolean {
     if (!left || left.token !== right.token) return false;
+    if (readAccountE2eeCustody(left) !== readAccountE2eeCustody(right)) return false;
     if (isLegacyAuthCredentials(left) || isLegacyAuthCredentials(right)) {
         return isLegacyAuthCredentials(left)
             && isLegacyAuthCredentials(right)
@@ -2771,14 +2803,17 @@ type HomeCredentialWriteOutcome = Readonly<{
 
 /** Select custody during refresh without giving credential shape authority over Account mode. */
 function credentialsForAuthenticationRefresh(previous: AuthCredentials | null, incoming: AuthCredentials): AuthCredentials | null {
-    if (!previous || !isTokenOnlyAuthCredentials(incoming)) return incoming;
+    if (!previous) return incoming;
+    const tokenOnly = isTokenOnlyAuthCredentials(incoming);
+    if (!tokenOnly && !(readAccountE2eeCustody(previous) === 'active'
+        && readAccountE2eeCustody(incoming) === 'historical')) return incoming;
     // Only genuine predecessor material is eligible for historical custody.
     try {
         if (isLegacyAuthCredentials(previous)) {
-            if (decodeBase64(previous.secret).length !== 32) return incoming;
+            if (decodeBase64(previous.secret, 'base64url').length !== 32) return incoming;
         } else if (isDataKeyAuthCredentials(previous)) {
-            const key = decodeBase64(previous.encryption.machineKey);
-            const publicKey = decodeBase64(previous.encryption.publicKey);
+            const key = decodeBase64(previous.encryption.machineKey, 'base64url');
+            const publicKey = decodeBase64(previous.encryption.publicKey, 'base64url');
             if (key.length !== 32 || publicKey.length !== 32) return incoming;
             const derived = tweetnacl.box.keyPair.fromSecretKey(key).publicKey;
             if (!derived.every((value, index) => value === publicKey[index])) return incoming;
@@ -2838,7 +2873,7 @@ async function writeHomeCredentialsForServerScope(
         }
     }
 
-    const effectiveCredentials = options.preserveHistoricalEncryption
+    const effectiveCredentials = options.preserveHistoricalEncryption && !options.expectedCredentials
         ? credentialsForAuthenticationRefresh(currentCredentials, credentials) : credentials;
     if (!effectiveCredentials) return { stored: false, serverId: identity.serverId, rollback: null };
     const json = JSON.stringify(effectiveCredentials);

@@ -18,10 +18,18 @@ import { loadSyncSingletonForTests } from '@/dev/testkit/harness/syncSingletonLo
 import { installRealActionExecutorModuleLoader } from '@/dev/testkit/harness/actionHomesHttpHarness';
 import { storage } from '@/sync/domains/state/storage';
 import { invalidateAccountEncryptionModeCache } from '@/sync/api/account/apiAccountEncryptionMode';
-import { ActionsSettingsV1Schema, AutomationTriggerIdSchema, openAutomationTemplateStoredV1, serializeAutomationStoredDefinitionExecutionRecipeV1,
-    serializeAutomationStoredWorkflowDefinitionRecipeV2, type AccountEncryptionMigrateRequest,
-    type AccountEncryptionMigrateAutomationsInventoryResponse, type ArtifactAccountEncryptionMigrationInventoryV1,
-    decodePlainArtifactStoredContent } from '@happier-dev/protocol';
+import { ActionsSettingsV1Schema} from '@happier-dev/protocol/actions/actionSettings';
+import { AutomationTriggerIdSchema} from '@happier-dev/protocol/automations/automationTriggerIdentity';
+import { openAutomationTemplateStoredV1} from '@happier-dev/protocol/automations/automationTemplateStoredV1';
+import { serializeAutomationStoredDefinitionExecutionRecipeV1} from '@happier-dev/protocol/automations/automationRunExecutionRecipeV1';
+import {
+    serializeAutomationStoredWorkflowDefinitionRecipeV2} from '@happier-dev/protocol/automations/automationWorkflowRecipeV2';
+import { type AccountEncryptionMigrateRequest,
+    type AccountEncryptionMigrateAutomationsInventoryResponse, AccountEncryptionMigrateTodosInventoryResponseSchema } from '@happier-dev/protocol/account/encryptionMigrate';
+import { SavedSecretResourceMaterialsResponseV1Schema } from '@happier-dev/protocol/account/settings/savedSecretCatalogV1';
+import { type ArtifactAccountEncryptionMigrationInventoryV1} from '@happier-dev/protocol/artifacts/artifactAccountEncryptionMigrationV1';
+import {
+    decodePlainArtifactStoredContent } from '@happier-dev/protocol/storage/artifactStoredContent';
 import { createPackageAssetArchiveV1, encodePackageAssetArchiveBodyV1 } from '@happier-dev/protocol/plugins/availability';
 import { Encryption } from '@/sync/encryption/encryption';
 import { ArtifactEncryption } from '@/sync/encryption/artifactEncryption';
@@ -114,7 +122,10 @@ async function mount(params: Readonly<{
     runs?: RunRow[];
     failInventory?: boolean; conflict?: boolean; beforeInventory?: () => Promise<void>; waitForControls?: boolean;
     initialMode?: 'plain' | 'e2ee';
+    /** This device's custody of its keys; a plain fixture defaults to retained history. */
+    initialCustody?: 'active' | 'historical';
     currentnessOverride?: () => ReturnType<typeof createPlainAccountEncryptionCurrentnessFixture> | null;
+    readAccountVersion?: () => number;
     afterCommitArchivedSessions?: ReturnType<typeof retainedSession>[];
     afterCommitInventoryFails?: boolean;
     beforeRetirementCurrentness?: () => Promise<void>;
@@ -129,6 +140,7 @@ async function mount(params: Readonly<{
     beforeD10Read?: () => Promise<void>;
     settingsVersion?: number;
     rawSettings?: Readonly<Record<string, unknown>>;
+    settingsHistoryPages?: readonly Readonly<{ items: readonly unknown[]; nextBeforeVersion: number | null }>[];
 }> = {}) {
     await loadSyncSingletonForTests();
     restoreExecutorModuleLoader = await installRealActionExecutorModuleLoader();
@@ -137,6 +149,7 @@ async function mount(params: Readonly<{
     const migrations: AccountEncryptionMigrateRequest[] = [];
     const unmatchedHttpRequests: Array<Readonly<{ path: string; method: string }>> = [];
     const d10CatalogReads: string[] = [];
+    const settingsHistoryReads: (string | null)[] = [];
     let promptLibraryRows = PromptLibraryCatalogKeyV1Schema.options.map(key =>
         params.promptLibraryRows?.find(row => row.key === key) ?? { key, revision: 1, content: null });
     let providerConnectionsRow = params.providerConnectionsRow;
@@ -144,7 +157,8 @@ async function mount(params: Readonly<{
     let mode = params.initialMode ?? 'plain';
     let inventoryReads = 0;
     const createdSessions: Array<Omit<ReturnType<typeof retainedSession>, 'dataEncryptionKey'> & { dataEncryptionKey: string | null }> = [];
-    const initialCredentials: AuthCredentials = { token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature', secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') };
+    const initialCredentials: AuthCredentials = { token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature', secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'),
+        ...((params.initialCustody ?? (mode === 'plain' ? 'historical' : 'active')) === 'historical' ? { custody: 'historical' as const } : {}) };
     const seed = new Uint8Array(32).fill(7);
     const contentBinding = await buildContentKeyBinding(seed);
     const signingKeyFingerprint = computeAccountEncryptionMigrateKeyFingerprintV1(deriveAccountSigningPublicKey(seed));
@@ -167,13 +181,17 @@ async function mount(params: Readonly<{
                 const overridden = params.currentnessOverride?.();
                 if (overridden) return json(overridden);
                 if (inventoryReads >= 2) await params.beforeRetirementCurrentness?.();
-                return json({ mode, version: 1,
+                return json({ mode, version: params.readAccountVersion?.() ?? 1,
                 updatedAt: 1, signingKeyFingerprint, contentKeyFingerprint,
                 recipientEnvelopeReadiness: mode === 'plain' ? { status: 'unavailable', reason: 'plain_account' } : { status: 'available' } });
             }
             if (target.pathname === '/v1/account/security') return json({ v: 1, encryptionMode: mode,
-                terminalPresentUserPolicy: 'allowed', nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
+                nativeEmail: null, password: { status: 'not_enrolled', revision: null } });
             if (target.pathname === '/v1/kv') return json({ items: [] });
+            if (target.pathname === '/v1/account/encryption/migrate/settings-history/inventory') {
+                settingsHistoryReads.push(target.searchParams.get('beforeVersion'));
+                return json(params.settingsHistoryPages?.[settingsHistoryReads.length - 1] ?? { items: [], nextBeforeVersion: null });
+            }
             if (target.pathname === '/v1/account/encryption/migrate/review-comments/inventory') return json({ v: 1, items: [] });
             if (target.pathname === '/v1/account/encryption/migrate/discussions/inventory')
                 return json(DiscussionAccountEncryptionInventoryV1Schema.parse({ items: [] }));
@@ -183,6 +201,9 @@ async function mount(params: Readonly<{
             if (target.pathname === '/v1/account/encryption/migrate' && init?.method === 'POST') {
                 const migration = JSON.parse(String(init.body)) as AccountEncryptionMigrateRequest;
                 migrations.push(migration);
+                if (params.readAccountVersion && migration.expectedAccountVersion !== params.readAccountVersion()) {
+                    return json({ error: 'invalid-params', reason: 'migration_inventory_changed' }, 400);
+                }
                 mode = migration.toMode;
                 settingsContent = migration.settingsContent ?? null;
                 if (migration.promptLibrary) promptLibraryRows = promptLibraryRows.map(row => {
@@ -278,6 +299,8 @@ async function mount(params: Readonly<{
             if (target.pathname === '/v1/machines') return json([]);
             if (target.pathname === '/v1/account/profile') return json({ ...profileDefaults, id: 'account-a' });
             if (target.pathname === '/v1/artifacts') return json([]);
+            if (target.pathname === '/v1/account/encryption/migrate/todos/inventory') return json(AccountEncryptionMigrateTodosInventoryResponseSchema.parse({ items: [] }));
+            if (target.pathname === '/v1/account/saved-secrets/resources/materials') return json(SavedSecretResourceMaterialsResponseV1Schema.parse({ resources: [] }));
             if (target.pathname === '/v1/account/encryption/artifacts') {
                 await params.beforeArtifactInventory?.();
                 const rows = params.artifactRows ?? [];
@@ -324,7 +347,14 @@ async function mount(params: Readonly<{
     vi.mocked(Modal.alertAsync).mockClear();
     const request = createServerFetchAtEndpoint({ endpointUrl: restored.home.serverUrl,
         serverId: restored.home.id, credentials: initialCredentials });
-    return { screen, restored, writes, migrations, request, createdSessions, unmatchedHttpRequests, d10CatalogReads };
+    return { screen, restored, writes, migrations, request, createdSessions, unmatchedHttpRequests, d10CatalogReads, settingsHistoryReads };
+}
+
+/** The converting device keeps its key bytes and only reclassifies them as history. */
+function expectKeysKeptAsHistory(): void {
+    expect(auth.loginWithCredentials).toHaveBeenCalledTimes(1);
+    expect(auth.loginWithCredentials.mock.calls[0]![0]).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
+        secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'), custody: 'historical' });
 }
 
 beforeEach(() => { previousAuth = getCurrentAuth(); });
@@ -333,7 +363,59 @@ afterEach(async () => {
     setCurrentAuth(previousAuth); await standardCleanup(); invalidateAccountEncryptionModeCache(); vi.restoreAllMocks(); });
 
 describe('Account encryption historical material custody', () => {
-    it('publishes the observed Account mode when conversion preparation refuses a moved mode', async () => {
+    it.each(['e2ee', 'plain'] as const)('captures the Account version after catalog admission while converting from %s', async initialMode => {
+        let accountVersion = 5;
+        const h = await mount({ initialMode, readAccountVersion: () => accountVersion,
+            beforeD10Read: async () => { accountVersion = 15; } });
+        try {
+            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                && typeof node.props.onValueChange === 'function')[0]!;
+            await act(async () => { await toggle.props.onValueChange(initialMode === 'plain'); });
+            expect(h.migrations).toHaveLength(1);
+            expect(h.migrations[0]!.expectedAccountVersion).toBe(15);
+            expect(h.migrations[0]!.settingsContent).toBeNull();
+            expect(vi.mocked(Modal.alertAsync)).not.toHaveBeenCalled();
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
+    it('pages retained Settings history once per cursor through the real Settings Action before submitting exact restore content', async () => {
+        const raw = { schemaVersion: 1, unknownRetainedRoot: { items: [false, null, 3] }, executionRunsGuidanceEnabled: 'historical' };
+        const material = resolveAccountScopedCryptoMaterialFromCredentials({ token: 'fixture', secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
+        const content = { t: 'encrypted' as const, c: sealAccountScopedBlobCiphertext({ kind: 'account_settings', material,
+            payload: raw, randomBytes: length => new Uint8Array(length).fill(15) }) };
+        const createdAt = '2026-10-01T01:02:03.000Z';
+        const h = await mount({ initialMode: 'e2ee', settingsHistoryPages: [
+            { items: [{ version: 8, createdAt, encryptionMode: 'e2ee', content }], nextBeforeVersion: 8 },
+            { items: [{ version: 7, createdAt, encryptionMode: 'e2ee', content: null }], nextBeforeVersion: null },
+        ] });
+        try {
+            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                && typeof node.props.onValueChange === 'function')[0]!;
+            await act(async () => { await toggle.props.onValueChange(false); });
+            expect(h.settingsHistoryReads).toEqual([null, '8']);
+            expect(h.migrations.length).toBe(1);
+            const items = h.migrations[0]!.settingsHistory?.items;
+            expect(items?.map(row => row.version)).toEqual([8, 7]);
+            expect(JSON.stringify(items?.[0]?.content) === JSON.stringify({ t: 'plain', v: raw })).toBe(true);
+            expect(items?.[0]?.expectedContent).toEqual(content);
+            expect(items?.[1]).toEqual({ version: 7, expectedContent: null, content: null });
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
+    it.each(['mixed-mode', 'corrupt'] as const)('refuses %s Settings history without a conversion POST', async failure => {
+        const h = await mount({ initialMode: 'e2ee', settingsHistoryPages: [{ items: [{ version: 8,
+            createdAt: '2026-10-01T01:02:03.000Z', encryptionMode: 'e2ee', content: failure === 'mixed-mode'
+                ? { t: 'plain', v: {} } : { t: 'encrypted', c: 'invalid-ciphertext' } }], nextBeforeVersion: null }] });
+        try {
+            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                && typeof node.props.onValueChange === 'function')[0]!;
+            await act(async () => { await toggle.props.onValueChange(false); });
+            expect(h.settingsHistoryReads).toEqual([null]);
+            expect(h.migrations.length).toBe(0);
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
+    it('locks instead of following a moved plain mode while this device holds active keys', async () => {
         let moved = false;
         const h = await mount({ initialMode: 'e2ee', currentnessOverride: () => moved ? createPlainAccountEncryptionCurrentnessFixture() : null });
         try {
@@ -342,8 +424,8 @@ describe('Account encryption historical material custody', () => {
                 && typeof node.props.onValueChange === 'function')[0]!;
             await act(async () => { await toggle.props.onValueChange(false); });
             expect(h.migrations).toEqual([]);
-            expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
-                && typeof node.props.onValueChange === 'function')[0]!.props.value).toBe(false);
+            await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-downgrade')).not.toHaveLength(0));
+            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -670,7 +752,7 @@ describe('Account encryption historical material custody', () => {
             await act(async () => { await toggle.props.onValueChange(false); });
             await vi.waitFor(() => expect(h.migrations).toHaveLength(1));
             expect(h.migrations[0]?.toMode).toBe('plain');
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            expectKeysKeptAsHistory();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
     it('does not retire material when a retained E2EE Session appears after the migration census', async () => {
@@ -680,7 +762,7 @@ describe('Account encryption historical material custody', () => {
                 && typeof node.props.onValueChange === 'function')[0]!;
             await act(async () => { await toggle.props.onValueChange(false); });
             await vi.waitFor(() => expect(h.migrations).toHaveLength(1));
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            expectKeysKeptAsHistory();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -691,7 +773,7 @@ describe('Account encryption historical material custody', () => {
                 && typeof node.props.onValueChange === 'function')[0]!;
             await act(async () => { await toggle.props.onValueChange(false); });
             expect(h.migrations).toHaveLength(1);
-            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            expectKeysKeptAsHistory();
         } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 
@@ -788,5 +870,33 @@ describe('Account encryption historical material custody', () => {
             await h.screen.pressByTestIdAsync('settings-account-encryption-forget-key');
             expect(auth.loginWithCredentials).not.toHaveBeenCalled();
         } finally { await h.screen.unmount(); await other.current?.dispose(); await h.restored.dispose(); }
+    });
+
+    it('locks a device holding active keys when the Home reports plain, and keeps its keys as history only on the person\'s tap', async () => {
+        const h = await mount({ initialCustody: 'active', waitForControls: false });
+        try {
+            await vi.waitFor(() => expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-downgrade')).not.toHaveLength(0));
+            expect(h.screen.findAll(node => node.props.testID === 'settings-account-encryption-forget-key')).toHaveLength(0);
+            expect(auth.loginWithCredentials).not.toHaveBeenCalled();
+            await h.screen.pressByTestIdAsync('settings-account-encryption-keep-key');
+            await vi.waitFor(() => expect(auth.loginWithCredentials).toHaveBeenCalledTimes(1));
+            expect(auth.loginWithCredentials.mock.calls[0]![0]).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
+                secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url'), custody: 'historical' });
+            expect(h.migrations).toEqual([]);
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
+    });
+
+    it('makes retained keys active again when this device re-enables end-to-end encryption', async () => {
+        const h = await mount({ initialMode: 'plain' });
+        try {
+            const toggle = h.screen.findAll(node => node.props.testID === 'settings-account-encryption-mode-switch'
+                && typeof node.props.onValueChange === 'function')[0]!;
+            await act(async () => { await toggle.props.onValueChange(true); });
+            await vi.waitFor(() => expect(h.migrations).toHaveLength(1));
+            expect(h.migrations[0]?.toMode).toBe('e2ee');
+            await vi.waitFor(() => expect(auth.loginWithCredentials).toHaveBeenCalledTimes(1));
+            expect(auth.loginWithCredentials.mock.calls[0]![0]).toEqual({ token: 'e30.eyJzdWIiOiJhY2NvdW50LWEifQ.signature',
+                secret: encodeBase64(new Uint8Array(32).fill(7), 'base64url') });
+        } finally { await h.screen.unmount(); await h.restored.dispose(); }
     });
 });

@@ -13,7 +13,7 @@ import { SettingRow } from '@/components/settings/shell/SettingRow';
 import { ACCOUNT_SETTINGS } from './accountSettings';
 import { Switch } from '@/components/ui/forms/Switch';
 import { HappyError } from '@/utils/errors/errors';
-import { isLegacyAuthCredentials, isTokenOnlyAuthCredentials } from '@/auth/storage/tokenStorage';
+import { isDataKeyAuthCredentials, isLegacyAuthCredentials, isTokenOnlyAuthCredentials, withAccountE2eeCustody } from '@/auth/storage/tokenStorage';
 import { useFeatureEnabled } from '@/hooks/server/useFeatureEnabled';
 import { useActiveServerSnapshot } from '@/hooks/server/useActiveServerSnapshot';
 import { fetchAccountEncryptionMode, getAccountEncryptionModeScopeKey } from '@/sync/api/account/apiAccountEncryptionMode';
@@ -28,15 +28,23 @@ import { RoundButton } from '@/components/ui/buttons/RoundButton';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 import { AccountEncryptionModeConversionFailureSchema, AccountEncryptionModeConversionResultSchema } from '@/sync/ops/account/convertAccountEncryptionMode';
 import { AccountHistoricalEncryptionKeyForgetResultV1Schema, AccountEncryptionAutomationTemplatesRecoverResultV1Schema } from '@happier-dev/protocol/auth/accountSecurity';
+import { isAccountModeDowngradeUnverifiedError } from '@happier-dev/sync-client';
+import { useUnistyles } from 'react-native-unistyles';
+import { StatusDot } from '@/components/ui/status/StatusDot';
+import { captureAccountSettingsRequest } from '@/sync/api/account/accountSettingsRequest';
+import { persistAccountE2eeMaterialCustody } from '@/sync/ops/account/accountE2eeMaterialCustody';
 
 type AccountEncryptionModePresentation = Readonly<{
     scope: string | null;
     mode: 'e2ee' | 'plain' | null;
     recoveryRequired: boolean;
+    /** The Home reports plain while this device's keys are still active. */
+    downgradeUnverified: boolean;
 }>;
 
 export const AccountEncryptionSettingsSection = React.memo(function AccountEncryptionSettingsSection() {
     const auth = useAuth();
+    const { theme } = useUnistyles();
     const executeAction = useMemo(() => createFrontDoorActionExecute(), []);
     const router = useRouter();
     const clientEncryptionRequirement = useSetting('clientEncryptionRequirementV1');
@@ -44,8 +52,11 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
     const { setSetting } = useSettingActionFeedback();
     const encryptionAccountOptOutEnabled = useFeatureEnabled('encryption.accountOptOut');
     const activeServer = useActiveServerSnapshot();
+    // The presentation follows the Account, Home and key material. Reclassifying
+    // this device's custody re-reads the mode without blanking its last value.
     const accountEncryptionScope = auth.credentials
-        ? getAccountEncryptionModeScopeKey(auth.credentials, activeServer)
+        ? getAccountEncryptionModeScopeKey(isLegacyAuthCredentials(auth.credentials) || isDataKeyAuthCredentials(auth.credentials)
+            ? withAccountE2eeCustody(auth.credentials, 'active') : auth.credentials, activeServer)
         : null;
 
     const [accountEncryptionPresentation, setAccountEncryptionPresentation] =
@@ -53,6 +64,7 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             scope: null,
             mode: null,
             recoveryRequired: false,
+            downgradeUnverified: false,
         });
     const [accountEncryptionModeLoading, setAccountEncryptionModeLoading] = useState(false);
     const [accountEncryptionModeSaving, setAccountEncryptionModeSaving] = useState(false);
@@ -65,6 +77,9 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
     const accountEncryptionRecoveryRequired =
         accountEncryptionPresentationIsCurrent
         && accountEncryptionPresentation.recoveryRequired;
+    const accountEncryptionDowngradeUnverified =
+        accountEncryptionPresentationIsCurrent
+        && accountEncryptionPresentation.downgradeUnverified;
     const effectiveClientEncryptionRequirement = resolveUiClientEncryptionRequirement({
         syncedSettings: { clientEncryptionRequirementV1: clientEncryptionRequirement },
         localSettings: { clientEncryptionRequirementLocalV1: clientEncryptionRequirementLocal },
@@ -74,11 +89,13 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             scope: string | null,
             mode: 'e2ee' | 'plain' | null,
             recoveryRequired = false,
+            downgradeUnverified = false,
         ) => {
             setAccountEncryptionPresentation({
                 scope,
                 mode,
                 recoveryRequired,
+                downgradeUnverified,
             });
         },
         [],
@@ -104,6 +121,10 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             error: unknown,
         ): Promise<void> => {
             if (cancelled) return;
+            if (isAccountModeDowngradeUnverifiedError(error)) {
+                publishAccountEncryptionPresentation(presentationScope, null, false, true);
+                return;
+            }
             if (
                 error instanceof HappyError
                 && error.code === 'account-encryption-recovery-required'
@@ -125,11 +146,9 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             );
         };
         setAccountEncryptionModeLoading(true);
-        publishAccountEncryptionPresentation(
-            presentationScope,
-            null,
-            false,
-        );
+        setAccountEncryptionPresentation(previous => previous.scope === presentationScope
+            ? { ...previous, recoveryRequired: false, downgradeUnverified: false }
+            : { scope: presentationScope, mode: null, recoveryRequired: false, downgradeUnverified: false });
         fetchAccountEncryptionMode(credentials)
             .then(async (res) => {
                 if (cancelled) return;
@@ -212,6 +231,42 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
             setAccountEncryptionModeSaving(false);
         }
     };
+
+    // A local human decision, deliberately not an Agent-invocable Action: a
+    // Home's report alone must never move this device's keys to history.
+    const keepEncryptionKeyAsHistory = async (): Promise<void> => {
+        const settingsScope = getActiveServerAccountScope();
+        const credentials = auth.credentials;
+        if (!settingsScope || !credentials || accountEncryptionModeSaving) return;
+        setAccountEncryptionModeSaving(true);
+        const captured = await captureAccountSettingsRequest({ credentials, settingsScope }).catch(() => null);
+        try {
+            if (!captured) return;
+            const kept = await persistAccountE2eeMaterialCustody({
+                credentials, custody: 'historical', captured, persistCredentials: auth.loginWithCredentials,
+            });
+            if (!kept) throw new Error('Account encryption key custody was not saved');
+        } catch {
+            if (captured?.isCurrent()) await Modal.alertAsync(t('common.error'), t('settingsAccount.keepEncryptionKeyFailed'));
+        } finally {
+            captured?.dispose();
+            setAccountEncryptionModeSaving(false);
+        }
+    };
+
+    const keepEncryptionKeyRow = accountEncryptionDowngradeUnverified ? (
+        <Item
+            testID="settings-account-encryption-downgrade"
+            title={t('settingsAccount.keepEncryptionKeyTitle')}
+            subtitle={t('settingsAccount.keepEncryptionKeyDescription')}
+            subtitleLeading={<StatusDot size={6} color={theme.colors.state.warning.foreground} />}
+            showChevron={false}
+            accessoryLayout="stacked"
+            rightElement={<RoundButton testID="settings-account-encryption-keep-key"
+                title={t('settingsAccount.keepEncryptionKeyAction')} size="small"
+                loading={accountEncryptionModeSaving} action={keepEncryptionKeyAsHistory} />}
+        />
+    ) : null;
 
     const forgetHistoricalEncryptionKey = async (): Promise<void> => {
         const settingsScope = getActiveServerAccountScope();
@@ -327,6 +382,10 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                                             announceAccessibilityMessage(t('common.success'));
                                         } catch (e) {
                                             if (!isCurrent()) return;
+                                            if (isAccountModeDowngradeUnverifiedError(e)) {
+                                                publishAccountEncryptionPresentation(presentationScope, null, false, true);
+                                                return;
+                                            }
                                             if (e instanceof HappyError) {
                                                 if (nextMode === 'e2ee' && e.status === 400) {
                                                     if (
@@ -366,6 +425,7 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                             }
                             showChevron={false}
                         />
+                        {keepEncryptionKeyRow}
                         {accountEncryptionMode === 'plain' && auth.credentials && !isTokenOnlyAuthCredentials(auth.credentials) && (
                             <>
                                 <Item
@@ -390,6 +450,9 @@ export const AccountEncryptionSettingsSection = React.memo(function AccountEncry
                             </>
                         )}
                     </ItemGroup>
+                )}
+                {!encryptionAccountOptOutEnabled && keepEncryptionKeyRow && (
+                    <ItemGroup title={t('terminal.encryption')}>{keepEncryptionKeyRow}</ItemGroup>
                 )}
                 {accountEncryptionRecoveryRequired && (
                     <ItemGroup title={t('terminal.encryption')}>

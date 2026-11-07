@@ -4,7 +4,7 @@ import type { AuthCredentials } from '@/auth/storage/tokenStorage';
 import { decodeBase64 } from '@/encryption/base64';
 import {
     computeAccountEncryptionMigrateKeyFingerprintV1,
-} from '@happier-dev/protocol';
+} from '@happier-dev/protocol/account/encryptionKeyFingerprintV1';
 
 import {
     prepareAccountEncryptionMigrateToE2eeKey,
@@ -51,7 +51,7 @@ describe('prepareAccountEncryptionMigrateToE2eeKey', () => {
         await expect(prepareAccountEncryptionMigrateToE2eeKey({
             credentials: { token: 'token' },
             expectedSigningKeyFingerprint: 'aemk1_retained-signing',
-            expectedContentKeyFingerprint: null,
+            expectedContentKeyFingerprint: 'aemk1_retained-content',
         })).rejects.toMatchObject({
             code: 'restore_required',
             status: 400,
@@ -62,7 +62,7 @@ describe('prepareAccountEncryptionMigrateToE2eeKey', () => {
         await expect(prepareAccountEncryptionMigrateToE2eeKey({
             credentials: legacyCredentials(5),
             expectedSigningKeyFingerprint: 'aemk1_different-signing',
-            expectedContentKeyFingerprint: null,
+            expectedContentKeyFingerprint: 'aemk1_different-content',
         })).rejects.toMatchObject({
             code: 'restore_required',
             status: 400,

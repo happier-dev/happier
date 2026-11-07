@@ -6,7 +6,8 @@ import {
     installTokenStorageWebPlatformMocks,
 } from './tokenStorage.testHelpers';
 import { installLocalStorageMock, installWebLockManagerMock } from './tokenStorage.web.testHelpers';
-import type { HomeCredentialMutationEvent } from './tokenStorage';
+import type { HomeCredentialMutationEvent, LegacyAuthCredentials, DataKeyAuthCredentials } from './tokenStorage';
+import nacl from 'tweetnacl';
 
 installTokenStorageWebPlatformMocks();
 installTokenStorageTestIsolation('token_storage_server_scoped');
@@ -55,6 +56,38 @@ describe('TokenStorage (web) server-scoped credentials', () => {
         await TokenStorage.setCredentialsForServerUrl(endpoint, target, original);
         expect(await TokenStorage.setCredentialsForServerUrl(endpoint, { ...target, preserveHistoricalEncryption: true }, { token: 'unknown-identity' })).toBe(false);
         expect(await TokenStorage.getCredentialsForServerUrl(endpoint, target)).toEqual(original);
+    });
+
+    it.each([['legacy', 'legacy'], ['dataKey', 'dataKey'], ['dataKey', 'legacy']] as const)('keeps an active %s pin on implicit %s restore while explicit custody changes still work', async (kind, incomingKind) => {
+        restoreLocalStorage = installLocalStorageMock().restore;
+        const token = (sub: string, nonce: string) => `e30.${Buffer.from(JSON.stringify({ sub, nonce })).toString('base64url')}.sig`;
+        const endpoint = 'https://active-custody-storage.test';
+        const target = { serverId: 'srv_active_custody_storage', preserveHistoricalEncryption: true };
+        const key = new Uint8Array(32).fill(251);
+        const publicKey = nacl.box.keyPair.fromSecretKey(key).publicKey;
+        const material = (kind: 'legacy' | 'dataKey', encoding: 'base64' | 'base64url') => kind === 'legacy'
+            ? { secret: encodeBase64(key, encoding) }
+            : { encryption: { machineKey: encodeBase64(key, encoding), publicKey: encodeBase64(publicKey, encoding) } };
+        const active: LegacyAuthCredentials | DataKeyAuthCredentials = { token: token('alice', 'old'), ...material(kind, 'base64url') };
+        const restored = { token: token('alice', 'restored'), ...material(incomingKind, 'base64'), custody: 'historical' as const };
+        expect(await TokenStorage.setCredentialsForServerUrl(endpoint, target, active)).toBe(true);
+        expect(await TokenStorage.setCredentialsForServerUrl(endpoint, target, restored)).toBe(true);
+        const retained = { ...active, token: restored.token };
+        expect(await TokenStorage.getCredentialsForServerUrl(endpoint, target)).toEqual(retained);
+
+        // Keep-key and post-conversion writes carry the exact prior credential.
+        expect(await TokenStorage.setCredentialsForServerUrl(endpoint, { ...target, expectedCredentials: retained }, restored)).toBe(true);
+        expect(await TokenStorage.getCredentialsForServerUrl(endpoint, target)).toEqual(restored);
+        expect(await TokenStorage.setCredentialsForServerUrl(endpoint, { ...target, expectedCredentials: restored }, active)).toBe(true);
+        expect(await TokenStorage.getCredentialsForServerUrl(endpoint, target)).toEqual(active);
+
+        // A different Account and a signed-out device have no same-Account pin.
+        const other = { ...restored, token: token('bob', 'restored') };
+        expect(await TokenStorage.setCredentialsForServerUrl(endpoint, target, other)).toBe(true);
+        expect(await TokenStorage.getCredentialsForServerUrl(endpoint, target)).toEqual(other);
+        expect(await TokenStorage.removeCredentialsForServerUrl(endpoint, target)).toBe(true);
+        expect(await TokenStorage.setCredentialsForServerUrl(endpoint, target, restored)).toBe(true);
+        expect(await TokenStorage.getCredentialsForServerUrl(endpoint, target)).toEqual(restored);
     });
 
     it('restores the previous exact credential bytes after an admitted write', async () => {

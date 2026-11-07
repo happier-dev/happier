@@ -11,7 +11,9 @@ import { getConnectedServiceCredentialSealed } from '@/sync/api/account/apiConne
 import { buildAccountEncryptionMigrateToE2eeRequest } from '@/sync/ops/account/buildAccountEncryptionMigrateToE2eeRequest';
 import { getConnectedServiceCredentialPlain } from '@/sync/api/account/apiConnectedServicesV3';
 import { getQualifiedConnectedAccountConfigurationV4, getQualifiedConnectedAccountCredentialV4 } from '@/sync/api/account/apiQualifiedConnectedAccountsV4';
-import { AccountEncryptionMigrateRequestSchema, createAccountEncryptionMigrateRequestBindingDigestV1, type AccountEncryptionMigrateRequest } from '@happier-dev/protocol/account/encryptionMigrate';
+import { AccountEncryptionMigrateRequestSchema, AccountEncryptionMigrateSettingsHistoryInventoryPageSchema,
+    createAccountEncryptionMigrateRequestBindingDigestV1, type AccountEncryptionMigrateRequest } from '@happier-dev/protocol/account/encryptionMigrate';
+import { accountEncryptionSettingsHistoryUnavailable, type AccountEncryptionSettingsHistoryMigrationCandidate } from './buildAccountEncryptionSettingsHistoryDirective';
 import { createEncryptionFromAuthCredentials } from '@/auth/encryption/createEncryptionFromAuthCredentials';
 import { fetchMachineRows } from '@/sync/engine/machines/syncMachines';
 import { fetchAccountEncryptionMigrationKvInventory } from '@/sync/ops/account/fetchAccountEncryptionMigrationKvInventory';
@@ -44,6 +46,7 @@ import { fetchAccountEncryptionEntityCatalogMigrationCandidates } from '@/sync/o
 import { prepareAccountEncryptionModePasswordCredential } from '@/sync/api/auth/accountSecurity';
 import { decodeBase64 } from '@/encryption/base64';
 import { captureAccountSettingsRequest } from '@/sync/api/account/accountSettingsRequest';
+import { persistAccountE2eeMaterialCustody } from './accountE2eeMaterialCustody';
 import { readAccountSettingsBaseline } from '@/sync/engine/settings/accountSettingsBaseline';
 import { settingsParse } from '@/sync/domains/settings/settings';
 import { resolveHomeKeyChallengeExpectedAudience } from '@/auth/flows/resolveHomeAuthenticationTarget';
@@ -53,6 +56,7 @@ import type { Profile } from '@/sync/domains/profiles/profile';
 import type { AccountSettingsScope } from '@/sync/domains/settings/scope/accountSettingsScope';
 import type { AuthContextType } from '@/auth/context/AuthContext';
 import { fetchAccountSecurity } from '@/sync/api/auth/accountSecurity';
+import { readSavedSecretCatalog } from '@/sync/api/account/apiSavedSecretCatalog';
 import { readDiscussionAttachmentStoredContent, stageDiscussionAttachmentAccountEncryptionConversion,
     cancelDiscussionAttachmentAccountEncryptionConversion } from '@/sync/api/discussions/discussionAttachmentTransport';
 
@@ -272,12 +276,20 @@ export async function convertAccountEncryptionMode(params: Readonly<{
             fetchAccountEncryptionMigrationDiscussionInventory({ request: homeRequest, token: credentials.token, scope: capturedRequest }),
         ]);
         requireCurrentScope();
+        // The owner's Saved Secret materials: the migration reseals the ones it
+        // owns with no grants. A Home without the resource route has none.
+        const savedSecretCatalog = await readSavedSecretCatalog(capturedRequest.scope, params.signal);
+        requireCurrentScope();
+        if (!savedSecretCatalog.ok && savedSecretCatalog.failure.kind !== 'unsupported') {
+            throw new Error('Saved Secret migration census is unavailable');
+        }
         const automations = automationsInventory.templates.map(row => ({
             id: row.automationId, templateVersion: row.expectedTemplateVersion,
             templateCiphertext: row.templateCiphertext,
         }));
         const storageDirectives =
             await buildAccountEncryptionMigrationStorageDirectives({
+                sourceAccountCurrentness: currentness,
                 fromMode:
                     currentness.mode,
                 toMode: nextMode,
@@ -305,6 +317,7 @@ export async function convertAccountEncryptionMode(params: Readonly<{
                 },
                 readArtifactRecipients: createArtifactAccessApi(credentials, { request: homeRequest }).readRecipients,
                 readArtifactBlob: (artifactId, blobId) => fetchArtifactBlob(credentials, artifactId, blobId, currentness.mode, { request: homeRequest }),
+                savedSecretResources: savedSecretCatalog.ok ? savedSecretCatalog.resources : undefined,
                 stageArtifactBlob: async (artifactId, blobId, content) => {
                     requireCurrentScope();
                     const staged = await stageArtifactBlobAccountEncryptionConversion(credentials, artifactId, blobId, content, { request: homeRequest });
@@ -384,14 +397,42 @@ export async function convertAccountEncryptionMode(params: Readonly<{
             request: homeRequest,
         });
         requireCurrentScope();
-        const rawSettings = settingsBaseline.raw ?? {};
-        const settings = settingsParse(rawSettings);
+        const rawSettings = settingsBaseline.raw;
+        const settings = settingsParse(rawSettings ?? {});
         const expectedSettingsVersion = settingsBaseline.version;
+        const settingsHistory: AccountEncryptionSettingsHistoryMigrationCandidate[] = [];
+        let beforeVersion: number | null = null;
+        do {
+            requireCurrentScope();
+            const query = beforeVersion === null ? '' : `?beforeVersion=${beforeVersion}`;
+            const response = await homeRequest(`/v1/account/encryption/migrate/settings-history/inventory${query}`,
+                { method: 'GET' }, { includeAuth: true, retry: 'none' });
+            requireCurrentScope();
+            if (!response.ok) throw accountEncryptionSettingsHistoryUnavailable();
+            const page = AccountEncryptionMigrateSettingsHistoryInventoryPageSchema.safeParse(await response.json().catch(() => null));
+            requireCurrentScope();
+            if (!page.success) throw accountEncryptionSettingsHistoryUnavailable();
+            for (const row of page.data.items) {
+                if (settingsHistory.length > 0 && row.version >= settingsHistory[settingsHistory.length - 1]!.version) {
+                    throw accountEncryptionSettingsHistoryUnavailable();
+                }
+                settingsHistory.push(row);
+            }
+            if (page.data.nextBeforeVersion !== null && (page.data.items.at(-1)?.version !== page.data.nextBeforeVersion
+                || (beforeVersion !== null && page.data.nextBeforeVersion >= beforeVersion))) {
+                throw accountEncryptionSettingsHistoryUnavailable();
+            }
+            beforeVersion = page.data.nextBeforeVersion;
+        } while (beforeVersion !== null);
+        // Catalog admission can initialize rows and advance the Account cursor.
+        // Capture that cursor after the census, before signing; source key
+        // fingerprints stay bound to the material used to open the inventory.
+        const { version: expectedAccountVersion } = await fetchAccountEncryptionCurrentness(credentials, { request: homeRequest });
+        requireCurrentScope();
         let request: AccountEncryptionMigrateRequest = nextMode === 'plain'
             ? await buildAccountEncryptionMigrateToPlainRequest({
                 credentials,
-                expectedAccountVersion:
-                    currentness.version,
+                expectedAccountVersion,
                 expectedSigningKeyFingerprint:
                     currentness
                         .signingKeyFingerprint,
@@ -402,6 +443,7 @@ export async function convertAccountEncryptionMode(params: Readonly<{
                 expectedSettingsVersion,
                 settings,
                 rawSettings,
+                settingsHistory,
                 connectedServiceProfiles,
                 qualifiedConnectedAccounts:
                     profile.connectedAccountsV4,
@@ -434,8 +476,7 @@ export async function convertAccountEncryptionMode(params: Readonly<{
                     preparedE2eeKey!
                         .credentials,
                 accountId,
-                expectedAccountVersion:
-                    currentness.version,
+                expectedAccountVersion,
                 expectedSigningKeyFingerprint:
                     currentness
                         .signingKeyFingerprint,
@@ -446,6 +487,7 @@ export async function convertAccountEncryptionMode(params: Readonly<{
                 expectedSettingsVersion,
                 settings,
                 rawSettings,
+                settingsHistory,
                 connectedServiceProfiles,
                 qualifiedConnectedAccounts:
                     profile.connectedAccountsV4,
@@ -608,6 +650,16 @@ export async function convertAccountEncryptionMode(params: Readonly<{
         // runAccountEncryptionModeMigration already retires local activation and draft acknowledgements.
         if (result === 'interaction_opened') return result;
         if (!result) return null;
+        // This device's own committed transition reclassifies its material:
+        // retained keys keep reading encrypted history on a plain Account, and
+        // a retained-key re-enable makes them active again. A failed write
+        // leaves the downgrade lock, whose in-place action reclassifies.
+        await persistAccountE2eeMaterialCustody({
+            credentials,
+            custody: result.mode === 'plain' ? 'historical' : 'active',
+            captured: capturedRequest,
+            persistCredentials: params.persistCredentials,
+        });
         return { mode: result.mode };
 
     } catch (error) {

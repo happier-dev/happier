@@ -2,7 +2,7 @@ import React from 'react';
 import { act } from 'react-test-renderer';
 import { afterAll, afterEach, beforeAll, expect, it, vi } from 'vitest';
 import nacl from 'tweetnacl';
-import { FeaturesResponseSchema } from '@happier-dev/protocol';
+import { FeaturesResponseSchema } from '@happier-dev/protocol/features/payload/featuresResponseSchema';
 import { KeyChallengeV2IssueResponseSchema } from '@happier-dev/protocol/auth/keyChallenge';
 import { installTokenStorageWebPlatformMocks } from '@/auth/storage/tokenStorage.testHelpers';
 import { installLocalStorageMock } from '@/auth/storage/tokenStorage.web.testHelpers';
@@ -25,12 +25,20 @@ installRestoreRouteCommonModuleMocks({
 const { renderScreen } = await import('@/dev/testkit');
 const { initializeAuthRouteRuntimeForTests } = await import('@/dev/testkit/harness/authRouteRuntimeHarness');
 await initializeAuthRouteRuntimeForTests();
+const { fetchAccountEncryptionCurrentness } = await import('@/sync/api/account/apiAccountEncryptionMode');
+const { prepareAccountEncryptionMigrateToE2eeKey } = await import('@/sync/ops/account/prepareAccountEncryptionMigrateToE2eeKey');
+const { buildAccountEncryptionMigrateToE2eeRequest } = await import('@/sync/ops/account/buildAccountEncryptionMigrateToE2eeRequest');
+const { migrateAccountEncryptionMode } = await import('@/sync/api/account/apiAccountEncryptionMigrate');
+const { createServerFetchAtEndpoint } = await import('@/sync/http/client');
+const { settingsParse } = await import('@/sync/domains/settings/settings');
+const { AccountModeDowngradeUnverifiedError } = await import('@happier-dev/sync-client');
 const { AuthProvider, getCurrentAuth } = await import('@/auth/context/AuthContext');
 const { TokenStorage } = await import('@/auth/storage/tokenStorage');
 const { adoptHomeProfile, setActiveServerId } = await import('@/sync/domains/server/serverProfiles');
 const { getActiveServerSnapshot } = await import('@/sync/domains/server/serverRuntime');
 const { authGetTokenAtEndpoint } = await import('@/auth/flows/getToken');
 const { encodeBase64 } = await import('@/encryption/base64');
+const { Encryption } = await import('@/sync/encryption/encryption');
 const { setRuntimeFetch } = await import('@/utils/system/runtimeFetch');
 const { disconnectActiveServerConnection } = await import('@/sync/runtime/orchestration/connectionManager');
 const Screen = (await import('@/app/(app)/restore/manual')).default;
@@ -73,8 +81,13 @@ afterEach(async () => {
 });
 afterAll(async () => { await app?.close(); await database?.close(); });
 
-it.each([['e2ee', 'standalone'], ['plain', 'standalone'], ['e2ee', 'qr']] as const)
-    ('restores the same %s Account through %s after Home-only sign-out', async (mode, ingress) => {
+it.each([
+    ['e2ee', 'standalone', 'signed-out'], ['plain', 'standalone', 'signed-out'],
+    ['e2ee', 'qr', 'signed-out'], ['plain', 'qr', 'signed-out'],
+    ['plain', 'standalone', 'active pin'],
+    ['plain', 'standalone', 'data-key active pin'],
+] as const)
+    ('restores the same %s Account through %s with %s custody', async (mode, ingress, prior) => {
     database.resetEnv({ HAPPIER_FEATURE_ENCRYPTION__DEFAULT_ACCOUNT_MODE: mode });
     storage = installLocalStorageMock();
     vi.stubGlobal('window', { location: { origin: 'https://borrowed-ui-r36.test', hostname: 'borrowed-ui-r36.test' },
@@ -111,12 +124,18 @@ it.each([['e2ee', 'standalone'], ['plain', 'standalone'], ['e2ee', 'qr']] as con
         serverIdentityId: homeIdentity, secret, requireKeyChallengeV2: true });
     const originalAccount = await serverAuth.verifyToken(issued.token);
     expect(originalAccount).not.toBeNull();
-    const credentials = mode === 'plain' ? issued : { token: issued.token, secret: restoredKey };
+    const encryption = await Encryption.create(secret);
+    const credentials = prior === 'data-key active pin'
+        ? { token: issued.token, encryption: { machineKey: encodeBase64(encryption.getContentPrivateKey()),
+            publicKey: encodeBase64(encryption.contentDataKey) } }
+        : mode === 'plain' && prior === 'signed-out' ? issued : { token: issued.token, secret: restoredKey };
     await TokenStorage.setCredentialsForServerUrl(homeUrl, { serverId: home.id }, credentials);
-    screen = await renderScreen(<AuthProvider initialCredentials={credentials}><Screen /></AuthProvider>);
-    await act(async () => { expect(await getCurrentAuth()!.logout({ scope: 'focused-home' })).toEqual({ kind: 'completed' }); });
+    screen = await renderScreen(<AuthProvider initialCredentials={prior === 'signed-out' ? credentials : null}><Screen /></AuthProvider>);
+    if (prior === 'signed-out') {
+        await act(async () => { expect(await getCurrentAuth()!.logout({ scope: 'focused-home' })).toEqual({ kind: 'completed' }); });
+        expect(await TokenStorage.getCredentialsForServerUrl(homeUrl, { serverId: home.id })).toBeNull();
+    }
     expect(getActiveServerSnapshot().serverId).toBe(homeIdentity);
-    expect(await TokenStorage.getCredentialsForServerUrl(homeUrl, { serverId: home.id })).toBeNull();
     if (ingress === 'qr') {
         const other = await adoptHomeProfile({ descriptor: { v: 1, homeServerIdentityId: 'srv_other_home_r36',
             canonicalServerUrl: stackUrl, revision: 1, endpoints: [{ kind: 'https', url: stackUrl }] },
@@ -146,7 +165,51 @@ it.each([['e2ee', 'standalone'], ['plain', 'standalone'], ['e2ee', 'qr']] as con
     const retained = await TokenStorage.getCredentialsForServerUrl(homeUrl, { serverId: home.id });
     expect(retained).not.toBeNull();
     expect(await serverAuth.verifyToken(retained!.token)).toMatchObject({ userId: originalAccount!.userId });
-    expect(retained).toEqual(mode === 'plain' ? { token: retained!.token } : { token: retained!.token, secret: restoredKey });
+    if (prior !== 'signed-out') {
+        // Re-entering a genuine key cannot let a Home's Plain report retire this
+        // device's existing E2EE pin without the explicit Keep-key action.
+        const request = createServerFetchAtEndpoint({ endpointUrl: homeUrl, serverId: home.id, credentials: retained! });
+        await expect(fetchAccountEncryptionCurrentness(retained!, { request }))
+            .rejects.toBeInstanceOf(AccountModeDowngradeUnverifiedError);
+        expect(retained).toEqual({ ...credentials, token: retained!.token });
+        expect(getCurrentAuth()?.credentials).toEqual(retained);
+        expect(requests.filter(row => row.path === '/v1/account/encryption/migrate')).toEqual([]);
+        return;
+    }
+    if (mode === 'plain') {
+        // A reload must read the restored material from the same scoped store,
+        // rather than inheriting a key held only by the restore form.
+        await screen.unmount();
+        const reloaded = await TokenStorage.getCredentialsForServerUrl(homeUrl, { serverId: home.id });
+        expect(reloaded).not.toBeNull();
+        screen = await renderScreen(<AuthProvider initialCredentials={reloaded}><Screen /></AuthProvider>);
+        const active = getCurrentAuth()!.credentials!;
+        const request = createServerFetchAtEndpoint({ endpointUrl: homeUrl, serverId: home.id, credentials: active });
+        const currentness = await fetchAccountEncryptionCurrentness(active, { request });
+        expect(currentness.mode).toBe('plain');
+        const prepared = await prepareAccountEncryptionMigrateToE2eeKey({ credentials: active,
+            expectedSigningKeyFingerprint: currentness.signingKeyFingerprint,
+            expectedContentKeyFingerprint: currentness.contentKeyFingerprint });
+        const migration = await buildAccountEncryptionMigrateToE2eeRequest({ credentials: prepared.credentials,
+            accountId: originalAccount!.userId, keyProof: prepared.keyProof,
+            expectedAccountVersion: currentness.version, expectedSettingsVersion: 0,
+            expectedSigningKeyFingerprint: currentness.signingKeyFingerprint,
+            expectedContentKeyFingerprint: currentness.contentKeyFingerprint,
+            rawSettings: null, settings: settingsParse({}), connectedServiceProfiles: [], automations: [],
+            fetchConnectedServiceCredentialPlain: async () => { throw new Error('No Connected Accounts in this fixture'); },
+            storageDirectives: { machines: { action: 'assert_empty' }, todos: { action: 'assert_empty' },
+                artifacts: { action: 'assert_empty' }, sessions: { action: 'assert_empty' },
+                reviewComments: { action: 'assert_empty' }, sessionOrganization: { action: 'assert_empty' },
+                pets: { action: 'assert_empty' } } });
+        const converted = await migrateAccountEncryptionMode(active, migration, { request, retry: 'none' });
+        expect(converted.mode).toBe('e2ee');
+        expect(requests.filter(row => row.path === '/v1/account/encryption/migrate')).toEqual([
+            { origin: homeUrl, path: '/v1/account/encryption/migrate', status: 200 },
+        ]);
+        expect((await fetchAccountEncryptionCurrentness(active, { request })).mode).toBe('e2ee');
+    }
+    expect(retained).toEqual({ token: retained!.token, secret: restoredKey,
+        ...(mode === 'plain' ? { custody: 'historical' } : {}) });
     expect(getCurrentAuth()?.credentials).toEqual(retained);
     expect(getActiveServerSnapshot().serverId).toBe(homeIdentity);
     expect(requests.filter(request => request.path === '/v1/auth/challenge' || request.path === '/v1/auth'))
