@@ -1869,7 +1869,7 @@ export const zhHans: TranslationStructure = {
             failureGeneric: '操作未完成。',
             isolationReview: {
                 title: '应用前请检查',
-                descriptionOn: '智能体将以独立用户运行，没有管理员权限。在你批准之前不会有任何更改。',
+                descriptionOn: '代理将在没有管理员权限的情况下运行。在你批准之前不会有任何更改。',
                 descriptionOff: '智能体将与 Happier 使用同一用户运行。在你批准之前不会有任何更改。',
                 policy: '独立用户',
                 turnOn: '开启',
@@ -2717,6 +2717,7 @@ export const zhHans: TranslationStructure = {
   },
 
   common: {
+    hide: "隐藏",
     stop: "停止",
     unknown: '未知',
     undo: '撤销',
@@ -3937,11 +3938,11 @@ export const zhHans: TranslationStructure = {
     machineEnrollStepRestartService: "正在重新启动后台服务",
     machineEnrollStepVerifyService: "正在验证后台服务",
     machineEnrollRemoteSshTargetPlaceholder: "user@host",
-    machineEnrollRemoteSshUsernameLabel: "SSH 用户名",
+    machineEnrollRemoteSshUsernameLabel: "登录用户",
     machineEnrollRemoteSshUsernamePlaceholder: "ubuntu",
-    machineEnrollRemoteSshHostLabel: "SSH 主机",
+    machineEnrollRemoteSshHostLabel: "地址",
     machineEnrollRemoteSshHostPlaceholder: "example.test",
-    machineEnrollRemoteSshPortLabel: "SSH 端口",
+    machineEnrollRemoteSshPortLabel: "端口",
     machineEnrollRemoteSshPortPlaceholder: "22",
     machineEnrollRemoteSshAuthMethodLabel: "认证方式",
     machineEnrollRemoteSshPasswordAuthLabel: "使用密码",
@@ -11348,6 +11349,16 @@ export const zhHans: TranslationStructure = {
   },
 
   browserShell: {
+
+    engineSwitch: {
+
+      managed: "在托管浏览器中打开",
+
+      embedded: "在此打开",
+
+      signInAgain: "你可能需要重新登录",
+
+    },
     viewport: { title: '设备预览', fitViewer: '适应查看器' },
     address: {
       label: '浏览器地址',
@@ -11358,7 +11369,7 @@ export const zhHans: TranslationStructure = {
             errorTitle: '页面加载失败',
         },
     nonFramable: {
-      title: '此网站拒绝被嵌入。',
+      title: '此网站无法在 Happier 中打开。',
       openInSystemBrowser: '在系统浏览器中打开',
     },
     toolbar: {
@@ -18134,7 +18145,6 @@ settingsSession: {
         healthDegraded: "降级",
         healthNotChecked: "尚未检查",
         servicesTitle: "服务",
-        servicesDescription: ({ machine }: { machine: string }) => `Compose 文件为此环境在 ${machine} 上运行的内容。日志和重启在机器的“服务”页面。`,
         servicesFact: ({ count }: { count: number }) => `已部署 ${count} 个`,
         openOnMachine: ({ machine }: { machine: string }) => `在 ${machine} 上打开`,
         rolloutFactStartFirst: "无停机",
@@ -18148,7 +18158,6 @@ settingsSession: {
         addPaste: "粘贴 .env 文件…",
         openMachineServices: "打开服务",
         serviceBuiltHere: "由本次部署构建",
-        servicesDescriptionAny: "Compose 文件为此环境运行的内容。日志和重启在机器的服务页面。",
         nothingDeployedBodyAny: "首次部署会构建 Compose 文件并启动它。",
         addSaved: "使用已保存的密钥…",
         addSavedHint: "绑定你已保存的密钥",
@@ -19229,9 +19238,9 @@ settingsSession: {
           appCheckFailed: "无法检查是否有新版本。",
           appDownloadFailed: "下载未完成。",
           appInstallFailed: "无法安装更新。",
-          cachedRelease: "缓存的发布信息；此处不会刷新",
-          cachedReleaseChannel: ({ channel }: { channel: string }) => `缓存的 ${channel} 发布信息；此处不会刷新`,
-          manualUpdateInterruptsSessions: "请在此计算机上更新。服务可能停止，运行中的会话可能结束。",
+          cachedRelease: '来自之前检查的最新版本',
+          cachedReleaseChannel: ({ channel }: { channel: string }) => `来自之前检查的最新 ${channel} 版本`,
+          manualUpdateInterruptsSessions: '请按你安装它的方式在这台机器上更新；正在运行的会话可能会结束。',
           latestUnknown: "无法检查是否有新版本",
           uncheckedTools: ({ count }: { count: number }) => `无法检查 ${count} 个工具`,
           rolledBack: ({ kept, target }: { kept: string; target: string }) => `${target} 未能在这台机器上启动，因此仍保持 ${kept}。`,

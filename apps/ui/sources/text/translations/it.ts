@@ -1870,7 +1870,7 @@ export const it: TranslationStructure = {
             failureGeneric: 'L’azione non è stata completata.',
             isolationReview: {
                 title: 'Verifica prima di applicare',
-                descriptionOn: 'Gli agenti verranno eseguiti con un utente dedicato, senza privilegi di amministratore. Non cambia nulla finché non approvi.',
+                descriptionOn: 'Gli agenti verranno eseguiti senza poteri di amministratore. Non cambia nulla finché non approvi.',
                 descriptionOff: 'Gli agenti verranno eseguiti con lo stesso utente di Happier. Non cambia nulla finché non approvi.',
                 policy: 'Utenti separati',
                 turnOn: 'Attiva',
@@ -2732,6 +2732,7 @@ export const it: TranslationStructure = {
   },
 
   common: {
+    hide: "Nascondi",
     stop: "Interrompi",
     unknown: 'Sconosciuto',
     undo: 'Annulla',
@@ -4358,11 +4359,11 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
       machineEnrollStepRestartService: "Riavvio del servizio in background",
       machineEnrollStepVerifyService: "Verifica del servizio in background",
       machineEnrollRemoteSshTargetPlaceholder: "user@host",
-      machineEnrollRemoteSshUsernameLabel: "Nome utente SSH",
+      machineEnrollRemoteSshUsernameLabel: "Accedi come",
       machineEnrollRemoteSshUsernamePlaceholder: "ubuntu",
-      machineEnrollRemoteSshHostLabel: "Host SSH",
+      machineEnrollRemoteSshHostLabel: "Indirizzo",
       machineEnrollRemoteSshHostPlaceholder: "example.test",
-      machineEnrollRemoteSshPortLabel: "Porta SSH",
+      machineEnrollRemoteSshPortLabel: "Porta",
       machineEnrollRemoteSshPortPlaceholder: "22",
       machineEnrollRemoteSshAuthMethodLabel: "Metodo di autenticazione",
       machineEnrollRemoteSshPasswordAuthLabel: "Usa password",
@@ -11933,6 +11934,16 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
   },
 
   browserShell: {
+
+    engineSwitch: {
+
+      managed: "Apri nel browser gestito",
+
+      embedded: "Apri qui",
+
+      signInAgain: "Potresti dover accedere di nuovo",
+
+    },
     viewport: { title: 'Anteprima dispositivo', fitViewer: 'Adatta al visualizzatore' },
     address: {
       label: 'Indirizzo del browser',
@@ -11943,7 +11954,7 @@ encryptedUnavailable: "Dettagli crittografati non disponibili",
             errorTitle: 'Caricamento pagina non riuscito',
         },
     nonFramable: {
-      title: 'Questo sito rifiuta di essere incorporato.',
+      title: 'Questo sito non si apre dentro Happier.',
       openInSystemBrowser: 'Apri nel browser di sistema',
     },
     toolbar: {
@@ -18517,7 +18528,6 @@ settingsSession: {
         healthDegraded: "Degradato",
         healthNotChecked: "Non ancora verificato",
         servicesTitle: "Servizi",
-        servicesDescription: ({ machine }: { machine: string }) => `Cosa esegue il file Compose su ${machine} per questo ambiente. Log e riavvii sono nella pagina Servizi della macchina.`,
         servicesFact: ({ count }: { count: number }) => `${count} distribuiti`,
         openOnMachine: ({ machine }: { machine: string }) => `Apri su ${machine}`,
         rolloutFactStartFirst: "Senza interruzioni",
@@ -18531,7 +18541,6 @@ settingsSession: {
         addPaste: "Incolla un file .env…",
         openMachineServices: "Apri servizi",
         serviceBuiltHere: "Costruito da questo deploy",
-        servicesDescriptionAny: "Ciò che il file Compose esegue per questo ambiente. Log e riavvii sono nella pagina Servizi della macchina.",
         nothingDeployedBodyAny: "Il primo deploy costruisce il file Compose e lo avvia.",
         addSaved: "Usa un segreto salvato…",
         addSavedHint: "Collega uno che hai già salvato",
@@ -19616,9 +19625,9 @@ settingsSession: {
           appCheckFailed: "Non è stato possibile cercare una versione più recente.",
           appDownloadFailed: "Il download non è stato completato.",
           appInstallFailed: "Non è stato possibile installare l’aggiornamento.",
-          cachedRelease: "Informazioni sulla versione in cache; non aggiornate qui",
-          cachedReleaseChannel: ({ channel }: { channel: string }) => `Informazioni sulla versione ${channel} in cache; non aggiornate qui`,
-          manualUpdateInterruptsSessions: "Aggiorna su questa macchina. I servizi potrebbero arrestarsi e le sessioni attive potrebbero terminare.",
+          cachedRelease: 'Versione più recente da un controllo precedente',
+          cachedReleaseChannel: ({ channel }: { channel: string }) => `Versione ${channel} più recente da un controllo precedente`,
+          manualUpdateInterruptsSessions: 'Aggiornalo su questa macchina come l’hai installato; le sessioni in corso potrebbero terminare.',
           latestUnknown: "Non è stato possibile cercare una versione più recente",
           uncheckedTools: ({ count }: { count: number }) => `Impossibile controllare ${count} strumenti`,
           rolledBack: ({ kept, target }: { kept: string; target: string }) => `${target} non si è avviata su questa macchina, quindi resta alla ${kept}.`,

@@ -2038,7 +2038,7 @@ export const ja: TranslationStructure = {
             failureGeneric: '操作が完了しませんでした。',
             isolationReview: {
                 title: '適用前に確認',
-                descriptionOn: 'エージェントは管理者権限のない専用ユーザーで実行されます。承認するまで何も変わりません。',
+                descriptionOn: 'エージェントは管理者権限なしで動作します。承認するまで何も変わりません。',
                 descriptionOff: 'エージェントは Happier と同じユーザーで実行されます。承認するまで何も変わりません。',
                 policy: '個別ユーザー',
                 turnOn: 'オンにする',
@@ -2898,6 +2898,7 @@ export const ja: TranslationStructure = {
   },
 
   common: {
+    hide: "非表示",
     stop: "停止",
     unknown: '不明',
     undo: '元に戻す',
@@ -4503,11 +4504,11 @@ localTailscale: {
     machineEnrollStepRestartService: "バックグラウンドサービスを再起動中",
     machineEnrollStepVerifyService: "バックグラウンドサービスを検証中",
     machineEnrollRemoteSshTargetPlaceholder: "user@host",
-    machineEnrollRemoteSshUsernameLabel: "SSH ユーザー名",
+    machineEnrollRemoteSshUsernameLabel: "サインインするユーザー",
     machineEnrollRemoteSshUsernamePlaceholder: "ubuntu",
-    machineEnrollRemoteSshHostLabel: "SSH ホスト",
+    machineEnrollRemoteSshHostLabel: "アドレス",
     machineEnrollRemoteSshHostPlaceholder: "example.test",
-    machineEnrollRemoteSshPortLabel: "SSH ポート",
+    machineEnrollRemoteSshPortLabel: "ポート",
     machineEnrollRemoteSshPortPlaceholder: "22",
     machineEnrollRemoteSshAuthMethodLabel: "認証方法",
     machineEnrollRemoteSshPasswordAuthLabel: "パスワードを使う",
@@ -12009,6 +12010,16 @@ localTailscale: {
   },
 
   browserShell: {
+
+    engineSwitch: {
+
+      managed: "管理ブラウザで開く",
+
+      embedded: "ここで開く",
+
+      signInAgain: "再ログインが必要な場合があります",
+
+    },
     viewport: { title: 'デバイスプレビュー', fitViewer: '表示領域に合わせる' },
     address: {
       label: 'ブラウザーアドレス',
@@ -12019,7 +12030,7 @@ localTailscale: {
             errorTitle: 'ページを読み込めませんでした',
         },
     nonFramable: {
-      title: 'このサイトは埋め込みを拒否しています。',
+      title: 'このサイトは Happier の中では開けません。',
       openInSystemBrowser: 'システムブラウザーで開く',
     },
     toolbar: {
@@ -18429,7 +18440,6 @@ settingsSession: {
         healthDegraded: "低下",
         healthNotChecked: "未確認",
         servicesTitle: "サービス",
-        servicesDescription: ({ machine }: { machine: string }) => `この環境で Compose ファイルが ${machine} 上で実行するもの。ログと再起動はマシンのサービスページにあります。`,
         servicesFact: ({ count }: { count: number }) => `${count} 件デプロイ済み`,
         openOnMachine: ({ machine }: { machine: string }) => `${machine} で開く`,
         rolloutFactStartFirst: "ダウンタイムなし",
@@ -18443,7 +18453,6 @@ settingsSession: {
         addPaste: ".env ファイルを貼り付け…",
         openMachineServices: "サービスを開く",
         serviceBuiltHere: "このデプロイでビルド",
-        servicesDescriptionAny: "この環境で Compose ファイルが実行するもの。ログと再起動はマシンのサービスページにあります。",
         nothingDeployedBodyAny: "最初のデプロイで Compose ファイルをビルドして起動します。",
         addSaved: "保存済みシークレットを使う…",
         addSavedHint: "保存済みのものを紐付け",
@@ -19524,9 +19533,9 @@ settingsSession: {
           appCheckFailed: "新しいバージョンを確認できませんでした。",
           appDownloadFailed: "ダウンロードが完了しませんでした。",
           appInstallFailed: "アップデートをインストールできませんでした。",
-          cachedRelease: "キャッシュされたリリース情報（ここでは更新されません）",
-          cachedReleaseChannel: ({ channel }: { channel: string }) => `キャッシュされた ${channel} リリース情報（ここでは更新されません）`,
-          manualUpdateInterruptsSessions: "このマシンで更新してください。サービスが停止し、実行中のセッションが終了する場合があります。",
+          cachedRelease: '以前の確認時点の最新バージョン',
+          cachedReleaseChannel: ({ channel }: { channel: string }) => `以前の確認時点の最新 ${channel} バージョン`,
+          manualUpdateInterruptsSessions: 'インストールした方法でこのマシン上で更新してください。実行中のセッションは終了する場合があります。',
           latestUnknown: "新しいバージョンを確認できませんでした",
           uncheckedTools: ({ count }: { count: number }) => `${count} 個のツールを確認できませんでした`,
           rolledBack: ({ kept, target }: { kept: string; target: string }) => `${target} はこのマシンで起動しなかったため、${kept} のままです。`,

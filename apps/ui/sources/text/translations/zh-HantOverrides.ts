@@ -2038,7 +2038,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             failureGeneric: '操作未完成。',
             isolationReview: {
                 title: '套用前請檢查',
-                descriptionOn: '智慧代理將以獨立使用者執行，沒有管理員權限。在你核准之前不會有任何變更。',
+                descriptionOn: '代理將在沒有管理員權限的情況下執行。在你核准之前不會有任何變更。',
                 descriptionOff: '智慧代理將與 Happier 使用同一使用者執行。在你核准之前不會有任何變更。',
                 policy: '獨立使用者',
                 turnOn: '開啟',
@@ -3257,6 +3257,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
       common: {
+        hide: "隱藏",
         decrease: "減少",
         increase: "增加",
         undo: '復原',
@@ -3750,6 +3751,9 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
         machineSetupComingSoon: '機器啟用功能即將推出。',
         machineSetupTaskWaitingForInput: '等待輸入',
         machineEnrollRemoteSshTargetLabel: 'SSH 目標',
+        machineEnrollRemoteSshHostLabel: '位址',
+        machineEnrollRemoteSshUsernameLabel: '登入使用者',
+        machineEnrollRemoteSshPortLabel: '連接埠',
         machineEnrollRemoteSshAgentAuthLabel: '使用 SSH 代理程式',
         machineEnrollRemoteSshKeyFileAuthLabel: '使用身分金鑰檔',
         machineEnrollRemoteSshIdentityFileLabel: '身分金鑰檔路徑',
@@ -9514,6 +9518,16 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
     },
 
     browserShell: {
+
+      engineSwitch: {
+
+        managed: "在託管瀏覽器中開啟",
+
+        embedded: "在此開啟",
+
+        signInAgain: "你可能需要重新登入",
+
+      },
       viewport: { title: '裝置預覽', fitViewer: '適應檢視器' },
         address: {
             label: '瀏覽器位址',
@@ -9524,7 +9538,7 @@ const zhHantOverrides: DeepPartial<TranslationStructure> = {
             errorTitle: '頁面載入失敗',
         },
         nonFramable: {
-            title: '此網站拒絕被嵌入。',
+            title: '此網站無法在 Happier 中開啟。',
             openInSystemBrowser: '在系統瀏覽器中開啟',
         },
         toolbar: {
@@ -14594,9 +14608,9 @@ settingsSession: {
           appCheckFailed: '無法檢查是否有新版本。',
           appDownloadFailed: '下載未完成。',
           appInstallFailed: '無法安裝更新。',
-          cachedRelease: "快取的發行資訊；此處不會重新整理",
-          cachedReleaseChannel: ({ channel }: { channel: string }) => `快取的 ${channel} 發行資訊；此處不會重新整理`,
-          manualUpdateInterruptsSessions: "請在此電腦上更新。服務可能停止，執行中的工作階段可能結束。",
+          cachedRelease: '來自先前檢查的最新版本',
+          cachedReleaseChannel: ({ channel }: { channel: string }) => `來自先前檢查的最新 ${channel} 版本`,
+          manualUpdateInterruptsSessions: '請依你安裝它的方式在這台機器上更新；執行中的工作階段可能會結束。',
           latestUnknown: '無法檢查是否有新版本',
           rolledBack: ({ kept, target }: { kept: string; target: string }) => `${target} 未能在這台機器上啟動，因此仍維持 ${kept}。`,
           installedByYou: '由你安裝',

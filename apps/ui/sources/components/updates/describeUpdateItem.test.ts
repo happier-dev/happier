@@ -2,10 +2,11 @@ import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/text', async () => {
     const { createTextModuleMock } = await import('@/dev/testkit/mocks/text');
-    return createTextModuleMock({ translate: (key: string) => key });
+    return createTextModuleMock({ translate: (key: string, params?: Record<string, unknown>) => params ? `${key}:${JSON.stringify(params)}` : key });
 });
 
 import type { UpdateItem } from '@/updates/items/updateItem';
+import { buildRemoteCliUpdateItem } from '@/updates/items/buildMachineUpdateItems';
 
 import { describeUpdateItem } from './describeUpdateItem';
 
@@ -40,3 +41,31 @@ describe('describeUpdateItem — already current', () => {
     });
 });
 
+
+describe('cached CLI release information', () => {
+    it('identifies the cached channel and the manual update interruption in the row', () => {
+        const item = buildRemoteCliUpdateItem({
+            machineId: 'windows', title: 'Happier CLI', online: true, platform: 'win32',
+            happyCliVersion: '0.2.16-dev.9', remoteUpdateAdvertised: false,
+            task: { running: false, step: null, errorMessage: null },
+            facts: {
+                currentVersion: '0.2.16-dev.9', latestVersion: '0.2.16-dev.9', channel: 'dev',
+                installSource: 'managed', canUpdateRemotely: false, updateCommand: 'hdev self update', lastUpdate: null,
+            },
+        });
+        const presentation = describeUpdateItem(item);
+        expect(presentation.subtitle).toContain('updates.row.cachedReleaseChannel');
+        expect(presentation.subtitle).toContain('dev');
+        expect(presentation.command).toBe('hdev self update');
+        expect(presentation.actionLabel).toBeNull();
+        expect(presentation.note).toContain('updates.row.manualUpdateInterruptsSessions');
+    });
+});
+
+describe('describeUpdateItem — a Happier CLI updated by hand says how once', () => {
+    it('keeps the facts on the status line and the how-to in the note', () => {
+        const presentation = describeUpdateItem({ ...remoteCli, managedBy: 'user', action: { kind: 'manual', command: null } });
+        expect(presentation.subtitle).not.toContain('updates.row.updateItYourWay');
+        expect(presentation.note).toBe('updates.row.manualUpdateInterruptsSessions');
+    });
+});

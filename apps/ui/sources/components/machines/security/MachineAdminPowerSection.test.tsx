@@ -17,6 +17,7 @@ import {
   buildAdminAccessSetInput,
   describeAdminPowerHeadline,
 } from './adminPower';
+import { describeRunsAs } from './MachineAdminPowerSection';
 import type {
   MachineAdminPowerControls,
   MachineAuthorityModel,
@@ -185,7 +186,7 @@ describe('Machine → Security → Administrator power', () => {
       authority({ observation: observation(), desiredAdminAccess: ask }),
       {
         canManage: false,
-        separateUsers: { value: 'sharedAgent', busy: false, onChoose: vi.fn(), step: React.createElement('View', { testID: 'offer' }) },
+        separateUsers: { value: 'sharedAgent', busy: false, onChoose: vi.fn(), onRepair: vi.fn(), step: React.createElement('View', { testID: 'offer' }) },
       },
     );
     expect(segmented(screen)?.props.disabled).toBe(true);
@@ -209,7 +210,7 @@ describe('Machine → Security → Administrator power', () => {
     const onChoose = vi.fn();
     const model = authority({ platform: 'linux', isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' },
       isolation: { kind: 'effective', platform: 'linux', agentUser: 'happier-agent' } });
-    const screen = await render(model, { separateUsers: { value: 'member', busy: false, onChoose, step: null } });
+    const screen = await render(model, { separateUsers: { value: 'member', busy: false, onChoose, onRepair: null, step: null } });
     const row = findTestInstanceByTypeWithProps(screen, SegmentedChoiceItem, { testID: 'machine-security-admin-isolation' });
     expect(row?.props.title).toBe(t('machineDetailPage.security.admin.isolationTitle'));
     expect(row?.props.subtitle).toBe(t('machineDetailPage.security.admin.isolationMember'));
@@ -219,17 +220,33 @@ describe('Machine → Security → Administrator power', () => {
     row?.props.onChange('sharedAgent');
     expect(onChoose).toHaveBeenCalledWith('sharedAgent');
     // Offline or mid-change, the choice stays visible and can't be changed.
-    const offline = await render(model, { online: false, separateUsers: { value: 'member', busy: false, onChoose, step: null } });
+    const offline = await render(model, { online: false, separateUsers: { value: 'member', busy: false, onChoose, onRepair: null, step: null } });
     expect(findTestInstanceByTypeWithProps(offline, SegmentedChoiceItem, { testID: 'machine-security-admin-isolation' })?.props.disabled).toBe(true);
-    const busy = await render(model, { separateUsers: { value: 'sharedAgent', busy: true, onChoose, step: null } });
+    const busy = await render(model, { separateUsers: { value: 'sharedAgent', busy: true, onChoose, onRepair: null, step: null } });
     expect(findTestInstanceByTypeWithProps(busy, SegmentedChoiceItem, { testID: 'machine-security-admin-isolation' })?.props.disabled).toBe(true);
   });
 
-  it('says a switched-on policy the Machine is not running yet as such, never as Off', async () => {
-    const screen = await render(authority({ platform: 'linux', isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' },
-      isolation: { kind: 'disabled' } }));
+  it('says how Happier itself runs beside its user: service kind, boot start, password and sign-in', () => {
+    const model = authority({ observation: observation({ daemonService: { mode: 'system', startsAtBoot: true },
+      daemonAccount: { passwordLocked: true, loginShell: '/usr/sbin/nologin' } } as Partial<Observation>) });
+    expect(describeRunsAs(model, false)).toBe([
+      t('machineDetailPage.security.admin.runsAsSystemService'), t('machineDetailPage.security.admin.runsAsStartsAtBoot'),
+      t('machineDetailPage.security.admin.runsAsNoPassword'), t('machineDetailPage.security.admin.runsAsNoSignIn'),
+    ].join(' · '));
+    expect(describeRunsAs(authority({ observation: observation() }), false)).toBeUndefined();
+    expect(describeRunsAs(model, true)).toBe(t('machineDetailPage.security.admin.runsAsRoot'));
+  });
+
+  it('says separate users set but not running as such, never as Off, and offers the same review to repair them', async () => {
+    const onRepair = vi.fn();
+    const model = authority({ platform: 'linux', isolationPolicy: { enabled: true, memberProvisioning: 'linuxUsersV1' },
+      isolation: { kind: 'disabled' } });
+    expect(model.separateUsers.availability.kind).toBe('repairable');
+    const screen = await render(model, { separateUsers: { value: 'member', busy: false, onChoose: vi.fn(), onRepair, step: null } });
     expect(findTestInstanceByTypeWithProps(screen, Item, { testID: 'machine-security-admin-isolation' })?.props.subtitle)
       .toBe(t('machineDetailPage.security.admin.isolationPending'));
+    await screen.pressByTestIdAsync('machine-security-separate-users-repair-review');
+    expect(onRepair).toHaveBeenCalledTimes(1);
   });
 
   it('saves Ask only once a valid administrator is named', async () => {

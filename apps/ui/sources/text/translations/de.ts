@@ -1677,7 +1677,7 @@ export const de: TranslationStructure = {
             failureGeneric: 'Die Aktion wurde nicht abgeschlossen.',
             isolationReview: {
                 title: 'Vor dem Anwenden prüfen',
-                descriptionOn: 'Agents laufen als eigener Benutzer, ohne Administratorrechte. Nichts ändert sich, bis du zustimmst.',
+                descriptionOn: 'Agents laufen ohne Administratorrechte. Nichts ändert sich, bis du zustimmst.',
                 descriptionOff: 'Agents laufen als derselbe Benutzer wie Happier. Nichts ändert sich, bis du zustimmst.',
                 policy: 'Getrennte Benutzer',
                 turnOn: 'Einschalten',
@@ -2598,6 +2598,7 @@ export const de: TranslationStructure = {
     },
 
 	    common: {
+        hide: "Ausblenden",
         stop: "Stoppen",
         unknown: 'Unbekannt',
         undo: 'Rückgängig',
@@ -3669,11 +3670,11 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
         machineSetupTaskWaitingForInput: 'Wartet auf Eingabe',
         machineEnrollRemoteSshTargetLabel: 'SSH-Ziel',
         machineEnrollRemoteSshTargetPlaceholder: 'user@host',
-        machineEnrollRemoteSshUsernameLabel: 'SSH-Benutzername',
+        machineEnrollRemoteSshUsernameLabel: 'Anmelden als',
         machineEnrollRemoteSshUsernamePlaceholder: 'ubuntu',
-        machineEnrollRemoteSshHostLabel: 'SSH-Host',
+        machineEnrollRemoteSshHostLabel: 'Adresse',
         machineEnrollRemoteSshHostPlaceholder: 'example.test',
-        machineEnrollRemoteSshPortLabel: 'SSH-Port',
+        machineEnrollRemoteSshPortLabel: 'Port',
         machineEnrollRemoteSshPortPlaceholder: '22',
         machineEnrollRemoteSshAuthMethodLabel: 'Authentifizierungsmethode',
         machineEnrollRemoteSshAgentAuthLabel: 'SSH-Agent verwenden',
@@ -11582,6 +11583,16 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
     },
 
     browserShell: {
+
+      engineSwitch: {
+
+        managed: "Im verwalteten Browser öffnen",
+
+        embedded: "Hier öffnen",
+
+        signInAgain: "Möglicherweise musst du dich erneut anmelden",
+
+      },
       viewport: { title: 'Gerätevorschau', fitViewer: 'An Ansicht anpassen' },
         address: {
             label: 'Browser-Adresse',
@@ -11592,7 +11603,7 @@ encryptedUnavailable: "Verschlüsselte Details nicht verfügbar",
             errorTitle: 'Die Seite ließ sich nicht laden',
         },
         nonFramable: {
-            title: 'Diese Website lässt sich nicht einbetten.',
+            title: 'Diese Website lässt sich nicht in Happier öffnen.',
             openInSystemBrowser: 'Im System-Browser öffnen',
         },
         toolbar: {
@@ -18621,7 +18632,6 @@ settingsSession: {
             healthDegraded: "Eingeschränkt",
             healthNotChecked: "Noch nicht geprüft",
             servicesTitle: "Dienste",
-            servicesDescription: ({ machine }: { machine: string }) => `Was die Compose-Datei für diese Umgebung auf ${machine} ausführt. Logs und Neustarts findest du auf der Dienste-Seite des Rechners.`,
             servicesFact: ({ count }: { count: number }) => `${count} bereitgestellt`,
             openOnMachine: ({ machine }: { machine: string }) => `Auf ${machine} öffnen`,
             rolloutFactStartFirst: "Ohne Ausfallzeit",
@@ -18635,7 +18645,6 @@ settingsSession: {
             addPaste: ".env-Datei einfügen…",
             openMachineServices: "Dienste öffnen",
             serviceBuiltHere: "Von diesem Deploy gebaut",
-            servicesDescriptionAny: "Was die Compose-Datei für diese Umgebung ausführt. Logs und Neustarts findest du auf der Dienste-Seite des Rechners.",
             nothingDeployedBodyAny: "Das erste Deploy baut die Compose-Datei und startet sie.",
             addSaved: "Gespeichertes Secret verwenden…",
             addSavedHint: "Eines binden, das du schon gespeichert hast",
@@ -19714,9 +19723,9 @@ settingsSession: {
             appCheckFailed: 'Es konnte nicht nach einer neueren Version gesucht werden.',
             appDownloadFailed: 'Der Download wurde nicht abgeschlossen.',
             appInstallFailed: 'Das Update konnte nicht installiert werden.',
-            cachedRelease: 'Zwischengespeicherte Release-Informationen; hier nicht aktualisiert',
-            cachedReleaseChannel: ({ channel }: { channel: string }) => `Zwischengespeicherte ${channel}-Release-Informationen; hier nicht aktualisiert`,
-            manualUpdateInterruptsSessions: 'Auf diesem Rechner aktualisieren. Dienste können stoppen und laufende Sitzungen können beendet werden.',
+            cachedRelease: 'Neueste Version aus einer früheren Prüfung',
+            cachedReleaseChannel: ({ channel }: { channel: string }) => `Neueste ${channel}-Version aus einer früheren Prüfung`,
+            manualUpdateInterruptsSessions: 'Aktualisiere es auf diesem Rechner so, wie du es installiert hast; laufende Sitzungen können enden.',
             latestUnknown: 'Es konnte nicht nach einer neueren Version gesucht werden',
             uncheckedTools: ({ count }: { count: number }) => `${count} Tools konnten nicht geprüft werden`,
             rolledBack: ({ kept, target }: { kept: string; target: string }) => `${target} ist auf diesem Rechner nicht gestartet, daher bleibt er bei ${kept}.`,

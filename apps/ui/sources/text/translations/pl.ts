@@ -1884,7 +1884,7 @@ export const pl: TranslationStructure = {
             failureGeneric: 'Akcja nie została ukończona.',
             isolationReview: {
                 title: 'Sprawdź przed zastosowaniem',
-                descriptionOn: 'Agenci będą działać jako własny użytkownik, bez uprawnień administratora. Nic się nie zmieni, dopóki nie zatwierdzisz.',
+                descriptionOn: 'Agenci będą działać bez uprawnień administratora. Nic się nie zmieni, dopóki nie zatwierdzisz.',
                 descriptionOff: 'Agenci będą działać jako ten sam użytkownik co Happier. Nic się nie zmieni, dopóki nie zatwierdzisz.',
                 policy: 'Osobni użytkownicy',
                 turnOn: 'Włącz',
@@ -2755,6 +2755,7 @@ export const pl: TranslationStructure = {
   },
 
   common: {
+    hide: "Ukryj",
     stop: "Zatrzymaj",
     unknown: 'Nieznane',
     undo: 'Cofnij',
@@ -4016,11 +4017,11 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
           machineEnrollStepRestartService: "Ponowne uruchamianie usługi w tle",
           machineEnrollStepVerifyService: "Weryfikowanie usługi w tle",
           machineEnrollRemoteSshTargetPlaceholder: "user@host",
-          machineEnrollRemoteSshUsernameLabel: "Nazwa użytkownika SSH",
+          machineEnrollRemoteSshUsernameLabel: "Zaloguj jako",
           machineEnrollRemoteSshUsernamePlaceholder: "ubuntu",
-          machineEnrollRemoteSshHostLabel: "Host SSH",
+          machineEnrollRemoteSshHostLabel: "Adres",
           machineEnrollRemoteSshHostPlaceholder: "example.test",
-          machineEnrollRemoteSshPortLabel: "Port SSH",
+          machineEnrollRemoteSshPortLabel: "Port",
           machineEnrollRemoteSshPortPlaceholder: "22",
           machineEnrollRemoteSshAuthMethodLabel: "Metoda uwierzytelniania",
           machineEnrollRemoteSshPasswordAuthLabel: "Użyj hasła",
@@ -11543,6 +11544,16 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
   },
 
   browserShell: {
+
+    engineSwitch: {
+
+      managed: "Otwórz w zarządzanej przeglądarce",
+
+      embedded: "Otwórz tutaj",
+
+      signInAgain: "Może być konieczne ponowne zalogowanie",
+
+    },
     viewport: { title: 'Podgląd urządzenia', fitViewer: 'Dopasuj do widoku' },
     address: {
       label: 'Adres przeglądarki',
@@ -11553,7 +11564,7 @@ encryptedUnavailable: "Zaszyfrowane dane niedostępne",
             errorTitle: 'Nie udało się wczytać strony',
         },
     nonFramable: {
-      title: 'Ta witryna nie zezwala na osadzanie.',
+      title: 'Tej witryny nie można otworzyć w Happier.',
       openInSystemBrowser: 'Otwórz w przeglądarce systemowej',
     },
     toolbar: {
@@ -18340,7 +18351,6 @@ settingsSession: {
         healthDegraded: "Pogorszony",
         healthNotChecked: "Jeszcze niesprawdzony",
         servicesTitle: "Usługi",
-        servicesDescription: ({ machine }: { machine: string }) => `Co plik Compose uruchamia na ${machine} dla tego środowiska. Logi i restarty są na stronie Usługi maszyny.`,
         servicesFact: ({ count }: { count: number }) => `Wdrożone: ${count}`,
         openOnMachine: ({ machine }: { machine: string }) => `Otwórz na ${machine}`,
         rolloutFactStartFirst: "Bez przestoju",
@@ -18354,7 +18364,6 @@ settingsSession: {
         addPaste: "Wklej plik .env…",
         openMachineServices: "Otwórz usługi",
         serviceBuiltHere: "Zbudowane przez to wdrożenie",
-        servicesDescriptionAny: "Co plik Compose uruchamia dla tego środowiska. Logi i restarty są na stronie Usługi maszyny.",
         nothingDeployedBodyAny: "Pierwsze wdrożenie zbuduje plik Compose i go uruchomi.",
         addSaved: "Użyj zapisanego sekretu…",
         addSavedHint: "Powiąż już zapisany",
@@ -19439,9 +19448,9 @@ settingsSession: {
           appCheckFailed: "Nie udało się sprawdzić, czy jest nowsza wersja.",
           appDownloadFailed: "Pobieranie nie zostało ukończone.",
           appInstallFailed: "Nie udało się zainstalować aktualizacji.",
-          cachedRelease: "Informacje o wydaniu z pamięci podręcznej; nie są tutaj odświeżane",
-          cachedReleaseChannel: ({ channel }: { channel: string }) => `Informacje o wydaniu ${channel} z pamięci podręcznej; nie są tutaj odświeżane`,
-          manualUpdateInterruptsSessions: "Zaktualizuj na tym komputerze. Usługi mogą zostać zatrzymane, a aktywne sesje zakończone.",
+          cachedRelease: 'Najnowsza wersja z wcześniejszego sprawdzenia',
+          cachedReleaseChannel: ({ channel }: { channel: string }) => `Najnowsza wersja ${channel} z wcześniejszego sprawdzenia`,
+          manualUpdateInterruptsSessions: 'Zaktualizuj na tej maszynie tak, jak instalowałeś; trwające sesje mogą się zakończyć.',
           latestUnknown: "Nie udało się sprawdzić, czy jest nowsza wersja",
           uncheckedTools: ({ count }: { count: number }) => `Nie udało się sprawdzić narzędzi: ${count}`,
           rolledBack: ({ kept, target }: { kept: string; target: string }) => `Wersja ${target} nie uruchomiła się na tej maszynie, więc nadal działa ${kept}.`,

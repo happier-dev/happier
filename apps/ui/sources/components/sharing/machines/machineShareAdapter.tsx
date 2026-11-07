@@ -103,7 +103,7 @@ export function createMachineShareAdapter(input: Readonly<{
                 content: <SectionContentRow showDivider={false}><MachineShareTrustDisclosure idPrefix={context.idPrefix}
                     lead={trust.lead}>
                     {!recipient && guest.canEnableSeparateUsers ? <MachineSeparateUsersOffer machine={machine} guestExecution={guest}
-                        idPrefix={context.idPrefix} openApproval={input.openApproval} /> : null}
+                        idPrefix={context.idPrefix} /> : null}
                 </MachineShareTrustDisclosure></SectionContentRow>,
             }] }];
             // Access that comes through a Team or Group names it; direct access needs no line.

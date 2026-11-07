@@ -75,7 +75,7 @@ export const actionOperationInboxTranslations = {
         failureGeneric: 'The action did not finish.',
         isolationReview: {
             title: 'Review before applying',
-            descriptionOn: 'Agents will run as their own user, without administrator power. Nothing changes until you approve.',
+            descriptionOn: 'Agents will run without administrator power. Nothing changes until you approve.',
             descriptionOff: 'Agents will run as the same user as Happier. Nothing changes until you approve.',
             policy: 'Separate users',
             turnOn: 'Turn on',

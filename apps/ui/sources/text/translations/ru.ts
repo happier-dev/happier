@@ -1885,7 +1885,7 @@ export const ru: TranslationStructure = {
             failureGeneric: 'Действие не завершено.',
             isolationReview: {
                 title: 'Проверьте перед применением',
-                descriptionOn: 'Агенты будут работать от отдельного пользователя, без прав администратора. Ничего не изменится, пока вы не подтвердите.',
+                descriptionOn: 'Агенты будут работать без прав администратора. Ничего не изменится, пока вы не подтвердите.',
                 descriptionOff: 'Агенты будут работать от того же пользователя, что и Happier. Ничего не изменится, пока вы не подтвердите.',
                 policy: 'Отдельные пользователи',
                 turnOn: 'Включить',
@@ -2758,6 +2758,7 @@ export const ru: TranslationStructure = {
   },
 
   common: {
+    hide: "Скрыть",
     stop: "Остановить",
     unknown: 'Неизвестно',
     undo: 'Отменить',
@@ -3905,11 +3906,11 @@ export const ru: TranslationStructure = {
     machineEnrollStepRestartService: "Перезапуск фоновой службы",
     machineEnrollStepVerifyService: "Проверка фоновой службы",
     machineEnrollRemoteSshTargetPlaceholder: "user@host",
-    machineEnrollRemoteSshUsernameLabel: "Имя пользователя SSH",
+    machineEnrollRemoteSshUsernameLabel: "Войти как",
     machineEnrollRemoteSshUsernamePlaceholder: "ubuntu",
-    machineEnrollRemoteSshHostLabel: "Хост SSH",
+    machineEnrollRemoteSshHostLabel: "Адрес",
     machineEnrollRemoteSshHostPlaceholder: "example.test",
-    machineEnrollRemoteSshPortLabel: "Порт SSH",
+    machineEnrollRemoteSshPortLabel: "Порт",
     machineEnrollRemoteSshPortPlaceholder: "22",
     machineEnrollRemoteSshAuthMethodLabel: "Метод аутентификации",
     machineEnrollRemoteSshPasswordAuthLabel: "Использовать пароль",
@@ -11565,6 +11566,16 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
   },
 
   browserShell: {
+
+    engineSwitch: {
+
+      managed: "Открыть в управляемом браузере",
+
+      embedded: "Открыть здесь",
+
+      signInAgain: "Возможно, потребуется войти снова",
+
+    },
     viewport: { title: 'Предпросмотр устройства', fitViewer: 'По размеру области просмотра' },
     address: {
       label: 'Адрес браузера',
@@ -11575,7 +11586,7 @@ encryptedUnavailable: "Зашифрованные данные недоступ�
             errorTitle: 'Страница не загрузилась',
         },
     nonFramable: {
-      title: 'Этот сайт запрещает встраивание.',
+      title: 'Этот сайт нельзя открыть внутри Happier.',
       openInSystemBrowser: 'Открыть в системном браузере',
     },
     toolbar: {
@@ -18468,7 +18479,6 @@ settingsSession: {
         healthDegraded: "Снижено",
         healthNotChecked: "Ещё не проверено",
         servicesTitle: "Сервисы",
-        servicesDescription: ({ machine }: { machine: string }) => `Что файл Compose запускает на ${machine} для этого окружения. Логи и перезапуски — на странице «Сервисы» машины.`,
         servicesFact: ({ count }: { count: number }) => `Развёрнуто: ${count}`,
         openOnMachine: ({ machine }: { machine: string }) => `Открыть на ${machine}`,
         rolloutFactStartFirst: "Без простоя",
@@ -18482,7 +18492,6 @@ settingsSession: {
         addPaste: "Вставить файл .env…",
         openMachineServices: "Открыть сервисы",
         serviceBuiltHere: "Собран этим развёртыванием",
-        servicesDescriptionAny: "Что файл Compose запускает для этого окружения. Логи и перезапуски — на странице «Сервисы» машины.",
         nothingDeployedBodyAny: "Первое развёртывание соберёт файл Compose и запустит его.",
         addSaved: "Использовать сохранённый секрет…",
         addSavedHint: "Привязать уже сохранённый",
@@ -19563,9 +19572,9 @@ settingsSession: {
           appCheckFailed: "Не удалось проверить наличие новой версии.",
           appDownloadFailed: "Загрузка не завершилась.",
           appInstallFailed: "Не удалось установить обновление.",
-          cachedRelease: "Сведения о выпуске из кэша; здесь не обновляются",
-          cachedReleaseChannel: ({ channel }: { channel: string }) => `Сведения о выпуске ${channel} из кэша; здесь не обновляются`,
-          manualUpdateInterruptsSessions: "Обновите на этом компьютере. Службы могут остановиться, а активные сеансы — завершиться.",
+          cachedRelease: 'Новейшая версия по прошлой проверке',
+          cachedReleaseChannel: ({ channel }: { channel: string }) => `Новейшая версия ${channel} по прошлой проверке`,
+          manualUpdateInterruptsSessions: 'Обновите на этой машине тем же способом, каким устанавливали; запущенные сессии могут завершиться.',
           latestUnknown: "Не удалось проверить наличие новой версии",
           uncheckedTools: ({ count }: { count: number }) => `Не удалось проверить инструменты: ${count}`,
           rolledBack: ({ kept, target }: { kept: string; target: string }) => `Версия ${target} не запустилась на этой машине, поэтому осталась ${kept}.`,

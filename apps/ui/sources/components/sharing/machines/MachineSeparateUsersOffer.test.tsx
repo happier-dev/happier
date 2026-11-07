@@ -8,6 +8,11 @@ import { t } from '@/text';
 import { MachineSeparateUsersOffer, SeparateUsersChangeStep, useSeparateUsersChange } from './MachineSeparateUsersOffer';
 import { createFrontDoorActionExecute } from '@/sync/ops/actions/frontDoorRuntimeActionExecutor';
 
+const router = vi.hoisted(() => ({ push: vi.fn() }));
+vi.mock('expo-router', async () => {
+    const { createExpoRouterMock } = await import('@/dev/testkit/mocks/router');
+    return createExpoRouterMock({ router }).module;
+});
 vi.mock('react-native', async () => {
     const { createReactNativeWebMock } = await import('@/dev/testkit/mocks/reactNative');
     return createReactNativeWebMock();
@@ -36,13 +41,15 @@ describe('separate users reviewed setup', () => {
         function Surface() {
             const guestExecution = useMachineGuestExecution({ machineId: 'machine', scope: { serverId: 'home', accountId: 'owner' },
                 canManage: true, execute });
-            return <MachineSeparateUsersOffer machine="Devbox" guestExecution={guestExecution} idPrefix="" />;
+            change = useSeparateUsersChange({ machine: 'Devbox', guestExecution, target: 'member' });
+            return <SeparateUsersChangeStep change={change} machine="Devbox" testID="machine-security-separate-users" />;
         }
+        let change!: ReturnType<typeof useSeparateUsersChange>;
         const screen = await renderScreen(<Surface />);
         try {
-            await screen.pressByTestIdAsync('machine-share-separate-users-turn-on');
-            await vi.waitFor(() => expect(screen.findAllByTestId('machine-share-separate-users-confirm').length).toBeGreaterThan(0));
-            await screen.pressByTestIdAsync('machine-share-separate-users-confirm');
+            await act(async () => { await change.review(); });
+            await vi.waitFor(() => expect(screen.findAllByTestId('machine-security-separate-users-confirm').length).toBeGreaterThan(0));
+            await screen.pressByTestIdAsync('machine-security-separate-users-confirm');
             await vi.waitFor(() => expect(admitted).toBe(true));
             await screen.unmount();
             release();
@@ -78,17 +85,19 @@ describe('separate users reviewed setup', () => {
         function Surface() {
             const guestExecution = useMachineGuestExecution({ machineId: 'machine', scope: { serverId: 'home', accountId: 'owner' },
                 canManage: true, execute });
-            return <MachineSeparateUsersOffer machine="Devbox" guestExecution={guestExecution} idPrefix="" />;
+            change = useSeparateUsersChange({ machine: 'Devbox', guestExecution, target: 'member' });
+            return <SeparateUsersChangeStep change={change} machine="Devbox" testID="machine-security-separate-users" />;
         }
+        let change!: ReturnType<typeof useSeparateUsersChange>;
         const screen = await renderScreen(<Surface />);
         try {
             expect(reads).toBe(0);
-            await screen.pressByTestIdAsync('machine-share-separate-users-turn-on');
+            await act(async () => { await change.review(); });
             await vi.waitFor(() => expect(screen.getTextContent()).toContain(message()));
-            expect(screen.findAllByTestId('machine-share-separate-users-result-action').length).toBeGreaterThan(0);
-            expect(screen.findAllByTestId('machine-share-separate-users-confirm')).toHaveLength(0);
+            expect(screen.findAllByTestId('machine-security-separate-users-result-action').length).toBeGreaterThan(0);
+            expect(screen.findAllByTestId('machine-security-separate-users-confirm')).toHaveLength(0);
             expect(reads).toBe(1);
-            await screen.pressByTestIdAsync('machine-share-separate-users-result-action');
+            await screen.pressByTestIdAsync('machine-security-separate-users-result-action');
             await vi.waitFor(() => expect(reads).toBe(2));
         } finally { await screen.unmount(); }
     });
@@ -117,7 +126,7 @@ describe('Security tab: how agents run, changed through the same review', () => 
             const guestExecution = useMachineGuestExecution({ machineId: 'machine', scope: { serverId: 'home', accountId: 'owner' },
                 canManage: true, execute });
             change = useSeparateUsersChange({ machine: 'vps-1', guestExecution, target });
-            return <SeparateUsersChangeStep change={change} machine="vps-1" testID="machine-security-separate-users" presentation="section" />;
+            return <SeparateUsersChangeStep change={change} machine="vps-1" testID="machine-security-separate-users" />;
         }
         const screen = await renderScreen(<Surface />);
         try {
@@ -135,6 +144,29 @@ describe('Security tab: how agents run, changed through the same review', () => 
             expect((calls[1]!.input as { memberProvisioning?: string }).memberProvisioning).toBe(memberProvisioning);
             await vi.waitFor(() => expect(screen.getTextContent())
                 .toContain(t('machineDetailPage.security.admin.agentsRunAsChanging', { machine: 'vps-1' })));
+        } finally { await screen.unmount(); }
+    });
+});
+
+describe('Sharing leads to the one review of how agents run', () => {
+    it('opens the Machine\u2019s Security tab instead of reviewing in the share sheet', async () => {
+        router.push.mockReset();
+        const execute = createFrontDoorActionExecute(createActionExecutor({ machineAgentIsolationAction: async () => {
+            throw new Error('Sharing must not preview');
+        } }));
+        function Surface() {
+            const guestExecution = useMachineGuestExecution({ machineId: 'machine-1', scope: { serverId: 'home', accountId: 'owner' },
+                canManage: true, execute });
+            return <MachineSeparateUsersOffer machine="Devbox" guestExecution={guestExecution} idPrefix="" />;
+        }
+        const screen = await renderScreen(<Surface />);
+        try {
+            await screen.pressByTestIdAsync('machine-share-separate-users-turn-on');
+            expect(router.push).toHaveBeenCalledTimes(1);
+            const href = String(router.push.mock.calls[0]![0]);
+            expect(href).toContain('/machine-1');
+            expect(href).toContain('tab=security');
+            expect(screen.findAllByTestId('machine-share-separate-users-review')).toHaveLength(0);
         } finally { await screen.unmount(); }
     });
 });

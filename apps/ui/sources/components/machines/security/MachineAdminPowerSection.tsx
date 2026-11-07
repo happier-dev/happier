@@ -51,6 +51,8 @@ export type MachineSeparateUsersControl = Readonly<{
   value: MachineAgentRunAs | null;
   busy: boolean;
   onChoose: (next: MachineAgentRunAs) => void;
+  /** Separate users are set but not running: the same review, for the policy already chosen. */
+  onRepair: (() => void) | null;
   step: React.ReactNode;
 }>;
 
@@ -178,6 +180,8 @@ export function MachineAdminPowerSection(
       separateUsers={{
         value: guest.runAs === null ? null : draftRunAs ?? guest.runAs,
         busy: phaseKind === 'previewing' || phaseKind === 'applying' || phaseKind === 'approval',
+        onRepair: guest.availability.kind === 'repairable' && guest.runAs !== null && phaseKind === 'offer'
+          ? () => setDraftRunAs(guest.runAs) : null,
         onChoose: (next) => {
           if (next === guest.runAs) {
             resetChange();
@@ -189,7 +193,6 @@ export function MachineAdminPowerSection(
             change={change}
             machine={props.machineName}
             testID="machine-security-separate-users"
-            presentation="section"
             openApproval={props.onOpenApproval}
           />
         ),
@@ -276,7 +279,8 @@ export function MachineAdminPowerView(
         description={
           <Text>
             <HeadlineStatement>{headline.statement}</HeadlineStatement>
-            {headline.rest ? ` ${headline.rest}` : null}
+            {headline.rest ? ' ' : null}
+            {headline.rest ? <HeadlineRest attention={headline.attention}>{headline.rest}</HeadlineRest> : null}
           </Text>
         }
       >
@@ -284,11 +288,7 @@ export function MachineAdminPowerView(
           <Item
             testID="machine-security-admin-runs-as"
             title={t(`${s}.runsAs`)}
-            subtitle={
-              observation.daemonIdentity === 'root'
-                ? t(`${s}.runsAsRoot`)
-                : undefined
-            }
+            subtitle={describeRunsAs(authority, observation.daemonIdentity === 'root')}
             showChevron={false}
             rightElement={<InlineCode>{observation.daemonUsername}</InlineCode>}
           />
@@ -370,6 +370,20 @@ export function MachineAdminPowerView(
           />
         </ItemGroup>
       ) : null}
+      {props.canManage && props.online === true && separateUsers?.onRepair ? (
+        // The row already says it isn't running yet; the repair is its next action, beneath the sheet.
+        <ItemGroup surface="none">
+          <SectionButtonRow testID="machine-security-separate-users-repair">
+            <RoundButton
+              testID="machine-security-separate-users-repair-review"
+              size="small"
+              display="secondary"
+              title={t('machines.sharing.fallback.reviewAgain')}
+              onPress={separateUsers.onRepair}
+            />
+          </SectionButtonRow>
+        </ItemGroup>
+      ) : null}
       {props.canManage ? separateUsers?.step : null}
       <AdminAccessSaveFoot
         machineName={machine}
@@ -382,6 +396,32 @@ export function MachineAdminPowerView(
 }
 
 /** The headline's statement in ink, the rest in the description's own tone (lab "Administrator power" lead). */
+/** What the rest of the headline says about agents; amber when agents hold administrator power (lab `security/off`). */
+function HeadlineRest(props: Readonly<{ attention: boolean; children: React.ReactNode }>) {
+  const { theme } = useUnistyles();
+  return props.attention
+    ? <Text style={{ color: theme.colors.state.warning.textForeground }}>{props.children}</Text>
+    : <>{props.children}</>;
+}
+
+/** How Happier's own service account runs, from the observed service and account facts; unknown facts say nothing. */
+export function describeRunsAs(
+  authority: Pick<MachineAuthorityModel, 'daemonService' | 'daemonAccount'>,
+  root: boolean,
+): string | undefined {
+  if (root) return t(`${s}.runsAsRoot`);
+  const { mode, startsAtBoot } = authority.daemonService;
+  const { passwordLocked, loginShell } = authority.daemonAccount;
+  const noLogin = loginShell != null && /(nologin|\/false)$/.test(loginShell);
+  const facts = [
+    mode === 'system' ? t(`${s}.runsAsSystemService`) : mode === 'user' ? t(`${s}.runsAsUserService`) : null,
+    startsAtBoot === true ? t(`${s}.runsAsStartsAtBoot`) : null,
+    passwordLocked === true ? t(`${s}.runsAsNoPassword`) : null,
+    noLogin ? t(`${s}.runsAsNoSignIn`) : null,
+  ].filter((fact): fact is string => fact !== null);
+  return facts.length > 0 ? facts.join(' · ') : undefined;
+}
+
 function HeadlineStatement(props: Readonly<{ children: React.ReactNode }>) {
   const { theme } = useUnistyles();
   return <Text emphasis="semiBold" style={{ color: theme.colors.text.primary }}>{props.children}</Text>;
@@ -395,9 +435,8 @@ function describeIsolation(
     ? `${s}.isolationUnknown` : `${s}.isolationUnavailable`);
   if (availability.kind === 'can_turn_on'
     && (authority.isolation == null || authority.isolation.kind === 'unavailable')) return t(`${s}.isolationOff`);
-  // Asked for, not observed running: the switch is on, the Machine hasn't caught up.
-  if (availability.kind === 'available' && authority.isolation != null && authority.isolation.kind !== 'effective'
-    && authority.isolation.kind !== 'applying') return t(`${s}.isolationPending`);
+  // Separate users asked for, not observed running: the presenter's repairable state (the review repairs it).
+  if (availability.kind === 'repairable') return t(`${s}.isolationPending`);
   switch (authority.isolation?.kind) {
     case 'effective':
       return t(authority.separateUsers.placement === 'member' ? `${s}.isolationMember` : `${s}.isolationEffective`);

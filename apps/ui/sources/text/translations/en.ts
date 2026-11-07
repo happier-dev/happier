@@ -2995,6 +2995,7 @@ const enWebCryptoGate = {
 };
 
 const enCommon = {
+  hide: "Hide",
   stop: "Stop",
   unknown: 'Unknown',
   undo: 'Undo',
@@ -4200,11 +4201,11 @@ const enSettings = {
   machineSetupTaskWaitingForInput: 'Waiting for input',
   machineEnrollRemoteSshTargetLabel: 'SSH target',
   machineEnrollRemoteSshTargetPlaceholder: 'user@host',
-  machineEnrollRemoteSshUsernameLabel: 'SSH username',
+  machineEnrollRemoteSshUsernameLabel: 'Sign in as',
   machineEnrollRemoteSshUsernamePlaceholder: 'ubuntu',
-  machineEnrollRemoteSshHostLabel: 'SSH host',
+  machineEnrollRemoteSshHostLabel: 'Address',
   machineEnrollRemoteSshHostPlaceholder: 'example.test',
-  machineEnrollRemoteSshPortLabel: 'SSH port',
+  machineEnrollRemoteSshPortLabel: 'Port',
   machineEnrollRemoteSshPortPlaceholder: '22',
   machineEnrollRemoteSshAuthMethodLabel: 'Authentication method',
   machineEnrollRemoteSshAgentAuthLabel: 'Use SSH agent',
@@ -13527,6 +13528,16 @@ const enBrowserLaunchpad = {
 };
 
 const enBrowserShell = {
+
+  engineSwitch: {
+
+    managed: "Open in managed browser",
+
+    embedded: "Open here",
+
+    signInAgain: "You may need to sign in again",
+
+  },
   viewport: { title: 'Device preview', fitViewer: 'Fit viewer' },
   address: {
     label: 'Browser address',
@@ -13537,7 +13548,7 @@ const enBrowserShell = {
     errorTitle: 'Page failed to load',
   },
   nonFramable: {
-    title: 'This site refuses to be embedded.',
+    title: 'This site can’t open inside Happier.',
     openInSystemBrowser: 'Open in system browser',
   },
   toolbar: {
@@ -21949,7 +21960,6 @@ const enProjects = {
       healthDegraded: "Degraded",
       healthNotChecked: "Not checked yet",
       servicesTitle: "Services",
-      servicesDescription: ({ machine }: { machine: string }) => `What the Compose file runs on ${machine} for this environment. Logs and restarts live on the Machine’s Services page.`,
       servicesFact: ({ count }: { count: number }) => `${count} deployed`,
       openOnMachine: ({ machine }: { machine: string }) => `Open on ${machine}`,
       rolloutFactStartFirst: "No downtime",
@@ -21963,7 +21973,6 @@ const enProjects = {
       addPaste: "Paste a .env file…",
       openMachineServices: "Open Services",
       serviceBuiltHere: "Built by this deploy",
-      servicesDescriptionAny: "What the Compose file runs for this environment. Logs and restarts live on the Machine’s Services page.",
       nothingDeployedBodyAny: "The first deploy builds the Compose file and starts it.",
       addSaved: "Use a saved secret…",
       addSavedHint: "Bind one you already saved",
@@ -22087,7 +22096,6 @@ const enProjects = {
       dataTitle: "Data",
       dataAdd: "Add a database",
       dataEmptyShort: "No database yet",
-      dataConnectionGuide: "Install a database from Store as its own Environment. Then connect it through Variables using an Environment export or a saved secret binding.",
       dataVariables: "Open Variables",
       dataBackups: "Backups",
       dataService: ({ service, port }: { service: string; port: number }) => `${service} · port ${port}`,
@@ -23281,9 +23289,9 @@ const enUpdates = {
     appCheckFailed: 'Couldn’t check for a newer version.',
     appDownloadFailed: 'The download didn’t finish.',
     appInstallFailed: 'The update couldn’t be installed.',
-    cachedRelease: 'Cached release information; not refreshed here',
-    cachedReleaseChannel: ({ channel }: { channel: string }) => `Cached ${channel} release information; not refreshed here`,
-    manualUpdateInterruptsSessions: 'Update on this machine. Services may stop and running sessions may end.',
+    cachedRelease: 'Newest version from an earlier check',
+    cachedReleaseChannel: ({ channel }: { channel: string }) => `Newest ${channel} version from an earlier check`,
+    manualUpdateInterruptsSessions: 'Update it on this machine the way you installed it; running sessions may end.',
     latestUnknown: 'Couldn’t check for a newer version',
     uncheckedTools: ({ count }: { count: number }) => `Couldn’t check ${count} tools for a newer version`,
     rolledBack: ({ kept, target }: { kept: string; target: string }) =>

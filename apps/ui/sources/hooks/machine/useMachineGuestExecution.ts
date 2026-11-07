@@ -51,7 +51,7 @@ export function useMachineGuestExecution(input: Readonly<{
         : Promise.resolve(UNBOUND),
     [execute, serverId, accountId, machineId]);
     const bound = scope !== null && input.canManage;
-    return { placement, availability: separateUsers.availability, isolation: readiness,
+    return { machineId, serverId, placement, availability: separateUsers.availability, isolation: readiness,
         canEnableSeparateUsers: bound && separateUsers.availability.kind === 'can_turn_on',
         /** The Machine's current policy, readable on a supported Machine; the owner changes it through the review. */
         runAs: separateUsers.availability.kind === 'unavailable' ? null : placement,

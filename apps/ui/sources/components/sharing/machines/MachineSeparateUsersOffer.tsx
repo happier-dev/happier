@@ -15,10 +15,10 @@ import {
 } from '@/components/ui/buttons/RoundButton';
 import { SurfaceStateCard } from '@/components/ui/surfaces/SurfaceStateCard';
 import { ItemGroup } from '@/components/ui/lists/ItemGroup';
-import {
-  AgentIsolationEffectsGroup,
-  describeAgentIsolationEffects,
-} from '@/components/inbox/actionOperations/agentIsolationEffects';
+import { AgentIsolationEffectsGroup } from '@/components/inbox/actionOperations/agentIsolationEffects';
+import { useRouter } from '@/components/appShell/workspace/destinationRoute';
+import { useMachinesDoor } from '@/components/machines/page/machinesDoor';
+import { machinePageHref } from '@/components/machines/page/machinePageHref';
 import { Text } from '@/components/ui/text/Text';
 import { Typography } from '@/constants/Typography';
 import type { MachineAgentRunAs, useMachineGuestExecution } from '@/hooks/machine/useMachineGuestExecution';
@@ -175,6 +175,12 @@ export function useSeparateUsersChange(
 
 export type SeparateUsersChange = ReturnType<typeof useSeparateUsersChange>;
 
+const CONFIRM_KEYS = {
+  member: 'machineDetailPage.security.admin.agentsRunAsConfirmMember',
+  sharedAgent: 'machineDetailPage.security.admin.agentsRunAsConfirmShared',
+  daemon: 'machineDetailPage.security.admin.agentsRunAsConfirmDaemon',
+} as const satisfies Record<MachineAgentRunAs, string>;
+
 const REVIEW_TITLE_KEYS = {
   member: 'machineDetailPage.security.admin.agentsRunAsReviewMember',
   sharedAgent: 'machineDetailPage.security.admin.agentsRunAsReviewShared',
@@ -182,26 +188,21 @@ const REVIEW_TITLE_KEYS = {
 } as const satisfies Record<MachineAgentRunAs, string>;
 
 /**
- * The change's step after the offer: checking, the reviewed effects with Cancel and the confirm, the
- * waiting approval, or the result with its one next action. Renders nothing while only offered.
- * `section`: a page section of its own (the Security tab); `inline`: lines under the trust line it
- * answers (Sharing). Both say the same effects, from `describeAgentIsolationEffects`.
+ * The change's step after the choice: checking, the reviewed effects with Cancel and the named confirm,
+ * the waiting approval, or the result with its one next action. Renders nothing while only offered.
+ * This is the one review of how agents run (Security); Sharing's offer leads here instead of drawing its own.
  */
 export function SeparateUsersChangeStep(
   props: Readonly<{
     change: SeparateUsersChange;
     machine: string;
     testID: string;
-    presentation: 'inline' | 'section';
     openApproval?: (artifactId: string) => void;
   }>,
 ) {
   const { change, machine, testID } = props;
   const { phase } = change;
-  const section = props.presentation === 'section';
-  const wrap = (node: React.ReactNode) => section
-    ? <ItemGroup surface="none">{node}</ItemGroup>
-    : <View style={styles.block} testID={testID}>{node}</View>;
+  const wrap = (node: React.ReactNode) => <ItemGroup surface="none">{node}</ItemGroup>;
   if (phase.kind === 'offer') return null;
   if (phase.kind === 'previewing')
     return wrap(
@@ -216,55 +217,36 @@ export function SeparateUsersChangeStep(
   if (phase.kind === 'review' || phase.kind === 'applying') {
     const preview = phase.preview;
     const applying = phase.kind === 'applying';
-    const actions = (
-      <RoundButtonSizeScope size="small">
-        <View style={section ? styles.sectionActions : styles.actions}>
-          <RoundButton
-            testID={`${testID}-cancel`}
-            display="secondary"
-            title={t('common.cancel')}
-            disabled={applying}
-            onPress={change.reset}
-          />
-          <RoundButton
-            testID={`${testID}-confirm`}
-            title={change.target === 'member'
-              ? t('machines.sharing.fallback.confirm')
-              : t('machineDetailPage.security.admin.agentsRunAsConfirm')}
-            loading={applying}
-            disabled={applying}
-            onPress={() => {
-              void change.apply(preview);
-            }}
-          />
-        </View>
-      </RoundButtonSizeScope>
-    );
-    if (section)
-      return (
-        <View testID={`${testID}-review`}>
-          <AgentIsolationEffectsGroup
-            enabled={change.enabled}
-            plan={preview.plan}
-            metadataVersion={preview.metadataVersion}
-            title={t(REVIEW_TITLE_KEYS[change.target], { machine })}
-          />
-          <ItemGroup surface="none">{actions}</ItemGroup>
-        </View>
-      );
-    const effects = describeAgentIsolationEffects(change.enabled, preview.plan)
-      .filter((effect) => effect.key !== 'policy');
     return (
-      <View style={styles.block} testID={`${testID}-review`}>
-        {effects.map((effect) => (
-          <Text key={effect.key} style={styles.line}>
-            <Text style={styles.lineTitle}>
-              {effect.count !== undefined ? `${effect.title} · ${effect.count}` : effect.title}
-            </Text>
-            {effect.hint ? ` ${effect.hint}` : null}
-          </Text>
-        ))}
-        {actions}
+      <View testID={`${testID}-review`}>
+        <AgentIsolationEffectsGroup
+          enabled={change.enabled}
+          plan={preview.plan}
+          metadataVersion={preview.metadataVersion}
+          title={t(REVIEW_TITLE_KEYS[change.target], { machine })}
+        />
+        <ItemGroup surface="none">
+          <RoundButtonSizeScope size="small">
+            <View style={styles.sectionActions}>
+              <RoundButton
+                testID={`${testID}-cancel`}
+                display="secondary"
+                title={t('common.cancel')}
+                disabled={applying}
+                onPress={change.reset}
+              />
+              <RoundButton
+                testID={`${testID}-confirm`}
+                title={t(CONFIRM_KEYS[change.target])}
+                loading={applying}
+                disabled={applying}
+                onPress={() => {
+                  void change.apply(preview);
+                }}
+              />
+            </View>
+          </RoundButtonSizeScope>
+        </ItemGroup>
       </View>
     );
   }
@@ -315,48 +297,38 @@ export function SeparateUsersChangeStep(
 
 /**
  * The Linux owner's way out of the fallback, said under the trust line it answers: separate users give
- * each person their own operating-system user. Turning them on shows the reviewed effects first and
- * applies only on the person's own confirmation.
+ * each person their own operating-system user. How agents run is one choice with one review, in the
+ * Machine's Security tab; this offer leads there.
  */
 export function MachineSeparateUsersOffer(
   props: Readonly<{
     machine: string;
     guestExecution: ReturnType<typeof useMachineGuestExecution>;
     idPrefix: string;
-    openApproval?: (artifactId: string) => void;
   }>,
 ) {
-  const { machine, guestExecution, idPrefix } = props;
-  const change = useSeparateUsersChange({ machine, guestExecution, target: 'member' });
-  const testID = `${idPrefix}machine-share-separate-users`;
-  if (change.phase.kind === 'offer')
-    return (
-      <View style={styles.block} testID={testID}>
-        <Text style={styles.line}>
-          {t('machines.sharing.fallback.offer', { machine })}
-        </Text>
-        {/* The same quiet bordered button the review step and the Secrets row operations use. */}
-        <View style={styles.actions}>
-          <RoundButton
-            size="small"
-            display="secondary"
-            title={t('machines.sharing.fallback.turnOn')}
-            testID={`${testID}-turn-on`}
-            onPress={() => {
-              void change.review();
-            }}
-          />
-        </View>
-      </View>
-    );
+  const router = useRouter();
+  const door = useMachinesDoor();
+  const { machineId, serverId } = props.guestExecution;
+  const testID = `${props.idPrefix}machine-share-separate-users`;
   return (
-    <SeparateUsersChangeStep
-      change={change}
-      machine={machine}
-      testID={testID}
-      presentation="inline"
-      {...(props.openApproval ? { openApproval: props.openApproval } : {})}
-    />
+    <View style={styles.block} testID={testID}>
+      <Text style={styles.line}>{t('machines.sharing.fallback.offer', { machine: props.machine })}</Text>
+      {/* The same quiet bordered button the Secrets row operations use. */}
+      <View style={styles.actions}>
+        <RoundButton
+          size="small"
+          display="secondary"
+          title={t('machines.sharing.fallback.turnOn')}
+          testID={`${testID}-turn-on`}
+          onPress={() => router.push(machinePageHref({
+            door,
+            target: { machineId, ...(serverId ? { serverId } : {}) },
+            tab: { id: 'security' },
+          }) as never)}
+        />
+      </View>
+    </View>
   );
 }
 
@@ -369,9 +341,6 @@ const styles = StyleSheet.create((theme) => ({
     ...Typography.default(),
     ...happierPageTextMetrics('rowDescription'),
     color: theme.colors.text.secondary,
-  },
-  lineTitle: {
-    color: theme.colors.text.primary,
   },
   actions: {
     flexDirection: 'row',
