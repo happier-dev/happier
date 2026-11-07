@@ -1,3 +1,5 @@
+import { RPC_ERROR_CODES } from '@happier-dev/protocol/rpc';
+import { CredentialRequestRedirectError } from '@happier-dev/cli-common/homeTarget';
 import { isMachineStoppedAnsweringError, MACHINE_RPC_TIMEOUT_ERROR_CODE } from '@/sync/runtime/orchestration/serverScopedRpc/machineRpcTimeoutError';
 import {
     DIRECT_IMPORT_FINALIZE_OUTCOME_INDETERMINATE_ERROR_CODE,
@@ -10,6 +12,7 @@ import {
  * Machine timeout for an abort or deadline, so a caller can word "isn't answering" instead of the transport's text.
  */
 export function readTransferFailureCode(error: unknown): string | undefined {
+    if (error instanceof CredentialRequestRedirectError) return error.code;
     if (error && typeof error === 'object' && typeof (error as { errorCode?: unknown }).errorCode === 'string') {
         return (error as { errorCode: string }).errorCode;
     }
@@ -22,14 +25,19 @@ export function readTransferFailureCode(error: unknown): string | undefined {
  * permission refused it, its carrier is unavailable/interrupted, it is too large, the result is not known, or the
  * Machine could not take it. A carrier failure is not evidence of a Machine-side refusal.
  */
-export type TransferFailureReason = 'unreachable' | 'carrierUnavailable' | 'carrierInterrupted' | 'declined' | 'permission' | 'tooLarge' | 'unconfirmed' | 'other';
+export type TransferFailureReason =
+    | 'unreachable' | 'carrierUnavailable' | 'carrierInterrupted' | 'declined' | 'accessRefused' | 'teamSignIn'
+    | 'updateRequired' | 'executionUnavailable' | 'permission' | 'tooLarge' | 'unconfirmed' | 'other';
 
 const REACHABILITY_CODES: ReadonlySet<string> = new Set([MACHINE_RPC_TIMEOUT_ERROR_CODE, 'server_unreachable', 'home_unreachable']);
 const DECLINED_CODES: ReadonlySet<string> = new Set(['approval_canceled', 'approval_rejected', 'approval_stale']);
-const PERMISSION_CODES: ReadonlySet<string> = new Set([
-    'credential_scope_denied', 'permission_denied', 'forbidden', 'access_denied', 'role_policy_denied',
-    'project_context_access_denied', 'EACCES', 'EPERM',
+// Happier refused this caller's access (its credential, grant or role), so only the owner can change it.
+const ACCESS_REFUSED_CODES: ReadonlySet<string> = new Set([
+    RPC_ERROR_CODES.FORBIDDEN, 'credential_scope_denied', 'forbidden', 'access_denied', 'role_policy_denied',
+    'project_context_access_denied',
 ]);
+// The Machine's own file system refused the write.
+const PERMISSION_CODES: ReadonlySet<string> = new Set(['permission_denied', 'EACCES', 'EPERM']);
 // An acknowledgement that never arrived, or a finalize the Machine may have committed: the result is not known.
 const UNCONFIRMED_CODES: ReadonlySet<string> = new Set([
     'outcome_uncertain', 'outcome_unknown', 'action_outcome_unknown', 'approval_execution_outcome_unknown', 'indeterminate',
@@ -50,6 +58,10 @@ export function classifyTransferFailure(failure: Readonly<{ errorCode?: string |
     if (code === 'machine_carrier_transport_failed') return 'carrierInterrupted';
     if (REACHABILITY_CODES.has(code)) return 'unreachable';
     if (DECLINED_CODES.has(code)) return 'declined';
+    if (ACCESS_REFUSED_CODES.has(code)) return 'accessRefused';
+    if (code === RPC_ERROR_CODES.TEAM_AUTHENTICATION_REQUIRED) return 'teamSignIn';
+    if (code === RPC_ERROR_CODES.UPDATE_REQUIRED) return 'updateRequired';
+    if (code === 'agent_isolation_unavailable') return 'executionUnavailable';
     if (PERMISSION_CODES.has(code)) return 'permission';
     if (UNCONFIRMED_CODES.has(code)) return 'unconfirmed';
     return TOO_LARGE_CODE.test(code) ? 'tooLarge' : 'other';
