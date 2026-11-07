@@ -25,8 +25,7 @@ export const AGENT_INPUT_CONTROL_REGISTRY = [
     { id: 'engine', line: 'primary', titleKey: 'newSession.wizardSection.model', icon: 'sparkle', defaultPlacement: 'pinned', menu: { disclosure: true } },
     { id: 'permission', line: 'primary', titleKey: 'newSession.wizardSection.permission', icon: 'shield-check', defaultPlacement: 'pinned', allowedPlacements: ['pinned', 'overflow'], menu: { disclosure: true } },
     { id: 'mode', line: 'primary', titleKey: 'agentInput.mode.sectionTitle', icon: 'rocket-launch', defaultPlacement: 'pinned', menu: { disclosure: true } },
-    // Where the models come from stands beside the model by default (J-SESSION UX2; routing lab `comp`).
-    { id: 'connectedServices', line: 'primary', titleKey: 'connectedServices.authChip.popoverTitle', icon: 'path', defaultPlacement: 'pinned' },
+    { id: 'connectedServices', line: 'primary', titleKey: 'connectedServices.authChip.popoverTitle', icon: 'path', defaultPlacement: 'overflow' },
     { id: 'profile', line: 'primary', titleKey: 'newSession.wizardSection.profile', icon: 'user-circle', defaultPlacement: 'overflow', menu: { disclosure: true } },
     { id: 'env', line: 'primary', titleKey: 'agentInput.envVars.title', icon: 'list', defaultPlacement: 'overflow', menu: { disclosure: true } },
     // Stop leads "the rest", so a running turn's stop never hides behind the rail's scroll.
