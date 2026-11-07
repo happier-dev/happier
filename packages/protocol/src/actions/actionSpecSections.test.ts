@@ -1,11 +1,23 @@
 import { describe, expect, it, vi } from 'vitest';
-import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, projectActionDefinitionForExternalDiscovery } from './actionCatalog.js';
+import { actionSpecToActionDefinitionV1, freezeWorkflowActionContractV1, projectActionDefinitionForExternalDiscovery, readWorkflowActionOutputSchemaV1 } from './actionCatalog.js';
 import { getActionSpec, listActionSpecs } from './actionSpecs.js';
 import { projectActionSpecSchemaSections, readCompleteActionSpecV1 } from './actionSpecSections.js';
 import { freezeActionCompletionContractV1 } from './actionCompletion.js';
 import { createActionExecutor } from './actionExecutor.js';
 
 describe('Action schema sections', () => {
+  it('stores the frozen deploy terminal schema once across output and completion', () => {
+    const definition = actionSpecToActionDefinitionV1(getActionSpec('deployments.deploy'));
+    const contract = freezeWorkflowActionContractV1(definition)!;
+    const terminal = JSON.stringify(freezeActionCompletionContractV1(getActionSpec('deployments.deploy').completion!).terminalOutputSchema);
+    const serialized = JSON.stringify(contract);
+    expect(serialized.split(terminal).length - 1).toBe(1);
+    expect(new TextEncoder().encode(serialized).byteLength).toBeLessThan(2 * new TextEncoder().encode(terminal).byteLength);
+    const restored = JSON.parse(serialized);
+    expect(readWorkflowActionOutputSchemaV1(restored)).toEqual(JSON.parse(terminal));
+    expect(readWorkflowActionOutputSchemaV1({ ...restored, outputSchema: JSON.parse(terminal) })).toEqual(JSON.parse(terminal));
+  });
+
   it('reads each complete native Workflow leaf through one CLI Action admission', async () => {
     const executor = createActionExecutor({});
     const leaves = ['machines.setup.apply', 'deployments.deploy'] as const;
@@ -30,7 +42,7 @@ describe('Action schema sections', () => {
       read: async input => projectActionSpecSchemaSections(full, input.schemaPath) });
     expect(discovered).toHaveProperty('completion', freezeActionCompletionContractV1(spec.completion!));
     expect(freezeWorkflowActionContractV1(discovered)).toEqual({ inputSchema: discovered.inputSchema,
-      outputSchema: freezeActionCompletionContractV1(spec.completion!).terminalOutputSchema,
+      outputSchema: { $ref: '#/completion/terminalOutputSchema' }, secretInputPaths: [],
       completion: freezeActionCompletionContractV1(spec.completion!) });
   });
 
@@ -38,9 +50,13 @@ describe('Action schema sections', () => {
     const completion = freezeActionCompletionContractV1(getActionSpec('subagents.plan.start').completion!);
     const definition = projectActionDefinitionForExternalDiscovery({ ...actionSpecToActionDefinitionV1(getActionSpec('action.spec.get')),
       id: 'external.workflow-test/check', inputSchema: { type: 'object' }, outputSchema: { type: 'string' }, completion });
-    expect(freezeWorkflowActionContractV1(definition)).toMatchObject({ completion, outputSchema: completion.terminalOutputSchema });
+    const frozen = freezeWorkflowActionContractV1(definition);
+    expect(frozen).toMatchObject({ completion, outputSchema: { $ref: '#/completion/terminalOutputSchema' } });
+    expect(readWorkflowActionOutputSchemaV1(frozen ?? undefined)).toEqual(completion.terminalOutputSchema);
     expect(freezeWorkflowActionContractV1({ outputSchema: { type: 'string' } }))
-      .toEqual({ inputSchema: {}, outputSchema: { type: 'string' } });
+      .toEqual({ inputSchema: {}, outputSchema: { type: 'string' }, secretInputPaths: [] });
+    expect(readWorkflowActionOutputSchemaV1(freezeWorkflowActionContractV1({ outputSchema: { type: 'string' } }) ?? undefined))
+      .toEqual({ type: 'string' });
     expect(freezeWorkflowActionContractV1({ outputSchema: {} , completion: { awaits: 'unknown' } })).toBeNull();
     expect(freezeWorkflowActionContractV1({ inputSchema: {} })).toBeNull();
   });

@@ -1,4 +1,5 @@
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '@happier-dev/protocol/actions/externalActionLimits';
+import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { decodeExecutionRunResultObservation, validateExecutionRunProfileResult } from '@happier-dev/protocol/execution/runs/resultContract';
 import { classifyWorkflowReviewEntryV1, applyWorkflowInvocationFactV1, WorkflowRunInvocationIndexV1Schema, WorkflowRunSummaryV1Schema } from '@happier-dev/protocol/workflows/workflowProgressV1';
 import { resolveWorkflowInvocationStructureV1, type WorkflowInvocationBindingRowV1 } from '@happier-dev/protocol/workflows/workflowInvocationStructureV1';
@@ -266,7 +267,7 @@ export function createWorkflowInvocationRecoveryFactWriter(params: Readonly<{
       const consent = readWorkflowProjectSetupConsentHold(step.actionId, observation.result);
       if (consent) return { kind: 'unresolved', code: consent.code };
       const contract = await resolveFrozenActionContract(invocation);
-      const schema = contract?.outputSchema;
+      const schema = readWorkflowActionOutputSchemaV1(contract);
       if (!isWorkflowJsonObject(schema)) {
         return { kind: 'unresolved', code: 'workflow_invocation_binding_unavailable' };
       }

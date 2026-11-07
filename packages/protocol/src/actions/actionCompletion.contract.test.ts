@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { z } from 'zod/mini';
+import { getActionSpec } from './actionSpecs.js';
 import {
   freezeActionCompletionContractV1, prepareActionCompletionV1, resumeActionCompletionV1,
   projectCommandActionCompletionV1,
@@ -173,7 +174,7 @@ describe('generic Action completion seam', () => {
     expect(prepareActionCompletionV1(undefined, { ok: true, result: 'immediate' }))
       .toEqual({ kind: 'completed', value: 'immediate' });
     expect(prepareActionCompletionV1(declaration, { ok: false, errorCode: 'denied', error: 'denied' }))
-      .toEqual({ kind: 'failed', errorCode: 'denied' });
+      .toEqual({ kind: 'failed', errorCode: 'denied', error: 'denied' });
   });
 
   it('does not manufacture a terminal value when the observation transport cannot establish an outcome', async () => {
@@ -186,7 +187,6 @@ describe('generic Action completion seam', () => {
   });
 
   it('keeps a partially acknowledged review launch uncertain after valid known-run completion', async () => {
-    const { getActionSpec } = await import('./actionSpecs.js');
     const review = getActionSpec('review.start').completion;
     if (!review) throw new Error('Review completion declaration missing');
     const prepared = prepareActionCompletionV1(review, { ok: true, result: {

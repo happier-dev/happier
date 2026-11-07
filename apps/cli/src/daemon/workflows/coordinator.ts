@@ -1,4 +1,5 @@
 import { classifyWorkflowHoldV1, classifyWorkflowReviewEntryV1, projectWorkflowLoopItemDisplayLabelV1 } from '@happier-dev/protocol/workflows/workflowProgressV1';
+import { readWorkflowActionOutputSchemaV1 } from '@happier-dev/protocol/actions/actionCatalog';
 import { freezeWorkflowLoopLimitsV1, projectWorkflowFiniteActionInputV1 } from '@happier-dev/protocol/workflows/materializeWorkflowAcceptedSnapshotV1';
 import { resolveWorkflowAcceptedStepSelectionV1, WorkflowStepSelectionErrorV1 } from '@happier-dev/protocol/workflows/workflowStepSelectionV1';
 import { deriveWorkflowReplacementId } from '@happier-dev/protocol/workflows/workflowInvocationIdentityV1';
@@ -2026,7 +2027,7 @@ async function executeActionBlock(
       completed.kind === 'failed' ? completed.value : undefined, completed.kind === 'failed' ? completed.failureCause : undefined,
       completed.kind === 'failed' ? completed.error : undefined);
   }
-  const outputSchema = frozen.actionContract.outputSchema;
+  const outputSchema = readWorkflowActionOutputSchemaV1(frozen.actionContract);
   if (!isWorkflowJsonObject(outputSchema)) return await fail('schema_mismatch');
   const validated = validateExecutionRunProfileResult(completed.value, { kind: 'json', schema: outputSchema });
   const capturedOutput = validated.ok ? captureResult?.(validated.value) : undefined;

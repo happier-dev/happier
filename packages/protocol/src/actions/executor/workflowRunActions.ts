@@ -42,7 +42,7 @@ import { resolveWorkflowInvocationStructureV1, resolveWorkflowRetainedConversati
 import { decodeExecutionRunResultObservation, validateExecutionRunProfileResult, type ExecutionRunProfileResultContract } from '../../execution/runs/resultContract.js';
 import { PluginJsonSchemaV2Schema } from '../../plugins/contributions/jsonSchema.js';
 import { formatQualifiedPluginActionId, parseQualifiedPluginActionId } from '../../plugins/actions/qualifiedActionId.js';
-import { ActionCompletionContractV1Schema } from '../actionCompletion.js';
+import { readWorkflowActionOutputSchemaV1 } from '../actionCatalog.js';
 import { AgentPermissionIntentV1Schema } from '../../runtime/permissionIntentV1.js';
 import { SessionInputCausalPermissionAuthorityV1Schema } from '../../sessions/messages/sessionInputAdmission.js';
 import { EXTERNAL_ACTION_RESPONSE_MAX_SERIALIZED_BYTES } from '../externalActionLimits.js';
@@ -2412,12 +2412,7 @@ export function createWorkflowAccountRunActionOwner(deps: WorkflowAccountRunActi
     const frozen = opened.accepted.materializedLeaves.find(entry => entry.sourceKey === structure.sourceKey
       && entry.blockId === structure.leaf.id && entry.kind === 'action');
     if (!frozen?.actionContract || frozen.actionId !== structure.leaf.actionId) throw workflowError('content_unavailable');
-    if (frozen.actionContract.completion !== undefined) {
-      const completion = ActionCompletionContractV1Schema.safeParse(frozen.actionContract.completion);
-      if (!completion.success) throw workflowError('content_unavailable');
-      return { kind: 'json', schema: completion.data.terminalOutputSchema };
-    }
-    const schema = PluginJsonSchemaV2Schema.safeParse(frozen.actionContract.outputSchema);
+    const schema = PluginJsonSchemaV2Schema.safeParse(readWorkflowActionOutputSchemaV1(frozen.actionContract));
     if (!schema.success) throw workflowError('content_unavailable');
     return { kind: 'json', schema: schema.data };
   };

@@ -16,6 +16,8 @@ import { PLAN_WITH_A_PANEL_WORKFLOW_V1 } from './builtins/planWithAPanel.js';
 import { materializeWorkflowAcceptedSnapshotV1, materializeWorkflowDefinitionAuthorityV1, readWorkflowAcceptedAgentStartLeavesV1, readWorkflowRunLeafStartRequestV1, type MaterializeWorkflowAcceptedSnapshotV1Input } from './materializeWorkflowAcceptedSnapshotV1.js';
 import { WorkflowAcceptedSnapshotV1Schema } from './workflowDefinitionV1.js';
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
+import { ConnectedServiceBindingsV2Schema } from '../connect/connectedServiceBindings.js';
+import { actionStartTargetUnavailableV1 } from '../actions/executor/actionStartDiagnostics.js';
 
 const agentTarget = { kind: 'agent' as const, identity: { pluginId: 'happier.agent.codex', localId: 'codex' } };
 const context = {
@@ -49,6 +51,42 @@ async function finiteContract(actionId: 'projects.script.run' | 'projects.comput
 function materialize(overrides: Partial<MaterializeWorkflowAcceptedSnapshotV1Input> = {}) {
   return materializeWorkflowAcceptedSnapshotV1({ definition, context, admission: { kind: 'user' }, effects: { resolveTargetAvailability: available }, ...overrides });
 }
+it('admits complete Action contracts beyond the unrelated Automation field ceiling', async () => {
+  const outputSchema = { type: 'string', description: 'x'.repeat(512 * 1024 + 1) };
+  const result = await materialize({ definition: { version: 1, defaults: {}, blocks: [
+    { kind: 'action', id: 'read', actionId: 'workflow.definition.get', input: {
+      definitionId: { kind: 'literal', value: 'definition-1' },
+    } },
+  ] }, effects: { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: {}, outputSchema }) } });
+  expect(result).toMatchObject({ ok: true });
+  if (!result.ok) throw new Error(result.error.code);
+  expect(result.snapshot.materializedLeaves[0]?.actionContract?.outputSchema).toEqual(outputSchema);
+});
+
+it.each(['happier.agent.codex/codex', 'external.review/assistant'])('retains selected connected services through a run Role Engine override (%s)', async agentTargetKey => {
+  const connectedServices = ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: {
+    [agentTargetKey === 'happier.agent.codex/codex' ? 'happier.agent.codex/openai-codex' : 'external.review/auth']: {
+      source: 'connected', selection: 'group', groupId: 'codex-pool' },
+  } });
+  const result = await materialize({ definition: { ...definition, defaults: {}, blocks: [{ kind: 'step', id: 'review',
+    document: { text: 'fixture', references: [], attachments: [] },
+    execution: { engine: { role: 'custom' }, connectedServices } }] },
+    roleSelection: { settingsRoles: { custom: { name: 'Reviewer', instructions: '',
+      engine: { agentTargetKey: 'happier.agent.claude/claude' }, runsAs: { kind: 'session' },
+      workspaceWrites: 'deny', secondOpinion: 'off', enabled: true } } },
+    roleOverrides: [{ roleId: 'custom', engine: { agentTargetKey, modelId: 'chosen' },
+      runsAs: { kind: 'background_run', intent: 'review' } }],
+  });
+  expect(result, JSON.stringify(result.ok ? { ok: true } : result.error)).toMatchObject({ ok: true });
+  if (!result.ok) throw new Error(result.error.code);
+  const accepted = WorkflowAcceptedSnapshotV1Schema.parse(result.snapshot);
+  expect(accepted.materializedLeaves).toMatchObject([{ role: { engine: { agentTargetKey, modelId: 'chosen' } },
+    selection: { connectedServices }, executionTarget: { kind: 'detached_run' } }]);
+  const [leaf] = await readWorkflowAcceptedAgentStartLeavesV1(accepted);
+  if (!leaf) throw new Error('Missing admitted Role Agent leaf');
+  expect(readWorkflowRunLeafStartRequestV1(leaf)).toMatchObject({ kind: 'workflow_run_leaf', leaf: { facts: { connectedServices } } });
+});
+
 const policyContext: AgentStartContextV1 = {
   caller: { kind: 'session', sessionId: 'origin', starterDepth: 1, turnDepth: 1 },
   baseline: { machineId: 'machine', directory: '/project', configuration: { agentTarget, permissionMode: 'default' } },
@@ -67,6 +105,77 @@ const admitOriginSessionAuthority: NonNullable<MaterializeWorkflowAcceptedSnapsh
   }) === null;
 
 describe('materializeWorkflowAcceptedSnapshotV1', () => {
+  it('consumes the owner-validated root without reparsing it while still validating a newly resolved child', async () => {
+    let prepared = false;
+    const authored = new Proxy({ ...definition, blocks: [...definition.blocks,
+      { kind: 'workflow', id: 'child', workflowRef: 'builtin:keep-going', input: {} }] }, {
+      get(target, key, receiver) {
+        if (prepared) throw new Error('root_definition_reparsed');
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const definitionValidation = validateWorkflowDefinition(authored);
+    expect(definitionValidation.valid).toBe(true);
+    prepared = true;
+    const result = await materialize({ definition: authored, definitionValidation,
+      effects: { resolveTargetAvailability: available,
+        readWorkflowDefinition: async () => ({ sourceKey: 'builtin:keep-going', definition: { blocks: [] } }) },
+    });
+    expect(result).toMatchObject({ ok: false, error: { code: 'invalid_input', blockId: 'child' } });
+    const accepted = await materialize({ definition: authored, definitionValidation,
+      effects: { resolveTargetAvailability: available,
+        readWorkflowDefinition: async () => ({ sourceKey: 'builtin:keep-going', definition: {
+          blocks: [{ kind: 'wait', id: 'approve', document: { text: 'Continue', references: [], attachments: [] } }],
+        } }) },
+    });
+    expect(accepted).toMatchObject({ ok: true, snapshot: {
+      authoredDefinition: { version: 1, inputs: [] },
+      frozenChildren: { 'builtin:keep-going': { version: 1, inputs: [] } },
+    } });
+    const invalid = validateWorkflowDefinition({ blocks: [] });
+    expect(await materialize({ definition: { blocks: [] }, definitionValidation: invalid }))
+      .toMatchObject({ ok: false, error: { code: 'invalid_input' } });
+  });
+
+  it('preserves a context refusal for a deferred Action leaf instead of blaming its definition', async () => {
+    const refusal = actionStartTargetUnavailableV1(undefined, 'agent_start_context', 'caller_depth_unavailable');
+    const result = await materialize({ definition: { ...definition, blocks: [definition.blocks[0],
+      { kind: 'action', id: 'review', actionId: 'review.start', input: {
+        instructions: { kind: 'literal', value: 'Review' }, engineIds: { kind: 'result',
+          producer: { blockId: 'work', scope: { kind: 'current' } }, path: [] },
+      } }] }, effects: { resolveTargetAvailability: available,
+        readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) },
+      admission: { kind: 'agent', admitLeaf: async leaf => leaf.blockId === 'review'
+        ? { ok: false, refusal: refusal.details }
+        : admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, readWorkflowRunLeafStartRequestV1(leaf), policyContext) },
+    });
+    expect(result).toMatchObject({ ok: false, error: { ...refusal.details, blockId: 'review' } });
+  });
+
+  it('returns a typed refusal instead of throwing for admitted direct Team parent custody', async () => {
+    const connectedServices = ConnectedServiceBindingsV2Schema.parse({ v: 2, bindingsByServiceId: {
+      'external.auth/subscription': { source: 'team_resource', resourceId: 'team-pool', deliveryMode: 'direct',
+        disclosedMember: { service: { pluginId: 'external.auth', localId: 'subscription' }, accountId: 'member' } },
+    } });
+    await expect(materialize({ definition: { ...definition, defaults: { engine: { agentTarget } } },
+      roleSelection: { defaultEngine: { agentTargetKey: 'agent:happier.agent.codex/codex' }, defaultConnectedServices: connectedServices },
+    })).resolves.toMatchObject({ ok: false, error: { code: 'execution_run_child_choice_required', blockId: 'work' } });
+  });
+  it('does not inherit another Run parent approval while replaying its accepted program', async () => {
+    const original = await materialize();
+    if (!original.ok) throw new Error(original.error.code);
+    const accepted = { ...original.snapshot, approvedOperation: {
+      parent: { actionId: 'machines.setup.apply', input: { machineId: 'machine', setup: {} } },
+      approvedBy: { accountId: 'person' },
+      steps: [{ actionId: 'machines.setup.apply', input: { machineId: 'machine', setup: {} } }],
+    } };
+    const restored = WorkflowAcceptedSnapshotV1Schema.parse(JSON.parse(JSON.stringify(accepted)));
+    expect(restored.approvedOperation).toEqual(accepted.approvedOperation);
+    const replayed = await materialize({ replay: { snapshot: restored }, context: { ...restored, metadata: undefined } });
+    expect(replayed.ok).toBe(true);
+    if (!replayed.ok) throw new Error(replayed.error.code);
+    expect(replayed.snapshot.approvedOperation).toBeUndefined();
+  });
   it('retains the accepted request cause through storage and replay after another requester arrives', async () => {
     const attribution = { requestRef: 'accepted-input', requester: { serverId: 'home', accountId: 'bob' },
       persona: { serverId: 'home', sessionId: 'release-bot' }, origin: null };
@@ -208,7 +317,8 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
         { kind: 'workflow_run_leaf', leaf }, policyContext,
       ) },
     });
-    expect(result).toMatchObject({ ok: false, error: { code: 'policy_denied_field', field: 'environmentVariables' } });
+    expect(result).toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority',
+      cause: { code: 'policy_denied_field', field: 'environmentVariables' } } });
   });
   it.each([
     { launchEnvironment: { values: { TOKEN: 'retained-value' }, unset: [] } },
@@ -340,7 +450,8 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     expect(await materialize({ ...replayInput, admission: { kind: 'agent', admitLeaf: async leaf => admitAgentStartV1(
       { ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowBackendTargetOverride: false },
       { kind: 'workflow_run_leaf', leaf }, policyContext,
-    ) } })).toMatchObject({ ok: false, error: { code: 'policy_denied_field', field: 'agentTarget', blockId: 'work' } });
+    ) } })).toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'work',
+      cause: { code: 'policy_denied_field', field: 'agentTarget' } } });
     expect(await materialize({ ...replayInput, replay: { snapshot: original.snapshot,
       agentOverride: { ...override, blockId: 'missing' } } })).toMatchObject({ ok: false, error: { code: 'invalid_input' } });
   });
@@ -488,7 +599,8 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
         { kind: 'workflow_run_leaf', leaf }, { ...policyContext, roles: facts.role ? { [facts.role.roleId]: facts.role } : {},
           allowLists: { v: 1, allowedRoleIds: null, allowedAgentTargetKeys: ['agent:happier.agent.codex/codex'] } }) },
     });
-    expect(result).toMatchObject({ ok: false, error: { code: 'policy_denied_field', field: 'agentTarget', blockId: 'review' } });
+    expect(result).toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'review',
+      cause: { code: 'policy_denied_field', field: 'agentTarget' } } });
   });
   it.each(['explicit', 'default', 'child'] as const)('refuses an originless %s origin-session leaf at admission', async (placement) => {
     const originLeaf = { ...definition.blocks[0], execution: { conversation: { kind: 'origin_session' } } };
@@ -547,7 +659,8 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     expect(await materialize({ definition: authored, admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(
       { ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowAgentModeOverride: false }, { kind: 'workflow_run_leaf', leaf }, {
         ...policyContext, baseline: { ...policyContext.baseline, configuration: { ...policyContext.baseline.configuration, agentModeId: 'code' } },
-      }) } })).toMatchObject({ ok: false, error: { code: 'policy_denied_field', field: 'agentModeId', blockId: 'work' } });
+      }) } })).toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'work',
+        cause: { code: 'policy_denied_field', field: 'agentModeId' } } });
   });
 
   it('accepts and replays the published native Action contract rather than substituting today\'s schema', async () => {
@@ -718,7 +831,8 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1({ ...DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, allowConnectedServicesOverride: false },
         { kind: 'workflow_run_leaf', leaf }, { ...policyContext, baseline: { ...policyContext.baseline,
           configuration: { ...policyContext.baseline.configuration, connectedServices: { v: 2, bindingsByServiceId: {} } } } }) } });
-    expect(result).toMatchObject({ ok: false, error: { code: 'policy_denied_field', field: 'connectedServices', blockId: 'work' } });
+    expect(result).toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'work',
+      cause: { code: 'policy_denied_field', field: 'connectedServices' } } });
     const user = await materialize({ definition: { ...definition, defaults: { agentTarget, connectedServices: null } } });
     expect(user).toMatchObject({ ok: true, agentStartLeaves: [{ facts: { connectedServices: null } }] });
   });
@@ -763,7 +877,8 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf }, {
         ...policyContext, allowLists: { v: 1, allowedRoleIds: null, allowedAgentTargetKeys: ['agent:happier.agent.codex/codex'] },
       }) } });
-    expect(result).toMatchObject({ ok: false, error: { code: 'policy_denied_field', field: 'agentTarget', blockId: 'review' } });
+    expect(result).toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'review',
+      cause: { code: 'policy_denied_field', field: 'agentTarget' } } });
   });
 
   it('retains a known Action fan-out member beside its future selection across accepted snapshot reads', async () => {
@@ -791,15 +906,6 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       .map(readWorkflowRunLeafStartRequestV1)).toMatchObject(expected);
   });
 
-  it('defers human dynamic Action selections but refuses agent authority that cannot be proved', async () => {
-    const options: Partial<MaterializeWorkflowAcceptedSnapshotV1Input> = { definition: { ...definition, blocks: [definition.blocks[0],
-      { kind: 'action', id: 'review', actionId: 'review.start', input: { instructions: { kind: 'literal', value: 'Review the changes' }, engineIds: { kind: 'result', producer: { blockId: 'work', scope: { kind: 'current' } }, path: [] } } }] },
-      effects: { resolveTargetAvailability: available, readActionContract: async () => ({ inputSchema: { type: 'object' }, outputSchema: {} }) } };
-    expect(await materialize(options)).toMatchObject({ ok: true, snapshot: { workDepth: 0 } });
-    expect(await materialize({ ...options, admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1,
-      { kind: 'workflow_run_leaf', leaf }, policyContext) } })).toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'review' } });
-  });
-
   it.each(['action', 'defaults'] as const)('preserves the known %s permission ceiling while a human Action target remains deferred', async (source) => {
     const options: Partial<MaterializeWorkflowAcceptedSnapshotV1Input> = {
       definition: { version: 1, ...(source === 'defaults' ? { defaults: { permissionMode: 'yolo' } } : {}), blocks: [
@@ -817,7 +923,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     expect(await materialize(options)).toMatchObject({ ok: true, snapshot: { authorization: { admittedPermissionCeiling: 'yolo' } },
       agentStartLeaves: [{ kind: 'action', facts: { agentTarget: { kind: 'unresolved' }, permissionMode: 'yolo' } }] });
     expect(await materialize({ ...options, admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(
-      DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf }, policyContext) } }))
+      DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, readWorkflowRunLeafStartRequestV1(leaf), { ...policyContext, callerPermissionCeiling: 'default' }) } }))
       .toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'start' } });
   });
 
@@ -839,7 +945,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       agentStartLeaves: [{ kind: 'action', facts: { agentTarget: { kind: 'unresolved' },
         machineId: 'machine', directory: '/project', permissionMode: 'yolo' } }] });
     expect(await materialize({ ...options, admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(
-      DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf }, policyContext) } }))
+      DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, readWorkflowRunLeafStartRequestV1(leaf), { ...policyContext, callerPermissionCeiling: 'default' }) } }))
       .toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'spawn' } });
     expect(await materialize({ ...options, definition: { version: 1, blocks: [
       { kind: 'wait', id: 'target', document: { text: 'Choose the Agent', references: [], attachments: [] } },
@@ -865,7 +971,7 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
       agentStartLeaves: [{ kind: 'action', runsAs: { kind: 'session' }, facts: { agentTarget,
         machineId: 'machine', directory: { kind: 'unresolved' }, permissionMode: 'yolo' } }] });
     expect(await materialize({ ...options, admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(
-      DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf }, policyContext) } }))
+      DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, readWorkflowRunLeafStartRequestV1(leaf), { ...policyContext, callerPermissionCeiling: 'default' }) } }))
       .toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'spawn' } });
   });
 
@@ -897,7 +1003,8 @@ describe('materializeWorkflowAcceptedSnapshotV1', () => {
     ] }, effects: { resolveTargetAvailability: available, readWorkflowDefinition: async (ref) => { reads.push(ref.kind); return { definition: child, sourceKey: 'builtin:child' }; } },
       admission: { kind: 'agent', admitLeaf: async (leaf) => admitAgentStartV1(DEFAULT_SESSION_AGENT_SPAWN_POLICY_V1, { kind: 'workflow_run_leaf', leaf }, { ...policyContext, callerPermissionCeiling: 'default' }) },
     });
-    expect(result).toMatchObject({ ok: false, error: { code: 'permission_exceeds_ceiling', blockId: 'child' } });
+    expect(result).toMatchObject({ ok: false, error: { code: 'definition_exceeds_authority', blockId: 'child',
+      cause: { code: 'permission_exceeds_ceiling' } } });
     expect(reads).toEqual(['builtin']);
   });
 

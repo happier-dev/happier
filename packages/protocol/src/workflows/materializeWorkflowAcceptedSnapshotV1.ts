@@ -1,7 +1,6 @@
 import { buildBackendTargetKeyV2, parseBackendTargetKeyV2 } from '../backends/targets/backendTargetRefV2.js';
 import type { AgentStartAdmissionV1, AgentStartRefusalV1, AgentStartRequestV1, MaterializedWorkflowLeafV1, Unresolved } from '../account/settings/admitAgentStartV1.js';
 import { isAgentStartActionV1, projectAgentStartSelectionV1, resolveActionAgentStartRequestsV1 } from '../actions/executor/agentStartAdmission.js';
-import { MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES } from '../automations/automationStoredContentEnvelopeV1.js';
 import { sameStrictJsonValue, type JsonValue } from '../json/strictJsonValue.js';
 import { WorkspaceAddressV1Schema } from '../workspaces/workspaceRefV1.js';
 import type { ActionCaller } from '../actions/executor/types.js';
@@ -21,7 +20,7 @@ import { listWorkflowAcceptedLeafSelectionsV1, parseWorkflowLiteralEngineSelecti
 import { validateWorkflowDefinition } from './workflowValidationV1.js';
 import { WorkflowStepExecutionSelectionSchema, type WorkflowBlock, type WorkflowDefinitionV1,
   type WorkflowIngressContextV1, type WorkflowLeafV1, type WorkflowStepSelectionV1,
-  type WorkflowActionValueReferenceV1,
+  type WorkflowActionValueReferenceV1, type WorkflowActionFieldBindingV1,
   type WorkflowValidationIssue } from './workflowV1.js';
 import type { WorkflowAcceptedWorkspaceTargetV1 } from './workflowWorkspaceV1.js';
 import { collectWorkflowConditionValueReferences, readWorkflowValuePathV1, type WorkflowValueReference } from './workflowReferenceV1.js';
@@ -392,6 +391,22 @@ function boundValue(reference: WorkflowActionValueReferenceV1, context: Workflow
     return selected === undefined ? { kind: 'unresolved' } : selected;
   }
   return { kind: 'unresolved' };
+}
+
+/** Execution and read projections bind authored Action operands through the same value owner. */
+function bindWorkflowActionInputV1(bindings: Readonly<Record<string, WorkflowActionFieldBindingV1>>,
+  context: WorkflowBindingContext, blockId: string, purpose: 'run' | 'definition', item?: WorkflowBoundItem) {
+  return Object.fromEntries(Object.entries(bindings).map(([field, binding]) => [field,
+    binding.kind === 'list' ? binding.items.map(reference => boundValue(reference, context, blockId, purpose, item))
+      : boundValue(binding, context, blockId, purpose, item)]));
+}
+
+/** Read projections share execution's enumeration of already-bound loop items. */
+export function bindWorkflowLeafInputsV1(definition: WorkflowDefinitionV1,
+  leaf: Readonly<{ id: string; input: Readonly<Record<string, WorkflowActionFieldBindingV1>> }>,
+  context: WorkflowBindingContext, purpose: 'run' | 'definition') {
+  return (actionItemContexts(definition, leaf.id, context) ?? [undefined])
+    .map(item => bindWorkflowActionInputV1(leaf.input, context, leaf.id, purpose, item));
 }
 
 function hasUnresolvedValue(value: unknown): boolean {
@@ -938,9 +953,7 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
           // Child frame inputs bind at invocation. Keep its already-projected
           // Action engine rather than rebuilding it from the concrete carrier.
           sidecar.actionInput = frozen && sourceKey !== '$root' ? structuredClone(frozen.actionInput)
-            : Object.fromEntries(Object.entries(leaf.input).map(([field, binding]) => [field,
-            binding.kind === 'list' ? binding.items.map((reference) => boundValue(reference, bindingContext, leaf.id, purpose))
-              : boundValue(binding, bindingContext, leaf.id, purpose)]));
+            : bindWorkflowActionInputV1(leaf.input, bindingContext, leaf.id, purpose);
         } catch (error) {
           if (error instanceof WorkflowMaterializationFailureV1) return { ok: false, error: error.error };
           throw error;
@@ -1047,6 +1060,5 @@ async function materializeWorkflowV1(input: MaterializeWorkflowAcceptedSnapshotV
     authorization: { ...input.context.authorization, admittedPermissionCeiling: permissionCeiling },
   });
   if (!snapshot.success) return invalidInput();
-  if (new TextEncoder().encode(JSON.stringify(snapshot.data)).byteLength > MAX_AUTOMATION_STORED_ENVELOPE_UTF8_BYTES) return invalidInput();
   return { ok: true, snapshot: snapshot.data, agentStartLeaves };
 }

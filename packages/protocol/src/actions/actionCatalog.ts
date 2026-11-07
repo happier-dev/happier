@@ -3,6 +3,7 @@ import type { JsonValue } from '../json/strictJsonValue.js';
 import { pluginJsonValuesEqual } from '../plugins/contributions/jsonSchemaValues.js';
 import {
   getActionSpec,
+  resolveActionPermissionChangingV1,
   isActionSpecSurfacedOn,
   listActionSpecs,
   type ActionInputFieldHint,
@@ -24,11 +25,19 @@ import {
 import { ActionJsonSchemaProjectionError, zodSchemaToJsonSchemaObject, type JsonSchemaObject } from './actionInputJsonSchema.js';
 import { freezeActionCompletionContractV1, ActionCompletionContractV1Schema } from './actionCompletion.js';
 import { StrictJsonValueSchema } from '../json/strictJsonValue.js';
+import { readActionSecretInputPaths } from './actionInputHintsRuntime.js';
+import type { InputHintsDescriptor } from '../inputs/inputFields.js';
 import type { WorkflowMaterializedLeafV1 } from '../workflows/workflowDefinitionV1.js';
 
 export { readCompleteActionSpecV1 } from './actionSpecSections.js';
 
 export type SerializedActionSpec = ActionDefinitionSummaryV1;
+
+/** A failed optional catalog is not an authoritative empty inventory. */
+export class ActionCatalogUnavailableError extends Error {
+  readonly code = 'catalog_unavailable';
+  constructor() { super('catalog_unavailable'); }
+}
 
 export type ResolvedActionOption = Readonly<{
   value: ActionInputOptionValue;
@@ -133,6 +142,7 @@ function actionSearchScore(
 }
 
 type ActionCatalogSurfaceParams = Readonly<{
+  admittedInput?: unknown;
   surface?: keyof ActionSurfaces | null;
   includeOutputSchema?: boolean;
 }>;
@@ -146,9 +156,10 @@ function resolveActionCatalogSurfaceProjection(
   outputSchema: ActionSpec['outputSchema'];
 }> {
   const apiBinding = surface === 'api' ? spec.surfaceBindings?.api : undefined;
+  const toolBinding = surface === 'agent' || surface === 'mcp' ? spec.surfaceBindings?.[surface] : undefined;
   return {
-    inputSchema: apiBinding?.inputSchema ?? spec.inputSchema,
-    inputHints: apiBinding?.inputHints ?? spec.inputHints,
+    inputSchema: toolBinding?.inputSchema ?? apiBinding?.inputSchema ?? spec.inputSchema,
+    inputHints: toolBinding?.inputHints ?? apiBinding?.inputHints ?? spec.inputHints,
     outputSchema: apiBinding?.outputSchema ?? spec.outputSchema,
   };
 }
@@ -196,6 +207,7 @@ function serializeActionSpecMetadata(
     title: spec.title,
     ...(spec.confirmVerb === undefined ? {} : { confirmVerb: spec.confirmVerb }),
     ...(spec.irreversible === undefined ? {} : { irreversible: spec.irreversible }),
+    ...(resolveActionPermissionChangingV1(spec, params?.admittedInput) ? { permissionChanging: true as const } : {}),
     description: spec.description ?? null,
     safety: spec.safety,
     approval: spec.approval,
@@ -232,17 +244,28 @@ export function actionSpecToActionDefinitionV1(
 
 /** One projection for native and contributed Workflow Action admission. */
 export function freezeWorkflowActionContractV1(
-  definition: Readonly<{ inputSchema?: unknown; outputSchema?: unknown; completion?: unknown }>,
+  definition: Readonly<{ inputSchema?: unknown; outputSchema?: unknown; completion?: unknown;
+    inputHints?: InputHintsDescriptor<unknown> | null }>,
 ): NonNullable<WorkflowMaterializedLeafV1['actionContract']> | null {
   const input = StrictJsonValueSchema.safeParse(definition.inputSchema ?? {});
   const completion = definition.completion === undefined ? undefined
     : ActionCompletionContractV1Schema.safeParse(definition.completion);
   if (!input.success || completion && !completion.success) return null;
   const output = StrictJsonValueSchema.safeParse(completion?.success
-    ? completion.data.terminalOutputSchema : definition.outputSchema);
+    ? { $ref: '#/completion/terminalOutputSchema' } : definition.outputSchema);
   if (!output.success) return null;
   return { inputSchema: input.data, outputSchema: output.data,
+    secretInputPaths: [...readActionSecretInputPaths(definition, {}, { includeInactive: true })],
     ...(completion?.success ? { completion: StrictJsonValueSchema.parse(completion.data) } : {}) };
+}
+
+/** Resolve the frozen terminal contract, including snapshots that stored it twice. */
+export function readWorkflowActionOutputSchemaV1(
+  contract: WorkflowMaterializedLeafV1['actionContract'],
+): JsonValue | undefined {
+  if (contract?.completion === undefined) return contract?.outputSchema;
+  const completion = ActionCompletionContractV1Schema.safeParse(contract.completion);
+  return completion.success ? completion.data.terminalOutputSchema : undefined;
 }
 
 function projectActionDiscoveryExamples(examples: ActionDefinitionSummaryV1['examples']) {
@@ -310,6 +333,7 @@ function projectActionDefinitionSummaryMetadata(definition: ActionDefinitionSumm
     title: definition.title,
     ...(definition.confirmVerb === undefined ? {} : { confirmVerb: definition.confirmVerb }),
     ...(definition.irreversible === undefined ? {} : { irreversible: definition.irreversible }),
+    ...(definition.permissionChanging === undefined ? {} : { permissionChanging: definition.permissionChanging }),
     description: definition.description,
     safety: definition.safety,
     ...(definition.approval === undefined ? {} : { approval: definition.approval }),
@@ -397,12 +421,19 @@ function searchActionDefinitionSummaryCandidates(
   const limitRaw = typeof params?.limit === 'number' && Number.isFinite(params.limit) ? Math.floor(params.limit) : 20;
   const limit = Math.max(1, Math.min(100, limitRaw));
   return candidates
-    .map((candidate) => ({
-      candidate,
-      score: actionSearchScore(candidate.definition, normalizedQuery, candidate.searchText),
-    }))
+    .map((candidate) => {
+      const searchText = candidate.searchText ?? actionSearchText(candidate.definition);
+      return {
+        candidate,
+        score: actionSearchScore(candidate.definition, normalizedQuery, searchText),
+        // Prefer the whole intent before ID substring bonuses. Generic owners
+        // can describe a precise operation without naming it in their Action id.
+        matchesAllTokens: normalizedQuery.tokens.every(token => searchText.includes(token)),
+      };
+    })
     .filter((entry) => (query ? entry.score > 0 : true))
     .sort((left, right) => {
+      if (left.matchesAllTokens !== right.matchesAllTokens) return left.matchesAllTokens ? -1 : 1;
       if (right.score !== left.score) return right.score - left.score;
       return left.candidate.definition.title.localeCompare(right.candidate.definition.title);
     })
@@ -578,9 +609,4 @@ export function filterResolvedActionOptions(
     : [...valued];
 
   return limit === null ? filtered : filtered.slice(0, limit);
-}
-
-export class ActionCatalogUnavailableError extends Error {
-  readonly code = 'catalog_unavailable';
-  constructor() { super('catalog_unavailable'); }
 }
