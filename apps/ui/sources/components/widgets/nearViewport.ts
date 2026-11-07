@@ -67,6 +67,8 @@ export type NearViewportTracker = Readonly<{
     onLayout: (event: LayoutChangeEvent) => void;
     subscribe: (listener: () => void) => () => void;
     getWindow: () => NearViewportWindow | null;
+    getVisibleWindow: () => NearViewportWindow | null;
+    subscribeVisibleWindow: (listener: () => void) => () => void;
     /** Native/DOM measurements share window coordinates; their delta is content-relative. */
     measureSpan: (node: unknown) => Promise<NearViewportSpan | null>;
     invalidateLayout: () => void;
@@ -85,9 +87,13 @@ export function createNearViewportTracker(input: Readonly<{
     readContentNode?: () => unknown;
 }>): NearViewportTracker {
     let windowTopOffset = 0;
+    let visibleTopOffset = 0;
     let viewportHeight = input.initialViewportHeight;
     let window = resolveNearViewportWindow({ windowTopOffset, viewportHeight, quantum: input.quantum, overscan: input.overscan });
     const listeners = new Set<() => void>();
+    // A platform window can seed prebuild, but motion waits for this physical scroller's layout.
+    let visibleWindow: NearViewportWindow | null = null;
+    const visibleListeners = new Set<() => void>();
     let layoutRevision = 0;
     let contentWidth = 0;
     let contentHeight = 0;
@@ -102,14 +108,34 @@ export function createNearViewportTracker(input: Readonly<{
         window = resolveNearViewportWindow({ windowTopOffset, viewportHeight, quantum: input.quantum, overscan: input.overscan });
         for (const listener of [...listeners]) listener();
     };
+    const updateVisible = (nextTop: number, nextHeight: number, measured = visibleWindow !== null) => {
+        visibleTopOffset = nextTop;
+        const next = measured && nextHeight > 0 ? { top: nextTop, bottom: nextTop + nextHeight } : null;
+        if (visibleWindow?.top === next?.top && visibleWindow?.bottom === next?.bottom) return;
+        visibleWindow = next;
+        for (const listener of [...visibleListeners]) listener();
+    };
     return {
-        onScroll: (event) => update(quantizeScrollOffset(event.nativeEvent.contentOffset[input.axis ?? 'y'], input.quantum), viewportHeight),
-        onLayout: (event) => update(windowTopOffset, input.axis === 'x' ? event.nativeEvent.layout.width : event.nativeEvent.layout.height),
+        onScroll: (event) => {
+            const offset = event.nativeEvent.contentOffset[input.axis ?? 'y'];
+            updateVisible(offset, viewportHeight);
+            update(quantizeScrollOffset(offset, input.quantum), viewportHeight);
+        },
+        onLayout: (event) => {
+            const height = input.axis === 'x' ? event.nativeEvent.layout.width : event.nativeEvent.layout.height;
+            updateVisible(visibleTopOffset, height, true);
+            update(windowTopOffset, height);
+        },
         subscribe: (listener) => {
             listeners.add(listener);
             return () => { listeners.delete(listener); };
         },
         getWindow: () => window,
+        getVisibleWindow: () => visibleWindow,
+        subscribeVisibleWindow: listener => {
+            visibleListeners.add(listener);
+            return () => { visibleListeners.delete(listener); };
+        },
         getLayoutRevision: () => layoutRevision,
         invalidateLayout,
         onContentSizeChange: (width, height) => {

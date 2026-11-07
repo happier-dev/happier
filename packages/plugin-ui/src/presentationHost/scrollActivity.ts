@@ -8,6 +8,9 @@ export type PluginUiScrollActivityTracker = Readonly<{
   onContentSizeChange(width: number, height: number): void;
   subscribe(listener: () => void): () => void;
   getWindow(): Readonly<{ top: number; bottom: number }> | null;
+  /** Exact physical viewport for running presentation; `getWindow` retains prebuild overscan. */
+  getVisibleWindow?(): Readonly<{ top: number; bottom: number }> | null;
+  subscribeVisibleWindow?(listener: () => void): () => void;
   measureSpan(node: unknown): Promise<Readonly<{ top: number; height?: number }> | null>;
   invalidateLayout(): void;
   getLayoutRevision(): number;

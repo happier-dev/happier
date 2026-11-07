@@ -33,6 +33,7 @@ import { PluginUiIconGlyph, type IconName } from './Icon.js';
 import { HAPPIER_TONE_COLOR_TOKEN, type HappierTone } from '../presentation/semantics.js';
 import type { HappierTypeRole, HappierUiTheme, HappierUiTypography } from '../environment/types.js';
 import { useOptionalPluginUiPresentationHost } from '../presentationHost/context.js';
+import { PluginUiScrollActivityProvider } from '../presentationHost/scrollActivity.js';
 import { HappierCollectionDetailWidthContext, HappierCollectionLayoutContext, resolveHappierCollectionLayoutState } from '../presentation/collection/collectionLayout.js';
 import { HAPPIER_COLLECTION_LIST_TEXT, HappierCollectionRestingRowsContext, HappierCollectionTableRowContext, type HappierCollectionRestingRows, HappierCollectionTreeRowContext, type HappierCollectionTableRowFacts, type HappierCollectionTreeRowFacts } from '../presentation/collection/CollectionList.js';
 import {
@@ -2774,8 +2775,12 @@ function PageColumn(props: Readonly<{ maxWidthPx: number | undefined; children?:
 }
 
 function PageScroller(props: Readonly<{ enabled: boolean; viewport: HappierCollectionViewport; request: Readonly<{ offset: number }>; children?: ReactNode }>): ReactElement {
-  const renderPageScroller = useOptionalPluginUiPresentationHost()?.renderPageScroller;
+  const host = useOptionalPluginUiPresentationHost();
+  const renderPageScroller = host?.renderPageScroller;
   const scroll = useRef<ScrollView | null>(null);
+  const tracker = useMemo(() => props.enabled && renderPageScroller === undefined && Platform.OS !== 'web'
+    ? host?.createScrollActivityTracker?.(scroll, false) ?? null : null,
+  [host?.createScrollActivityTracker, props.enabled, renderPageScroller]);
   useLayoutEffect(() => {
     if (props.enabled) scroll.current?.scrollTo({ y: props.request.offset, animated: false });
   }, [props.enabled, props.request]);
@@ -2783,8 +2788,9 @@ function PageScroller(props: Readonly<{ enabled: boolean; viewport: HappierColle
   if (renderPageScroller !== undefined) return <>{renderPageScroller(props.children)}</>;
   return (
     <ScrollView ref={scroll} style={pageScrollerStyle} keyboardShouldPersistTaps="handled" scrollEventThrottle={16}
-      onScroll={event => { props.viewport.offsetRef.current = event.nativeEvent.contentOffset.y; }}>
-      {props.children}
+      onLayout={tracker?.onLayout} onContentSizeChange={tracker?.onContentSizeChange}
+      onScroll={event => { tracker?.onScroll(event); props.viewport.offsetRef.current = event.nativeEvent.contentOffset.y; }}>
+      {tracker === null ? props.children : <PluginUiScrollActivityProvider tracker={tracker}>{props.children}</PluginUiScrollActivityProvider>}
     </ScrollView>
   );
 }

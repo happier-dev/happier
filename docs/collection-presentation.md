@@ -4,6 +4,13 @@ A Collection presents keyed items through one headless model, shared list/table/
 
 This page describes **0.3 development source**. It promotes implemented owners, not the historical Collection plan's rollout or unverified fidelity claims.
 
+Collection's moving needs-you treatments follow physical row visibility. Web uses the platform's
+intersection observation, including ancestor clipping. Native consumes the existing physical scroll
+owner's measured exact viewport; its separate near-viewport window still owns prebuilding and overscan.
+An unmeasured or offscreen row keeps Glint and Shimmer stopped, and entering the viewport starts the
+treatment. Dot, Accent and rows without a moving treatment acquire no visibility observation.
+The standalone `CollectionRowNeedsYouHighlight` continues to consume its caller's explicit `visible` fact.
+
 ## Model and presentation
 
 In 0.3 development source, serializable membership uses Protocol's

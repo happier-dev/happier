@@ -13,6 +13,26 @@ function scrollTo(tracker: ReturnType<typeof createNearViewportTracker>, y: numb
 }
 
 describe('near-viewport window', () => {
+    it('publishes exact visible demand without advancing the quantized prebuild window', () => {
+        const tracker = createNearViewportTracker({ quantum: 100, initialViewportHeight: 800 });
+        expect(tracker.getVisibleWindow()).toBeNull();
+        tracker.onLayout({ nativeEvent: { layout: { x: 0, y: 0, width: 300, height: 800 } } } as never);
+        let visibleNotifications = 0;
+        let prebuildNotifications = 0;
+        const release = tracker.subscribeVisibleWindow(() => { visibleNotifications += 1; });
+        tracker.subscribe(() => { prebuildNotifications += 1; });
+        scrollTo(tracker, 40);
+        scrollTo(tracker, 40);
+        scrollTo(tracker, 99);
+        expect(tracker.getVisibleWindow()).toEqual({ top: 99, bottom: 899 });
+        expect(tracker.getWindow()).toEqual({ top: -800, bottom: 1700 });
+        expect(visibleNotifications).toBe(2);
+        expect(prebuildNotifications).toBe(0);
+        release();
+        scrollTo(tracker, 100);
+        expect(visibleNotifications).toBe(2);
+        expect(prebuildNotifications).toBe(1);
+    });
     it('measures against the native inner view ref rather than its numeric native node handle', async () => {
         let offset = 0;
         const content = { measureInWindow: (callback: (x: number, y: number, width: number, height: number) => void) => callback(10, -100, 800, 6000) };
