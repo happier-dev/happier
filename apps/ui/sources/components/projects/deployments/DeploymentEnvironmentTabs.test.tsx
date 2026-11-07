@@ -994,17 +994,43 @@ describe('Environment → Settings: checks, backups, previews', () => {
       data: [{ kind: 'managed', dataTargetLinkId: 'neon-link', ownership: 'providerNative',
         parentBranchRef: { providerProjectId: 'neon-project', branchId: 'main' } }],
     } } });
-    const { screen, controller, settle } = await renderTab('settings', detail);
+    const settled = { ok: true as const, environmentId: detail.environment.id, revision: detail.environment.revision + 1 };
+    const updateEnvironment = vi.fn(async (..._args: unknown[]) => settled);
+    const { screen, controller, settle } = await renderTab('settings', detail, {},
+      { environmentActions: { setController: vi.fn(), updateEnvironment } });
     const id = 'project-deployments.environment.settings.previews.template';
+    const template = detail.content.previewTemplate!;
     try {
       expect(await settle(`${id}.enabled`)).not.toBeNull();
       const text = screen.getTextContent();
       expect(text).toContain('On for new pull requests');
-      expect(text).toContain('pr-{number}.preview.happier.dev');
       expect(text).toContain('A branch of the database');
       // The template runs on this Environment's own runtime link: the production-Machine warning shows.
       expect(text).toContain('Previews share the production Machine');
       expect(screen.findByTestId(`${id}.forks`)).not.toBeNull();
+      // A manager edits the template; each change saves the whole template once through environments.update.
+      await screen.pressByTestIdAsync(`${id}.enabled`);
+      expect(updateEnvironment).toHaveBeenLastCalledWith(detail.environment, { previewTemplate: { ...template, enabled: false } });
+      const { FieldValueItem } = await import('@/components/ui/forms/FieldValueItem');
+      const address = screen.findAllByType(FieldValueItem).find((node) => node.props.testID === `${id}.address`)!;
+      expect(address.props.value).toBe('pr-{number}.preview.happier.dev');
+      await act(async () => { address.props.onCommit('pr-{number}.staging.happier.dev'); });
+      expect(updateEnvironment).toHaveBeenLastCalledWith(detail.environment, { previewTemplate: { ...template,
+        domain: { ...template.domain!, hostnamePattern: 'pr-{number}.staging.happier.dev' } } });
+      const { SegmentedChoiceItem } = await import('@/components/ui/lists/SegmentedChoiceItem');
+      const data = screen.findAllByType(SegmentedChoiceItem).find((node) => node.props.testID === `${id}.data`)!;
+      // Its own database needs a catalog data choice this template never had, so it isn't offered as if it could save.
+      expect(data.props.options.find((option: { id: string }) => option.id === 'own')).toMatchObject({ disabled: true });
+      await act(async () => data.props.onChange('none'));
+      expect(updateEnvironment).toHaveBeenLastCalledWith(detail.environment, { previewTemplate: { ...template, data: [] } });
+      const { DeploymentEnvironmentUpdateInputV1Schema } = await import('@happier-dev/protocol/deployments/deploymentActionsV1');
+      // An agent sends the same patch to the same Action.
+      for (const call of updateEnvironment.mock.calls) {
+        expect(DeploymentEnvironmentUpdateInputV1Schema.safeParse({ serverId: 'srv', environmentId: detail.environment.id,
+          expectedRevision: 1, contentArtifactId: detail.environment.contentArtifactId,
+          contentHeaderVersion: detail.environment.contentHeaderVersion, contentBodyVersion: detail.environment.contentBodyVersion,
+          patch: call[1] }).success).toBe(true);
+      }
     } finally { await screen.unmount(); controller.retire(); }
   });
 

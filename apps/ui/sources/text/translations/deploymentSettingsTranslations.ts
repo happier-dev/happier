@@ -39,6 +39,7 @@ type DeploymentSettingsTranslations = Readonly<{
   previewsDataNone: string;
   previewsForks: string;
   previewsProductionMachine: string;
+  previewsDataUnavailable: string;
   addCheck: string;
   addCheckUnavailable: string;
 }>;
@@ -87,6 +88,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'None',
     previewsForks: "Pull requests from forks don't get previews",
     previewsProductionMachine: 'Previews share the production Machine',
+    previewsDataUnavailable: 'Not set up for this environment · ask an agent to set it up',
     addCheck: 'Add check',
     addCheckUnavailable:
       "Checks can't be set up from here · open the Machine's Services page",
@@ -133,6 +135,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'Нет',
     previewsForks: 'Pull request из форков не получают превью',
     previewsProductionMachine: 'Превью используют рабочую машину',
+    previewsDataUnavailable: 'Не настроено для этого окружения · попросите агента',
     addCheck: 'Добавить проверку',
     addCheckUnavailable:
       'Проверки нельзя настроить отсюда · откройте страницу служб машины',
@@ -178,6 +181,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'Brak',
     previewsForks: 'Pull requesty z forków nie dostają podglądów',
     previewsProductionMachine: 'Podglądy dzielą maszynę produkcyjną',
+    previewsDataUnavailable: 'Nieskonfigurowane dla tego środowiska · poproś agenta',
     addCheck: 'Dodaj sprawdzenie',
     addCheckUnavailable:
       'Sprawdzeń nie można tu skonfigurować · otwórz stronę usług maszyny',
@@ -226,6 +230,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'Ninguno',
     previewsForks: 'Las pull requests de forks no tienen vista previa',
     previewsProductionMachine: 'Las vistas previas comparten la máquina de producción',
+    previewsDataUnavailable: 'No configurado en este entorno · pídeselo a un agente',
     addCheck: 'Añadir comprobación',
     addCheckUnavailable:
       'Las comprobaciones no se configuran aquí · abre la página de servicios de la máquina',
@@ -276,6 +281,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'Aucune',
     previewsForks: 'Les pull requests de forks n’ont pas d’aperçu',
     previewsProductionMachine: 'Les aperçus partagent la machine de production',
+    previewsDataUnavailable: 'Pas configuré pour cet environnement · demandez à un agent',
     addCheck: 'Ajouter une vérification',
     addCheckUnavailable:
       'Les vérifications ne se configurent pas ici · ouvrez la page Services de la machine',
@@ -325,6 +331,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'Nessuno',
     previewsForks: 'Le pull request dai fork non hanno anteprime',
     previewsProductionMachine: 'Le anteprime condividono la macchina di produzione',
+    previewsDataUnavailable: 'Non configurato per questo ambiente · chiedi a un agente',
     addCheck: 'Aggiungi controllo',
     addCheckUnavailable:
       'I controlli non si configurano qui · apri la pagina Servizi della macchina',
@@ -375,6 +382,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'Nenhum',
     previewsForks: 'Pull requests de forks não têm pré-visualização',
     previewsProductionMachine: 'As pré-visualizações partilham a máquina de produção',
+    previewsDataUnavailable: 'Não configurado neste ambiente · peça a um agente',
     addCheck: 'Adicionar verificação',
     addCheckUnavailable:
       'As verificações não se configuram aqui · abra a página Serviços da máquina',
@@ -424,6 +432,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'Cap',
     previewsForks: 'Les pull requests de forks no tenen previsualització',
     previewsProductionMachine: 'Les previsualitzacions comparteixen la màquina de producció',
+    previewsDataUnavailable: 'No configurat en aquest entorn · demana-ho a un agent',
     addCheck: 'Afegeix una comprovació',
     addCheckUnavailable:
       'Les comprovacions no es configuren aquí · obre la pàgina Serveis de la màquina',
@@ -473,6 +482,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'Keine',
     previewsForks: 'Pull Requests aus Forks bekommen keine Vorschau',
     previewsProductionMachine: 'Vorschauen teilen die Produktionsmaschine',
+    previewsDataUnavailable: 'Für diese Umgebung nicht eingerichtet · einen Agenten fragen',
     addCheck: 'Prüfung hinzufügen',
     addCheckUnavailable:
       'Prüfungen lassen sich hier nicht einrichten · Dienste-Seite der Maschine öffnen',
@@ -516,6 +526,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: '无',
     previewsForks: '来自分叉的拉取请求没有预览',
     previewsProductionMachine: '预览与生产机器共用',
+    previewsDataUnavailable: '此环境尚未设置 · 请让代理设置',
     addCheck: '添加检查',
     addCheckUnavailable: '无法在此设置检查 · 请打开机器的服务页面',
   },
@@ -558,6 +569,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: '無',
     previewsForks: '來自分叉的拉取請求沒有預覽',
     previewsProductionMachine: '預覽與生產機器共用',
+    previewsDataUnavailable: '此環境尚未設定 · 請讓代理設定',
     addCheck: '新增檢查',
     addCheckUnavailable: '無法在此設定檢查 · 請開啟機器的服務頁面',
   },
@@ -602,6 +614,7 @@ export const deploymentSettingsTranslations = {
     previewsDataNone: 'なし',
     previewsForks: 'フォークからのプルリクエストにはプレビューがありません',
     previewsProductionMachine: 'プレビューは本番マシンを共有します',
+    previewsDataUnavailable: 'この環境では未設定 · エージェントに依頼してください',
     addCheck: 'チェックを追加',
     addCheckUnavailable:
       'ここではチェックを設定できません · マシンのサービスページを開いてください',

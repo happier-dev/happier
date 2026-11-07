@@ -413,7 +413,15 @@ export const DeploymentEnvironmentSettingsPanel = React.memo(
             description={t('projects.deployments.sectionPreviewsDescription')}
           >
             {detail.environment.purpose !== 'preview' ? (
-              <PreviewTemplateRows detail={detail} machineName={machineName} testID={`${section('previews')}.template`} />
+              <PreviewTemplateRows
+                detail={detail}
+                machineName={machineName}
+                onSave={editing ? (next) => {
+                  void change.press(() => editing.actions.updateEnvironment(detail.environment, { previewTemplate: next }));
+                } : null}
+                saving={change.running}
+                testID={`${section('previews')}.template`}
+              />
             ) : null}
             {detail.environment.purpose === 'preview' ? (
               <PreviewOfRow {...props} testID={section('previews')} />
@@ -620,53 +628,141 @@ function retentionLabel(retention: DeploymentBackupConfigurationV1['retention'])
  * `d5d/prodmachine`): whether new pull requests get previews, where they run, their address pattern and their data.
  * Read from the Environment's own content; forks never get previews, which is a fact rather than a choice here.
  */
+type PreviewTemplate = NonNullable<DeploymentEnvironmentReadDetailV1['content']['previewTemplate']>;
+type PreviewData = 'own' | 'branch' | 'none';
+
+function previewDataKind(template: PreviewTemplate): PreviewData {
+  const data = template.data[0];
+  return !data ? 'none' : data.kind === 'managed' ? 'branch' : 'own';
+}
+
 function PreviewTemplateRows(props: Readonly<{
   detail: DeploymentEnvironmentReadDetailV1;
   machineName: (machineId: string) => string;
+  /** Saves the whole next template once through `environments.update` (patch.previewTemplate); absent for viewers. */
+  onSave: ((next: PreviewTemplate) => void) | null;
+  saving: boolean;
   testID: string;
 }>) {
   const { theme } = useUnistyles();
   const template = props.detail.content.previewTemplate;
+  // The saved data selections this page has seen, so switching to None and back keeps the exact choice.
+  const [seenData, setSeenData] = React.useState<Readonly<Partial<Record<'own' | 'branch', PreviewTemplate['data']>>>>({});
+  React.useEffect(() => {
+    const kind = template ? previewDataKind(template) : 'none';
+    if (template && kind !== 'none') setSeenData((seen) => seen[kind] === template.data ? seen : { ...seen, [kind]: template.data });
+  }, [template]);
   // Without a template the preview list below already says there are none.
   if (!template) return null;
-  const link = props.detail.targetLinks.find((row) => row.targetLink.id === template.runtimeTargetLinkId)?.targetLink;
-  const machines = link && 'machines' in link && Array.isArray(link.machines) ? link.machines.map(props.machineName) : [];
+  const { onSave } = props;
+  const runtimeLinks = props.detail.targetLinks.map((row) => row.targetLink).filter((link) => link.role === 'runtime');
+  const linkName = (link: (typeof runtimeLinks)[number] | undefined) => {
+    const machines = link && 'machines' in link && Array.isArray(link.machines) ? link.machines.map(props.machineName) : [];
+    return machines.join(', ') || link?.targetKind || '';
+  };
+  const link = runtimeLinks.find((candidate) => candidate.id === template.runtimeTargetLinkId);
   const sharesProduction = template.runtimeTargetLinkId === (props.detail.environment.runtimeTargetLinkId ?? props.detail.runtimeTargetLink?.id);
-  const data = template.data[0];
+  const dataKind = previewDataKind(template);
+  const save = (patch: Partial<PreviewTemplate>) => onSave?.({ ...template, ...patch });
+  const unavailable = t('projects.deployments.settingsSections.previewsDataUnavailable');
+  const dataOptions: ReadonlyArray<SegmentedChoiceOption<PreviewData>> = [
+    { id: 'own', label: t('projects.deployments.settingsSections.previewsDataOwn'),
+      disabled: !seenData.own && dataKind !== 'own', unavailableReason: unavailable },
+    { id: 'branch', label: t('projects.deployments.settingsSections.previewsDataBranch'),
+      disabled: !seenData.branch && dataKind !== 'branch', unavailableReason: unavailable },
+    { id: 'none', label: t('projects.deployments.settingsSections.previewsDataNone') },
+  ];
+  const runsOnSubtitle = sharesProduction ? t('projects.deployments.settingsSections.previewsProductionMachine') : undefined;
+  const runsOnLeading = sharesProduction ? <StatusDot size={6} color={theme.colors.state.warning.foreground} /> : undefined;
   return (
     <>
       <Item
         testID={`${props.testID}.enabled`}
         title={t('projects.deployments.settingsSections.previewsTitle')}
-        detail={template.enabled
+        subtitle={template.enabled
           ? t('projects.deployments.settingsSections.previewsOn')
           : t('projects.deployments.settingsSections.previewsOff')}
-        mode="info"
+        mode={onSave ? undefined : 'info'}
+        rightElement={onSave ? (
+          <Switch value={template.enabled} disabled={props.saving}
+            onValueChange={(enabled) => save({ enabled })} />
+        ) : undefined}
       />
-      <Item
-        testID={`${props.testID}.runsOn`}
-        title={t('projects.deployments.settingsSections.previewsRunsOn')}
-        subtitle={sharesProduction ? t('projects.deployments.settingsSections.previewsProductionMachine') : undefined}
-        subtitleLeading={sharesProduction ? <StatusDot size={6} color={theme.colors.state.warning.foreground} /> : undefined}
-        detail={machines.join(', ') || link?.targetKind}
-        mode="info"
-      />
-      {template.domain ? (
+      {onSave && runtimeLinks.length > 1 && runtimeLinks.length <= 4 ? (
+        <SegmentedChoiceItem<string>
+          testID={`${props.testID}.runsOn`}
+          testIDPrefix={`${props.testID}.runsOn`}
+          title={t('projects.deployments.settingsSections.previewsRunsOn')}
+          subtitle={runsOnSubtitle}
+          subtitleLeading={runsOnLeading}
+          accessoryLayout="adaptive"
+          options={runtimeLinks.map((candidate) => ({ id: candidate.id, label: linkName(candidate) }))}
+          value={template.runtimeTargetLinkId}
+          disabled={props.saving}
+          onChange={(runtimeTargetLinkId) => save({ runtimeTargetLinkId })}
+        />
+      ) : (
         <Item
-          testID={`${props.testID}.address`}
-          title={t('projects.deployments.settingsSections.previewsAddress')}
-          detail={template.domain.hostnamePattern}
+          testID={`${props.testID}.runsOn`}
+          title={t('projects.deployments.settingsSections.previewsRunsOn')}
+          subtitle={runsOnSubtitle}
+          subtitleLeading={runsOnLeading}
+          detail={linkName(link)}
           mode="info"
         />
+      )}
+      {template.domain ? (
+        onSave ? (
+          <FieldValueItem
+            testID={`${props.testID}.address`}
+            fieldTestID={`${props.testID}.address.input`}
+            title={t('projects.deployments.settingsSections.previewsAddress')}
+            accessoryLayout="stacked"
+            monospace
+            autoCapitalize="none"
+            value={template.domain.hostnamePattern}
+            disabled={props.saving}
+            onCommit={(draft) => {
+              const hostnamePattern = draft.trim();
+              if (template.domain && hostnamePattern !== '' && hostnamePattern !== template.domain.hostnamePattern) {
+                save({ domain: { ...template.domain, hostnamePattern } });
+              }
+              // The settled Environment re-read replaces this value.
+              return template.domain?.hostnamePattern ?? '';
+            }}
+          />
+        ) : (
+          <Item
+            testID={`${props.testID}.address`}
+            title={t('projects.deployments.settingsSections.previewsAddress')}
+            detail={template.domain.hostnamePattern}
+            mode="info"
+          />
+        )
       ) : null}
-      <Item
-        testID={`${props.testID}.data`}
-        title={t('projects.deployments.settingsSections.previewsData')}
-        detail={!data ? t('projects.deployments.settingsSections.previewsDataNone')
-          : data.kind === 'managed' ? t('projects.deployments.settingsSections.previewsDataBranch')
-            : t('projects.deployments.settingsSections.previewsDataOwn')}
-        mode="info"
-      />
+      {onSave ? (
+        <SegmentedChoiceItem<PreviewData>
+          testID={`${props.testID}.data`}
+          testIDPrefix={`${props.testID}.data`}
+          title={t('projects.deployments.settingsSections.previewsData')}
+          accessoryLayout="adaptive"
+          options={dataOptions}
+          value={dataKind}
+          disabled={props.saving}
+          onChange={(next) => {
+            if (next === dataKind) return;
+            const data = next === 'none' ? [] : seenData[next];
+            if (data) save({ data });
+          }}
+        />
+      ) : (
+        <Item
+          testID={`${props.testID}.data`}
+          title={t('projects.deployments.settingsSections.previewsData')}
+          detail={dataOptions.find((option) => option.id === dataKind)?.label}
+          mode="info"
+        />
+      )}
       {template.forkPreviews === 'off' ? (
         <Item testID={`${props.testID}.forks`} title={t('projects.deployments.settingsSections.previewsForks')} mode="info" />
       ) : null}
